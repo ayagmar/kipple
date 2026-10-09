@@ -15,6 +15,7 @@ Kip is a small sea otter who keeps one glowing amber pebble, the thing worth kee
 | `lockup.svg`, `lockup-dark.svg` | Logo plus wordmark, side by side |
 | `banner.svg`, `banner-dark.svg` | README header (switched with `<picture>`) |
 | `social-card.png` (`.svg` source) | GitHub social preview, 1280×640. Upload it in repo Settings → Social preview |
+| `source/mascot-sheet.jpg` | Approved reference for Kip's full-body poses (AI-generated draft, not for direct use) |
 
 `-dark` variants are for dark backgrounds. They swap the near-black outline for a warm brown so the silhouette stays visible.
 

@@ -43,7 +43,7 @@ kipple must always be able to explain why it believes something is safe to remov
 ## Brand Commitments
 
 - **Name:** `kipple`, always lowercase. It's a word popularized by Philip K. Dick for useless stuff that piles up by itself when nobody is looking. Say "popularized", never "coined".
-- **Mascot: Kip, a cute flat-style sea otter.** Kip keeps one glowing amber pebble (the thing worth keeping) and tosses away the clutter. This mirrors "keep what matters" (`p` pins an item). The approved logo was redrawn as SVG in `assets/brand/` (see `BRAND.md`). The approved full-body pose sheet stays local in `assets/brand/source/mascot-sheet.jpg` (gitignored) until the poses are drawn in M6.
+- **Mascot: Kip, a cute flat-style sea otter.** Kip keeps one glowing amber pebble (the thing worth keeping) and tosses away the clutter. This mirrors "keep what matters" (`p` pins an item). The approved logo was redrawn as SVG in `assets/brand/` (see `BRAND.md`). The approved full-body pose sheet, `assets/brand/source/mascot-sheet.jpg`, is the reference for drawing the poses in M6.
 - **Logo:** Kip's head, front view. Two variants: the head with paws holding the pebble (larger uses), and the head alone (16 px and terminal uses). Light and dark versions.
 - **Colours set by the approved assets:**
 
