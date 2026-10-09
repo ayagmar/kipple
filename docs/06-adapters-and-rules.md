@@ -49,6 +49,8 @@ Unknown keys anywhere are an error. Every error carries the file, line and colum
 | `id` | string | yes | | `<pack id>.<name>`, unique |
 | `integration` | string | yes | | `generic`, or a built-in integration ID. Third-party packs may only use `generic` in v1. |
 | `title`, `description`, `loss` | string | `title`, `loss` yes | `description` empty | at most 200 / 1000 / 300 chars |
+| `why` | string | yes | | at most 300 chars: why this exists on the machine ("Cargo writes build output here") |
+| `references` | array of HTTPS URLs | no | `[]` | at most 5: upstream docs backing the rule |
 | `category` | enum | yes | | one of the categories in 03 §1. Display only. |
 | `platforms` | array | no | the pack's platforms | a subset of the pack's platforms |
 | `scope.root` | enum | yes | | a published symbolic root. `home` is allowed only with a `pattern` of at least one literal leading component (see below). |
@@ -60,7 +62,7 @@ Unknown keys anywhere are an error. Every error carries the file, line and colum
 | `operation.kind` | enum | yes | | a published operation. Third-party packs: `report` or `remove-files` only. |
 | `operation.methods` | array of `delete` / `trash` | for `remove-files` | | non-empty. The host may offer fewer. |
 | `selection.default` | `unselected` | no | `unselected` | the only allowed value in v1 |
-| `selection.recent_days` | integer 0–365 | no | config `scan.recent_days` | |
+| `selection.recent_days` | integer 0–365 | no | the carefulness level's window (04 §2a) | can only lengthen the level's window, never shorten it |
 
 ### Generic selectors
 
@@ -141,6 +143,7 @@ integration = "codex"
 title = "Inactive Codex releases"
 category = "release-install"
 description = "Old Codex releases kept after updates. The active, running and one rollback release per component are always kept."
+why = "Codex keeps every downloaded release after self-updating."
 loss = "The removed versions; Codex re-downloads a version only if you install it again."
 
 [rule.scope]
@@ -202,6 +205,7 @@ id = "builtin.git.worktree-anomalies"
 integration = "git"
 title = "Worktrees needing review"
 category = "source-worktree"
+why = "Agents create git worktrees and often leave them behind."
 loss = "Nothing. Report only."
 
 [rule.scope]

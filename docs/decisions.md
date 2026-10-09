@@ -31,6 +31,10 @@ Each entry gives the decision, the reason and the date. Dependencies are recorde
 | D-023 | 2026-10-09 | Roots resolve through each tool's upstream precedence first (CODEX_HOME, CLAUDE_CONFIG_DIR, Pi session dir), and Linux support is capability-based, never keyed on distro names. | Correct discovery on relocated setups, and on derivatives without a distro table. |
 | D-024 | 2026-10-09 | Worktrees use a generic Git integration with agent labels, not a Claude-specific one. | The verified public report shows most abandoned worktrees came from other agents, and Claude already sweeps its own. |
 | D-025 | 2026-10-09 | Session cleanup stays out of v0.1. Pi is the first candidate in 0.3, then Codex. Privileged operations wait for a separate design (0.5). | The founder mines sessions. Sessions are linked stores with upstream exceptions. A sudo prompt isn't a privilege boundary. |
+| D-026 | 2026-10-09 | Carefulness levels (Careful, Balanced default, Thorough) move only the Safe/Review line (the method is a separate setting), set during first-run onboarding with live numbers for the machine, and can be overridden per rule. | Too careful and kipple cleans nothing; too loose and it breaks things. Protected and the invariants never move. |
+| D-027 | 2026-10-09 | Every deletion needs a review screen and explicit confirmation, except the automation forms the user set up. | Users expect to confirm before anything is deleted. |
+| D-028 | 2026-10-09 | Every rule carries `why`, `loss` and optional upstream `references`, can be tuned or disabled in config, and gets a generated docs page. The `p`/`P` keys keep an item or a rule permanently (`k` stays vim navigation). | Every action has a reason, is configurable, and is documented. |
+| D-029 | 2026-10-09 | No GUI before the CLI and TUI reach 1.0. The core stays GUI-ready. | Focus. A GUI doubles the UX surface before the engine has proven itself. |
 
 ## 2. Candidate dependencies (verified 2026-10-08, not yet added)
 

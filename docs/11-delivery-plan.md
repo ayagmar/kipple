@@ -71,10 +71,12 @@ Verify:
 Build:
 - state machine plus a pure renderer: Safe / Review / Protected buckets with Agents / Dev / System grouping, detail pane (what it is, why it's here, why kipple thinks it's safe, what you lose, how it comes back), streaming sizes, fuzzy filter, selection and the `c` Safe shortcut, help, narrow layout, `NO_COLOR` and `--ascii`
 - a lens-first variant behind a dev flag, used only for the M2 comparison and then deleted
+- first-run onboarding (J0), carefulness levels, keep (`p`/`P`), and the settings screen
 - vhs tapes for first scan and navigation
 
 Verify:
 - State-transition tests pass.
+- On `demo-home`, Balanced puts at least 80% of rebuildable, reinstallable and re-downloadable bytes in Safe (04 §2a). Careful and Thorough match their snapshots.
 - Buffer snapshots at 80×24 and 160×48 match.
 - Keypress-to-frame p95 is under 50 ms while scanning the 1M reference tree, measured by `xtask bench-tui`.
 - The founder compares the bucket and lens layouts on the same fixture data, picks one, and signs off on the feel. The loser is removed.
@@ -92,7 +94,7 @@ Build:
 
 Verify:
 - Every required failure scenario in 04 §10 has a test.
-- Profile regressions: same rule ID with a wider pattern, a replaced root, a changed method or retention, a removed grant, a new rule, and a once-Safe item becoming Review or unknown. Each one suspends or skips, and none of them widens.
+- Profile regressions: switching Careful to Balanced, switching Balanced to Thorough, a per-rule level or recent-window change, re-enabling a rule, same rule ID with a wider pattern, a replaced root, a changed method or retention, a removed grant, a new rule, and a once-Safe item becoming Review or unknown. Each one suspends or skips, and none of them widens.
 - Overlap regressions: an alias across a protected root, a hard link with an unselected sibling, a parent/child overlap, a method conflict.
 - The native-profile suite passes on all three CI OSes.
 - `proptest` confinement properties run for 10k cases in CI.
@@ -156,9 +158,9 @@ Verify:
 
 | Version | Theme |
 | --- | --- |
-| 0.2 | Curated pack index, more agents (Gemini CLI, OpenCode, Copilot CLI, Aider), Docker and Podman native prune, emptying the Trash, Flatpak, Homebrew, Xcode DerivedData, Go, Bun, a Downloads inventory (old installers as Review, never Safe) |
-| 0.3 | Pack signatures and revocation, store-specific session adapters (Pi first, since it is file-per-session with a documented in-app delete; Codex next, since its rollouts have no upstream retention), each needing verified semantics, fixtures and activity evidence. Model stores (Ollama manifests and blobs). crates.io publishing |
+| 0.2 | Scheduled runs from a profile (systemd user timer, launchd agent, Task Scheduler entry, created and removed by `kipple schedule`), curated pack index, more agents (Gemini CLI, OpenCode, Copilot CLI, Aider), Docker and Podman native prune, emptying the Trash, Flatpak, Homebrew, Xcode DerivedData, Go, Bun, a Downloads inventory (old installers as Review, never Safe) |
+| 0.3 | Report-only listing of leftover agent processes (orphaned MCP servers, headless browsers) with their memory use; kipple never kills them. Pack signatures and revocation, store-specific session adapters (Pi first, since it is file-per-session with a documented in-app delete; Codex next, since its rollouts have no upstream retention), each needing verified semantics, fixtures and activity evidence. Model stores (Ollama manifests and blobs). crates.io publishing |
 | 0.4 | `analyze`: a full-disk explorer that knows what it is looking at |
 | 0.5 | Privileged native operations, only after a separate reviewed design: a narrow privileged helper (never an elevated TUI or plugin host), typed operations, verified executable and config identity, re-checks after elevation, receipts. Covers pacman, apt, dnf and journald |
-| GUI | A Tauri (or native) app as a second composition root over the same core |
+| GUI | Not planned before the CLI and TUI reach 1.0. The core stays GUI-ready (D-002, D-029). Later, a Tauri or native app would be a second composition root over the same core |
 | Maybe | An MCP server so agents can ask kipple what they can safely clean, via the same engine and grants |

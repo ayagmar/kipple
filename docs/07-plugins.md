@@ -31,6 +31,7 @@ id = "dev.example.bun.install-cache"
 integration = "generic"
 title = "Bun install cache"
 category = "cache"
+why = "Bun caches every downloaded package here."
 loss = "Packages re-download on next install."
 [rule.scope]
 root = "home"

@@ -92,7 +92,7 @@ Motion explains something, or it's left out. The planned piece is the hero scan 
 | Start | Install on Linux, Install on macOS, Install on Windows, First scan, First clean | hand-written, commands verified in CI |
 | What kipple knows | Support matrix (adapter × OS × discover/report/mutate), one page per adapter with exact paths, losses, rebuild cost, native retention advice | generated from adapter metadata, plus hand-written notes per adapter |
 | Safety and recovery | Safety model, what is never touched, eligibility vs category, trash and restore limits, accounting, partial failure and receipts | hand-written; must match core behavior and tests |
-| Using kipple | TUI guide, `clean` flows, `--only` and automation with `--yes`, saved plans, history and restore, exclusions and config | hand-written |
+| Using kipple | Onboarding and carefulness levels, keeping items, per-rule settings, TUI guide, `clean` flows, `--only` and automation with `--yes`, saved plans, history and restore, exclusions and config | hand-written |
 | Reference | CLI reference, config file reference, exit codes, JSON result envelope, JSONL event stream, rule-pack schema | generated |
 | Rule packs | Authoring a rule pack, selectors/facts/operations catalog, testing a pack with fixtures, publishing | hand-written + generated catalog |
 | Plugin trust | What installing grants (nothing destructive), cleanup grants, digests and lockfile, removing a pack | hand-written |
@@ -111,6 +111,7 @@ Anything that can drift from the binary is generated from it, and CI fails if th
 | JSON envelope and event schemas | Rust DTOs via JSON Schema derive | `site/src/generated/schema/*.json` + reference pages |
 | Rule-pack schema and capability catalog | manifest types + published selector/fact/operation registry | reference + rule-pack pages |
 | Support matrix | adapter descriptors (id, OS support, operations, verified tool versions) | `site/src/generated/support-matrix.json`, rendered by an Astro component |
+| **Rule catalog: one page per built-in rule** | rule packs plus integration descriptors | `site/src/content/docs/rules/<rule-id>.mdx`, covering what it finds, why it exists, the evidence kipple checks, what you lose, how it comes back, its bucket at each carefulness level, upstream references, and how to tune or disable it (exact config snippet). A rule without `why` and `loss` text fails `gen-docs --check` |
 | Hero scan and demo text | `kipple scan` against `fixtures/demo-home` | `site/src/generated/demo-scan.txt` |
 
 Mechanism: a dev-only `xtask` binary in the workspace (`cargo xtask gen-docs`). It is not one of the four product crates and is never shipped. A hidden subcommand in the shipped binary was rejected because it would grow the user-facing surface. Precedent: `~/projects/llm-usage-metrics/scripts/generate-cli-reference.mjs` builds `site/src/content/docs/cli-reference.mdx` from the real CLI definition, and the same approach is used here, in Rust.

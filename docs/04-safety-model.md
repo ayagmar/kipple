@@ -34,16 +34,39 @@ Classification is **ordered and exhaustive**. The first matching row wins:
 | # | Bucket | Condition |
 | ---: | --- | --- |
 | 1 | **Protected / report-only** | not eligible: blocked, unknown required fact, needs a grant, report-only operation, or advice only. The specific reason is always shown |
-| 2 | **Safe** | eligible, *and* `recovery` is `automatic` or `rebuild-local`, *and* `loss` is a subset of {`cache-warmth`}, *and* `cost` isn't `high`, *and* not recent, *and* the method is available and granted, *and* there is no conflict with another operation on the same tree |
-| 3 | **Review** | every other eligible finding: `reinstall`, `redownload` or `none` recovery, any other loss, high cost, recent, or in conflict |
+| 2 | **Safe** | eligible, *and* `recovery` and `loss` are within the user's **carefulness level** (below), *and* `cost` isn't `high`, *and* the item isn't recent for that level, *and* the method is available and granted, *and* there is no conflict with another operation on the same tree |
+| 3 | **Review** | every other eligible finding: outside the level, `none` recovery, `history` loss, high cost, recent, or in conflict |
 
-An unknown `cost` is optional. It doesn't block Safe, and the detail pane shows "restore cost unknown". Any combination that includes a re-download (for example "rebuild needs a re-download") is `reinstall` or `redownload`, and so lands in Review.
+An unknown `cost` is optional. It doesn't block Safe, and the detail pane shows "restore cost unknown".
+
+### Carefulness levels
+
+The level moves the line between **Safe** and **Review**. It never moves anything out of **Protected**, and never touches an invariant in §3. A level is set during onboarding, changed any time in config or the TUI settings screen, and can be overridden per rule.
+
+| Level | Safe may include `recovery` | Safe may include `loss` | Recent window |
+| --- | --- | --- | --- |
+| **Careful** | `automatic`, `rebuild-local` | `cache-warmth` | 14 days |
+| **Balanced** (default) | + `reinstall`, `redownload` | + `offline-ability` | 7 days |
+| **Thorough** | same as Balanced | + `rollback-ability` | 2 days |
+
+Levels change classification only. The removal method is a separate setting (03 §6).
+
+**Effective recent window** for a rule = the largest of: its level's window, the manifest's `selection.recent_days`, and the config override `rules.<id>.recent_days`. Overrides can only lengthen it. This one value drives the bucket, the "recent" label and every group shortcut.
+
+Never Safe at any level: `history` loss, `none` recovery, `high` cost, third-party rules (recovery `none`), anything unknown or blocked. Retention protections (keep active, keep running, keep N) apply at every level. Thorough doesn't lower `keep_additional`; it only lets that retained-rollback loss count as Safe.
+
+What this means in practice:
+- **Careful:** only build output and regenerated caches.
+- **Balanced:** adds `node_modules` and venvs, download caches, and inactive agent releases beyond the kept rollback.
+- **Thorough:** adds things that cost you a rollback, for example package-cache entries beyond the kept versions once privileged operations exist.
+
+**Useful by default.** Balanced must put the bulk of regenerable bytes in Safe. The M2 acceptance includes a fixture assertion: on `demo-home`, at least 80% of the bytes the integrations mark rebuildable, reinstallable or re-downloadable are Safe under Balanced. If careful defaults leave nothing to clean, that's a product failure, not a safety win.
 
 - **Consequence is composable.** `loss` is a set, and `recovery` and `cost` are separate facts. A package cache prune loses rollback and offline installs at once.
 - **Consequence facts come from the host.** For typed integrations they come from verified semantics. For third-party `remove-files` rules, recovery is `none`, so by row 3 they always land in Review (or Protected) and can never be Safe. A pack's `loss` prose is display text, never input to classification.
 - **Unknown is never Review.** Missing activity or required facts block mutation. More confirmation can't make up for missing evidence.
 - **Optional facts don't gate.** An unknown optional fact (for example the restore cost estimate) shows as "unknown cost". It doesn't make the item Safe, and it doesn't block it.
-- **Native doesn't mean disposable.** A tool's own command constrains *how* something is removed, not *what is lost*. Package cache pruning and journal vacuuming lose rollback and diagnostics, so they are Review.
+- **Native doesn't mean disposable.** A tool's own command constrains *how* something is removed, not *what is lost*. Native operations go through the same ordered table. For example, a package cache prune loses `rollback-ability` and `offline-ability`, so it is Safe only at Thorough. A journal vacuum loses `history` (diagnostics), so it is never Safe.
 - **"Safe" means passing the current checks**, not "risk-free". The detail pane lists residual risks (§11).
 
 ## 3. Invariants
