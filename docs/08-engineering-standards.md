@@ -86,6 +86,8 @@ These are cheap and deterministic, and they protect the boundaries in [05-archit
 
 Write tests that would catch a real bug a user would notice. Don't write tests that only restate the code.
 
+Test cases come from the spec, not from the implementation. The required failure scenarios (04 §10), the integration fixtures (06 §7) and each milestone's verify lines (11) are the human-written statement of intent. Tests an agent invents from its own code only confirm its own reading of the task. In one agent eval, they added cost without improving success ([source](https://x.com/kunchenguid/status/2108030810691629403)). Before adding a test that isn't traceable to the spec, name the realistic bug it would catch.
+
 **Do test:**
 - Policy and eligibility decisions from fact sets, including the unknown-blocks cases
 - Retention: keep-active, keep-running, keep-N, per-group

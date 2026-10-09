@@ -8,7 +8,7 @@
 6. Unknown means blocked. Never default a missing fact, unfamiliar layout or failed process probe to "safe" or "idle". Read `docs/04-safety-model.md` before touching policy, plans, the executor or an integration.
 7. A new integration or upstream version needs a layout fixture in `crates/kipple-adapters/tests/fixtures/` built with `FixtureTree`. Never write a rule from guessed paths.
 8. Tests never touch the real `$HOME`, real tool stores, the real trash, the external network, or the user's git config and hooks. The only network test is the marked loopback HTTPS pack integration test. Inject roots and the clock. Native-backend tests run only in the `native` nextest profile (see `docs/08-engineering-standards.md` §5).
-9. Add a test for every behaviour change and a regression test for every bug fix. Don't test getters, derives or mocks that return what they were told. There is no coverage target.
+9. Tests encode domain behaviour and safety invariants, and are derived from the spec (`docs/04-safety-model.md` §10, the integration fixtures in `docs/06-adapters-and-rules.md`, and the verify lines in `docs/11-delivery-plan.md`), never from the code just written. Name the bug a test catches before writing it. Don't test getters, derives, framework behaviour or mocks that return what they were told. There is no coverage target.
 10. Keep functions small and flat within the clippy limits. Split by responsibility, not to dodge a number.
 11. Prefer types over comments: newtypes for IDs, byte kinds and roots. Internal items are `pub(crate)`.
 12. stdout is data, stderr is diagnostics. Final reports are sorted deterministically. The event stream follows emission order. JSON schemas are versioned and generated from the types.
