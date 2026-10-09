@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/brand/banner-dark.svg">
+    <img alt="kipple: find what your tools leave behind, keep what matters" src="assets/brand/banner.svg" width="720">
+  </picture>
+</p>
+
 # kipple
 
 > Kipple: useless stuff that piles up by itself when nobody is looking. A word popularized by Philip K. Dick.
@@ -22,3 +29,5 @@ kipple finds what your tools leave behind, explains what each thing is and what 
 | [CI and release](docs/10-ci-and-release.md) | CI matrix, release pipeline, channels, signing |
 | [Delivery plan](docs/11-delivery-plan.md) | Spikes, milestones M0–M7, roadmap |
 | [Decisions](docs/decisions.md) | Decision log and candidate dependency versions |
+| [Product context](PRODUCT.md) | Users, positioning, voice and brand commitments for design work |
+| [Brand](assets/brand/BRAND.md) | Kip the otter, logo files, colours, rules |

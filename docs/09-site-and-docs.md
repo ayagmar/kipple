@@ -7,9 +7,10 @@ One website serves two jobs: a landing page that makes someone want to run kippl
 ## 1. Structure
 
 ```text
+PRODUCT.md              (repo root) product truth for design work, impeccable schema; exists
+DESIGN.md               (repo root) design system: type, color, spacing, motion; written in M6
+assets/brand/           logo, mascot, wordmark, banners, favicon; rules in BRAND.md
 site/
-  PRODUCT.md            who the site is for, what it must make them feel and do
-  DESIGN.md             design system: type, color, spacing, motion (impeccable schema)
   lighthouserc.json     Lighthouse budgets, enforced in CI
   astro.config.mjs      landing routes + Starlight integration, base /kipple
   scripts/subset-fonts.sh
@@ -79,9 +80,9 @@ Motion explains something, or it's left out. The planned piece is the hero scan 
 
 ## 4. Design process
 
-1. Write `site/PRODUCT.md`: audience, the single action (run `kipple scan`), voice, what the page must not look like.
-2. Research references: the Mobbin MCP when it is available, otherwise browsing real developer-tool sites. Look at developer-tool landing pages, CLI product heroes and how terminal output is presented. Save references and reasons in `PRODUCT.md`.
-3. Use the `impeccable` skill for direction, build and critique. Record tokens in `site/DESIGN.md` from the shipped page, not from intentions.
+1. `PRODUCT.md` at the repo root already records the audience, voice and brand commitments. Add the landing page's own strategy (the single action, `kipple scan`, and what the page must not look like) as an impeccable surface brief.
+2. Research references: the Mobbin MCP when it is available, otherwise browsing real developer-tool sites. Look at developer-tool landing pages, CLI product heroes and how terminal output is presented. Save references and reasons in the surface brief.
+3. Use the `impeccable` skill for direction, build and critique. Start from the brand in `assets/brand/BRAND.md`, and record `DESIGN.md` at the repo root from the shipped page, not from intentions.
 4. Review gate: the user signs off on the direction before the build. The user rejected generic, AI-looking landing pages more than once on modmgr, so get a distinct visual identity first and polish after.
 5. Lighthouse 100 on all four categories, on the landing page and one representative docs page. This is a release gate under reproducible conditions: `lhci` with the mobile preset, 3 runs, median assertion, static build served locally. On PRs the job reports a regression budget (no category drops) and doesn't block merges for single-run noise.
 

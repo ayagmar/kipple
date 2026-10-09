@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="14 28 484 484" role="img" aria-label="kipple">
+  <title>kipple</title>
+  <defs><radialGradient id="glow" cx="50%" cy="50%" r="50%"><stop offset="0" stop-color="#F2A23A" stop-opacity=".55"/><stop offset="1" stop-color="#F2A23A" stop-opacity="0"/></radialGradient></defs>
+  <defs><clipPath id="head"><ellipse cx="256" cy="246" rx="212" ry="186"/></clipPath></defs>
+  <circle cx="68" cy="172" r="40" fill="#CA8848" stroke="#4A2A1C" stroke-width="14"/>
+  <circle cx="80" cy="178" r="17" fill="#B5753A"/>
+  <circle cx="444" cy="172" r="40" fill="#CA8848" stroke="#4A2A1C" stroke-width="14"/>
+  <circle cx="432" cy="178" r="17" fill="#B5753A"/>
+  <ellipse cx="256" cy="246" rx="212" ry="186" fill="#CA8848"/>
+  <path clip-path="url(#head)" fill="#F4EADE" d="M30 318 C 90 292, 150 300, 190 300 C 222 300, 222 236, 256 236 C 290 236, 290 300, 322 300 C 362 300, 422 292, 482 318 L 482 480 L 30 480 Z"/>
+  <ellipse cx="256" cy="246" rx="212" ry="186" fill="none" stroke="#4A2A1C" stroke-width="14"/>
+  <circle cx="170" cy="266" r="26" fill="#15171C"/>
+  <circle cx="179" cy="256" r="8.5" fill="#F4EADE"/>
+  <circle cx="342" cy="266" r="26" fill="#15171C"/>
+  <circle cx="351" cy="256" r="8.5" fill="#F4EADE"/>
+  <path fill="#15171C" d="M226 292 C 226 279, 286 279, 286 292 C 286 305, 266 318, 256 318 C 246 318, 226 305, 226 292 Z"/>
+  <path fill="none" stroke="#15171C" stroke-width="12" stroke-linecap="round" stroke-linejoin="round" d="M256 318 L256 328 M218 326 C 226 348, 250 348, 256 328 C 262 348, 286 348, 294 326"/>
+  <ellipse cx="256" cy="448" rx="170" ry="90" fill="url(#glow)"/>
+  <ellipse cx="256" cy="446" rx="92" ry="50" fill="#F2A23A" stroke="#4A2A1C" stroke-width="10"/>
+  <ellipse cx="226" cy="428" rx="34" ry="9" fill="#F8C979" transform="rotate(-8 226 428)"/>
+  <ellipse cx="160" cy="456" rx="46" ry="40" fill="#CA8848" stroke="#4A2A1C" stroke-width="14"/>
+  <ellipse cx="352" cy="456" rx="46" ry="40" fill="#CA8848" stroke="#4A2A1C" stroke-width="14"/>
+</svg>
