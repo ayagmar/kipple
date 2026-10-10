@@ -163,7 +163,7 @@ keep_running = true
 keep_pending_install = true
 keep_additional = 1
 additional_order = "version-descending"
-unparseable_version = "keep"
+unparsable_version = "keep"
 
 [rule.operation]
 kind = "remove-verified-release"
