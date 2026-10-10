@@ -1,0 +1,7 @@
+#!/bin/sh
+# The fast subset of `cargo xtask check`. Enable with `git config core.hooksPath .githooks`.
+set -eu
+
+cargo fmt --all --check
+cargo clippy --workspace --all-targets --locked -- -D warnings
+typos

@@ -108,7 +108,7 @@ Anything that can drift from the binary is generated from it, and CI fails if th
 
 | Output | Generated from | Target |
 | --- | --- | --- |
-| CLI reference | clap command tree (help text, args, defaults, examples) | `site/src/content/docs/reference/cli.mdx` |
+| CLI reference | clap command tree (help text, args, defaults, examples) | `site/src/content/docs/reference/cli.mdx`; until the site exists, `site/src/generated/cli.md` (M0: `--help` and `--version` only) |
 | JSON envelope and event schemas | Rust DTOs via JSON Schema derive | `site/src/generated/schema/*.json` + reference pages |
 | Rule-pack schema and capability catalog | manifest types + published selector/fact/operation registry | reference + rule-pack pages |
 | Support matrix | adapter descriptors (id, OS support, operations, verified tool versions) | `site/src/generated/support-matrix.json`, rendered by an Astro component |
@@ -135,6 +135,6 @@ Mechanism: a dev-only `xtask` binary in the workspace (`cargo xtask gen-docs`). 
 
 ## 9. Order of work
 
-1. M1: `fixtures/demo-home` and `xtask gen-docs` for the CLI reference and JSON schemas (generated files are committed under `site/src/generated/` before the site exists, and `gen-docs --check` gates them).
+1. M0: `xtask gen-docs` for the CLI reference (`--help` and `--version`). M1: `fixtures/demo-home` and `gen-docs` for the JSON schemas (generated files are committed under `site/src/generated/` before the site exists, and `gen-docs --check` gates them).
 2. M6: Astro and Starlight site, landing page, Safety and recovery pages checked against tests, tapes.
 3. M7: release-candidate site, Lighthouse 100 under the release conditions, humanizer pass, user sign-off.

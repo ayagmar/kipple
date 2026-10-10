@@ -1,0 +1,18 @@
+cognitive-complexity-threshold = 15
+too-many-lines-threshold = 80
+too-many-arguments-threshold = 5
+excessive-nesting-threshold = 4
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-panic-in-tests = true
+disallowed-methods = [
+  { path = "std::fs::remove_file",      reason = "mutation goes through kipple-platform's confined executor" },
+  { path = "std::fs::remove_dir",       reason = "mutation goes through kipple-platform's confined executor" },
+  { path = "std::fs::remove_dir_all",   reason = "mutation goes through kipple-platform's confined executor" },
+  { path = "std::fs::rename",           reason = "mutation goes through kipple-platform's confined executor" },
+  { path = "std::process::Command::new", reason = "native commands go through the platform runner (identity, deadline, env)" },
+  { path = "std::env::var",             reason = "read environment once in the composition root and inject it" },
+  { path = "std::env::set_var",         reason = "process-global mutation" },
+  { path = "std::thread::sleep",        reason = "use the injected Clock or a cancellable wait" },
+]

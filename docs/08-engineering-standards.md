@@ -1,6 +1,6 @@
 # Engineering standards
 
-Status: planned. These configs are created in M0 and enforced from the first commit of code.
+Status: the M0 steps (1–9) and §2–§3 are in place and enforced. Later steps are planned.
 
 ## 1. One gate
 

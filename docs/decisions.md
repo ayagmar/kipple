@@ -1,6 +1,6 @@
 # Decisions
 
-Each entry gives the decision, the reason and the date. Dependencies are recorded here when they are added to `Cargo.toml`. The candidate table in §2 was verified on 2026-10-08 and must be rechecked at M0.
+Each entry gives the decision, the reason and the date. Dependencies are recorded in §2 when they are added to `Cargo.toml`. The candidates in §3 were verified on 2026-10-08 and are rechecked when each one is added.
 
 ## 1. Product and architecture decisions
 
@@ -35,10 +35,37 @@ Each entry gives the decision, the reason and the date. Dependencies are recorde
 | D-027 | 2026-10-09 | Every deletion needs a review screen and explicit confirmation, except the automation forms the user set up. | Users expect to confirm before anything is deleted. |
 | D-028 | 2026-10-09 | Every rule carries `why`, `loss` and optional upstream `references`, can be tuned or disabled in config, and gets a generated docs page. The `p`/`P` keys keep an item or a rule permanently (`k` stays vim navigation). | Every action has a reason, is configurable, and is documented. |
 | D-029 | 2026-10-09 | No GUI before the CLI and TUI reach 1.0. The core stays GUI-ready. | Focus. A GUI doubles the UX surface before the engine has proven itself. |
+| D-030 | 2026-10-10 | `unsafe_code` is `deny` in `[workspace.lints]`, and every crate root except `kipple-platform` adds `#![forbid(unsafe_code)]`. | Cargo can't override a single workspace lint for one crate, so the strictest level that still lets the platform crate use reviewed `#[expect(unsafe_code)]` goes in the workspace, and the other crates forbid it themselves. |
+| D-031 | 2026-10-10 | `check-arch` keeps an allowlist of kipple-to-kipple edges (adapters → core, platform → core, the binary → all three) and rejects every other edge of any kind (normal, dev, build). `xtask` may depend on any crate. `target_os` anywhere in a `.rs` file outside `crates/kipple-platform` fails. | An allowlist rejects new edges too (05 §1), and a dev-dependency crosses a boundary just as much as a normal one. |
+| D-032 | 2026-10-10 | The `kipple` package has a library target that exposes the clap definition. `gen-docs` renders `--help` and `--version` through clap's own handling of those flags, and writes `site/src/generated/cli.md` until the site exists. | The reference is exactly what the binary prints, without running it and without a hidden subcommand (09 §6). |
+| D-033 | 2026-10-10 | `xtask` launches cargo and the gate tools through one `#[expect(clippy::disallowed_methods)]` in `xtask/src/cmd.rs`. It runs `cargo-machete` directly, not as `cargo machete`. | xtask is the dev-only task runner, so it is the one place outside the platform runner that spawns processes. Launched as `cargo machete` from inside `cargo run`, cargo-machete 0.9.2 took `machete` for a directory to scan and failed. |
+| D-034 | 2026-10-10 | The project license is not chosen yet. The crates are `publish = false` with no `license` field, and `deny.toml` ignores private crates for license checks. `Unlicense` (from `memchr`'s `Unlicense OR MIT`) is on the allowlist. | Choosing a license is the founder's call. Until then nothing is published. |
 
-## 2. Candidate dependencies (verified 2026-10-08, not yet added)
+## 2. Dependencies and tools in use
 
-Rule: newest stable release that is at least 7 days old. Recheck at M0.
+Rule: newest stable release that is at least 7 days old. Verified 2026-10-10 (M0) against the crates.io API and the GitHub releases API.
+
+| Dependency | Version | Published | Used by | Why |
+| --- | --- | --- | --- | --- |
+| Rust toolchain | 1.99.0 | 2026-10-01 | `rust-toolchain.toml` (with clippy, rustfmt) | edition 2024, newest stable |
+| clap (derive) | 4.6.7 | 2026-09-14 | `kipple`, `xtask` | CLI parsing, and the source of the CLI reference |
+| anyhow | 1.0.104 | 2026-07-18 | `xtask` only | error context in the dev tool (08 §4) |
+| serde (derive) | 1.0.229 | 2026-07-18 | `xtask` | typed `cargo metadata` for `check-arch` |
+| serde_json | 1.0.151 | 2026-07-20 | `xtask` | parsing `cargo metadata` |
+| syn (transitive) | 3.0.6 | 2026-09-16 | via clap_derive, serde_derive | held at 3.0.6 in `Cargo.lock`: 3.0.7 was published on 2026-10-10 |
+
+Every other crate in `Cargo.lock` is the newest stable release its dependents allow, and at least 7 days old on 2026-10-10.
+
+| Tool or action | Version | Published | Where |
+| --- | --- | --- | --- |
+| cargo-nextest | 0.9.146 | 2026-09-21 | gate tests (0.9.148 is from 2026-10-08) |
+| cargo-deny | 0.20.2 | 2026-07-09 | gate |
+| cargo-machete | 0.9.2 | 2026-04-15 | gate |
+| typos-cli | 1.50.3 | 2026-09-25 | gate, pre-commit (1.51.x is from 2026-10-06) |
+
+## 3. Candidate dependencies (verified 2026-10-08, not yet added)
+
+Rule: newest stable release that is at least 7 days old. Recheck each one when it is added.
 
 | Crate | Version | Published | Use | Note |
 | --- | --- | --- | --- | --- |

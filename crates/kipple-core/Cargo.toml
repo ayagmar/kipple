@@ -1,0 +1,11 @@
+[package]
+name = "kipple-core"
+description = "kipple's domain model, policy and engine"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true
