@@ -11,7 +11,7 @@
 
 kipple finds what your tools leave behind, explains what each thing is and what you lose by removing it, and removes what is safe to remove, with a record of everything it did. It is a fast, cross-platform CLI and TUI written in Rust for Linux, macOS and Windows. It knows the footprint of coding agents (Claude Code, Codex, Pi, Cursor) and developer toolchains, and you can extend it with declarative rule packs.
 
-**Status: M0 (foundation).** The workspace, the quality gate and CI exist. `kipple` only prints `--help` and `--version` so far. The docs below are the plan.
+**Status: M1 (core model and read-only scan), in progress.** The engine, the platform probes and `kipple doctor` exist: `doctor` shows where kipple looks, what it can read, which native tools it found and how many running programs it can identify. Scanning arrives next. The docs below are the plan, with a status line on each.
 
 ## Development
 
@@ -23,6 +23,7 @@ cargo xtask fix                      # clippy fixes, then rustfmt
 cargo xtask check-arch               # crate boundaries only
 cargo xtask gen-docs                 # regenerate the CLI reference
 cargo xtask bench-tree <dir> --entries 100000  # benchmark reference tree
+cargo xtask test-native              # native-backend tests: disposable hosts only (KIPPLE_TEST_DISPOSABLE_HOST=1)
 git config core.hooksPath .githooks  # pre-commit: fmt, clippy, typos
 ```
 

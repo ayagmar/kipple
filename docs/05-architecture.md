@@ -1,6 +1,6 @@
 # Architecture
 
-Status: partly built. The core ports, `Engine::scan` and its events (§2), and the platform's root resolution, probes, walker and capability probes (§1, §3) exist since M1. The Rust in §2 shows the signatures as they are, and items marked *planned* are sketches that have not been compiled. Nothing is frozen yet.
+Status: partly built. The core ports, `Engine::scan` and its events (§2), the platform's root resolution, probes, walker and capability probes (§1, §3), and `kipple doctor` exist since M1. The Rust in §2 shows the signatures as they are, and items marked *planned* are sketches that have not been compiled. Nothing is frozen yet.
 
 ## 1. Workspace
 

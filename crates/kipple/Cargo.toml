@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 clap.workspace = true
+kipple-core.workspace = true
+kipple-platform.workspace = true
 
 [lints]
 workspace = true

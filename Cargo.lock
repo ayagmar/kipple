@@ -206,6 +206,8 @@ name = "kipple"
 version = "0.0.0"
 dependencies = [
  "clap",
+ "kipple-core",
+ "kipple-platform",
 ]
 
 [[package]]

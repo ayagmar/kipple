@@ -7,7 +7,11 @@
 ```text
 Find what your tools leave behind and keep what matters
 
-Usage: kipple
+Usage: kipple <COMMAND>
+
+Commands:
+  doctor  Show where kipple looks, what it can read and which tools it found. Read-only
+  help    Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help
@@ -18,4 +22,15 @@ Options:
 
 ```text
 kipple 0.0.0
+```
+
+## `kipple doctor --help`
+
+```text
+Show where kipple looks, what it can read and which tools it found. Read-only
+
+Usage: kipple doctor
+
+Options:
+  -h, --help  Print help
 ```

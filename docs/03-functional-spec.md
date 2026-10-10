@@ -126,6 +126,8 @@ On every run:
 
 Secrets are redacted. Version probes run through the platform runner with deadlines.
 
+Today `doctor` reports kipple's own directories and config file, every symbolic root of the platform with its path, source and what a no-follow probe found there (with the OS error when it can't be read), `git`, `paccache` and `journalctl` with their versions, and how many running processes could be identified, with whether the process listing is complete. The macOS Full Disk Access hint appears only after a permission failure. Integration roots, omissions and pack compatibility arrive with the integrations and packs, and `--json` with the generated schemas.
+
 ## 3. CLI surface
 
 ```text

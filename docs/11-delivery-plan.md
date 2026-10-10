@@ -50,6 +50,8 @@ Verify:
 
 ## M1: Core model and read-only scan
 
+Status (2026-10-10): sessions 1 and 2 of 3 are done. Built: spikes S2 and S3; the core types, ports and `Engine::scan` with its event contract; platform root resolution with sources, the no-follow probes, the D-035 process probe, the D-036 walker and the capability probes; `kipple doctor` (human output). Left for session 3: the rule loader and validator, the read-only integrations and advice, `scan`, `rules` and `explain`, `doctor --json`, `demo-home` and `verify-demo`, and the `gen-docs` schemas and support matrix.
+
 Build:
 - core types, ports, and `Engine::scan` with the event contract (05 §2)
 - platform root resolution and no-follow probes, plus spikes S2 and S3
