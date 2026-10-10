@@ -45,3 +45,7 @@ git config core.hooksPath .githooks  # pre-commit: fmt, clippy, typos
 | [Decisions](docs/decisions.md) | Decision log and candidate dependency versions |
 | [Product context](PRODUCT.md) | Users, positioning, voice and brand commitments for design work |
 | [Brand](assets/brand/BRAND.md) | Kip the otter, logo files, colours, rules |
+
+## License
+
+MIT. See [LICENSE](LICENSE).

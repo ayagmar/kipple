@@ -4,6 +4,7 @@ description = "Find what your tools leave behind and keep what matters"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
