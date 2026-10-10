@@ -6,7 +6,7 @@ Status: planned. Nothing in this document is built yet. Items marked **M-later**
 
 The gate is `cargo xtask check`. Its authoritative step list and per-milestone activation schedule live in [08-engineering-standards.md](08-engineering-standards.md) §1. This document doesn't repeat them.
 
-**Why `cargo xtask`, not `just` or `make`.** kipple needs native Windows contributors and runners. `just` recipes run in a shell (`sh` by default), and POSIX lines such as `RUSTDOCFLAGS=... cargo doc` don't run in PowerShell. `make` has the same problem. An `xtask` is a Rust binary in the workspace, so it runs the same everywhere with nothing extra to install, sets environment variables through `std::process::Command`, and is itself linted and tested. `.cargo/config.toml` defines `[alias] xtask = "run --package xtask --"`.
+**Why `cargo xtask`, not `just` or `make`.** kipple needs native Windows contributors and runners. `just` recipes run in a shell (`sh` by default), and POSIX lines such as `RUSTDOCFLAGS=... cargo doc` don't run in PowerShell. `make` has the same problem. An `xtask` is a Rust binary in the workspace, so it runs the same everywhere with nothing extra to install, sets environment variables through `std::process::Command`, and is itself linted and tested. `.cargo/config.toml` defines `[alias] xtask = "run --locked --package xtask --"`, so building xtask can never rewrite `Cargo.lock` before the locked steps run.
 
 Other subcommands: `cargo xtask fix` (fmt and `clippy --fix`), `cargo xtask gen-docs [--check]`, `cargo xtask site` (site build and Lighthouse, once the site exists), `cargo xtask distro <name>` (one Linux container smoke run with podman or docker).
 
