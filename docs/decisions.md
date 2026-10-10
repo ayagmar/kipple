@@ -40,8 +40,8 @@ Each entry gives the decision, the reason and the date. Dependencies are recorde
 | D-032 | 2026-10-10 | The `kipple` package has a library target that exposes the clap definition. `gen-docs` renders `--help` and `--version` through clap's own handling of those flags, and writes `site/src/generated/cli.md` until the site exists. | The reference is exactly what the binary prints, without running it and without a hidden subcommand (09 §6). |
 | D-033 | 2026-10-10 | `xtask` launches cargo and the gate tools through one `#[expect(clippy::disallowed_methods)]` in `xtask/src/cmd.rs`. It runs `cargo-machete` directly, not as `cargo machete`. | xtask is the dev-only task runner, so it is the one place outside the platform runner that spawns processes. Launched as `cargo machete` from inside `cargo run`, cargo-machete 0.9.2 took `machete` for a directory to scan and failed. |
 | D-034 | 2026-10-10 | The project license is not chosen yet. The crates are `publish = false` with no `license` field, and `deny.toml` ignores private crates for license checks. `Unlicense` (from `memchr`'s `Unlicense OR MIT`) is on the allowlist. | Choosing a license is the founder's call. Until then nothing is published. |
-| D-035 | 2026-10-10 | Running-executable identity (spike S2) comes from direct OS APIs in `kipple-platform`, not `sysinfo`. Linux: `readlink` and `stat` on `/proc/<pid>/exe` (std only), giving device, inode and link count of the file actually running. macOS: `proc_listallpids` and `proc_pidpath` for the path, and the vnode (device, inode, link count) of the process's first file-backed region via `proc_pidinfo(PROC_PIDREGIONPATHINFO)` for the identity (`libc`). Windows: `K32EnumProcesses`, `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`, `QueryFullProcessImageNameW`, then volume serial and file index of the image file (`windows-sys`). Every PID gets an explicit outcome: identified, path only, denied, exited, gone, no executable, or other error. Only exited and gone mean "not running". Path only, denied and other error are unknown. A `/proc` mounted with `hidepid` or `subset` makes the whole inventory partial. | `sysinfo` 0.39.6 returns `exe() == None` for a permission error, a zombie and a kernel thread alike (155 of 162 processes on the Linux runner were denied), strips the kernel's ` (deleted)` marker so a binary replaced in place reports the new file at that path, gives no file identity, and lists threads as processes unless told not to. `stat` on a reported path is wrong after an in-place replacement on Linux and macOS. The direct probes identified those cases on all three OSes, and cost under 15 ms per snapshot. Evidence in §4.1. |
-| D-036 | 2026-10-10 | Directory walking and sizing (spike S3) use kipple's own walker in `kipple-platform`: std `read_dir`, metadata from each `DirEntry` (no-follow), and one task per directory on a bounded `rayon` pool. The walker itself never reads ignore files or git config, never skips hidden entries, never follows links, stays on the root's file system, honours the selector's `max_depth`, and prunes artifacts and exclusions before descending. `ignore` and `dua-core` are not used. Supersedes D-014; the founder confirmed it on 2026-10-10. | Warm on 1M entries it was fastest on Linux (937 ms; `ignore` 1364, `dua-core` 1611) and Windows (1230 ms; 1957 and 1816). Cold on Linux all three tied (disk-bound). `ignore` was never within 10% of the fastest: it `lstat`s every entry and `stat`s every directory by full path, while std on Linux (glibc) and macOS stats relative to the open directory. On macOS `dua-core`'s bulk metadata was fastest in every run (the plain walker was 9% behind at 1M, up to 39% behind at 100k on a noisy 3-vCPU runner). Owning the walker also leaves room for the handle-relative probes of spike S1. Evidence in §4.2. |
+| D-035 | 2026-10-10 | Running-executable identity (spike S2) comes from direct OS APIs in `kipple-platform`, not `sysinfo`. Linux: `readlink` and `stat` on `/proc/<pid>/exe` (std only), giving device, inode and link count of the file actually running. macOS: `proc_listallpids` and `proc_pidpath` for the path; the identity (device, inode, link count) is the vnode behind the process's first file-backed region, via `proc_pidinfo(PROC_PIDREGIONPATHINFO)` (`libc`), and it counts only when that region's path is the path `proc_pidpath` returns. Windows: `K32EnumProcesses`, `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`, `QueryFullProcessImageNameW`, then volume serial and file index of the image file (`windows-sys`). Every PID gets an explicit outcome: identified, path only, denied, exited, gone, no executable, or other error. Only exited and gone mean "not running", and gone needs positive evidence (`ESRCH`, or the PID's `/proc` entry missing). Path only, denied and other error are unknown. A `/proc` mounted with `hidepid` or `subset` makes the whole inventory partial. | `sysinfo` 0.39.6 returns `exe() == None` for a permission error, a zombie and a kernel thread alike (159 of 166 processes on the Linux runner were denied), strips the kernel's ` (deleted)` marker so a binary replaced in place reports the new file at that path, gives no file identity, and lists threads as processes unless told not to. `stat` on a reported path gives the new file's identity after an in-place replacement on Linux and macOS. The direct probes identified that case on all three OSes, stayed unknown where they could not confirm an identity, and took under 17 ms per snapshot. Evidence in §4.1. |
+| D-036 | 2026-10-10 | Directory walking and sizing (spike S3) use kipple's own walker in `kipple-platform`: std `read_dir`, metadata from each `DirEntry` (no-follow), and one task per directory on a bounded `rayon` pool. The walker itself never reads ignore files or git config, never skips hidden entries, never follows links, stays on the root's file system, honours the selector's `max_depth`, and prunes artifacts and exclusions before descending. `ignore` and `dua-core` are not used. Supersedes D-014. **Accepted exception:** on macOS at 1M entries it is 17% behind `dua-core`, outside the S3 acceptance rule; the founder kept the walker on 2026-10-10. If macOS misses a scan budget, the platform walker can read bulk metadata (`getattrlistbulk`) itself. | Warm, it was fastest on Linux (1M: 1226 ms; `ignore` 1800, `dua-core` 2220) and Windows (1M: 2334 ms; 3960 and 3853), and cold on Linux (1M: 9949 ms; 10540 and 10643). On Linux and Windows `ignore` came within 10% only in cold runs, and was 44–77% slower warm. It `lstat`s every entry and `stat`s every directory by full path, while std on Linux (glibc) and macOS stats relative to the open directory. On macOS the walker was fastest at 100k and 17% behind `dua-core`'s bulk metadata at 1M. Owning the walker also leaves room for the handle-relative probes of spike S1. Evidence in §4.2. |
 
 ## 2. Dependencies and tools in use
 
@@ -67,9 +67,9 @@ Every other crate in `Cargo.lock` is the newest stable release its dependents al
 | typos-cli | 1.50.3 | 2026-09-25 | gate, pre-commit (1.51.x is from 2026-10-06) |
 | `actions/checkout` | v7.0.1 (`3d3c42e5aac5ba805825da76410c181273ba90b1`) | 2026-07-20 | `ci.yml` |
 | `taiki-e/install-action` | v2.87.22 (`83ac0ad63c0167e6f06796fab0fce28db1bf3db0`) | 2026-09-29 | `ci.yml` (v2.87.23 was 6 days 22 hours old at the check) |
-| strace, GNU time, Python 3 | 6.8, 1.9 (Debian packaging prints `UNKNOWN`), 3.12.3 | Ubuntu 24.04 archive and runner image `ubuntu24/20261004.327` | `bench.yml` and `.github/scripts/bench.py`. Installed from the runner's archive, not pinned; each run logs the versions in its machine description |
+| strace, GNU time, Python 3 | 6.8 (`6.8-0ubuntu2`), 1.9 (`1.9-0.2build1`, prints `UNKNOWN`), 3.12.3 | Ubuntu 24.04 release pocket; Python from runner image `ubuntu24/20261004.327` | `bench.yml` and `.github/scripts/bench.py`. **Exception to the newest-stable rule:** these come from the runner's Ubuntu archive and are not pinned, because they only measure, are never shipped and never gate. Each run logs the versions in its machine description |
 
-Spike-only crates, used on the `spike/m1-s2-s3` branch for S2 and S3 and not in `main`'s `Cargo.lock` (verified 2026-10-10):
+Spike-only crates, used on the `spike/m1-s2-s3` branch for S2 and S3 and not a dependency of any crate on `main` (`libc` and `windows-sys` are in `main`'s `Cargo.lock` only through `tempfile`). Verified 2026-10-10:
 
 | Crate | Version | Published | Spike |
 | --- | --- | --- | --- |
@@ -117,70 +117,60 @@ Site and release tool versions are recorded in [09-site-and-docs.md](09-site-and
 
 ## 4. Spike evidence
 
-The prototypes are throwaway code on the `spike/m1-s2-s3` branch (`spikes/s2-procid`, `spikes/s3-walk`), which is never merged. CI numbers come from `bench.yml` dispatched on that branch: [100k](https://github.com/ayagmar/kipple/actions/runs/38069110604), [1M](https://github.com/ayagmar/kipple/actions/runs/38069234733) and a [100k rerun](https://github.com/ayagmar/kipple/actions/runs/38071136180) after the macOS identity change.
+The prototypes are throwaway code on the `spike/m1-s2-s3` branch (`spikes/s2-procid`, `spikes/s3-walk`), which is never merged. The evidence of record comes from `bench.yml` dispatched on that branch at commit `b04564c`: [100k run](https://github.com/ayagmar/kipple/actions/runs/38075346926) and [1M run](https://github.com/ayagmar/kipple/actions/runs/38075509494). Three earlier runs ([100k](https://github.com/ayagmar/kipple/actions/runs/38069110604), [1M](https://github.com/ayagmar/kipple/actions/runs/38069234733), [100k](https://github.com/ayagmar/kipple/actions/runs/38071136180)) came before the review fixes. Back then the macOS probe trusted the first mapped file unconditionally, and only `ignore` checked the file system on macOS. The warm orderings on Linux and Windows in those runs match the ones below.
 
-Machines:
-- **Linux runner:** `ubuntu-latest`, image `ubuntu24/20261004.327`, Linux 6.17.0-1022-azure, Intel Xeon Platinum 8573C, 4 vCPUs, 15 GiB, ext4 on a 150 GB NVMe disk, run as the unprivileged `runner` user.
-- **macOS runner:** `macos-latest`, image `macos26/20260907.0351`, arm64, 3 vCPUs.
-- **Windows runner:** `windows-latest`, image `win25-vs2026/20260925.250`, 4 vCPUs.
-- **Local:** AMD Ryzen 9 9950X3D (16 cores, 32 threads), 62 GiB, Samsung 9100 PRO NVMe, btrfs (`compress=zstd:3`, `noatime`), Linux 7.2.8-arch1-2. Warm runs only, without GNU time or strace.
+Machines of record:
+- **Linux runner:** `ubuntu-latest`, image `ubuntu24/20261004.327`, Linux 6.17.0-1022-azure, AMD EPYC 7763, 4 vCPUs, 15 GiB, ext4 root on a 150 GB virtual NVMe disk, run as the unprivileged `runner` user. The 38071136180 run got an Intel Xeon Platinum 8573C instead, so absolute times differ between runs.
+- **macOS runner:** `macos-latest`, image `macos26/20260907.0351`, Apple M1 (virtual), 3 vCPUs, 7 GiB, APFS on SSD.
+- **Windows runner:** `windows-latest`, image `win25-vs2026/20260925.250`, AMD EPYC 7763, 4 logical CPUs, 16 GiB, Microsoft virtual disk. The tree sits under `D:\a\_temp`.
+- **Local:** AMD Ryzen 9 9950X3D (16 cores, 32 threads), 62 GiB, Samsung 9100 PRO NVMe, btrfs (`compress=zstd:3`, `noatime`), Linux 7.2.8-arch1-2. These numbers are hand-transcribed from runs of the prototype at `0f39bed`: `s2-procid snapshot`, and `.github/scripts/bench.py warm <tree> 5 "target/release/s3-walk <variant> {tree} <threads>"`. They are warm only, without GNU time or strace, and are supporting data, not the record.
 
 ### 4.1 S2: running-executable identity
 
-Snapshot of every process, from the rerun. "Unknown" is denied, path only or other error.
+Snapshot of every process from the 100k run. "Unknown" is denied, path only or other error. The local row is from `0f39bed`, before the macOS and fallback fixes, which do not affect Linux outcomes there.
 
 | OS | Processes | Identified | Unknown | Not running | No executable | Direct probe | `sysinfo` path | `sysinfo` + `stat(path)` |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| Linux runner | 162 | 7 | 155 (denied: other users) | 0 | 0 | 0.41 ms | 4.59 ms | 4.60 ms |
-| macOS runner | 460 | 240 | 219 (218 path only: region info refused for other users) | 1 | 0 | 5.97 ms | 4.13 ms | 8.39 ms |
-| Windows runner | 144 | 139 | 2 (`QueryFullProcessImageNameW` failed with error 31) | 1 | 2 | 13.10 ms | 6.50 ms | 9.83 ms |
+| Linux runner | 166 | 7 | 159 (denied: other users) | 0 | 0 | 0.43 ms | 4.71 ms | 4.75 ms |
+| macOS runner | 573 | 314 | 258 (257 path only: region info refused for other users) | 1 | 0 | 7.79 ms | 5.48 ms | 10.14 ms |
+| Windows runner | 148 | 144 | 2 (`QueryFullProcessImageNameW` failed with error 31) | 0 | 2 | 16.91 ms | 7.12 ms | 10.50 ms |
 | Local Linux | 727 | 244 (52 running a deleted file) | 481 (denied) | 2 | 0 | 0.62 ms | 4.83 ms | 4.42 ms |
 
-Times are medians of 21 snapshots (11 locally). On Linux `sysinfo` reported `exe() == None` for all 155 denied processes, the same value it gives a zombie or a kernel thread. With `/proc` remounted `hidepid=invisible`, the Linux runner saw 7 processes instead of 162 and no error; only the mount options in `/proc/self/mountinfo` show that the inventory is partial.
+Times are medians of 21 snapshots (11 locally). On Linux, `sysinfo` reported `exe() == None` for all 159 denied processes, which is the same value it gives a zombie or a kernel thread. With `/proc` remounted `hidepid=invisible`, the Linux runner saw 7 processes instead of 166, and no error. Only the mount options in `/proc/self/mountinfo` show that the inventory is partial. On macOS the first mapped file matched `proc_pidpath` for every process whose region info could be read.
 
 Scenarios, each with a copy of the spike binary started from a temp dir:
 
 | Scenario | Linux direct | macOS direct | Windows direct | `sysinfo` + `stat(path)` |
 | --- | --- | --- | --- | --- |
 | File in place | identified | identified | identified | same identity |
-| File deleted while running | identified, link count 0 | identified, link count 0 | delete refused; after a rename the path follows the file, identity unchanged | Linux, macOS: path of a missing file, no identity |
+| File deleted while running | identified, link count 0 | unknown (`proc_pidpath` fails, so the vnode can't be confirmed) | delete refused; after a rename the path follows the file, identity unchanged | Linux, macOS: path of a missing file, no identity |
 | Replaced in place (new file at the same path) | identified: the old file, link count 0 | identified: the old file, link count 0 | old file renamed away first; path follows it, identity correct | Linux, macOS: the **new** file's identity |
 | Exited, not reaped | exited (zombie) | gone | exited (handle still open) | Linux: `exe() == None`; macOS, Windows: not listed |
 | Exited and reaped | gone | gone | exited (our handle is still open) | not listed |
 | Privileged process | pid 1: denied | pid 1: path only | pid 4: no executable | Linux: `None`; macOS: a path; Windows: an empty path |
 
-The first macOS run used `stat` on the `proc_pidpath` result. After the in-place replacement it reported the new file's identity, so the macOS probe was changed to read the identity from the vnode behind the process's first file-backed memory region, as `lsof` does. In the rerun the vnode identity matched `stat(path)` for every unchanged process.
-
 ### 4.2 S3: walker and sizing
 
-Reference trees from `cargo xtask bench-tree`: 100000 entries (16989 directories, 83011 files, 112278450 bytes) and 1000000 entries (169981 directories, 830019 files, 1102545689 bytes). Every variant counted the same entries and bytes with no errors. Each variant used all CPUs. The medians below are of 5 runs. Peak RSS comes from GNU time, and syscalls from `strace -f -c` on one warm run.
+Reference trees from `cargo xtask bench-tree`: 100000 entries (16989 directories, 83011 files, 112278450 bytes) and 1000000 entries (169981 directories, 830019 files, 1102545689 bytes). Every variant counted the same entries and bytes with no errors. Every variant used all CPUs, never followed links, and checked the root's device on Linux and macOS. On Windows none of them follows junctions or mount points, and only `ignore` also checks the volume. Medians are of 5 runs. Peak RSS comes from GNU time on Linux and BSD `time -l` on macOS; there is no wrapper for it on Windows. Syscalls come from `strace -f -c` on one warm Linux run.
 
-Linux runner, 1000000 entries:
+Linux runner:
 
-| Variant | Cold (ms) | Warm (ms) | Peak RSS (MiB) | Syscalls |
+| Variant | 100k cold | 100k warm | 1M cold | 1M warm | Peak RSS 1M warm (MiB) | Syscalls 100k / 1M |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `read_dir` + `rayon` | **1004** | **125** | **9949** | **1226** | 2.8 | 185230 / 1865363 |
+| `ignore` (05 §3 settings) | 1061 | 180 | 10540 | 1800 | 4.0 | 202487 / 2024293 |
+| `dua-core` | 1079 | 211 | 10643 | 2220 | 3.1 | 267806 / 2672843 |
+
+macOS and Windows runners, warm (ms, peak RSS in MiB on macOS):
+
+| Variant | macOS 100k | macOS 1M | Windows 100k | Windows 1M |
 | --- | ---: | ---: | ---: | ---: |
-| `read_dir` + `rayon` | 8742 | **937** | 2.9 | 1850254 |
-| `ignore` (05 §3 settings) | 8770 | 1364 | 4.2 | 2021180 |
-| `dua-core` | 8742 | 1611 | 3.2 | 2694947 |
+| `read_dir` + `rayon` | **327** (2.2) | 11619 (2.3) | **287** | **2334** |
+| `ignore` | 352 (2.9) | 11548 (3.2) | 509 | 3960 |
+| `dua-core` | 376 (2.5) | **9902** (2.9) | 630 | 3853 |
 
-Linux runner, 100000 entries, first run / rerun:
-
-| Variant | Cold (ms) | Warm (ms) | Peak RSS (MiB) | Syscalls |
-| --- | ---: | ---: | ---: | ---: |
-| `read_dir` + `rayon` | 1037 / 827 | **104 / 73** | 2.8 | 185255 |
-| `ignore` | 1574 / 880 | 150 / 102 | 3.8 | 202201 |
-| `dua-core` | 1503 / 907 | 175 / 128 | 3.0 | 270511 |
-
-The cold 1M runs were bound by the runner's disk: all three variants fall within 0.3% of each other. Cold 100k runs vary a lot between runs.
-
-Warm on macOS and Windows (self-timed medians in ms, no GNU time or strace there):
-
-| Variant | macOS 1M | macOS 100k (run / rerun) | Windows 1M | Windows 100k (run / rerun) |
-| --- | ---: | ---: | ---: | ---: |
-| `read_dir` + `rayon` | 6300 | 427 / 813 | **1230** | **204 / 166** |
-| `ignore` | 6794 | 464 / 759 | 1957 | 370 / 278 |
-| `dua-core` | **5780** | 471 / **583** | 1816 | 549 / 480 |
+The macOS runner is noisy. Its 1M samples spread by up to 38% within one variant, for example 10299 to 14234 ms for `ignore`.
 
 Local warm, 1000000 entries, by thread count (ms): 4 threads: `read_dir` + `rayon` 261, `ignore` 319, `dua-core` 343. 8 threads: 143, 172, 186. 32 threads: 117, 119, 387.
 
-Why `ignore` is slower: with `follow_links(false)` it `lstat`s every entry by full path, and `same_file_system(true)` adds a full-path `stat` of every directory. std's `DirEntry::metadata` uses `statx`/`fstatat` relative to the open directory on Linux (glibc) and macOS. Linux musl builds fall back to a full-path `lstat` in std. `dua-core` reads native bulk metadata on macOS (`getattrlistbulk`), which is why it leads there.
+Why `ignore` is slower: with `follow_links(false)` it `lstat`s every entry by full path, and `same_file_system(true)` adds a full-path `stat` of every directory. std's `DirEntry::metadata` uses `statx`/`fstatat` relative to the open directory on Linux (glibc) and macOS. Linux musl builds fall back to a full-path `lstat` in std. `dua-core` reads native bulk metadata on macOS (`getattrlistbulk`), which is why it leads there at 1M.
