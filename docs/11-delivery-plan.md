@@ -25,8 +25,8 @@ It never replaces fixture evidence and is never required to finish a milestone.
 | ID | When | Question | Output |
 | --- | --- | --- | --- |
 | S1 | M3 | Can `cap-std` (>= 4.0.3) plus std give confined, handle-relative removal on Linux, macOS and Windows: root identity, no link or junction escape, defined behaviour for new children? | Prototype plus `native`-profile tests on all three CI runners. The executor design and its findings go in decisions.md |
-| S2 | M1 | Running-executable identity: `sysinfo` vs direct `/proc`, `proc_pidpath` and `QueryFullProcessImageNameW`. Speed, identity (inode or file ID), failure modes. | A decision in decisions.md |
-| S3 | M1 | Walker and sizing: configured `ignore` vs `dua-core` vs `read_dir` with `rayon`. | Numbers from the procedure below, and a decision |
+| S2 | M1 | Running-executable identity: `sysinfo` vs direct `/proc`, `proc_pidpath` and `QueryFullProcessImageNameW`. Speed, identity (inode or file ID), failure modes. | A decision in decisions.md. Done 2026-10-10: D-035, evidence in decisions.md §4.1 |
+| S3 | M1 | Walker and sizing: configured `ignore` vs `dua-core` vs `read_dir` with `rayon`. | Numbers from the procedure below, and a decision. Done 2026-10-10: D-036, evidence in decisions.md §4.2 |
 | S4 | M3 | Trash on macOS: `trash` has no list or restore there. Our own receipt-based restore, or "trash only, restore through Finder"? | A decision, and whether `restore` is advertised on macOS |
 | S5 | M4 | Upstream layouts and lifecycles for Codex, Claude Code, Pi and Cursor on all three OSes, from docs and open source. | `FixtureTree` fixtures per verified version, plus each integration's fact list |
 
