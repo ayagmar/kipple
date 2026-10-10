@@ -73,7 +73,7 @@ jobs:
             /usr/bin/time --version
             python3 --version
             echo '```'
-          } >>"$GITHUB_STEP_SUMMARY"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Cold runs
         env:
