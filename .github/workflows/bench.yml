@@ -204,7 +204,8 @@ jobs:
         run: |
           run_variant() {
             if [[ $RUNNER_OS == macOS ]]; then
-              /usr/bin/time -l target/release/s3-walk "$1" "$RUNNER_TEMP/tree" 2>"$RUNNER_TEMP/rss"
+              # `$(...)` turns off errexit, so a failed run must return explicitly.
+              /usr/bin/time -l target/release/s3-walk "$1" "$RUNNER_TEMP/tree" 2>"$RUNNER_TEMP/rss" || return 1
               awk '/maximum resident set size/ { printf "peak_rss_mib=%.1f\n", $1 / 1048576 }' "$RUNNER_TEMP/rss"
             else
               target/release/s3-walk "$1" "$RUNNER_TEMP/tree"
