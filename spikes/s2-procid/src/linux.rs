@@ -57,8 +57,12 @@ fn classify(pid: u32, error: io::Error) -> Outcome {
         return Outcome::Other(error);
     }
     // `exe` is missing: a kernel thread, a zombie, or the process just went away.
-    let Ok(stat) = fs::read_to_string(format!("/proc/{pid}/stat")) else {
-        return Outcome::Gone;
+    // Only a missing entry means the process went away; any other failure stays unknown.
+    let stat = match fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat,
+        Err(stat_error) if stat_error.kind() == io::ErrorKind::NotFound => return Outcome::Gone,
+        Err(stat_error) if stat_error.raw_os_error() == Some(ESRCH) => return Outcome::Gone,
+        Err(_) => return Outcome::Other(error),
     };
     // Fields after the parenthesised command name: state is first, flags is seventh.
     let fields: Vec<&str> = stat

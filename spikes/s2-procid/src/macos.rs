@@ -81,12 +81,31 @@ pub(crate) fn probe(pid: u32) -> Outcome {
     };
     let path = pid_path(raw_pid);
     match (region_vnode(raw_pid), path) {
-        (Ok(Some((id, deleted, region_path))), path) => {
-            let path = path.unwrap_or(region_path);
-            if !deleted && file_id(&path).ok() != Some(id) {
-                REGION_PATH_MISMATCHES.fetch_add(1, Ordering::Relaxed);
+        // The first file-backed region is only trusted when it is the file `proc_pidpath`
+        // names; anything else (an earlier mapping, a failed lookup) stays unknown.
+        (Ok(Some((id, deleted, region_path))), Ok(path)) => {
+            if region_path == path {
+                return Outcome::Identified { path, id, deleted };
             }
-            Outcome::Identified { path, id, deleted }
+            REGION_PATH_MISMATCHES.fetch_add(1, Ordering::Relaxed);
+            Outcome::PathOnly {
+                path,
+                error: io::Error::other(format!(
+                    "first mapped file is {}, not the executable",
+                    region_path.display()
+                )),
+            }
+        }
+        (Ok(Some((_, _, region_path))), Err(path_error)) => {
+            let outcome = classify(pid, path_error);
+            if let Outcome::Other(error) = outcome {
+                Outcome::PathOnly {
+                    path: region_path,
+                    error,
+                }
+            } else {
+                outcome
+            }
         }
         (Ok(None), Ok(path)) => Outcome::PathOnly {
             path,
@@ -169,7 +188,7 @@ fn region_vnode(raw_pid: c_int) -> io::Result<Option<(FileId, bool, PathBuf)>> {
 #[expect(clippy::unnecessary_wraps, reason = "the other OSes return None")]
 pub(crate) fn diagnostics() -> Option<String> {
     Some(format!(
-        "region vnode differs from stat(proc_pidpath) for {} processes",
+        "first mapped file differs from proc_pidpath for {} processes",
         REGION_PATH_MISMATCHES.load(Ordering::Relaxed)
     ))
 }

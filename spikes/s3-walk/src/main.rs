@@ -5,7 +5,7 @@
 //! Usage: `s3-walk <ignore|dua|rayon> <dir> [threads]`
 //!
 //! Every variant counts the entries below `dir` (not `dir` itself), never follows
-//! symlinks, stays on `dir`'s file system on Linux, and sums the apparent size of
+//! symlinks, stays on `dir`'s file system on Unix, and sums the apparent size of
 //! everything that is not a directory.
 #![forbid(unsafe_code)]
 
@@ -228,19 +228,20 @@ impl SharedTotals {
     }
 }
 
-/// The root's device on Linux, where the variants stay on one file system.
+/// The root's device on Unix, where the variants stay on one file system. On Windows none
+/// of the variants follows a junction or mount point, so they stay on the volume anyway.
 fn root_device(root: &Path) -> Option<u64> {
     std_device(&fs::symlink_metadata(root).ok()?)
 }
 
-#[cfg(target_os = "linux")]
-#[expect(clippy::unnecessary_wraps, reason = "the other OSes return None")]
+#[cfg(unix)]
+#[expect(clippy::unnecessary_wraps, reason = "Windows returns None")]
 fn std_device(meta: &fs::Metadata) -> Option<u64> {
     use std::os::unix::fs::MetadataExt as _;
     Some(meta.dev())
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(unix))]
 const fn std_device(_: &fs::Metadata) -> Option<u64> {
     None
 }
@@ -250,7 +251,13 @@ fn dua_device(meta: &dua_core::Metadata) -> Option<u64> {
     std_device(meta)
 }
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "macos")]
+#[expect(clippy::unnecessary_wraps, reason = "Windows returns None")]
+fn dua_device(meta: &dua_core::Metadata) -> Option<u64> {
+    Some(meta.dev())
+}
+
+#[cfg(windows)]
 const fn dua_device(_: &dua_core::Metadata) -> Option<u64> {
     None
 }
