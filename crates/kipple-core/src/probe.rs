@@ -66,6 +66,12 @@ pub enum ProbeError {
         /// What was asked for.
         path: PathBuf,
     },
+    /// The path goes through a link inside a root, which would lead out of it.
+    #[error("{} is a link, and kipple doesn't follow links", link.display())]
+    ThroughLink {
+        /// The link on the way.
+        link: PathBuf,
+    },
 }
 
 impl ProbeError {
@@ -83,7 +89,7 @@ impl ProbeError {
     pub fn io_kind(&self) -> Option<io::ErrorKind> {
         match self {
             Self::Io { source, .. } => Some(source.kind()),
-            Self::OutsideRoots { .. } => None,
+            Self::OutsideRoots { .. } | Self::ThroughLink { .. } => None,
         }
     }
 }

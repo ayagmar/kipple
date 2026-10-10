@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::cancel::CancelToken;
 use crate::engine::{Finding, FindingId};
 use crate::event::{EventTx, ScanEvent, Stopped};
-use crate::probe::{DirEntryMeta, EntryMeta, FsProbe, ProbeError};
+use crate::probe::{DirEntryMeta, EntryKind, EntryMeta, FsProbe, ProbeError};
 use crate::root::{ResolvedRoot, SymbolicRoot};
 
 /// A built-in integration's ID, such as `cargo`.
@@ -98,15 +98,26 @@ impl ScanContext<'_> {
     }
 
     /// `path`, if it lies inside one of the roots. A path with a `..` component is
-    /// refused rather than normalised, so it can't climb out of a root.
+    /// refused rather than normalised, so it can't climb out of a root. So is a path
+    /// through a link below the root: the OS follows a link in the middle of a path even
+    /// when the probe itself doesn't follow the last one.
     fn confined<'p>(&self, path: &'p Path) -> Result<&'p Path, ProbeError> {
         let plain = path.components().all(|c| c != Component::ParentDir);
-        if plain && self.roots.iter().any(|root| path.starts_with(&root.path)) {
-            return Ok(path);
+        let root = self.roots.iter().find(|root| path.starts_with(&root.path));
+        let (true, Some(root)) = (plain, root) else {
+            return Err(ProbeError::OutsideRoots {
+                path: path.to_owned(),
+            });
+        };
+        let between = path.ancestors().skip(1).take_while(|dir| *dir != root.path);
+        for dir in between {
+            if self.fs.metadata(dir)?.kind == EntryKind::Symlink {
+                return Err(ProbeError::ThroughLink {
+                    link: dir.to_owned(),
+                });
+            }
         }
-        Err(ProbeError::OutsideRoots {
-            path: path.to_owned(),
-        })
+        Ok(path)
     }
 }
 
@@ -115,19 +126,21 @@ impl ScanContext<'_> {
 #[derive(Debug)]
 pub struct FindingSink<'a> {
     pub(crate) integration: IntegrationId,
+    pub(crate) cx: &'a ScanContext<'a>,
     pub(crate) events: &'a EventTx,
-    pub(crate) cancel: &'a CancelToken,
     pub(crate) next_id: &'a AtomicU64,
     pub(crate) found: Vec<Finding>,
 }
 
 impl FindingSink<'_> {
-    /// Adds a finding at `path`.
+    /// Adds a finding at `path`, which must lie inside the integration's roots.
     ///
     /// # Errors
     /// [`IntegrationError::Stopped`] when the scan was cancelled or its consumer went
-    /// away. The integration should return it.
+    /// away, and [`IntegrationError::Probe`] when `path` is outside the roots. The
+    /// integration should return either.
     pub fn add(&mut self, path: PathBuf) -> Result<(), IntegrationError> {
+        self.cx.confined(&path)?;
         let id = FindingId(self.next_id.fetch_add(1, Ordering::Relaxed));
         let event = ScanEvent::FindingAdded {
             id,
@@ -135,7 +148,7 @@ impl FindingSink<'_> {
             path: path.clone(),
         };
         self.events
-            .send(event, self.cancel)
+            .send(event, self.cx.cancel)
             .map_err(|_: Stopped| IntegrationError::Stopped)?;
         self.found.push(Finding {
             id,

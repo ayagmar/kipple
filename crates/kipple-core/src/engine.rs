@@ -3,7 +3,8 @@
 
 use std::fmt;
 use std::io;
-use std::path::PathBuf;
+use std::panic::{self, AssertUnwindSafe};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
 use std::thread;
 
@@ -12,7 +13,7 @@ use crate::event::{EventTx, ScanEvent, Stopped};
 use crate::integration::{
     FindingSink, Integration, IntegrationDescriptor, IntegrationError, IntegrationId, ScanContext,
 };
-use crate::probe::{EntryKind, FsProbe, ProbeError, Sizer};
+use crate::probe::{EntryKind, EntryMeta, FsProbe, ProbeError, Sizer};
 use crate::root::{ResolvedRoot, Roots, SymbolicRoot, UnresolvedRoot};
 use crate::size::SpaceEstimate;
 
@@ -83,7 +84,8 @@ pub enum Omission {
         /// The upstream error.
         error: ProbeError,
     },
-    /// The integration panicked. Whatever it found before is kept.
+    /// The integration, or the sizing of its findings, panicked. When discovery panicked,
+    /// whatever it found before is kept.
     #[error("the integration crashed")]
     Crashed,
 }
@@ -233,21 +235,28 @@ impl Engine {
         let opened = self
             .open_roots(descriptor, shared, &mut omissions)
             .unwrap_or_default();
+        let cx = ScanContext {
+            roots: &opened,
+            fs: self.fs.as_ref(),
+            cancel: shared.cancel,
+        };
         let mut sink = FindingSink {
             integration: descriptor.id,
+            cx: &cx,
             events: shared.events,
-            cancel: shared.cancel,
             next_id: shared.next_id,
             found: Vec::new(),
         };
         if !shared.cancel.is_cancelled() {
-            let cx = ScanContext {
-                roots: &opened,
-                fs: self.fs.as_ref(),
-                cancel: shared.cancel,
-            };
-            if let Err(IntegrationError::Probe(error)) = integration.discover(&cx, &mut sink) {
-                omissions.push(Omission::DiscoveryFailed { error });
+            // A panic is caught here so what the integration found before it is kept.
+            let discovered =
+                panic::catch_unwind(AssertUnwindSafe(|| integration.discover(&cx, &mut sink)));
+            match discovered {
+                Ok(Ok(()) | Err(IntegrationError::Stopped)) => {}
+                Ok(Err(IntegrationError::Probe(error))) => {
+                    omissions.push(Omission::DiscoveryFailed { error });
+                }
+                Err(_) => omissions.push(Omission::Crashed),
             }
         }
         let mut findings = sink.found;
@@ -256,8 +265,8 @@ impl Engine {
         finish(descriptor.id, omissions, findings, shared)
     }
 
-    /// The declared roots that exist and are directories, announcing each one. A root
-    /// that doesn't exist is not an omission: the tool simply isn't there.
+    /// The declared roots that exist and are directories that can be listed, announcing
+    /// each one. A root that doesn't exist is not an omission: the tool simply isn't there.
     fn open_roots(
         &self,
         descriptor: &IntegrationDescriptor,
@@ -275,7 +284,7 @@ impl Engine {
                 }
                 Some(Ok(resolved)) => resolved,
             };
-            match self.fs.metadata(&resolved.path) {
+            match self.open(&resolved.path) {
                 Ok(meta) if meta.kind == EntryKind::Dir => {
                     let event = ScanEvent::RootOpened {
                         integration: descriptor.id,
@@ -295,6 +304,16 @@ impl Engine {
             }
         }
         Ok(opened)
+    }
+
+    /// What is at `path`. A directory that can't be listed is unreadable, even when its
+    /// metadata can be read.
+    fn open(&self, path: &Path) -> Result<EntryMeta, ProbeError> {
+        let meta = self.fs.metadata(path)?;
+        if meta.kind == EntryKind::Dir {
+            self.fs.read_dir(path)?;
+        }
+        Ok(meta)
     }
 
     fn size_all(
@@ -344,7 +363,8 @@ fn finish(
     }
 }
 
-/// The run of an integration that panicked. Its findings were streamed but are lost.
+/// The run of an integration whose sizing panicked. Its findings were streamed but are
+/// lost.
 fn crashed(id: IntegrationId, shared: Shared<'_>) -> IntegrationRun {
     finish(id, vec![Omission::Crashed], Vec::new(), shared)
 }

@@ -1,7 +1,7 @@
 //! `Engine::scan` against fake ports: the event contract of `docs/05-architecture.md` §2
 //! and the root rules of §1.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -29,10 +29,11 @@ const SIZE: SpaceEstimate = SpaceEstimate {
     completeness: Completeness::Complete,
 };
 
-/// Every path is a directory, unless listed otherwise.
+/// Every path is a directory that can be listed, unless listed otherwise.
 #[derive(Debug, Default)]
 struct FakeFs {
     entries: BTreeMap<PathBuf, Result<EntryKind, io::ErrorKind>>,
+    unlistable: BTreeSet<PathBuf>,
 }
 
 impl FsProbe for FakeFs {
@@ -51,7 +52,10 @@ impl FsProbe for FakeFs {
         }
     }
 
-    fn read_dir(&self, _: &Path) -> Result<Vec<DirEntryMeta>, ProbeError> {
+    fn read_dir(&self, dir: &Path) -> Result<Vec<DirEntryMeta>, ProbeError> {
+        if self.unlistable.contains(dir) {
+            return Err(ProbeError::io(dir, io::ErrorKind::PermissionDenied.into()));
+        }
         Ok(Vec::new())
     }
 }
@@ -81,6 +85,9 @@ impl Sizer for FakeSizer {
     }
 }
 
+/// The root every emitter reads.
+const FOUND: &str = "/found";
+
 /// Adds `count` findings under `/found/<id>/`, in descending order, then stops. Counts
 /// how many it tried to add, and can meet the test at a barrier before the first one.
 #[derive(Debug)]
@@ -106,7 +113,7 @@ impl Integration for Emitter {
     fn descriptor(&self) -> IntegrationDescriptor {
         IntegrationDescriptor {
             id: IntegrationId(self.id),
-            roots: Vec::new(),
+            roots: vec![SymbolicRoot::XdgCache],
         }
     }
 
@@ -125,6 +132,13 @@ impl Integration for Emitter {
         }
         Ok(())
     }
+}
+
+/// A request in which the emitters' root exists.
+fn found() -> ScanRequest {
+    let mut roots = Roots::default();
+    insert(&mut roots, SymbolicRoot::XdgCache, FOUND);
+    ScanRequest { roots }
 }
 
 fn engine(sizer: FakeSizer, integrations: Vec<Box<dyn Integration>>) -> Engine {
@@ -156,8 +170,9 @@ fn a_stalled_consumer_cannot_keep_a_cancel_from_being_acknowledged() {
     let cancel = CancelToken::new();
     let engine = engine(FakeSizer::default(), vec![Box::new(emitter)]);
 
-    // Nobody reads: the stream fills with `ScanStarted` and the first finding waits.
-    let (_events, report) = spawn_scan(engine, ScanRequest::default(), 1, &cancel);
+    // Nobody reads: the stream fills with `ScanStarted` and `RootOpened`, and the first
+    // finding waits.
+    let (_events, report) = spawn_scan(engine, found(), 2, &cancel);
     first_add.wait();
     cancel.cancel();
 
@@ -176,7 +191,7 @@ fn a_slow_consumer_receives_every_finding_and_size_instead_of_losing_them() {
         FakeSizer::default(),
         vec![Box::new(Emitter::new("slow", count))],
     );
-    let (events, report) = spawn_scan(engine, ScanRequest::default(), 2, &CancelToken::new());
+    let (events, report) = spawn_scan(engine, found(), 2, &CancelToken::new());
 
     let mut added = HashSet::new();
     let mut sized = HashSet::new();
@@ -210,7 +225,7 @@ fn a_consumer_that_goes_away_cancels_the_scan_and_keeps_the_partial_report() {
     let attempts = Arc::clone(&emitter.attempts);
     let cancel = CancelToken::new();
     let engine = engine(FakeSizer::default(), vec![Box::new(emitter)]);
-    let (events, report) = spawn_scan(engine, ScanRequest::default(), 4, &cancel);
+    let (events, report) = spawn_scan(engine, found(), 4, &cancel);
 
     assert_eq!(events.take(20).count(), 20);
 
@@ -232,7 +247,7 @@ fn cancelling_during_sizing_stops_before_the_next_finding_is_sized() {
     let calls = Arc::clone(&sizer.calls);
     let cancel = CancelToken::new();
     let engine = engine(sizer, vec![Box::new(Emitter::new("sizing", 3))]);
-    let (events, report) = spawn_scan(engine, ScanRequest::default(), 64, &cancel);
+    let (events, report) = spawn_scan(engine, found(), 64, &cancel);
     let drain = thread::spawn(move || events.count());
 
     sizing.wait();
@@ -252,13 +267,24 @@ fn cancelling_during_sizing_stops_before_the_next_finding_is_sized() {
     drain.join().unwrap();
 }
 
-/// Declares every root it is given and records what the engine let it read.
+/// Declares every root it is given and records what the engine let it read: for each
+/// path in `probe`, how listing it and adding it as a finding went.
 #[derive(Debug)]
 struct RootReader {
     roots: Vec<SymbolicRoot>,
     seen: Arc<Mutex<Vec<PathBuf>>>,
-    probes: Arc<Mutex<Vec<Result<(), ProbeError>>>>,
+    probes: Arc<Mutex<Vec<(&'static str, &'static str)>>>,
     probe: Vec<PathBuf>,
+}
+
+/// How a probe went: allowed, or refused and why.
+const fn outcome(error: Option<&ProbeError>) -> &'static str {
+    match error {
+        None => "allowed",
+        Some(ProbeError::OutsideRoots { .. }) => "outside",
+        Some(ProbeError::ThroughLink { .. }) => "link",
+        Some(ProbeError::Io { .. }) => "failed",
+    }
 }
 
 impl Integration for RootReader {
@@ -272,13 +298,20 @@ impl Integration for RootReader {
     fn discover(
         &self,
         cx: &ScanContext<'_>,
-        _: &mut FindingSink<'_>,
+        sink: &mut FindingSink<'_>,
     ) -> Result<(), IntegrationError> {
         if let Ok(mut seen) = self.seen.lock() {
             seen.extend(cx.roots().iter().map(|root| root.path.clone()));
         }
         if let Ok(mut probes) = self.probes.lock() {
-            probes.extend(self.probe.iter().map(|path| cx.read_dir(path).map(drop)));
+            for path in &self.probe {
+                let read = cx.read_dir(path).err();
+                let add = match sink.add(path.clone()) {
+                    Ok(()) | Err(IntegrationError::Stopped) => None,
+                    Err(IntegrationError::Probe(error)) => Some(error),
+                };
+                probes.push((outcome(read.as_ref()), outcome(add.as_ref())));
+            }
         }
         Ok(())
     }
@@ -308,12 +341,15 @@ fn roots_that_cannot_be_read_are_omissions_and_are_never_handed_to_the_integrati
             (PathBuf::from("/absent"), Err(io::ErrorKind::NotFound)),
             (PathBuf::from("/link"), Ok(EntryKind::Symlink)),
         ]),
+        // Its metadata can be read, but it can't be listed, like a directory with mode 000.
+        unlistable: BTreeSet::from([PathBuf::from("/unlistable")]),
     };
     let mut roots = Roots::default();
     insert(&mut roots, SymbolicRoot::Home, "/home");
     insert(&mut roots, SymbolicRoot::XdgCache, "/denied");
     insert(&mut roots, SymbolicRoot::XdgData, "/absent");
     insert(&mut roots, SymbolicRoot::XdgState, "/link");
+    insert(&mut roots, SymbolicRoot::LocalAppData, "/unlistable");
     let unset = UnresolvedRoot::NotSet { var: "HOME" };
     roots.insert(SymbolicRoot::XdgConfig, Err(unset));
     let seen = Arc::default();
@@ -324,6 +360,7 @@ fn roots_that_cannot_be_read_are_omissions_and_are_never_handed_to_the_integrati
             SymbolicRoot::XdgCache,
             SymbolicRoot::XdgData,
             SymbolicRoot::XdgState,
+            SymbolicRoot::LocalAppData,
             SymbolicRoot::XdgConfig,
             SymbolicRoot::MacosCaches,
         ],
@@ -344,17 +381,23 @@ fn roots_that_cannot_be_read_are_omissions_and_are_never_handed_to_the_integrati
     assert!(matches!(
         omissions.as_slice(),
         [
-            Omission::RootUnreadable { root: SymbolicRoot::XdgCache, error },
+            Omission::RootUnreadable { root: SymbolicRoot::XdgCache, error: stat },
             Omission::RootNotDirectory { root: SymbolicRoot::XdgState, kind: EntryKind::Symlink, .. },
+            Omission::RootUnreadable { root: SymbolicRoot::LocalAppData, error: list },
             Omission::RootUnresolved { root: SymbolicRoot::XdgConfig, .. },
-        ] if error.io_kind() == Some(io::ErrorKind::PermissionDenied)
+        ] if stat.io_kind() == Some(io::ErrorKind::PermissionDenied)
+            && list.io_kind() == Some(io::ErrorKind::PermissionDenied)
     ));
 }
 
 #[test]
-fn an_integration_cannot_probe_outside_its_roots() {
+fn an_integration_can_neither_probe_nor_report_anything_outside_its_roots() {
     let mut roots = Roots::default();
     insert(&mut roots, SymbolicRoot::XdgCache, "/home/u/.cache");
+    let fs = FakeFs {
+        entries: BTreeMap::from([(PathBuf::from("/home/u/.cache/link"), Ok(EntryKind::Symlink))]),
+        ..FakeFs::default()
+    };
     let probes = Arc::default();
     let reader = RootReader {
         roots: vec![SymbolicRoot::XdgCache],
@@ -365,23 +408,34 @@ fn an_integration_cannot_probe_outside_its_roots() {
             "/home/u",
             "/home/u/.cache-other",
             "/home/u/.cache/../.ssh",
+            "/home/u/.cache/link/inner",
         ]
         .map(PathBuf::from)
         .to_vec(),
     };
-    let engine = engine(FakeSizer::default(), vec![Box::new(reader)]);
+    let engine = Engine::new(
+        Box::new(fs),
+        Box::new(FakeSizer::default()),
+        vec![Box::new(reader)],
+    );
 
-    run(&engine, &ScanRequest { roots });
+    let report = run(&engine, &ScanRequest { roots });
 
-    let refused: Vec<_> = probes
-        .lock()
-        .unwrap()
-        .iter()
-        .map(|probe| matches!(probe, Err(ProbeError::OutsideRoots { .. })))
-        .collect();
-    assert_eq!(refused, [false, true, true, true]);
+    assert_eq!(
+        *probes.lock().unwrap(),
+        [
+            ("allowed", "allowed"),
+            ("outside", "outside"),
+            ("outside", "outside"),
+            ("outside", "outside"),
+            ("link", "link"),
+        ]
+    );
+    let found: Vec<_> = report.findings.iter().map(|f| f.path.clone()).collect();
+    assert_eq!(found, [PathBuf::from("/home/u/.cache/tool")]);
 }
 
+/// Adds one finding, then panics.
 #[derive(Debug)]
 struct Crashes;
 
@@ -389,7 +443,7 @@ impl Integration for Crashes {
     fn descriptor(&self) -> IntegrationDescriptor {
         IntegrationDescriptor {
             id: IntegrationId("crashes"),
-            roots: Vec::new(),
+            roots: vec![SymbolicRoot::XdgCache],
         }
     }
 
@@ -401,14 +455,15 @@ impl Integration for Crashes {
     fn discover(
         &self,
         _: &ScanContext<'_>,
-        _: &mut FindingSink<'_>,
+        sink: &mut FindingSink<'_>,
     ) -> Result<(), IntegrationError> {
+        sink.add(PathBuf::from("/found/crashes/00000"))?;
         panic!("integration bug");
     }
 }
 
 #[test]
-fn the_report_is_sorted_the_same_way_whatever_order_things_were_found_in() {
+fn the_report_is_sorted_and_keeps_what_a_crashed_integration_found_before_it_crashed() {
     let engine = engine(
         FakeSizer::default(),
         vec![
@@ -418,7 +473,7 @@ fn the_report_is_sorted_the_same_way_whatever_order_things_were_found_in() {
         ],
     );
 
-    let report = run(&engine, &ScanRequest::default());
+    let report = run(&engine, &found());
 
     let found: Vec<_> = report
         .findings
@@ -431,6 +486,7 @@ fn the_report_is_sorted_the_same_way_whatever_order_things_were_found_in() {
             "/found/alpha/00000",
             "/found/alpha/00001",
             "/found/alpha/00002",
+            "/found/crashes/00000",
             "/found/zeta/00000",
             "/found/zeta/00001",
             "/found/zeta/00002",

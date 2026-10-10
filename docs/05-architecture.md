@@ -89,7 +89,7 @@ pub trait Integration: Debug + Send + Sync {
 }
 ```
 
-The engine opens each declared root without following links before `discover` runs. A root that doesn't exist is simply absent. One that is unresolved, unreadable or not a directory becomes an omission and is not handed to the integration. `ScanContext` exposes the roots that opened, read-only probes confined to them (a path outside every root, or with a `..` component, is refused), and cancellation. `FindingSink::add` streams each finding as `FindingAdded` and fails once the scan stops, so the integration returns early. Rules (TOML) are evaluated by the core against an integration's published selectors and facts. See [06-adapters-and-rules.md](06-adapters-and-rules.md).
+The engine opens each declared root without following links before `discover` runs. A root that doesn't exist is simply absent. One that is unresolved, unreadable (including a directory that can't be listed) or not a directory becomes an omission and is not handed to the integration. `ScanContext` exposes the roots that opened, read-only probes confined to them, and cancellation. A path outside every root, with a `..` component, or through a link below its root is refused. `FindingSink::add` applies the same confinement, streams each finding as `FindingAdded` and fails once the scan stops, so the integration returns early. If `discover` panics, what it found until then is kept and the integration gets a `Crashed` omission. These checks are path-based until spike S1's handle-relative probes, so a link swapped in between check and use is not yet caught. Rules (TOML) are evaluated by the core against an integration's published selectors and facts. See [06-adapters-and-rules.md](06-adapters-and-rules.md).
 
 ### Engine API (what every frontend calls)
 
@@ -125,6 +125,7 @@ planned: IntegrationProgress, PlanReady, ItemStarted, ItemCompleted(outcome), Ap
 
 - **Bounded and cancellation-aware.** Producers send with a short timeout in a loop that checks the cancel token, so a stalled consumer can never stop cancellation from being acknowledged. Progress events may be coalesced. Findings and outcomes are never dropped. They wait, and the scan slows down rather than losing data.
 - **Consumer gone.** If the receiver is dropped, the engine treats it as cancellation: no new work is scheduled, and the call returns its partial report or receipt.
+- **Closing records after a cancel.** Once cancelled, `IntegrationCompleted` and `ScanCompleted` are sent only if the stream has room at that moment, so a stalled consumer can't hold up the acknowledgement. The returned report always carries the outcome and every omission.
 - **Broken pipe.** In the CLI, a closed stdout (`kipple scan --events jsonl | head`) counts as cancellation. It exits with 130 and prints nothing more to stderr. A final JSONL record is promised only while stdout stays writable.
 - **Ordering.** Event sequence numbers follow emission order: the receiving end numbers events from 0 as they arrive. Only the final `ScanReport` and `--json` output are sorted deterministically. The stream is not.
 - **Cancellation budget.** "Within 100 ms" means scheduling stops and the cancel is acknowledged, under local I/O that we control. It doesn't cover an OS call that is already blocked and can't be interrupted (for example a hung network mount).
