@@ -35,7 +35,7 @@ kipple must always be able to explain why it believes something is safe to remov
 
 ## Capabilities and Constraints
 
-- Specification: `docs/01`–`11` and `docs/decisions.md`. Status: specification only. No code is implemented yet.
+- Specification: `docs/01`–`11` and `docs/decisions.md`. Status: M0 foundation (workspace, gate and CI). No product behaviour is implemented yet.
 - Vocabulary is fixed in `docs/03-functional-spec.md` §1: finding, rule, pack, category, eligibility, method, selection, plan, receipt, grant, advice, consequence, bucket, profile.
 - Never in scope: system "optimisation", killing processes, running as root (until a separate design), secure wipe, telemetry.
 - Undecided: custom domain, Homebrew tap name.
