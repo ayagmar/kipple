@@ -59,9 +59,11 @@ Every other crate in `Cargo.lock` is the newest stable release its dependents al
 | Tool or action | Version | Published | Where |
 | --- | --- | --- | --- |
 | cargo-nextest | 0.9.146 | 2026-09-21 | gate tests (0.9.148 is from 2026-10-08) |
-| cargo-deny | 0.20.2 | 2026-07-09 | gate |
+| cargo-deny | 0.20.2 | 2026-07-09 | `deny` CI job, local gate |
 | cargo-machete | 0.9.2 | 2026-04-15 | gate |
 | typos-cli | 1.50.3 | 2026-09-25 | gate, pre-commit (1.51.x is from 2026-10-06) |
+| `actions/checkout` | v7.0.1 (`3d3c42e5aac5ba805825da76410c181273ba90b1`) | 2026-07-20 | `ci.yml` |
+| `taiki-e/install-action` | v2.87.22 (`83ac0ad63c0167e6f06796fab0fce28db1bf3db0`) | 2026-09-29 | `ci.yml` (v2.87.23 was 6 days 22 hours old at the check) |
 
 ## 3. Candidate dependencies (verified 2026-10-08, not yet added)
 

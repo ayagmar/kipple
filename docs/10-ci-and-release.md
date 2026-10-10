@@ -59,7 +59,7 @@ Both outputs go into one `upload-pages-artifact`, then `deploy-pages` runs. The 
 
 ### Dependabot
 
-Copied from `~/projects/niri-computer-use/.github/dependabot.yml`: `cargo` at `/`, `github-actions` at `/`, `npm` at `/site`, all weekly with `cooldown.default-days: 7`. The cooldown matches the "newest stable that is at least 7 days old" rule.
+Copied from `~/projects/niri-computer-use/.github/dependabot.yml`: `cargo` at `/`, `github-actions` at `/`, `npm` at `/site`, all weekly with `cooldown.default-days: 7`. The `npm` entry is added in M6, when `site/package.json` exists. The cooldown matches the "newest stable that is at least 7 days old" rule.
 
 ### Gate tool versions (decision date 2026-10-08)
 
@@ -75,7 +75,7 @@ Newest stable that is at least 7 days old. Re-check at scaffold time and record 
 | `actions/checkout` | v7.0.1 | 2026-07-20 |
 | `actions/attest-build-provenance` | v4.2.2 | 2026-08-06 |
 
-Source: GitHub releases API, 2026-10-08.
+Source: GitHub releases API, 2026-10-08. Rechecked at M0 on 2026-10-10 with the same result; the pins in use are in [decisions.md](decisions.md) §2.
 
 ## 3. Release pipeline
 
