@@ -45,7 +45,7 @@ Each entry gives the decision, the reason and the date. Dependencies are recorde
 
 ## 2. Dependencies and tools in use
 
-Rule: newest stable release that is at least 7 days old. Verified 2026-10-10 (M0) against the crates.io API and the GitHub releases API.
+Rule: newest stable release that is at least 7 days old. Verified 2026-10-10 (M0, and again for the M1 crates) against the crates.io API and the GitHub releases API.
 
 | Dependency | Version | Published | Used by | Why |
 | --- | --- | --- | --- | --- |
@@ -55,6 +55,8 @@ Rule: newest stable release that is at least 7 days old. Verified 2026-10-10 (M0
 | serde (derive) | 1.0.229 | 2026-07-18 | `xtask` | typed `cargo metadata` for `check-arch` |
 | serde_json | 1.0.151 | 2026-07-20 | `xtask` | parsing `cargo metadata` |
 | tempfile | 3.27.0 | 2026-03-11 | `xtask` (dev) | disposable directories for the `bench-tree` tests, removed on drop. Added 2026-10-10 (M1) |
+| thiserror | 2.0.21 | 2026-09-23 | `kipple-core` | structured error enums that keep the upstream error (08 §4). Added 2026-10-10 (M1) |
+| crossbeam-channel | 0.5.17 | 2026-09-05 | `kipple-core` | the bounded event stream (05 §2). A producer must wait on a full stream yet still notice a cancel, and std's `SyncSender::send_timeout` is unstable in Rust 1.99. Added 2026-10-10 (M1) |
 | syn (transitive) | 3.0.6 | 2026-09-16 | via clap_derive, serde_derive | held at 3.0.6 in `Cargo.lock`: 3.0.7 was published on 2026-10-10 |
 
 Every other crate in `Cargo.lock` is the newest stable release its dependents allow, and at least 7 days old on 2026-10-10.
@@ -93,13 +95,11 @@ Rule: newest stable release that is at least 7 days old. Recheck each one when i
 | serde / serde_json | 1.0.229 / 1.0.151 | 2026-07 | serialization | |
 | toml | 1.1.6 | 2026-09-10 | config, rules, lockfile | 1.1.7 too new |
 | schemars | 1.2.2 | 2026-07-27 | JSON Schemas for `--json` and rules | |
-| thiserror | 2.0.21 | 2026-09-23 | errors | |
 | cap-std / cap-fs-ext | 4.0.3 | 2026-08-20 | confined executor (spike S1) | **>= 4.0.3 required**: [GHSA-hp8f-xmx4-4qrg](https://github.com/sunfishcode/cap-std/security/advisories/GHSA-hp8f-xmx4-4qrg) (published 2026-08-20), `manually::open` follows symlinks through a trailing slash. Also GHSA-hxf5-99xg-86hw (Windows device names, fixed in 3.4.1) |
 | rustix | 1.1.5 | 2026-09-16 | Unix syscalls not covered by cap-std | |
 | windows-sys | 0.61.2 | 2025-10-06 | Windows file IDs, process identity | D-035 |
 | trash | 5.2.9 | 2026-09-13 | OS trash | list/restore only on Windows and freedesktop, **not macOS** (see Q4) |
 | rayon | 1.12.0 | 2026-04-14 | walking and sizing pool | D-036 |
-| crossbeam-channel | 0.5.17 | 2026-09-05 | bounded event channel | |
 | libc | 0.2.190 | 2026-10-02 | macOS process probes (`proc_pidpath`, `proc_pidinfo`) | D-035; verified 2026-10-10 |
 | etcetera | 0.11.0 | 2025-10-28 | platform dirs | |
 | semver | 1.0.28 | 2026-04-04 | release ordering | |
