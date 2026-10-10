@@ -231,7 +231,7 @@ pub(crate) fn probe_pid(pid: u32) -> ProcessOutcome {
         )
     };
     if ok == 0 {
-        let outcome = classify(io::Error::last_os_error());
+        let outcome = unknown(io::Error::last_os_error());
         // The System process (pid 4) has no image file.
         if pid == 4 && matches!(outcome, ProcessOutcome::Other(_)) {
             return ProcessOutcome::NoExecutable;
@@ -255,15 +255,28 @@ pub(crate) fn probe_pid(pid: u32) -> ProcessOutcome {
     }
 }
 
+/// The outcome of a failed `OpenProcess`. Only there does an invalid parameter prove that
+/// the PID no longer exists (spike S2).
 fn classify(error: io::Error) -> ProcessOutcome {
-    match error
+    if os_error(&error) == Some(ERROR_INVALID_PARAMETER) {
+        return ProcessOutcome::Gone;
+    }
+    unknown(error)
+}
+
+/// The outcome of a failure on a process that is open and running, which says nothing
+/// about whether it is gone.
+fn unknown(error: io::Error) -> ProcessOutcome {
+    if os_error(&error) == Some(ERROR_ACCESS_DENIED) {
+        return ProcessOutcome::Denied(Arc::new(error));
+    }
+    ProcessOutcome::Other(Arc::new(error))
+}
+
+fn os_error(error: &io::Error) -> Option<u32> {
+    error
         .raw_os_error()
         .and_then(|code| u32::try_from(code).ok())
-    {
-        Some(ERROR_ACCESS_DENIED) => ProcessOutcome::Denied(Arc::new(error)),
-        Some(ERROR_INVALID_PARAMETER) => ProcessOutcome::Gone,
-        _ => ProcessOutcome::Other(Arc::new(error)),
-    }
 }
 
 /// `K32EnumProcesses` lists every process to every user.

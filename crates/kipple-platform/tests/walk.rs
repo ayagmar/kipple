@@ -95,10 +95,20 @@ fn probes_report_a_link_as_a_link_and_never_what_it_points_to() {
 
     let meta = NoFollowFs.metadata(&item.join("dir-link")).unwrap();
     let through_link = NoFollowFs.read_dir(&item.join("dir-link"));
-    // A trailing separator makes the OS resolve the link.
-    let slashed = item.join("dir-link").join("");
-    let slashed_meta = NoFollowFs.metadata(&slashed).unwrap();
-    let slashed_listing = NoFollowFs.read_dir(&slashed);
+    // A trailing separator or `.` makes the OS resolve the link.
+    let spellings = [
+        item.join("dir-link").join(""),
+        item.join("dir-link").join("."),
+    ];
+    let resolved: Vec<_> = spellings
+        .iter()
+        .map(|path| {
+            (
+                NoFollowFs.metadata(path).unwrap().kind,
+                NoFollowFs.read_dir(path),
+            )
+        })
+        .collect();
     let mut listing: Vec<_> = NoFollowFs
         .read_dir(&item)
         .unwrap()
@@ -108,11 +118,10 @@ fn probes_report_a_link_as_a_link_and_never_what_it_points_to() {
     listing.sort_by(|a, b| a.0.cmp(&b.0));
 
     assert_eq!(meta.kind, EntryKind::Symlink);
-    assert_eq!(slashed_meta.kind, EntryKind::Symlink);
-    assert!(
-        slashed_listing.is_err(),
-        "listed a link's target: {slashed_listing:?}"
-    );
+    for (kind, through) in &resolved {
+        assert_eq!(*kind, EntryKind::Symlink);
+        assert!(through.is_err(), "listed a link's target: {through:?}");
+    }
     assert!(
         through_link.is_err(),
         "listed a link's target: {through_link:?}"

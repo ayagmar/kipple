@@ -34,17 +34,24 @@ pub(crate) fn resolve_roots(env: &Environment) -> Roots {
 
 #[expect(unsafe_code, reason = "libc has no safe wrapper for proc_listallpids")]
 pub(crate) fn list_pids() -> Result<Vec<u32>, ProbeError> {
-    let failed = |error| ProbeError::io(Path::new("proc_listallpids"), error);
+    // It returns 0, not -1, when the listing fails. An empty listing is never real: at
+    // least kipple itself is running.
+    let failed = || ProbeError::io(Path::new("proc_listallpids"), io::Error::last_os_error());
+    let listed = |n: c_int| {
+        usize::try_from(n)
+            .ok()
+            .filter(|&n| n > 0)
+            .ok_or_else(failed)
+    };
     // SAFETY: a null buffer asks for the number of PIDs.
-    let count = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
-    let count = usize::try_from(count).map_err(|_| failed(io::Error::last_os_error()))?;
+    let count = listed(unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) })?;
     // Room for processes started between the two calls.
     let mut pids: Vec<c_int> = vec![0; count * 2 + 16];
     let bytes = c_int::try_from(pids.len() * size_of::<c_int>())
-        .map_err(|e| failed(io::Error::other(e)))?;
+        .map_err(|e| ProbeError::io(Path::new("proc_listallpids"), io::Error::other(e)))?;
     // SAFETY: the buffer is valid for `bytes` bytes.
-    let filled = unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast::<c_void>(), bytes) };
-    let filled = usize::try_from(filled).map_err(|_| failed(io::Error::last_os_error()))?;
+    let filled =
+        listed(unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast::<c_void>(), bytes) })?;
     pids.truncate(filled);
     Ok(pids
         .into_iter()

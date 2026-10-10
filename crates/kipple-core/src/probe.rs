@@ -119,10 +119,11 @@ pub trait FsProbe: fmt::Debug + Send + Sync {
 /// Measures what removing an item would free.
 pub trait Sizer: fmt::Debug + Send + Sync {
     /// Sizes `path` and everything below it, without following links or leaving its file
-    /// system. Stops at the next directory once `cancel` is set.
+    /// system. Stops at the next entry once `cancel` is set.
     ///
     /// # Errors
-    /// When `path` itself can't be read. Unreadable entries below it make the estimate
+    /// When the metadata of `path` itself can't be read. A directory that can't be listed,
+    /// at `path` or below it, makes the estimate
     /// [`Incomplete`](crate::Completeness::Incomplete) instead.
     fn size(&self, path: &Path, cancel: &CancelToken) -> Result<SpaceEstimate, ProbeError>;
 }
