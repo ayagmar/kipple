@@ -47,16 +47,22 @@ pub(crate) fn list_pids() -> Result<Vec<u32>, ProbeError> {
     let count = listed(unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) })?;
     // Room for processes started between the two calls.
     let mut pids: Vec<c_int> = vec![0; count * 2 + 16];
-    let bytes = c_int::try_from(pids.len() * size_of::<c_int>())
-        .map_err(|e| ProbeError::io(Path::new("proc_listallpids"), io::Error::other(e)))?;
-    // SAFETY: the buffer is valid for `bytes` bytes.
-    let filled =
-        listed(unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast::<c_void>(), bytes) })?;
-    pids.truncate(filled);
-    Ok(pids
-        .into_iter()
-        .filter_map(|pid| u32::try_from(pid).ok())
-        .collect())
+    loop {
+        let bytes = c_int::try_from(pids.len() * size_of::<c_int>())
+            .map_err(|e| ProbeError::io(Path::new("proc_listallpids"), io::Error::other(e)))?;
+        // SAFETY: the buffer is valid for `bytes` bytes.
+        let filled =
+            listed(unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast::<c_void>(), bytes) })?;
+        // A full buffer may have been too small: grow it and ask again.
+        if filled < pids.len() {
+            pids.truncate(filled);
+            return Ok(pids
+                .into_iter()
+                .filter_map(|pid| u32::try_from(pid).ok())
+                .collect());
+        }
+        pids.resize(pids.len() * 2, 0);
+    }
 }
 
 pub(crate) fn probe_pid(pid: u32) -> ProcessOutcome {
