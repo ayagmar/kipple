@@ -86,7 +86,7 @@ impl ScanContext<'_> {
     /// # Errors
     /// When `path` is outside the integration's roots, or can't be read.
     pub fn metadata(&self, path: &Path) -> Result<EntryMeta, ProbeError> {
-        self.fs.metadata(self.confined(path)?)
+        self.fs.metadata(&self.confined(path)?)
     }
 
     /// The entries of the directory at `dir`, without following links.
@@ -94,27 +94,35 @@ impl ScanContext<'_> {
     /// # Errors
     /// When `dir` is outside the integration's roots, or can't be read.
     pub fn read_dir(&self, dir: &Path) -> Result<Vec<DirEntryMeta>, ProbeError> {
-        self.fs.read_dir(self.confined(dir)?)
+        self.fs.read_dir(&self.confined(dir)?)
     }
 
-    /// `path`, if it lies inside one of the roots. A path with a `..` component is
-    /// refused rather than normalised, so it can't climb out of a root. So is a path
-    /// through a link below the root: the OS follows a link in the middle of a path even
-    /// when the probe itself doesn't follow the last one.
-    fn confined<'p>(&self, path: &'p Path) -> Result<&'p Path, ProbeError> {
-        let plain = path.components().all(|c| c != Component::ParentDir);
-        let root = self.roots.iter().find(|root| path.starts_with(&root.path));
-        let (true, Some(root)) = (plain, root) else {
-            return Err(ProbeError::OutsideRoots {
-                path: path.to_owned(),
-            });
+    /// `path` without a trailing separator or `.` component, if it lies inside one of the
+    /// roots. Those would make the OS follow a link in the last component. A path with a
+    /// `..` component is refused rather than normalised, so it can't climb out of a root.
+    /// So is a path through a link below the root, which the OS would follow too. Each
+    /// directory below the root is checked from the top, so nothing beyond a link is
+    /// touched.
+    fn confined(&self, path: &Path) -> Result<PathBuf, ProbeError> {
+        let outside = || ProbeError::OutsideRoots {
+            path: path.to_owned(),
         };
-        let between = path.ancestors().skip(1).take_while(|dir| *dir != root.path);
-        for dir in between {
-            if self.fs.metadata(dir)?.kind == EntryKind::Symlink {
-                return Err(ProbeError::ThroughLink {
-                    link: dir.to_owned(),
-                });
+        if path.components().any(|c| c == Component::ParentDir) {
+            return Err(outside());
+        }
+        let path: PathBuf = path.components().collect();
+        let (root, below) = self
+            .roots
+            .iter()
+            .find_map(|root| Some((root, path.strip_prefix(&root.path).ok()?)))
+            .ok_or_else(outside)?;
+        let mut dir = root.path.clone();
+        let mut between = below.components();
+        between.next_back();
+        for part in between {
+            dir.push(part);
+            if self.fs.metadata(&dir)?.kind == EntryKind::Symlink {
+                return Err(ProbeError::ThroughLink { link: dir });
             }
         }
         Ok(path)
@@ -139,8 +147,8 @@ impl FindingSink<'_> {
     /// [`IntegrationError::Stopped`] when the scan was cancelled or its consumer went
     /// away, and [`IntegrationError::Probe`] when `path` is outside the roots. The
     /// integration should return either.
-    pub fn add(&mut self, path: PathBuf) -> Result<(), IntegrationError> {
-        self.cx.confined(&path)?;
+    pub fn add(&mut self, path: &Path) -> Result<(), IntegrationError> {
+        let path = self.cx.confined(path)?;
         let id = FindingId(self.next_id.fetch_add(1, Ordering::Relaxed));
         let event = ScanEvent::FindingAdded {
             id,

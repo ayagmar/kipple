@@ -108,6 +108,12 @@ pub trait FsProbe: fmt::Debug + Send + Sync {
     /// When the directory or any of its entries can't be read: a partial listing is
     /// never returned as if it were whole.
     fn read_dir(&self, dir: &Path) -> Result<Vec<DirEntryMeta>, ProbeError>;
+
+    /// Checks that the directory at `dir` can be listed, without listing it.
+    ///
+    /// # Errors
+    /// When it can't be opened for listing.
+    fn open_dir(&self, dir: &Path) -> Result<(), ProbeError>;
 }
 
 /// Measures what removing an item would free.

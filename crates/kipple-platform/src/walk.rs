@@ -13,6 +13,7 @@ use kipple_core::{
     Allocated, Apparent, CancelToken, Completeness, FileIdentity, ProbeError, Sizer, SpaceEstimate,
 };
 
+use crate::fs_probe::exact;
 use crate::os;
 
 /// Sizes trees on its own bounded thread pool. It reads no ignore file or git config,
@@ -41,7 +42,8 @@ impl Walker {
 
 impl Sizer for Walker {
     fn size(&self, path: &Path, cancel: &CancelToken) -> Result<SpaceEstimate, ProbeError> {
-        let meta = fs::symlink_metadata(path).map_err(|e| ProbeError::io(path, e))?;
+        let item = exact(path);
+        let meta = fs::symlink_metadata(&item).map_err(|e| ProbeError::io(path, e))?;
         let tally = Tally::default();
         let mut top = Counts::default();
         top.add(&meta);
@@ -49,7 +51,7 @@ impl Sizer for Walker {
         if meta.is_dir() {
             let device = os::device(&meta);
             self.pool
-                .scope(|scope| visit(scope, path, device, &tally, cancel));
+                .scope(|scope| visit(scope, &item, device, &tally, cancel));
         }
         Ok(tally.estimate())
     }

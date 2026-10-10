@@ -53,10 +53,14 @@ impl FsProbe for FakeFs {
     }
 
     fn read_dir(&self, dir: &Path) -> Result<Vec<DirEntryMeta>, ProbeError> {
+        self.open_dir(dir).map(|()| Vec::new())
+    }
+
+    fn open_dir(&self, dir: &Path) -> Result<(), ProbeError> {
         if self.unlistable.contains(dir) {
             return Err(ProbeError::io(dir, io::ErrorKind::PermissionDenied.into()));
         }
-        Ok(Vec::new())
+        Ok(())
     }
 }
 
@@ -128,7 +132,7 @@ impl Integration for Emitter {
             {
                 first_add.wait();
             }
-            sink.add(PathBuf::from(format!("/found/{}/{n:05}", self.id)))?;
+            sink.add(&PathBuf::from(format!("/found/{}/{n:05}", self.id)))?;
         }
         Ok(())
     }
@@ -152,7 +156,7 @@ fn spawn_scan(
     capacity: usize,
     cancel: &CancelToken,
 ) -> (EventRx, mpsc::Receiver<ScanReport>) {
-    let (events, rx) = event_channel(capacity);
+    let (events, rx) = event_channel(capacity, cancel);
     let (done, report) = mpsc::channel();
     let cancel = cancel.clone();
     thread::spawn(move || {
@@ -267,6 +271,25 @@ fn cancelling_during_sizing_stops_before_the_next_finding_is_sized() {
     drain.join().unwrap();
 }
 
+#[test]
+fn a_consumer_that_goes_away_during_sizing_stops_the_walk_in_progress() {
+    let sizing = Arc::new(Barrier::new(2));
+    let sizer = FakeSizer {
+        block_first: Some(Arc::clone(&sizing)),
+        ..FakeSizer::default()
+    };
+    let cancel = CancelToken::new();
+    let engine = engine(sizer, vec![Box::new(Emitter::new("sizing", 3))]);
+    let (events, report) = spawn_scan(engine, found(), 64, &cancel);
+
+    // The walk sends nothing until it finishes, so only the dropped receiver can stop it.
+    sizing.wait();
+    drop(events);
+
+    let report = report.recv_timeout(ACK_LIMIT).expect("walk kept running");
+    assert_eq!(report.outcome, ScanOutcome::Cancelled);
+}
+
 /// Declares every root it is given and records what the engine let it read: for each
 /// path in `probe`, how listing it and adding it as a finding went.
 #[derive(Debug)]
@@ -306,7 +329,7 @@ impl Integration for RootReader {
         if let Ok(mut probes) = self.probes.lock() {
             for path in &self.probe {
                 let read = cx.read_dir(path).err();
-                let add = match sink.add(path.clone()) {
+                let add = match sink.add(path) {
                     Ok(()) | Err(IntegrationError::Stopped) => None,
                     Err(IntegrationError::Probe(error)) => Some(error),
                 };
@@ -324,8 +347,9 @@ fn insert(roots: &mut Roots, root: SymbolicRoot, path: &str) {
 }
 
 fn run(engine: &Engine, request: &ScanRequest) -> ScanReport {
-    let (events, rx) = event_channel(1024);
-    let report = engine.scan(request, &events, &CancelToken::new());
+    let cancel = CancelToken::new();
+    let (events, rx) = event_channel(1024, &cancel);
+    let report = engine.scan(request, &events, &cancel);
     drop(rx);
     report
 }
@@ -395,7 +419,16 @@ fn an_integration_can_neither_probe_nor_report_anything_outside_its_roots() {
     let mut roots = Roots::default();
     insert(&mut roots, SymbolicRoot::XdgCache, "/home/u/.cache");
     let fs = FakeFs {
-        entries: BTreeMap::from([(PathBuf::from("/home/u/.cache/link"), Ok(EntryKind::Symlink))]),
+        entries: BTreeMap::from([
+            // Above the root, so it never matters: on macOS `/var` is a link.
+            (PathBuf::from("/home/u"), Ok(EntryKind::Symlink)),
+            (PathBuf::from("/home/u/.cache/link"), Ok(EntryKind::Symlink)),
+            // Beyond the link: probing it would already reach outside the root.
+            (
+                PathBuf::from("/home/u/.cache/link/deep"),
+                Err(io::ErrorKind::PermissionDenied),
+            ),
+        ]),
         ..FakeFs::default()
     };
     let probes = Arc::default();
@@ -404,11 +437,13 @@ fn an_integration_can_neither_probe_nor_report_anything_outside_its_roots() {
         seen: Arc::default(),
         probes: Arc::clone(&probes),
         probe: [
+            "/home/u/.cache",
             "/home/u/.cache/tool",
             "/home/u",
             "/home/u/.cache-other",
             "/home/u/.cache/../.ssh",
             "/home/u/.cache/link/inner",
+            "/home/u/.cache/link/deep/file",
         ]
         .map(PathBuf::from)
         .to_vec(),
@@ -425,14 +460,22 @@ fn an_integration_can_neither_probe_nor_report_anything_outside_its_roots() {
         *probes.lock().unwrap(),
         [
             ("allowed", "allowed"),
+            ("allowed", "allowed"),
             ("outside", "outside"),
             ("outside", "outside"),
             ("outside", "outside"),
             ("link", "link"),
+            ("link", "link"),
         ]
     );
     let found: Vec<_> = report.findings.iter().map(|f| f.path.clone()).collect();
-    assert_eq!(found, [PathBuf::from("/home/u/.cache/tool")]);
+    assert_eq!(
+        found,
+        [
+            PathBuf::from("/home/u/.cache"),
+            PathBuf::from("/home/u/.cache/tool")
+        ]
+    );
 }
 
 /// Adds one finding, then panics.
@@ -457,7 +500,7 @@ impl Integration for Crashes {
         _: &ScanContext<'_>,
         sink: &mut FindingSink<'_>,
     ) -> Result<(), IntegrationError> {
-        sink.add(PathBuf::from("/found/crashes/00000"))?;
+        sink.add(Path::new("/found/crashes/00000"))?;
         panic!("integration bug");
     }
 }

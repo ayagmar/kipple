@@ -275,6 +275,9 @@ impl Engine {
     ) -> Result<Vec<ResolvedRoot>, Stopped> {
         let mut opened = Vec::new();
         for &root in &descriptor.roots {
+            if shared.cancel.is_cancelled() {
+                return Err(Stopped::Cancelled);
+            }
             let resolved = match shared.roots.get(root) {
                 None => continue,
                 Some(Err(reason)) => {
@@ -311,7 +314,7 @@ impl Engine {
     fn open(&self, path: &Path) -> Result<EntryMeta, ProbeError> {
         let meta = self.fs.metadata(path)?;
         if meta.kind == EntryKind::Dir {
-            self.fs.read_dir(path)?;
+            self.fs.open_dir(path)?;
         }
         Ok(meta)
     }

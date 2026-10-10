@@ -86,23 +86,28 @@ pub(crate) enum Stopped {
 #[derive(Debug)]
 pub struct EventTx(Sender<ScanEvent>);
 
-/// The frontend's end of the stream. Dropping it cancels the scan.
+/// The frontend's end of the stream. Dropping it before the stream ended cancels the
+/// scan, even while the engine is busy and sends nothing.
 #[derive(Debug)]
 pub struct EventRx {
     receiver: Receiver<ScanEvent>,
     next_seq: u64,
+    cancel: CancelToken,
+    ended: bool,
 }
 
-/// A stream that holds at most `capacity` undelivered events. A full stream makes the
-/// engine wait: findings and outcomes are never dropped.
+/// A stream that holds at most `capacity` undelivered events, for a scan cancelled by
+/// `cancel`. A full stream makes the engine wait: findings and outcomes are never dropped.
 #[must_use]
-pub fn event_channel(capacity: usize) -> (EventTx, EventRx) {
+pub fn event_channel(capacity: usize, cancel: &CancelToken) -> (EventTx, EventRx) {
     let (sender, receiver) = crossbeam_channel::bounded(capacity);
     (
         EventTx(sender),
         EventRx {
             receiver,
             next_seq: 0,
+            cancel: cancel.clone(),
+            ended: false,
         },
     )
 }
@@ -146,9 +151,20 @@ impl Iterator for EventRx {
     /// The next event, waiting for one. `None` once the engine has finished, every
     /// [`EventTx`] is dropped and every event was received.
     fn next(&mut self) -> Option<Sequenced> {
-        let event = self.receiver.recv().ok()?;
+        let Ok(event) = self.receiver.recv() else {
+            self.ended = true;
+            return None;
+        };
         let seq = self.next_seq;
         self.next_seq += 1;
         Some(Sequenced { seq, event })
+    }
+}
+
+impl Drop for EventRx {
+    fn drop(&mut self) {
+        if !self.ended {
+            self.cancel.cancel();
+        }
     }
 }

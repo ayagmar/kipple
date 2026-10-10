@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use kipple_core::{DirEntryMeta, EntryKind, EntryMeta, FsProbe, ProbeError};
 
@@ -15,20 +15,17 @@ pub struct NoFollowFs;
 
 impl FsProbe for NoFollowFs {
     fn metadata(&self, path: &Path) -> Result<EntryMeta, ProbeError> {
-        let meta = fs::symlink_metadata(path).map_err(|e| ProbeError::io(path, e))?;
+        let exact = exact(path);
+        let meta = fs::symlink_metadata(&exact).map_err(|e| ProbeError::io(path, e))?;
         Ok(EntryMeta {
             kind: kind_of(meta.file_type()),
-            identity: os::identity(path, &meta),
+            identity: os::identity(&exact, &meta),
         })
     }
 
     fn read_dir(&self, dir: &Path) -> Result<Vec<DirEntryMeta>, ProbeError> {
         let read = || -> io::Result<Vec<DirEntryMeta>> {
-            // `fs::read_dir` would list a link's target.
-            if !fs::symlink_metadata(dir)?.is_dir() {
-                return Err(io::ErrorKind::NotADirectory.into());
-            }
-            fs::read_dir(dir)?
+            open(dir)?
                 .map(|entry| {
                     let entry = entry?;
                     Ok(DirEntryMeta {
@@ -40,6 +37,26 @@ impl FsProbe for NoFollowFs {
         };
         read().map_err(|e| ProbeError::io(dir, e))
     }
+
+    fn open_dir(&self, dir: &Path) -> Result<(), ProbeError> {
+        open(dir).map(drop).map_err(|e| ProbeError::io(dir, e))
+    }
+}
+
+/// `path` without a trailing separator or `.` component, either of which would make the
+/// OS follow a link in the last component.
+pub(crate) fn exact(path: &Path) -> PathBuf {
+    path.components().collect()
+}
+
+/// The directory at `dir`, opened for listing. A link is refused: `fs::read_dir` would
+/// list its target.
+fn open(dir: &Path) -> io::Result<fs::ReadDir> {
+    let dir = exact(dir);
+    if !fs::symlink_metadata(&dir)?.is_dir() {
+        return Err(io::ErrorKind::NotADirectory.into());
+    }
+    fs::read_dir(dir)
 }
 
 /// What a no-follow file type is. On Windows std reports a junction as a link, not as a
