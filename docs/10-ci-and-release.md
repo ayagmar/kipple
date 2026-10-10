@@ -1,6 +1,6 @@
 # kipple — CI and Release Plan
 
-Status: planned. Nothing in this document is built yet. Items marked **M-later** are out of scope for the first public release.
+Status: the M0 parts are built: the `check` matrix and `deny` job in `ci.yml`, Dependabot, and the `xtask` commands `check`, `fix`, `check-arch` and `gen-docs`. Everything else is planned. Items marked **M-later** are out of scope for the first public release.
 
 ## 1. One gate, local and CI
 
