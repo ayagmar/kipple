@@ -66,7 +66,7 @@ Every other crate in `Cargo.lock` is the newest stable release its dependents al
 | cargo-machete | 0.9.2 | 2026-04-15 | gate |
 | typos-cli | 1.50.3 | 2026-09-25 | gate, pre-commit (1.51.x is from 2026-10-06) |
 | `actions/checkout` | v7.0.1 (`3d3c42e5aac5ba805825da76410c181273ba90b1`) | 2026-07-20 | `ci.yml` |
-| `taiki-e/install-action` | v2.87.22 (`83ac0ad63c0167e6f06796fab0fce28db1bf3db0`) | 2026-09-29 | `ci.yml` (v2.87.23 was 6 days 22 hours old at the check) |
+| `taiki-e/install-action` | v2.87.23 (`861a07ce7084f55488e375df125cdc99bba60eb7`) | 2026-10-03 | `ci.yml` (Dependabot #1, merged 2026-10-10; v2.87.24 is from 2026-10-04 and was under 7 days old) |
 | strace, GNU time, Python 3 | 6.8 (`6.8-0ubuntu2`), 1.9 (`1.9-0.2build1`, prints `UNKNOWN`), 3.12.3 | Ubuntu 24.04 release pocket; Python from runner image `ubuntu24/20261004.327` | `bench.yml` and `.github/scripts/bench.py`. **Exception to the newest-stable rule:** these come from the runner's Ubuntu archive and are not pinned, because they only measure, are never shipped and never gate. Each run logs the versions in its machine description |
 
 Spike-only crates, used on the `spike/m1-s2-s3` branch for S2 and S3 and not a dependency of any crate on `main` (`libc` and `windows-sys` are in `main`'s `Cargo.lock` only through `tempfile`). Verified 2026-10-10:
