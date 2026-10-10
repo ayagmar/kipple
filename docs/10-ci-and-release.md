@@ -8,7 +8,7 @@ The gate is `cargo xtask check`. Its authoritative step list and per-milestone a
 
 **Why `cargo xtask`, not `just` or `make`.** kipple needs native Windows contributors and runners. `just` recipes run in a shell (`sh` by default), and POSIX lines such as `RUSTDOCFLAGS=... cargo doc` don't run in PowerShell. `make` has the same problem. An `xtask` is a Rust binary in the workspace, so it runs the same everywhere with nothing extra to install, sets environment variables through `std::process::Command`, and is itself linted and tested. `.cargo/config.toml` defines `[alias] xtask = "run --locked --package xtask --"`, so building xtask can never rewrite `Cargo.lock` before the locked steps run.
 
-Other subcommands: `cargo xtask fix` (fmt and `clippy --fix`), `cargo xtask gen-docs [--check]`, `cargo xtask site` (site build and Lighthouse, once the site exists), `cargo xtask distro <name>` (one Linux container smoke run with podman or docker).
+Other subcommands: `cargo xtask fix` (fmt and `clippy --fix`), `cargo xtask gen-docs [--check]`, `cargo xtask bench-tree <dir> --entries <n>` (the deterministic benchmark reference tree, 11 S3 procedure), `cargo xtask site` (site build and Lighthouse, once the site exists), `cargo xtask distro <name>` (one Linux container smoke run with podman or docker).
 
 **Local vs CI.** `cargo xtask check` on one OS is what a contributor runs. CI runs that same command on all three OSes, plus jobs that cannot run on every machine (the distro containers, the site and Lighthouse). Those extra jobs have their own `xtask` subcommands, so anyone can reproduce them locally.
 

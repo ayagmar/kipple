@@ -22,6 +22,7 @@ cargo xtask check                    # the gate: green here is green
 cargo xtask fix                      # clippy fixes, then rustfmt
 cargo xtask check-arch               # crate boundaries only
 cargo xtask gen-docs                 # regenerate the CLI reference
+cargo xtask bench-tree <dir> --entries 100000  # benchmark reference tree
 git config core.hooksPath .githooks  # pre-commit: fmt, clippy, typos
 ```
 

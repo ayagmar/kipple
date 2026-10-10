@@ -52,6 +52,7 @@ Rule: newest stable release that is at least 7 days old. Verified 2026-10-10 (M0
 | anyhow | 1.0.104 | 2026-07-18 | `xtask` only | error context in the dev tool (08 §4) |
 | serde (derive) | 1.0.229 | 2026-07-18 | `xtask` | typed `cargo metadata` for `check-arch` |
 | serde_json | 1.0.151 | 2026-07-20 | `xtask` | parsing `cargo metadata` |
+| tempfile | 3.27.0 | 2026-03-11 | `xtask` (dev) | disposable directories for the `bench-tree` tests, removed on drop. Added 2026-10-10 (M1) |
 | syn (transitive) | 3.0.6 | 2026-09-16 | via clap_derive, serde_derive | held at 3.0.6 in `Cargo.lock`: 3.0.7 was published on 2026-10-10 |
 
 Every other crate in `Cargo.lock` is the newest stable release its dependents allow, and at least 7 days old on 2026-10-10.
