@@ -120,23 +120,21 @@ Site and release tool versions are recorded in [09-site-and-docs.md](09-site-and
 The prototypes are throwaway code on the `spike/m1-s2-s3` branch (`spikes/s2-procid`, `spikes/s3-walk`), which is never merged. The evidence of record comes from `bench.yml` dispatched on that branch at commit `b04564c`: [100k run](https://github.com/ayagmar/kipple/actions/runs/38075346926) and [1M run](https://github.com/ayagmar/kipple/actions/runs/38075509494). Three earlier runs ([100k](https://github.com/ayagmar/kipple/actions/runs/38069110604), [1M](https://github.com/ayagmar/kipple/actions/runs/38069234733), [100k](https://github.com/ayagmar/kipple/actions/runs/38071136180)) came before the review fixes. Back then the macOS probe trusted the first mapped file unconditionally, and only `ignore` checked the file system on macOS. The warm orderings on Linux and Windows in those runs match the ones below.
 
 Machines of record:
-- **Linux runner:** `ubuntu-latest`, image `ubuntu24/20261004.327`, Linux 6.17.0-1022-azure, AMD EPYC 7763, 4 vCPUs, 15 GiB, ext4 root on a 150 GB virtual NVMe disk, run as the unprivileged `runner` user. The 38071136180 run got an Intel Xeon Platinum 8573C instead, so absolute times differ between runs.
+- **Linux runner:** `ubuntu-latest`, image `ubuntu24/20261004.327`, Linux 6.17.0-1022-azure, AMD EPYC 7763, 4 vCPUs, 15 GiB, ext4 root on a 150 GB virtual disk (`sda`, reported as rotational), run as the unprivileged `runner` user. The 38071136180 run got an Intel Xeon Platinum 8573C instead, so absolute times differ between runs.
 - **macOS runner:** `macos-latest`, image `macos26/20260907.0351`, Apple M1 (virtual), 3 vCPUs, 7 GiB, APFS on SSD.
 - **Windows runner:** `windows-latest`, image `win25-vs2026/20260925.250`, AMD EPYC 7763, 4 logical CPUs, 16 GiB, Microsoft virtual disk. The tree sits under `D:\a\_temp`.
-- **Local:** AMD Ryzen 9 9950X3D (16 cores, 32 threads), 62 GiB, Samsung 9100 PRO NVMe, btrfs (`compress=zstd:3`, `noatime`), Linux 7.2.8-arch1-2. These numbers are hand-transcribed from runs of the prototype at `0f39bed`: `s2-procid snapshot`, and `.github/scripts/bench.py warm <tree> 5 "target/release/s3-walk <variant> {tree} <threads>"`. They are warm only, without GNU time or strace, and are supporting data, not the record.
 
 ### 4.1 S2: running-executable identity
 
-Snapshot of every process from the 100k run. "Unknown" is denied, path only or other error. The local row is from `0f39bed`, before the macOS and fallback fixes, which do not affect Linux outcomes there.
+Snapshot of every process from the 100k run. "Unknown" is denied, path only or other error.
 
 | OS | Processes | Identified | Unknown | Not running | No executable | Direct probe | `sysinfo` path | `sysinfo` + `stat(path)` |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 | Linux runner | 166 | 7 | 159 (denied: other users) | 0 | 0 | 0.43 ms | 4.71 ms | 4.75 ms |
 | macOS runner | 573 | 314 | 258 (257 path only: region info refused for other users) | 1 | 0 | 7.79 ms | 5.48 ms | 10.14 ms |
 | Windows runner | 148 | 144 | 2 (`QueryFullProcessImageNameW` failed with error 31) | 0 | 2 | 16.91 ms | 7.12 ms | 10.50 ms |
-| Local Linux | 727 | 244 (52 running a deleted file) | 481 (denied) | 2 | 0 | 0.62 ms | 4.83 ms | 4.42 ms |
 
-Times are medians of 21 snapshots (11 locally). On Linux, `sysinfo` reported `exe() == None` for all 159 denied processes, which is the same value it gives a zombie or a kernel thread. With `/proc` remounted `hidepid=invisible`, the Linux runner saw 7 processes instead of 166, and no error. Only the mount options in `/proc/self/mountinfo` show that the inventory is partial. On macOS the first mapped file matched `proc_pidpath` for every process whose region info could be read.
+Times are medians of 21 snapshots. On Linux, `sysinfo` reported `exe() == None` for all 159 denied processes, which is the same value it gives a zombie or a kernel thread. With `/proc` remounted `hidepid=invisible`, the Linux runner saw 7 processes instead of 166, and no error. Only the mount options in `/proc/self/mountinfo` show that the inventory is partial. On macOS the first mapped file matched `proc_pidpath` for every process whose region info could be read.
 
 Scenarios, each with a copy of the spike binary started from a temp dir:
 
@@ -170,7 +168,5 @@ macOS and Windows runners, warm (ms, peak RSS in MiB on macOS):
 | `dua-core` | 376 (2.5) | **9902** (2.9) | 630 | 3853 |
 
 The macOS runner is noisy. Its 1M samples spread by up to 38% within one variant, for example 10299 to 14234 ms for `ignore`.
-
-Local warm, 1000000 entries, by thread count (ms): 4 threads: `read_dir` + `rayon` 261, `ignore` 319, `dua-core` 343. 8 threads: 143, 172, 186. 32 threads: 117, 119, 387.
 
 Why `ignore` is slower: with `follow_links(false)` it `lstat`s every entry by full path, and `same_file_system(true)` adds a full-path `stat` of every directory. std's `DirEntry::metadata` uses `statx`/`fstatat` relative to the open directory on Linux (glibc) and macOS. Linux musl builds fall back to a full-path `lstat` in std. `dua-core` reads native bulk metadata on macOS (`getattrlistbulk`), which is why it leads there at 1M.
