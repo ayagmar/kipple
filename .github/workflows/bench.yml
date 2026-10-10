@@ -31,6 +31,12 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
+# An explicit bash shell runs with `-eo pipefail`, so a failed measurement fails the job
+# instead of disappearing into `tee`. The default shell only sets `-e`.
+defaults:
+  run:
+    shell: bash
+
 jobs:
   linux:
     runs-on: ubuntu-latest
