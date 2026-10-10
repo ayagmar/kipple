@@ -184,7 +184,7 @@ jobs:
           ENTRIES: ${{ inputs.entries }}
         run: |
           {
-            echo "## S3 warm, $ENTRIES entries (${{ matrix.os }}, $ImageOS $ImageVersion, $(nproc 2>/dev/null || echo "$NUMBER_OF_PROCESSORS") CPUs)"
+            echo "## S3 warm, $ENTRIES entries (${{ matrix.os }}, $ImageOS $ImageVersion, ${NUMBER_OF_PROCESSORS:-$(getconf _NPROCESSORS_ONLN)} CPUs)"
             echo '```text'
             for variant in ignore dua rayon; do target/release/s3-walk "$variant" "$RUNNER_TEMP/tree" >/dev/null; done
             for run in 1 2 3 4 5; do

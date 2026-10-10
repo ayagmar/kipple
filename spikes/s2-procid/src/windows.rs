@@ -135,3 +135,7 @@ pub(crate) const fn inventory_note() -> Option<String> {
 pub(crate) fn privileged_pids() -> Vec<(u32, &'static str)> {
     vec![(4, "pid 4, System")]
 }
+
+pub(crate) const fn diagnostics() -> Option<String> {
+    None
+}

@@ -179,6 +179,9 @@ fn snapshot(iterations: usize) -> io::Result<()> {
     let exes = sysinfo_exes();
     report_outcomes(&outcomes);
     report_sysinfo(&outcomes, &exes);
+    if let Some(note) = direct::diagnostics() {
+        println!("diagnostics: {note}");
+    }
 
     let direct_ms = median_ms(iterations, || probe_all().map(drop))?;
     let sysinfo_ms = median_ms(iterations, || {

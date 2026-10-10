@@ -7,6 +7,7 @@ use std::io;
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::{FileId, Outcome};
 
@@ -34,34 +35,143 @@ pub(crate) fn list_pids() -> io::Result<Vec<u32>> {
         .collect())
 }
 
-#[expect(
-    unsafe_code,
-    reason = "S2 spike: libc has no safe wrapper for proc_pidpath"
-)]
+/// `PROC_PIDREGIONPATHINFO` and its result, from XNU's `sys/proc_info.h` (not in libc).
+const PROC_PIDREGIONPATHINFO: c_int = 8;
+
+#[repr(C)]
+struct ProcRegionInfo {
+    protection: u32,
+    max_protection: u32,
+    inheritance: u32,
+    flags: u32,
+    offset: u64,
+    behavior: u32,
+    user_wired_count: u32,
+    user_tag: u32,
+    pages_resident: u32,
+    pages_shared_now_private: u32,
+    pages_swapped_out: u32,
+    pages_dirtied: u32,
+    ref_count: u32,
+    shadow_depth: u32,
+    share_mode: u32,
+    private_pages_resident: u32,
+    shared_pages_resident: u32,
+    obj_id: u32,
+    depth: u32,
+    address: u64,
+    size: u64,
+}
+
+#[repr(C)]
+struct ProcRegionWithPathInfo {
+    region: ProcRegionInfo,
+    vnode: libc::vnode_info_path,
+}
+
+/// Processes whose first file-backed region is not the file `proc_pidpath` names.
+static REGION_PATH_MISMATCHES: AtomicUsize = AtomicUsize::new(0);
+
+/// The running image: the path from `proc_pidpath`, the identity from the vnode behind
+/// the process's first file-backed memory region (its main executable's `__TEXT`). The
+/// vnode survives deletion and replacement of the path; a later `stat(path)` does not.
 pub(crate) fn probe(pid: u32) -> Outcome {
     let Ok(raw_pid) = c_int::try_from(pid) else {
         return Outcome::Other(io::Error::other("pid out of range"));
     };
+    let path = pid_path(raw_pid);
+    match (region_vnode(raw_pid), path) {
+        (Ok(Some((id, deleted, region_path))), path) => {
+            let path = path.unwrap_or(region_path);
+            if !deleted && file_id(&path).ok() != Some(id) {
+                REGION_PATH_MISMATCHES.fetch_add(1, Ordering::Relaxed);
+            }
+            Outcome::Identified { path, id, deleted }
+        }
+        (Ok(None), Ok(path)) => Outcome::PathOnly {
+            path,
+            error: io::Error::other("no file-backed region"),
+        },
+        (Err(error), Ok(path)) => Outcome::PathOnly {
+            path,
+            error: io::Error::other(format!("region info: {error}")),
+        },
+        (Ok(None) | Err(_), Err(error)) => classify(pid, error),
+    }
+}
+
+#[expect(
+    unsafe_code,
+    reason = "S2 spike: libc has no safe wrapper for proc_pidpath"
+)]
+fn pid_path(raw_pid: c_int) -> io::Result<PathBuf> {
     let mut buf = vec![0_u8; 4 * 1024];
     let capacity = u32::try_from(buf.len()).unwrap_or(u32::MAX);
     // SAFETY: the buffer is valid for `capacity` bytes.
     let len = unsafe { libc::proc_pidpath(raw_pid, buf.as_mut_ptr().cast::<c_void>(), capacity) };
-    let Ok(len) = usize::try_from(len) else {
-        return classify(pid, io::Error::last_os_error());
-    };
-    if len == 0 {
-        return classify(pid, io::Error::last_os_error());
+    match usize::try_from(len) {
+        Ok(len) if len > 0 => {
+            buf.truncate(len);
+            Ok(PathBuf::from(OsStr::from_bytes(&buf)))
+        }
+        _ => Err(io::Error::last_os_error()),
     }
-    buf.truncate(len);
-    let path = PathBuf::from(OsStr::from_bytes(&buf));
-    match file_id(&path) {
-        Ok(id) => Outcome::Identified {
-            path,
-            id,
-            deleted: false,
-        },
-        Err(error) => Outcome::PathOnly { path, error },
+}
+
+#[expect(
+    unsafe_code,
+    reason = "S2 spike: libc has no safe wrapper for proc_pidinfo"
+)]
+fn region_vnode(raw_pid: c_int) -> io::Result<Option<(FileId, bool, PathBuf)>> {
+    let size = c_int::try_from(size_of::<ProcRegionWithPathInfo>()).map_err(io::Error::other)?;
+    let mut address = 0_u64;
+    for _ in 0..256 {
+        // SAFETY: zeroed is a valid value for these plain C structs.
+        let mut info: ProcRegionWithPathInfo = unsafe { std::mem::zeroed() };
+        // SAFETY: `info` is writable for `size` bytes.
+        let filled = unsafe {
+            libc::proc_pidinfo(
+                raw_pid,
+                PROC_PIDREGIONPATHINFO,
+                address,
+                (&raw mut info).cast::<c_void>(),
+                size,
+            )
+        };
+        if filled != size {
+            let error = io::Error::last_os_error();
+            return if address == 0 { Err(error) } else { Ok(None) };
+        }
+        let stat = &info.vnode.vip_vi.vi_stat;
+        if stat.vst_ino != 0 {
+            let bytes: Vec<u8> = info
+                .vnode
+                .vip_path
+                .iter()
+                .flatten()
+                .map_while(|&c| u8::try_from(c).ok().filter(|&b| b != 0))
+                .collect();
+            let id = FileId {
+                volume: u64::from(stat.vst_dev),
+                file: stat.vst_ino,
+            };
+            return Ok(Some((
+                id,
+                stat.vst_nlink == 0,
+                PathBuf::from(OsStr::from_bytes(&bytes)),
+            )));
+        }
+        address = info.region.address.saturating_add(info.region.size);
     }
+    Ok(None)
+}
+
+#[expect(clippy::unnecessary_wraps, reason = "the other OSes return None")]
+pub(crate) fn diagnostics() -> Option<String> {
+    Some(format!(
+        "region vnode differs from stat(proc_pidpath) for {} processes",
+        REGION_PATH_MISMATCHES.load(Ordering::Relaxed)
+    ))
 }
 
 fn classify(pid: u32, error: io::Error) -> Outcome {
