@@ -98,3 +98,99 @@ jobs:
             echo "## Warm, $ENTRIES entries"
             python3 -I .github/scripts/bench.py warm "$RUNNER_TEMP/tree" "$RUNS" "${commands[@]}"
           } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # Spike branch only (spike/m1-s2-s3): S2 on all three OSes. Never merged to main.
+  s2:
+    name: s2 (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+
+      - name: Build
+        run: cargo build --release --locked -p s2-procid
+
+      - name: Snapshot
+        shell: bash
+        run: |
+          {
+            echo "## S2 snapshot (${{ matrix.os }}, $ImageOS $ImageVersion)"
+            echo '```text'
+            target/release/s2-procid snapshot 21
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Scenarios
+        shell: bash
+        run: |
+          {
+            echo "## S2 scenarios (${{ matrix.os }})"
+            echo '```text'
+            target/release/s2-procid scenarios
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Snapshot with /proc hiding other users' processes
+        if: runner.os == 'Linux'
+        run: |
+          sudo mount -o remount,hidepid=invisible /proc
+          {
+            echo "## S2 snapshot with hidepid=invisible (Linux)"
+            echo '```text'
+            target/release/s2-procid snapshot 3
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # Spike branch only: S3 warm runs on macOS and Windows, self-timed (no GNU time there).
+  s3-warm:
+    name: s3 warm (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+
+      - name: Build
+        run: cargo build --release --locked -p s3-walk
+
+      - name: Build the reference tree
+        shell: bash
+        env:
+          ENTRIES: ${{ inputs.entries }}
+        run: cargo xtask bench-tree "$RUNNER_TEMP/tree" --entries "$ENTRIES"
+
+      - name: Warm runs
+        shell: bash
+        env:
+          ENTRIES: ${{ inputs.entries }}
+        run: |
+          {
+            echo "## S3 warm, $ENTRIES entries (${{ matrix.os }}, $ImageOS $ImageVersion, $(nproc 2>/dev/null || echo "$NUMBER_OF_PROCESSORS") CPUs)"
+            echo '```text'
+            for variant in ignore dua rayon; do target/release/s3-walk "$variant" "$RUNNER_TEMP/tree" >/dev/null; done
+            for run in 1 2 3 4 5; do
+              for variant in ignore dua rayon; do
+                echo "$variant $(target/release/s3-walk "$variant" "$RUNNER_TEMP/tree")"
+              done
+            done
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
