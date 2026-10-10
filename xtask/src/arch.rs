@@ -259,6 +259,15 @@ mod tests {
     }
 
     #[test]
+    fn source_discovery_finds_every_crate_relative_to_the_workspace_root() {
+        let files = rust_sources(Path::new(crate::WORKSPACE_ROOT)).unwrap();
+        let has = |path: &str| files.iter().any(|f| f.path == Path::new(path));
+        assert!(has("crates/kipple-core/src/lib.rs"));
+        assert!(has("crates/kipple/src/main.rs"));
+        assert!(files.iter().any(|f| f.path.starts_with(PLATFORM_CRATE_DIR)));
+    }
+
+    #[test]
     fn target_os_inside_platform_passes() {
         let files = [source(
             "crates/kipple-platform/src/linux.rs",
