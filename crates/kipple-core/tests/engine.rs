@@ -518,11 +518,8 @@ fn the_report_is_sorted_and_keeps_what_a_crashed_integration_found_before_it_cra
 
     let report = run(&engine, &found());
 
-    let found: Vec<_> = report
-        .findings
-        .iter()
-        .map(|f| f.path.to_str().unwrap())
-        .collect();
+    // Compared as paths: on Windows the engine reports them with `\` separators.
+    let found: Vec<_> = report.findings.iter().map(|f| f.path.as_path()).collect();
     assert_eq!(
         found,
         [
@@ -534,6 +531,7 @@ fn the_report_is_sorted_and_keeps_what_a_crashed_integration_found_before_it_cra
             "/found/zeta/00001",
             "/found/zeta/00002",
         ]
+        .map(Path::new)
     );
     let ids: Vec<_> = report.integrations.iter().map(|i| i.id.0).collect();
     assert_eq!(ids, ["alpha", "crashes", "zeta"]);
