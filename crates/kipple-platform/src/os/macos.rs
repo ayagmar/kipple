@@ -175,7 +175,9 @@ fn region_vnode(raw_pid: c_int) -> io::Result<Option<Region>> {
                 .vip_path
                 .iter()
                 .flatten()
-                .map_while(|&c| u8::try_from(c).ok().filter(|&b| b != 0))
+                // `c_char` is signed here: reinterpret the byte, don't convert the value.
+                .map(|&c| c.to_ne_bytes()[0])
+                .take_while(|&b| b != 0)
                 .collect();
             return Ok(Some(Region {
                 path: PathBuf::from(OsStr::from_bytes(&bytes)),

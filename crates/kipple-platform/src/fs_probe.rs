@@ -1,6 +1,7 @@
 //! Read-only filesystem probes that never follow a link.
 
 use std::fs;
+use std::io;
 use std::path::Path;
 
 use kipple_core::{DirEntryMeta, EntryKind, EntryMeta, FsProbe, ProbeError};
@@ -22,7 +23,11 @@ impl FsProbe for NoFollowFs {
     }
 
     fn read_dir(&self, dir: &Path) -> Result<Vec<DirEntryMeta>, ProbeError> {
-        let read = || -> std::io::Result<Vec<DirEntryMeta>> {
+        let read = || -> io::Result<Vec<DirEntryMeta>> {
+            // `fs::read_dir` would list a link's target.
+            if !fs::symlink_metadata(dir)?.is_dir() {
+                return Err(io::ErrorKind::NotADirectory.into());
+            }
             fs::read_dir(dir)?
                 .map(|entry| {
                     let entry = entry?;

@@ -94,6 +94,7 @@ fn probes_report_a_link_as_a_link_and_never_what_it_points_to() {
     let item = temp.path().join("item");
 
     let meta = NoFollowFs.metadata(&item.join("dir-link")).unwrap();
+    let through_link = NoFollowFs.read_dir(&item.join("dir-link"));
     let mut listing: Vec<_> = NoFollowFs
         .read_dir(&item)
         .unwrap()
@@ -103,6 +104,10 @@ fn probes_report_a_link_as_a_link_and_never_what_it_points_to() {
     listing.sort_by(|a, b| a.0.cmp(&b.0));
 
     assert_eq!(meta.kind, EntryKind::Symlink);
+    assert!(
+        through_link.is_err(),
+        "listed a link's target: {through_link:?}"
+    );
     assert_eq!(
         listing,
         [

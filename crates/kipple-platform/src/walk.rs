@@ -56,7 +56,7 @@ impl Sizer for Walker {
 }
 
 /// Sizes the entries of `dir` and schedules each subdirectory on the same device as its
-/// own task. Once cancelled, no directory is read anymore.
+/// own task. Once cancelled, no entry is read and no directory is scheduled anymore.
 fn visit<'s>(
     scope: &rayon::Scope<'s>,
     dir: &Path,
@@ -75,6 +75,10 @@ fn visit<'s>(
         return;
     };
     for entry in entries {
+        if cancel.is_cancelled() {
+            tally.cancelled.store(true, Ordering::Relaxed);
+            break;
+        }
         let Ok((entry, meta)) = entry.and_then(|e| e.metadata().map(|meta| (e, meta))) else {
             counts.unreadable += 1;
             continue;
