@@ -1,0 +1,100 @@
+name: Bench
+
+# Benchmarks on a disposable runner VM (docs/11-delivery-plan.md, S3 procedure). Manual
+# only: it never runs on push or pull requests and is not part of the gate.
+on:
+  workflow_dispatch:
+    inputs:
+      entries:
+        description: Entries in the reference tree
+        type: choice
+        options: ["100000", "1000000"]
+        default: "100000"
+      runs:
+        description: Measured runs per command, cold and warm
+        type: number
+        default: 5
+      commands:
+        description: >-
+          Commands to measure, separated by ";", run from the workspace root after a release
+          build. Words are split on spaces and {tree} becomes the tree path.
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+
+      - name: Install strace and GNU time
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends strace time
+
+      - name: Build
+        run: cargo build --release --locked --workspace
+
+      - name: Build the reference tree
+        env:
+          ENTRIES: ${{ inputs.entries }}
+        run: cargo xtask bench-tree "$RUNNER_TEMP/tree" --entries "$ENTRIES"
+
+      - name: Describe the machine
+        run: |
+          {
+            echo "## Machine"
+            echo '```text'
+            echo "Runner image: $ImageOS $ImageVersion"
+            uname -srm
+            grep -m1 'model name' /proc/cpuinfo
+            echo "CPUs: $(nproc)"
+            free -h | head -n2
+            df -hT "$RUNNER_TEMP" | tail -n1
+            lsblk -d -o NAME,MODEL,ROTA,SIZE
+            strace -V | head -n1
+            /usr/bin/time --version
+            python3 --version
+            echo '```'
+          } >>"$GITHUB_STEP_SUMMARY"
+
+      - name: Cold runs
+        env:
+          ENTRIES: ${{ inputs.entries }}
+          RUNS: ${{ inputs.runs }}
+          COMMANDS: ${{ inputs.commands }}
+        run: |
+          IFS=';' read -ra commands <<<"$COMMANDS"
+          {
+            echo "## Cold, $ENTRIES entries, page cache dropped before every run"
+            python3 -I .github/scripts/bench.py cold "$RUNNER_TEMP/tree" "$RUNS" "${commands[@]}"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Warm runs
+        env:
+          ENTRIES: ${{ inputs.entries }}
+          RUNS: ${{ inputs.runs }}
+          COMMANDS: ${{ inputs.commands }}
+        run: |
+          IFS=';' read -ra commands <<<"$COMMANDS"
+          {
+            echo "## Warm, $ENTRIES entries"
+            python3 -I .github/scripts/bench.py warm "$RUNNER_TEMP/tree" "$RUNS" "${commands[@]}"
+          } | tee -a "$GITHUB_STEP_SUMMARY"

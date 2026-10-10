@@ -49,6 +49,10 @@ Each container gets a disposable `HOME` built by `cargo xtask demo-home`. The su
 
 What CI can't prove: native mutation safety on each advertised OS is a release gate (see [04-safety-model.md](04-safety-model.md) and [11-delivery-plan.md](11-delivery-plan.md)). The matrix above is where those integration fixtures run. Unit tests with fakes don't count toward it.
 
+### `bench.yml` (manual dispatch only)
+
+Benchmarks on a disposable `ubuntu-latest` runner VM, following the S3 procedure in [11-delivery-plan.md](11-delivery-plan.md). It never runs on push or pull requests, is not part of the gate and never blocks a merge. Inputs: the reference tree size (100000 or 1000000 entries), the number of runs, and the commands to measure, separated by `;`, with `{tree}` standing for the tree path. The job builds the workspace in release mode and the tree with `cargo xtask bench-tree`, writes a machine description, then runs `.github/scripts/bench.py` twice: cold, with the page cache dropped through `sudo` before every run, and warm, after one unmeasured run. It reports the median wall time, the median peak RSS (GNU time) and the warm syscall count (`strace -f -c`) to the job summary. The script also runs locally for warm numbers; without GNU time or strace those columns say n/a. Dispatch on a branch (`gh workflow run bench.yml --ref <branch> -f commands=...`) to measure code that is not on `main`.
+
 ### `pages.yml` (push to `main`, GitHub `release: published`; exists from M6)
 
 There is one Pages artifact with two parts, and every run rebuilds both, so neither part can overwrite the other:
