@@ -186,7 +186,7 @@ Built with ratatui. Design goals: a calm, dense view where you always know what 
 
 ### Where kipple keeps its own files
 
-Every frontend uses the same strategy (etcetera's app strategy; see D-015), so the CLI, TUI and a future GUI share config, grants and receipts. These are kipple's own directories only. Each integration resolves its tool's upstream locations separately.
+Every frontend uses the same directories (D-015, resolved by the platform since D-037), so the CLI, TUI and a future GUI share config, grants and receipts. These are kipple's own directories only. Each integration resolves its tool's upstream locations separately.
 
 | | Linux | macOS | Windows |
 | --- | --- | --- | --- |
@@ -194,7 +194,7 @@ Every frontend uses the same strategy (etcetera's app strategy; see D-015), so t
 | data (receipts, packs, grants) | `$XDG_DATA_HOME/kipple` (default `~/.local/share/kipple`) | `~/.local/share/kipple` | `%APPDATA%\kipple\data` |
 | cache | `$XDG_CACHE_HOME/kipple` (default `~/.cache/kipple`) | `~/.cache/kipple` | `%LOCALAPPDATA%\kipple\cache` |
 
-The exact Windows subpaths are confirmed against etcetera in M1 and this table is updated to match.
+On Windows, `%APPDATA%` and `%LOCALAPPDATA%` mean the `RoamingAppData` and `LocalAppData` Known Folders, read through the Known Folder API rather than the environment. A relative `XDG_*` value leaves the directory unknown, and `doctor` says so.
 
 Config file precedence: `--config FILE`, then `KIPPLE_CONFIG`, then `<config dir>/config.toml`. A missing config file is not an error, and the defaults below apply. An invalid one exits with code 2 and a line and column.
 

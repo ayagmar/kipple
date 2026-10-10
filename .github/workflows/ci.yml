@@ -39,6 +39,33 @@ jobs:
       - name: Run the gate
         run: cargo xtask check --skip deny
 
+  native:
+    name: native (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@861a07ce7084f55488e375df125cdc99bba60eb7 # v2.87.23
+        with:
+          tool: cargo-nextest@0.9.146
+
+      # The runner VM is disposable, so the native-backend tests may read its real state.
+      - name: Run the native-backend tests
+        run: cargo xtask test-native
+        env:
+          KIPPLE_TEST_DISPOSABLE_HOST: "1"
+
   deny:
     runs-on: ubuntu-latest
     steps:

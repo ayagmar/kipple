@@ -42,6 +42,9 @@ enum Task {
         #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
         entries: u64,
     },
+    /// Run the native-backend tests (the `native` nextest profile). They read real OS
+    /// state, so they refuse to run unless `KIPPLE_TEST_DISPOSABLE_HOST=1`.
+    TestNative,
     /// Regenerate the CLI reference.
     GenDocs {
         /// Fail if the committed reference differs from a fresh generation.
@@ -57,6 +60,11 @@ fn main() -> Result<()> {
         Task::Fix => check::fix(root),
         Task::CheckArch => arch::run(root),
         Task::BenchTree { dir, entries } => bench_tree::run(&dir, entries),
+        Task::TestNative => {
+            let disposable =
+                std::env::var_os("KIPPLE_TEST_DISPOSABLE_HOST").is_some_and(|v| v == "1");
+            check::test_native(root, disposable)
+        }
         Task::GenDocs { check } => gen_docs::run(root, check),
     }
 }

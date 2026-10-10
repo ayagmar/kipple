@@ -1,6 +1,6 @@
 # kipple — CI and Release Plan
 
-Status: the M0 parts are built: the `check` matrix and `deny` job in `ci.yml`, Dependabot, and the `xtask` commands `check`, `fix`, `check-arch` and `gen-docs`. Everything else is planned. Items marked **M-later** are out of scope for the first public release.
+Status: the M0 parts are built: the `check` matrix and `deny` job in `ci.yml`, Dependabot, and the `xtask` commands `check`, `fix`, `check-arch` and `gen-docs`. M1 added the `native` matrix and `cargo xtask test-native`. Everything else is planned. Items marked **M-later** are out of scope for the first public release.
 
 ## 1. One gate, local and CI
 
@@ -28,7 +28,7 @@ concurrency:
 
 | Job | Runner | What |
 | --- | --- | --- |
-| `check` | `ubuntu-latest`, `macos-latest`, `windows-latest` | `cargo xtask check --skip deny` natively. Platform integration tests (trash backend, known-dir resolution, confinement, process probes) run here against disposable temp roots |
+| `check` | `ubuntu-latest`, `macos-latest`, `windows-latest` | `cargo xtask check --skip deny` natively. Platform tests that need only disposable temp roots run here: the walker, no-follow probes, root resolution from an injected environment and the runner, and from M3 the trash backend and confinement |
 | `distro` | `ubuntu-latest` + containers | Builds the static musl binary once, then runs the discovery and platform smoke suite inside each distro container (see below) |
 | `native` | `ubuntu-latest`, `macos-latest`, `windows-latest` | `cargo xtask test-native` (the `native` nextest profile) on the disposable runner VM, with `KIPPLE_TEST_DISPOSABLE_HOST=1`. Exists from M1 (probes) and grows in M3 (executor, trash) |
 | `deny` | `ubuntu-latest` | `cargo deny check` (advisories, licenses, bans, sources) |

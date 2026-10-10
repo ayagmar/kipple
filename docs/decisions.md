@@ -20,7 +20,7 @@ Each entry gives the decision, the reason and the date. Dependencies are recorde
 | D-012 | 2026-10-08 | `--json` is one envelope. `--events jsonl` is a stream with sequence numbers. | Simple consumers shouldn't need a streaming parser. |
 | D-013 | 2026-10-08 | Core is synchronous over bounded worker threads. No async runtime in the library crates. | Filesystem work blocks anyway. This keeps the API simple for a GUI. |
 | D-014 | 2026-10-08 | Directory walking uses `ignore`'s parallel walker (provisional, with every ignore/hidden filter disabled; see 05 §3). `jwalk` is rejected. Spike S3 confirms it against `dua-core` and plain `read_dir`. | jwalk is archived and unmaintained. dua-core is promising but only weeks old. **Superseded by D-036 (2026-10-10).** |
-| D-015 | 2026-10-08 | kipple's own dirs come from `etcetera`'s app strategy (XDG on Linux and macOS, Known Folders on Windows), for every frontend including a GUI. | This matches what CLI users expect on macOS, and CLI and GUI must share config, grants and receipts. |
+| D-015 | 2026-10-08 | kipple's own dirs come from `etcetera`'s app strategy (XDG on Linux and macOS, Known Folders on Windows), for every frontend including a GUI. **The layout stands; the library was dropped by D-037 (2026-10-10).** | This matches what CLI users expect on macOS, and CLI and GUI must share config, grants and receipts. |
 | D-016 | 2026-10-08 | `cargo xtask` is the task runner. No just or make. | `just` and `make` recipes run in a shell and break on Windows without `sh`. An xtask runs the same on all three OSes. See 10-ci-and-release.md §1. |
 | D-017 | 2026-10-08 | Release with release-plz (lockstep versions, changelog, a single `vX.Y.Z` tag on `kipple`) plus dist (build, installers, checksums, attestations, SBOM). No crates.io publishing in v0.1. No self-updater. | Both are maintained, and they cover the pipeline without custom scripts. Publishing only from the tag keeps every upload behind the gate. |
 | D-018 | 2026-10-08 | One document format, the pack, for built-in and third-party rules. A normative schema (06 §3). Fixtures built in test code, not in a new file format. | One contract to validate and document. No accidental DSLs. |
@@ -43,6 +43,10 @@ Each entry gives the decision, the reason and the date. Dependencies are recorde
 | D-035 | 2026-10-10 | Running-executable identity (spike S2) comes from direct OS APIs in `kipple-platform`, not `sysinfo`. Linux: `readlink` and `stat` on `/proc/<pid>/exe` (std only), giving device, inode and link count of the file actually running. macOS: `proc_listallpids` and `proc_pidpath` for the path; the identity (device, inode, link count) is the vnode behind the process's first file-backed region, via `proc_pidinfo(PROC_PIDREGIONPATHINFO)` (`libc`), and it counts only when that region's path is the path `proc_pidpath` returns. Windows: `K32EnumProcesses`, `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)`, `QueryFullProcessImageNameW`, then volume serial and file index of the image file (`windows-sys`). Every PID gets an explicit outcome: identified, path only, denied, exited, gone, no executable, or other error. Only exited and gone mean "not running", and gone needs positive evidence (`ESRCH`, or the PID's `/proc` entry missing). Path only, denied and other error are unknown. A `/proc` mounted with `hidepid` or `subset` makes the whole inventory partial. | `sysinfo` 0.39.6 returns `exe() == None` for a permission error, a zombie and a kernel thread alike (159 of 166 processes on the Linux runner were denied), strips the kernel's ` (deleted)` marker so a binary replaced in place reports the new file at that path, gives no file identity, and lists threads as processes unless told not to. `stat` on a reported path gives the new file's identity after an in-place replacement on Linux and macOS. The direct probes identified that case on all three OSes, stayed unknown where they could not confirm an identity, and took under 17 ms per snapshot. Evidence in §4.1. |
 | D-036 | 2026-10-10 | Directory walking and sizing (spike S3) use kipple's own walker in `kipple-platform`: std `read_dir`, metadata from each `DirEntry` (no-follow), and one task per directory on a bounded `rayon` pool. The walker itself never reads ignore files or git config, never skips hidden entries, never follows links, stays on the root's file system, honours the selector's `max_depth`, and prunes artifacts and exclusions before descending. `ignore` and `dua-core` are not used. Supersedes D-014. **Accepted exception:** on macOS at 1M entries it is 17% behind `dua-core`, outside the S3 acceptance rule; the founder kept the walker on 2026-10-10. If macOS misses a scan budget, the platform walker can read bulk metadata (`getattrlistbulk`) itself. | Warm, it was fastest on Linux (1M: 1226 ms; `ignore` 1800, `dua-core` 2220) and Windows (1M: 2334 ms; 3960 and 3853), and cold on Linux (1M: 9949 ms; 10540 and 10643). On Linux and Windows `ignore` came within 10% only in cold runs, and was 44–77% slower warm. It `lstat`s every entry and `stat`s every directory by full path, while std on Linux (glibc) and macOS stats relative to the open directory. On macOS the walker was fastest at 100k and 17% behind `dua-core`'s bulk metadata at 1M. Owning the walker also leaves room for the handle-relative probes of spike S1. Evidence in §4.2. |
 
+| D-037 | 2026-10-10 | kipple's own directories come from the platform's root resolver, not `etcetera`, keeping the D-015 layout: `kipple` under `$XDG_CONFIG_HOME`, `$XDG_DATA_HOME` and `$XDG_CACHE_HOME` on Linux and macOS (defaults under `$HOME`), and `kipple\config`, `kipple\data` under the `RoamingAppData` Known Folder and `kipple\cache` under `LocalAppData` on Windows, read through `SHGetKnownFolderPath`. A relative `XDG_*` value leaves the directory unknown. | `etcetera` 0.11.0 reads the process environment itself, which bypasses the one snapshot the composition root takes (05 §1) and the injected roots tests depend on (08 §5). It also silently ignores a relative `XDG_*` value and uses the default, where 05 §1 requires unknown, and it can't say where a directory came from, which `doctor` reports. The platform resolves the same roots, with their sources, for discovery anyway. |
+| D-038 | 2026-10-10 | The platform runner is the one `Command::new` in kipple's crates. It starts a native command with no stdin and an empty environment plus `LC_ALL=C` (and `SystemRoot` on Windows), keeps at most 64 KiB of each output stream, and **kills the child it started** if the child misses its deadline. So far it runs only `--version` probes for `git`, `paccache` and `journalctl`, with a 2 s deadline, found on absolute `PATH` entries only. | A deadline that can't stop the child bounds nothing: a hung probe would hang `doctor`. "No process control" (04 §3.8) is about processes kipple didn't start, and now says so. A version probe needs no user environment, and a fixed one keeps its output parseable. |
+| D-039 | 2026-10-10 | Native-backend tests live in test targets named `native` and run only in the `native` nextest profile (`.config/nextest.toml`; the default profile excludes them), through `cargo xtask test-native`, which refuses to run unless `KIPPLE_TEST_DISPOSABLE_HOST=1`. CI's `native` job runs them on all three OSes. | 08 §5: the process table and the Windows Known Folders are real OS state that a test can't redirect, so their tests must only run on disposable hosts. |
+
 ## 2. Dependencies and tools in use
 
 Rule: newest stable release that is at least 7 days old. Verified 2026-10-10 (M0, and again for the M1 crates) against the crates.io API and the GitHub releases API.
@@ -54,9 +58,12 @@ Rule: newest stable release that is at least 7 days old. Verified 2026-10-10 (M0
 | anyhow | 1.0.104 | 2026-07-18 | `xtask` only | error context in the dev tool (08 §4) |
 | serde (derive) | 1.0.229 | 2026-07-18 | `xtask` | typed `cargo metadata` for `check-arch` |
 | serde_json | 1.0.151 | 2026-07-20 | `xtask` | parsing `cargo metadata` |
-| tempfile | 3.27.0 | 2026-03-11 | `xtask` (dev) | disposable directories for the `bench-tree` tests, removed on drop. Added 2026-10-10 (M1) |
+| tempfile | 3.27.0 | 2026-03-11 | `xtask`, `kipple-platform` (dev) | disposable directories for the `bench-tree` and platform tests, removed on drop. Added 2026-10-10 (M1) |
 | thiserror | 2.0.21 | 2026-09-23 | `kipple-core` | structured error enums that keep the upstream error (08 §4). Added 2026-10-10 (M1) |
 | crossbeam-channel | 0.5.17 | 2026-09-05 | `kipple-core` | the bounded event stream (05 §2). A producer must wait on a full stream yet still notice a cancel, and std's `SyncSender::send_timeout` is unstable in Rust 1.99. Added 2026-10-10 (M1) |
+| rayon | 1.12.0 | 2026-04-14 | `kipple-platform` | the walker's bounded thread pool (D-036). Its `either` dependency is held at 1.18.0 (2026-08-20) in `Cargo.lock`: 1.19.0 was published on 2026-10-06. Added 2026-10-10 (M1) |
+| libc | 0.2.190 | 2026-10-02 | `kipple-platform`, macOS only | `proc_listallpids`, `proc_pidpath` and `proc_pidinfo` (D-035). The 1.0.0 releases are still alphas. Added 2026-10-10 (M1) |
+| windows-sys | 0.61.2 | 2025-10-06 | `kipple-platform`, Windows only | process identity and file identity (D-035), Known Folders (D-037). Added 2026-10-10 (M1) |
 | syn (transitive) | 3.0.6 | 2026-09-16 | via clap_derive, serde_derive | held at 3.0.6 in `Cargo.lock`: 3.0.7 was published on 2026-10-10 |
 
 Every other crate in `Cargo.lock` is the newest stable release its dependents allow, and at least 7 days old on 2026-10-10.
@@ -71,16 +78,13 @@ Every other crate in `Cargo.lock` is the newest stable release its dependents al
 | `taiki-e/install-action` | v2.87.23 (`861a07ce7084f55488e375df125cdc99bba60eb7`) | 2026-10-03 | `ci.yml` (Dependabot #1, merged 2026-10-10; v2.87.24 is from 2026-10-04 and was under 7 days old) |
 | strace, GNU time, Python 3 | 6.8 (`6.8-0ubuntu2`), 1.9 (`1.9-0.2build1`, prints `UNKNOWN`), 3.12.3 | Ubuntu 24.04 release pocket; Python from runner image `ubuntu24/20261004.327` | `bench.yml` and `.github/scripts/bench.py`. **Exception to the newest-stable rule:** these come from the runner's Ubuntu archive and are not pinned, because they only measure, are never shipped and never gate. Each run logs the versions in its machine description |
 
-Spike-only crates, used on the `spike/m1-s2-s3` branch for S2 and S3 and not a dependency of any crate on `main` (`libc` and `windows-sys` are in `main`'s `Cargo.lock` only through `tempfile`). Verified 2026-10-10:
+Spike-only crates, used on the `spike/m1-s2-s3` branch for S2 and S3 and not a dependency of any crate on `main`. The spikes also used `libc`, `windows-sys` and `rayon` at the versions above. Verified 2026-10-10:
 
 | Crate | Version | Published | Spike |
 | --- | --- | --- | --- |
 | sysinfo | 0.39.6 | 2026-07-09 | S2, compared against the direct probes |
-| libc | 0.2.190 | 2026-10-02 | S2, macOS probes |
-| windows-sys | 0.61.2 | 2025-10-06 | S2, Windows probes |
 | ignore | 0.4.33 | 2026-08-04 | S3 variant |
 | dua-core | 4.1.0 | 2026-09-12 | S3 variant |
-| rayon | 1.12.0 | 2026-04-14 | S3 variant (its `either` dependency held at 1.18.0: 1.19.0 is from 2026-10-06) |
 
 ## 3. Candidate dependencies (verified 2026-10-08, not yet added)
 
@@ -97,11 +101,7 @@ Rule: newest stable release that is at least 7 days old. Recheck each one when i
 | schemars | 1.2.2 | 2026-07-27 | JSON Schemas for `--json` and rules | |
 | cap-std / cap-fs-ext | 4.0.3 | 2026-08-20 | confined executor (spike S1) | **>= 4.0.3 required**: [GHSA-hp8f-xmx4-4qrg](https://github.com/sunfishcode/cap-std/security/advisories/GHSA-hp8f-xmx4-4qrg) (published 2026-08-20), `manually::open` follows symlinks through a trailing slash. Also GHSA-hxf5-99xg-86hw (Windows device names, fixed in 3.4.1) |
 | rustix | 1.1.5 | 2026-09-16 | Unix syscalls not covered by cap-std | |
-| windows-sys | 0.61.2 | 2025-10-06 | Windows file IDs, process identity | D-035 |
 | trash | 5.2.9 | 2026-09-13 | OS trash | list/restore only on Windows and freedesktop, **not macOS** (see Q4) |
-| rayon | 1.12.0 | 2026-04-14 | walking and sizing pool | D-036 |
-| libc | 0.2.190 | 2026-10-02 | macOS process probes (`proc_pidpath`, `proc_pidinfo`) | D-035; verified 2026-10-10 |
-| etcetera | 0.11.0 | 2025-10-28 | platform dirs | |
 | semver | 1.0.28 | 2026-04-04 | release ordering | |
 | jiff | 0.2.37 | 2026-09-12 | timestamps | |
 | ulid | 3.0.0 | 2026-07-16 | receipt and plan IDs (sortable) | |
@@ -170,3 +170,4 @@ macOS and Windows runners, warm (ms, peak RSS in MiB on macOS):
 The macOS runner is noisy. Its 1M samples spread by up to 38% within one variant, for example 10299 to 14234 ms for `ignore`.
 
 Why `ignore` is slower: with `follow_links(false)` it `lstat`s every entry by full path, and `same_file_system(true)` adds a full-path `stat` of every directory. std's `DirEntry::metadata` uses `statx`/`fstatat` relative to the open directory on Linux (glibc) and macOS. Linux musl builds fall back to a full-path `lstat` in std. `dua-core` reads native bulk metadata on macOS (`getattrlistbulk`), which is why it leads there at 1M.
+

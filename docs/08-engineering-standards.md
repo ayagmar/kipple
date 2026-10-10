@@ -1,6 +1,6 @@
 # Engineering standards
 
-Status: the M0 steps (1–9) and §2–§3 are in place and enforced. Later steps are planned.
+Status: the M0 steps (1–9) and §2–§3 are in place and enforced. The `native` nextest profile and `cargo xtask test-native` (§5) exist since M1. Later steps are planned.
 
 ## 1. One gate
 
@@ -109,7 +109,7 @@ Test cases come from the spec, not from the implementation. The required failure
 **Isolation.** Tests never read or write the real `$HOME`, real tool stores, the user's trash, the external network, or the user's git config and hooks. The one network exception is a separately marked integration test that talks to a disposable loopback HTTPS server, trusting a test-only CA in that client only. Setting environment variables alone is not enough:
 - **Roots are injected.** Platform root resolution (XDG, Known Folders, `~/Library`) sits behind a port, and ordinary tests pass fixture roots directly. No test depends on `APPDATA` redirection changing what Windows Known Folder APIs return.
 - **Git** runs with an empty, disposable config file (`GIT_CONFIG_GLOBAL=<tempdir>/gitconfig`, `GIT_CONFIG_NOSYSTEM=1`, `core.hooksPath` set to an empty temp dir), on fixture repos created inside the test.
-- **Native backends** (OS trash on macOS and Windows, Known Folders, process probes) touch real OS state that can't be redirected. They live in a separate nextest profile, `native`, which the default profile excludes. They run only on disposable hosts: CI's GitHub runner VMs, or a local throwaway VM or OS account. Locally, `cargo xtask test-native` refuses to run unless `KIPPLE_TEST_DISPOSABLE_HOST=1` is set, and the docs say to set it only inside such a VM. On Linux, the freedesktop trash tests use a disposable `XDG_DATA_HOME` and run in the default profile.
+- **Native backends** (OS trash on macOS and Windows, Known Folders, process probes) touch real OS state that can't be redirected. They live in test targets named `native`, which only the `native` nextest profile in `.config/nextest.toml` runs; the default profile excludes them. They run only on disposable hosts: CI's GitHub runner VMs, or a local throwaway VM or OS account. Locally, `cargo xtask test-native` refuses to run unless `KIPPLE_TEST_DISPOSABLE_HOST=1` is set, and the docs say to set it only inside such a VM. On Linux, the freedesktop trash tests use a disposable `XDG_DATA_HOME` and run in the default profile.
 - **Sentinels.** Native and end-to-end tests place sentinel files only inside their disposable boundary (the temp root, or the disposable host's home). They assert that only the planned targets changed.
 - Time comes from an injected `Clock`.
 

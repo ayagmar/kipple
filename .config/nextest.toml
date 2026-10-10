@@ -1,0 +1,9 @@
+# Native-backend tests touch real OS state that can't be redirected (the process table,
+# Known Folders). They run only in the `native` profile, on disposable hosts, through
+# `cargo xtask test-native` (docs/08-engineering-standards.md §5).
+
+[profile.default]
+default-filter = "not binary(native)"
+
+[profile.native]
+default-filter = "binary(native)"

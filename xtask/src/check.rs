@@ -3,7 +3,7 @@
 use std::io::{self, Write as _};
 use std::path::Path;
 
-use anyhow::Result;
+use anyhow::{Result, bail};
 use clap::ValueEnum;
 
 use crate::{arch, cmd, gen_docs};
@@ -110,6 +110,25 @@ pub(crate) fn run(root: &Path, skip: &[Skip]) -> Result<()> {
     announce("generated docs")?;
     gen_docs::run(root, true)?;
     announce("all checks passed")
+}
+
+/// Runs the `native` nextest profile, which reads real OS state (the process table,
+/// Known Folders). Only on a disposable host: a CI runner or a throwaway VM.
+pub(crate) fn test_native(root: &Path, disposable_host: bool) -> Result<()> {
+    if !disposable_host {
+        bail!(
+            "the native tests read real OS state; run them only on a disposable host \
+             (a CI runner or a throwaway VM) with KIPPLE_TEST_DISPOSABLE_HOST=1"
+        );
+    }
+    cmd::run(cmd::command("cargo", root).args([
+        "nextest",
+        "run",
+        "--workspace",
+        "--locked",
+        "--profile",
+        "native",
+    ]))
 }
 
 /// Applies clippy's machine-applicable fixes, then formats.

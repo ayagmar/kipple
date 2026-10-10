@@ -1,6 +1,6 @@
 # Architecture
 
-Status: planned. The Rust below sketches shapes. It has not been compiled, and the signatures are not frozen.
+Status: partly built. The core ports, `Engine::scan` and its events (§2), and the platform's root resolution, probes, walker and capability probes (§1, §3) exist since M1. The Rust in §2 shows the signatures as they are, and items marked *planned* are sketches that have not been compiled. Nothing is frozen yet.
 
 ## 1. Workspace
 
@@ -41,50 +41,62 @@ These boundaries are enforced by Cargo itself (no dependency means no access) pl
 
 **Upstream configuration first.** Each integration resolves its tool's roots using that tool's documented precedence: `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, Pi's `--session-dir` / `PI_CODING_AGENT_SESSION_DIR` / `sessionDir` setting, and so on. Defaults come second. The composition root captures one environment snapshot and passes it through `ScanContext`. An explicit override that is malformed or unsupported makes the integration report unknown; it never falls back silently to the default. kipple can't see the flags another process was started with, so integrations report which sources they used, and `doctor` says that discovery may be incomplete. Users can add extra roots in config.
 
-`#[cfg(target_os)]` appears only in `kipple-platform/src/{linux,macos,windows,unix}.rs` and its `mod.rs`. Core and adapters are platform-neutral. Integrations ask the platform for symbolic roots (`Root::XdgCache`, `Root::KnownFolder(LocalAppData)`, `Root::Tool(Codex)`), never for hard-coded paths.
+`#[cfg(target_os)]` appears only in `kipple-platform`: its `src/os.rs` picks one of `src/os/{linux,macos,windows}.rs` (`src/os/unix.rs` holds what Linux and macOS share), and a few platform tests are gated to one OS. Core and adapters are platform-neutral. Integrations ask the platform for symbolic roots (`SymbolicRoot::XdgCache`, `SymbolicRoot::LocalAppData`, and tool roots such as Codex's later), never for hard-coded paths.
+
+**Roots today.** `resolve_roots` turns one environment snapshot into every symbolic root the OS has, each with its source: `home` from `HOME` and the XDG roots from their variables or their `$HOME` defaults on Linux and macOS, `macos.caches` (`~/Library/Caches`), and on Windows `home`, `known.local-app-data` and `known.roaming-app-data` from the Known Folder API. A relative `XDG_*` value leaves its root unknown. kipple's own directories hang off the same roots (D-037).
+
+**Capabilities today.** `probe_tools` finds `git`, `paccache` and `journalctl` on the absolute entries of `PATH` and runs `--version` through the platform runner (D-038). A tool counts only with a parsed version. Which versions an integration supports is decided with that integration.
 
 ## 2. Core contracts
 
 ### Ports (implemented by `kipple-platform`, faked in tests)
 
 ```rust
-pub trait FsProbe: Send + Sync {          // read-only, no-follow
-    fn open_root(&self, root: &ResolvedRoot) -> Result<RootHandle, ProbeError>;
-    fn read_dir(&self, dir: &DirHandle) -> Result<DirEntries, ProbeError>;
-    fn metadata(&self, at: &EntryRef) -> Result<EntryMeta, ProbeError>;  // identity, sizes, mtime, kind
+pub trait FsProbe: Debug + Send + Sync {   // read-only, no-follow
+    fn metadata(&self, path: &Path) -> Result<EntryMeta, ProbeError>;          // kind, identity
+    fn read_dir(&self, dir: &Path) -> Result<Vec<DirEntryMeta>, ProbeError>;   // all or nothing
 }
 
-pub trait ProcessProbe: Send + Sync {
-    fn snapshot(&self) -> Result<ProcessSnapshot, ProbeError>;          // exe identities, cwd where cheap
+pub trait Sizer: Debug + Send + Sync {     // the walker (D-036)
+    fn size(&self, path: &Path, cancel: &CancelToken) -> Result<SpaceEstimate, ProbeError>;
 }
 
-pub trait Executor: Send + Sync {          // the only mutation boundary
+pub trait ProcessProbe: Debug + Send + Sync {
+    fn snapshot(&self) -> Result<ProcessSnapshot, ProbeError>;  // one outcome per process (D-035)
+}
+
+// planned, with their first consumers:
+pub trait Executor: Send + Sync {          // the only mutation boundary (M3)
     fn execute(&self, op: &AuthorizedOp, journal: &mut dyn Journal) -> ItemOutcome;
 }
 
-pub trait Clock: Send + Sync { fn now(&self) -> Timestamp; }
+pub trait Clock: Send + Sync { fn now(&self) -> Timestamp; }   // with `modified_age` (rules)
 ```
+
+The probes are path-based. Spike S1 decides whether read-only probes become handle-relative like the executor.
 
 `AuthorizedOp` has private constructors. Only the engine's policy code can build one, from a validated plan entry and a user authorization. Integrations never see `Executor`.
 
 ### Integrations (implemented in `kipple-adapters`)
 
 ```rust
-pub trait Integration: Send + Sync {
-    fn descriptor(&self) -> IntegrationDescriptor;   // id, tools, OS support, supported upstream versions
-    fn discover(&self, cx: &ScanContext<'_>, sink: &mut dyn FindingSink) -> Result<Summary, IntegrationError>;
-    fn facts(&self, cx: &ScanContext<'_>, finding: &Finding) -> Result<FactSet, IntegrationError>;
-    fn propose(&self, finding: &Finding, facts: &FactSet) -> Vec<ProposedOp>;  // data only
+pub trait Integration: Debug + Send + Sync {
+    fn descriptor(&self) -> IntegrationDescriptor;   // id and the symbolic roots it reads
+    fn discover(&self, cx: &ScanContext<'_>, sink: &mut FindingSink<'_>) -> Result<(), IntegrationError>;
+    // planned: tools, OS support and upstream versions in the descriptor, and
+    // fn facts(&self, cx: &ScanContext<'_>, finding: &Finding) -> Result<FactSet, IntegrationError>;
+    // fn propose(&self, finding: &Finding, facts: &FactSet) -> Vec<ProposedOp>;  // data only
 }
 ```
 
-`ScanContext` exposes the read-only probes, the resolved roots the integration may read, cancellation, and the clock. Rules (TOML) are evaluated by the core against an integration's published selectors and facts. See [06-adapters-and-rules.md](06-adapters-and-rules.md).
+The engine opens each declared root without following links before `discover` runs. A root that doesn't exist is simply absent. One that is unresolved, unreadable or not a directory becomes an omission and is not handed to the integration. `ScanContext` exposes the roots that opened, read-only probes confined to them (a path outside every root, or with a `..` component, is refused), and cancellation. `FindingSink::add` streams each finding as `FindingAdded` and fails once the scan stops, so the integration returns early. Rules (TOML) are evaluated by the core against an integration's published selectors and facts. See [06-adapters-and-rules.md](06-adapters-and-rules.md).
 
 ### Engine API (what every frontend calls)
 
 ```rust
 impl Engine {
-    pub fn scan(&self, req: ScanRequest, events: &EventTx, cancel: &CancelToken) -> ScanReport;
+    pub fn scan(&self, req: &ScanRequest, events: &EventTx, cancel: &CancelToken) -> ScanReport;
+    // planned:
     pub fn plan(&self, report: &ScanReport, sel: Selection, method: MethodChoice) -> Result<Plan, PlanError>;
     pub fn apply(&self, plan: &Plan, auth: Authorization, events: &EventTx, cancel: &CancelToken) -> Receipt;
     pub fn restore(&self, receipt: &ReceiptId, items: ItemSelection, events: &EventTx, cancel: &CancelToken) -> RestoreReceipt;
@@ -92,13 +104,13 @@ impl Engine {
 }
 ```
 
-These calls are synchronous and blocking, run on worker threads, and report through a bounded event channel. There is no async runtime in core. Filesystem work is blocking, and a bounded thread pool is enough. Async may appear later in the binary for pack downloads only.
+These calls are synchronous and blocking, run on worker threads, and report through a bounded event channel. `scan` runs every integration on its own thread, then sizes each integration's findings through the `Sizer`. There is no async runtime in core. Filesystem work is blocking, and a bounded thread pool is enough. Async may appear later in the binary for pack downloads only.
 
 ### Key types
 
-- **IDs:** `IntegrationId`, `RuleId`, `PackId`, `FindingId`, `PlanId`, `ReceiptId`, all distinct newtypes. IDs are references, never authorization.
-- **`Finding`:** ID, owner (integration, rule, pack and version), category, `PathRef` (lossless OS path plus escaped display), `SpaceEstimate`, evidence, loss and recovery description, eligibility with reasons, allowed methods, advice.
-- **`SpaceEstimate`:** apparent, allocated, unique-reclaim estimate, completeness.
+- **IDs:** `IntegrationId` and `FindingId` exist; `RuleId`, `PackId`, `PlanId` and `ReceiptId` are planned. All are distinct newtypes. IDs are references, never authorization. A `FindingId` is unique within one scan.
+- **`Finding`:** today its ID, integration, path and size. Planned: owner (integration, rule, pack and version), category, `PathRef` (lossless OS path plus escaped display), `SpaceEstimate`, evidence, loss and recovery description, eligibility with reasons, allowed methods, advice.
+- **`SpaceEstimate`:** apparent, allocated, unique-reclaim estimate, completeness (`Complete`, `Incomplete { unreadable }` or `Cancelled`). A hard-linked file counts once, and one with a link outside the item is left out of the unique-reclaim estimate. Windows reports neither allocation nor link counts cheaply, so there the last two are unknown.
 - **`Plan`:** schema version, creation time, entries (target identities and fingerprints, method, operation), policy, exclusion and pack digests, and a review DTO for display. Imported plan files are untrusted input: they are re-planned and revalidated, never executed as written.
 - **`Receipt`:** per-item `Done | Skipped(Reason) | Failed(ErrorDetail) | Cancelled | Indeterminate`, method, recovery handle where one exists, estimated bytes, and an optional observed free-space change.
 - **Errors:** `thiserror` enums with structured codes and context (integration, item, OS error or tool exit code and stderr). Upstream detail is preserved in the error value and shown to the user. Only structured fields are persisted (04 §8a). Strings never become the public API.
@@ -106,24 +118,24 @@ These calls are synchronous and blocking, run on worker threads, and report thro
 ### Events
 
 ```text
-ScanStarted, RootOpened, FindingAdded, FindingUpdated(size), IntegrationProgress,
-IntegrationCompleted{omissions}, ScanCompleted,
-PlanReady, ItemStarted, ItemCompleted(outcome), ApplyCompleted
+ScanStarted, RootOpened, FindingAdded, FindingUpdated(size),
+IntegrationCompleted{omissions}, ScanCompleted
+planned: IntegrationProgress, PlanReady, ItemStarted, ItemCompleted(outcome), ApplyCompleted
 ```
 
 - **Bounded and cancellation-aware.** Producers send with a short timeout in a loop that checks the cancel token, so a stalled consumer can never stop cancellation from being acknowledged. Progress events may be coalesced. Findings and outcomes are never dropped. They wait, and the scan slows down rather than losing data.
 - **Consumer gone.** If the receiver is dropped, the engine treats it as cancellation: no new work is scheduled, and the call returns its partial report or receipt.
 - **Broken pipe.** In the CLI, a closed stdout (`kipple scan --events jsonl | head`) counts as cancellation. It exits with 130 and prints nothing more to stderr. A final JSONL record is promised only while stdout stays writable.
-- **Ordering.** Event sequence numbers follow emission order. Only the final `ScanReport` and `--json` output are sorted deterministically. The stream is not.
+- **Ordering.** Event sequence numbers follow emission order: the receiving end numbers events from 0 as they arrive. Only the final `ScanReport` and `--json` output are sorted deterministically. The stream is not.
 - **Cancellation budget.** "Within 100 ms" means scheduling stops and the cancel is acknowledged, under local I/O that we control. It doesn't cover an OS call that is already blocked and can't be interrupted (for example a hung network mount).
-- Tests cover a full queue with a stalled consumer, a dropped consumer and cancellation during sizing.
+- Tests cover a full queue with a stalled consumer, a slow consumer that still gets every finding, a dropped consumer and cancellation during sizing.
 
 ## 3. Performance design
 
 - **Targeted first.** Known integration roots are probed directly: a handful of `stat` and `read_dir` calls each. The first findings appear in under 250 ms.
 - **One walk per root.** A shared discovery pass walks each project root once and hands directory metadata to every interested integration. Integrations don't each crawl the same tree.
-- **Walker** (our own, in `kipple-platform`; spike S3, D-036). std `read_dir`, with metadata taken from each `DirEntry` without following links, and one task per directory on the bounded `rayon` pool. It reads no ignore file or git config and skips nothing hidden. It never follows symlinks or junctions, stays on the root's file system, honours an explicit `max_depth` from the selector, and prunes candidate artifacts and user exclusions before descending. Fixtures cover gitignored `target/` and `node_modules`, hidden `.venv`, and `.claude/worktrees`.
-- **Bounded parallelism.** Size computation runs on a work-stealing pool sized to the storage, not unbounded. It can be cancelled at directory granularity.
+- **Walker** (our own, in `kipple-platform`; spike S3, D-036). std `read_dir`, with metadata taken from each `DirEntry` without following links, and one task per directory on the bounded `rayon` pool. It reads no ignore file or git config and skips nothing hidden. It never follows symlinks or junctions and stays on the root's file system. Today it sizes findings. With the selectors it will also honour an explicit `max_depth` and prune candidate artifacts and user exclusions before descending. Fixtures cover gitignored `target/` and `node_modules`, hidden `.venv`, and `.claude/worktrees`.
+- **Bounded parallelism.** Size computation runs on a work-stealing pool, not unbounded: one thread per CPU today, to be tuned to the storage. It can be cancelled at directory granularity.
 - **Prune early.** Discovery skips into a recognised artifact directory only for sizing, never to look for nested projects inside `node_modules` or `target`.
 - **TUI decoupling.** The UI thread renders from a snapshot model updated by events at most once per frame (60 Hz cap). Large leaf sets are frozen inside the engine, not kept as UI rows.
 - **Optional scan cache.** Directory identity plus mtime keyed sizes in the cache dir. It is only a hint, and a cold scan must still meet the budgets.
