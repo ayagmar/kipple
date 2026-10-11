@@ -31,11 +31,11 @@ pub(crate) fn env_name_matches(key: &OsStr, name: &str) -> bool {
 /// The home root, from `HOME`.
 pub(crate) fn home(env: &Environment) -> Result<ResolvedRoot, UnresolvedRoot> {
     let path = absolute(env, "HOME")?.ok_or(UnresolvedRoot::NotSet { var: "HOME" })?;
-    Ok(ResolvedRoot {
-        root: SymbolicRoot::Home,
+    Ok(ResolvedRoot::new(
+        SymbolicRoot::Home,
         path,
-        source: RootSource::Env("HOME"),
-    })
+        RootSource::Env("HOME"),
+    ))
 }
 
 /// `home`, then the XDG roots: each variable when set, its default under home
@@ -45,11 +45,7 @@ pub(crate) fn xdg_roots(env: &Environment, home: &Result<ResolvedRoot, Unresolve
     roots.insert(SymbolicRoot::Home, home.clone());
     for (root, var, relative) in XDG {
         let resolved = match absolute(env, var) {
-            Ok(Some(path)) => Ok(ResolvedRoot {
-                root,
-                path,
-                source: RootSource::Env(var),
-            }),
+            Ok(Some(path)) => Ok(ResolvedRoot::new(root, path, RootSource::Env(var))),
             Ok(None) => under(home, root, relative),
             Err(unusable) => Err(unusable),
         };
@@ -67,14 +63,11 @@ pub(crate) fn under(
     let home = home.as_ref().map_err(|_| UnresolvedRoot::BaseUnresolved {
         base: SymbolicRoot::Home,
     })?;
-    Ok(ResolvedRoot {
-        root,
-        path: home.path.join(relative),
-        source: RootSource::Default {
-            base: SymbolicRoot::Home,
-            relative,
-        },
-    })
+    let source = RootSource::Default {
+        base: SymbolicRoot::Home,
+        relative,
+    };
+    Ok(ResolvedRoot::new(root, home.path.join(relative), source))
 }
 
 /// The value of `var` as an absolute path, `None` when unset or empty.

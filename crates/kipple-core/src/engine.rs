@@ -70,6 +70,15 @@ pub enum Omission {
         /// What is there instead.
         kind: EntryKind,
     },
+    /// A root resolved through a link now leads to a different directory than when it
+    /// was resolved (D-041), so it is not read.
+    #[error("{root} at {} is no longer the directory it was resolved to", path.display())]
+    RootChanged {
+        /// The root.
+        root: SymbolicRoot,
+        /// The path it was resolved to.
+        path: PathBuf,
+    },
     /// The integration stopped on a probe failure.
     #[error("discovery stopped early: {error}")]
     DiscoveryFailed {
@@ -288,6 +297,10 @@ impl Engine {
                 Some(Ok(resolved)) => resolved,
             };
             match self.open(&resolved.path) {
+                Ok(meta) if changed(resolved, &meta) => omissions.push(Omission::RootChanged {
+                    root,
+                    path: resolved.path.clone(),
+                }),
                 Ok(meta) if meta.kind == EntryKind::Dir => {
                     let event = ScanEvent::RootOpened {
                         integration: descriptor.id,
@@ -302,7 +315,13 @@ impl Engine {
                     path: resolved.path.clone(),
                     kind: meta.kind,
                 }),
-                Err(error) if error.io_kind() == Some(io::ErrorKind::NotFound) => {}
+                Err(error) if resolved.link.is_some() && missing(&error) => {
+                    omissions.push(Omission::RootChanged {
+                        root,
+                        path: resolved.path.clone(),
+                    });
+                }
+                Err(error) if missing(&error) => {}
                 Err(error) => omissions.push(Omission::RootUnreadable { root, error }),
             }
         }
@@ -347,6 +366,18 @@ impl Engine {
             }
         }
     }
+}
+
+fn missing(error: &ProbeError) -> bool {
+    error.io_kind() == Some(io::ErrorKind::NotFound)
+}
+
+/// Whether a root resolved through a link no longer has the identity it had then.
+fn changed(resolved: &ResolvedRoot, meta: &EntryMeta) -> bool {
+    resolved
+        .link
+        .as_ref()
+        .is_some_and(|link| meta.identity != Some(link.identity))
 }
 
 fn finish(

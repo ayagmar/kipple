@@ -1,13 +1,16 @@
 //! Root resolution from an injected environment, upstream conventions first
 //! (`docs/05-architecture.md` §1). Windows resolves Known Folders through the OS, so its
-//! roots are covered by the native profile instead.
+//! roots are covered by the native profile instead. A root whose own path is a link is
+//! resolved once (D-041), here in a temp dir.
 #![cfg(unix)]
 
 use std::ffi::OsString;
-use std::path::PathBuf;
+use std::fs;
+use std::os::unix::fs::symlink;
+use std::path::{Path, PathBuf};
 
-use kipple_core::{RootSource, Roots, SymbolicRoot, UnresolvedRoot};
-use kipple_platform::{Environment, kipple_dirs, resolve_roots};
+use kipple_core::{FsProbe as _, LinkProblem, RootSource, Roots, SymbolicRoot, UnresolvedRoot};
+use kipple_platform::{Environment, NoFollowFs, kipple_dirs, resolve_roots};
 
 fn roots(vars: &[(&str, &str)]) -> Roots {
     resolve_roots(&Environment::from_vars(
@@ -103,4 +106,79 @@ fn macos_caches_live_under_home() {
 
     let (caches, _) = path(&roots, SymbolicRoot::MacosCaches).unwrap();
     assert_eq!(caches, PathBuf::from("/Users/u/Library/Caches"));
+}
+
+/// A home directory in a temp dir, with `.cache` as whatever `make_cache` puts there.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a fixture that fails to build fails the test"
+)]
+fn home_with_cache(make_cache: impl FnOnce(&Path, &Path)) -> (tempfile::TempDir, Roots) {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().join("home");
+    fs::create_dir(&home).unwrap();
+    make_cache(temp.path(), &home.join(".cache"));
+    let roots = roots(&[("HOME", home.to_str().unwrap())]);
+    (temp, roots)
+}
+
+#[test]
+fn a_root_that_is_a_link_is_read_where_the_link_leads_and_keeps_its_configured_path() {
+    let (temp, roots) = home_with_cache(|temp, cache| {
+        fs::create_dir_all(temp.join("ssd/cache")).unwrap();
+        // A chain, with a relative link at the end, as a move to another disk leaves it.
+        symlink("ssd/cache", temp.join("moved")).unwrap();
+        symlink("../moved", cache).unwrap();
+    });
+    let target = fs::canonicalize(temp.path().join("ssd/cache")).unwrap();
+
+    let Some(Ok(cache)) = roots.get(SymbolicRoot::XdgCache) else {
+        panic!("{:?}", roots.get(SymbolicRoot::XdgCache));
+    };
+
+    assert_eq!(cache.path, target);
+    assert_eq!(cache.configured(), &temp.path().join("home/.cache"));
+    let identity = NoFollowFs.metadata(&target).unwrap().identity;
+    assert_eq!(cache.link.as_ref().map(|link| link.identity), identity);
+    assert_eq!(
+        kipple_dirs(&roots).cache.path.unwrap(),
+        target.join("kipple")
+    );
+}
+
+#[test]
+fn a_root_link_that_leads_nowhere_or_to_a_file_leaves_the_root_unknown() {
+    let (_dangling_dir, dangling) = home_with_cache(|temp, cache| {
+        symlink(temp.join("unmounted/cache"), cache).unwrap();
+    });
+    let (_file_dir, to_file) = home_with_cache(|temp, cache| {
+        fs::write(temp.join("file"), "").unwrap();
+        symlink(temp.join("file"), cache).unwrap();
+    });
+
+    assert!(matches!(
+        dangling.get(SymbolicRoot::XdgCache),
+        Some(Err(UnresolvedRoot::Link {
+            problem: LinkProblem::Unresolvable(_),
+            ..
+        }))
+    ));
+    assert!(matches!(
+        to_file.get(SymbolicRoot::XdgCache),
+        Some(Err(UnresolvedRoot::Link {
+            problem: LinkProblem::NotDirectory,
+            ..
+        }))
+    ));
+}
+
+#[test]
+fn a_root_that_is_not_a_link_is_left_as_configured() {
+    let (temp, roots) = home_with_cache(|_, cache| fs::create_dir(cache).unwrap());
+
+    let Some(Ok(cache)) = roots.get(SymbolicRoot::XdgCache) else {
+        panic!("{:?}", roots.get(SymbolicRoot::XdgCache));
+    };
+    assert_eq!(cache.path, temp.path().join("home/.cache"));
+    assert_eq!(cache.link, None);
 }

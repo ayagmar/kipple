@@ -66,11 +66,7 @@ pub(crate) fn resolve_roots(_: &Environment) -> Roots {
     let mut roots = Roots::default();
     for (root, id, folder) in KNOWN_FOLDERS {
         let resolved = known_folder(id)
-            .map(|path| ResolvedRoot {
-                root,
-                path,
-                source: RootSource::KnownFolder(folder),
-            })
+            .map(|path| ResolvedRoot::new(root, path, RootSource::KnownFolder(folder)))
             .map_err(|error| UnresolvedRoot::Os {
                 folder,
                 source: Arc::new(error),

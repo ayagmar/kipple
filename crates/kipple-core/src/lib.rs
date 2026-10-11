@@ -28,5 +28,7 @@ pub use probe::{DirEntryMeta, EntryKind, EntryMeta, FileIdentity, FsProbe, Probe
 pub use process::{
     Inventory, ProcessClass, ProcessOutcome, ProcessProbe, ProcessRecord, ProcessSnapshot,
 };
-pub use root::{ResolvedRoot, RootSource, Roots, SymbolicRoot, UnresolvedRoot};
+pub use root::{
+    LinkProblem, ResolvedRoot, RootLink, RootSource, Roots, SymbolicRoot, UnresolvedRoot,
+};
 pub use size::{Allocated, Apparent, Completeness, SpaceEstimate};

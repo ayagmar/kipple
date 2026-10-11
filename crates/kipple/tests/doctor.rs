@@ -8,7 +8,8 @@ use std::process::ExitCode;
 use kipple::doctor::{Report, RootCheck};
 use kipple::{CANCELLED, exit_code};
 use kipple_core::{
-    Inventory, ProbeError, ProcessSnapshot, ResolvedRoot, RootSource, SymbolicRoot, UnresolvedRoot,
+    FileIdentity, Inventory, ProbeError, ProcessSnapshot, ResolvedRoot, RootLink, RootSource,
+    SymbolicRoot, UnresolvedRoot,
 };
 use kipple_platform::{KippleDir, KippleDirs};
 
@@ -33,11 +34,11 @@ fn report(cache_error: io::ErrorKind) -> Report {
         base,
         path: Err(UnresolvedRoot::NotSet { var: "HOME" }),
     };
-    let cache = ResolvedRoot {
-        root: SymbolicRoot::XdgCache,
-        path: PathBuf::from("/home/u/.cache"),
-        source: RootSource::Env("XDG_CACHE_HOME"),
-    };
+    let cache = ResolvedRoot::new(
+        SymbolicRoot::XdgCache,
+        PathBuf::from("/home/u/.cache"),
+        RootSource::Env("XDG_CACHE_HOME"),
+    );
     let failure = ProbeError::io(&cache.path, cache_error.into());
     Report {
         dirs: KippleDirs {
@@ -103,4 +104,26 @@ fn the_permission_hint_appears_only_after_a_permission_failure() {
         "{output}"
     );
     assert!(!output.contains(HINT), "{output}");
+}
+
+#[test]
+fn a_root_resolved_through_a_link_shows_the_link_and_where_it_leads() {
+    let mut report = report(io::ErrorKind::NotFound);
+    let check = &mut report.roots[0];
+    if let Ok((cache, _)) = &mut check.status {
+        cache.link = Some(RootLink {
+            configured: cache.path.clone(),
+            identity: FileIdentity { volume: 1, file: 2 },
+        });
+        cache.path = PathBuf::from("/mnt/ssd/cache");
+    }
+
+    let output = printed(&report);
+
+    let shown = format!(
+        "{} -> {}  (from XDG_CACHE_HOME)",
+        PathBuf::from("/home/u/.cache").display(),
+        PathBuf::from("/mnt/ssd/cache").display()
+    );
+    assert!(output.contains(&shown), "{output}");
 }

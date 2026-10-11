@@ -18,7 +18,9 @@ pub use capabilities::probe_tools;
 pub use environment::Environment;
 pub use fs_probe::NoFollowFs;
 pub use process::OsProcesses;
-pub use roots::{CONFIG_FILE, KippleDir, KippleDirs, kipple_dirs, resolve_roots};
+pub use roots::{
+    CONFIG_FILE, KippleDir, KippleDirs, follow_root_links, kipple_dirs, resolve_roots,
+};
 pub use walk::Walker;
 
 /// A hint to show only after a permission failure was actually diagnosed, such as

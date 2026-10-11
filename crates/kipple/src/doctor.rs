@@ -119,7 +119,7 @@ impl Report {
                 Err(unresolved) => format!("unknown: {unresolved}"),
                 Ok((resolved, meta)) => format!(
                     "{}  ({}): {}",
-                    resolved.path.display(),
+                    location(resolved),
                     source(resolved.source),
                     found(meta)
                 ),
@@ -217,6 +217,15 @@ fn dir_line(dir: &KippleDir) -> String {
         Ok(path) => format!("{}  (under {})", path.display(), dir.base),
         Err(unresolved) => format!("unknown: {unresolved}"),
     }
+}
+
+/// Where a root is: for a root resolved through a link, the link and where it leads.
+fn location(resolved: &ResolvedRoot) -> String {
+    let path = resolved.path.display();
+    resolved.link.as_ref().map_or_else(
+        || path.to_string(),
+        |link| format!("{} -> {path}", link.configured.display()),
+    )
 }
 
 fn source(source: RootSource) -> String {

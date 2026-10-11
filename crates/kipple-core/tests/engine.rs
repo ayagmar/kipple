@@ -12,10 +12,10 @@ use std::time::Duration;
 
 use kipple_core::{
     Allocated, Apparent, CancelToken, Completeness, DirEntryMeta, Engine, EntryKind, EntryMeta,
-    EventRx, FindingSink, FsProbe, Integration, IntegrationDescriptor, IntegrationError,
-    IntegrationId, Omission, ProbeError, ResolvedRoot, RootSource, Roots, ScanContext, ScanEvent,
-    ScanOutcome, ScanReport, ScanRequest, Sizer, SpaceEstimate, SymbolicRoot, UnresolvedRoot,
-    event_channel,
+    EventRx, FileIdentity, FindingSink, FsProbe, Integration, IntegrationDescriptor,
+    IntegrationError, IntegrationId, Omission, ProbeError, ResolvedRoot, RootLink, RootSource,
+    Roots, ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Sizer, SpaceEstimate,
+    SymbolicRoot, UnresolvedRoot, event_channel,
 };
 
 /// Ten times the 100 ms cancellation budget: long enough not to flake on a loaded CI
@@ -29,11 +29,13 @@ const SIZE: SpaceEstimate = SpaceEstimate {
     completeness: Completeness::Complete,
 };
 
-/// Every path is a directory that can be listed, unless listed otherwise.
+/// Every path is a directory that can be listed, with no identity, unless listed
+/// otherwise.
 #[derive(Debug, Default)]
 struct FakeFs {
     entries: BTreeMap<PathBuf, Result<EntryKind, io::ErrorKind>>,
     unlistable: BTreeSet<PathBuf>,
+    identities: BTreeMap<PathBuf, FileIdentity>,
 }
 
 impl FsProbe for FakeFs {
@@ -46,7 +48,7 @@ impl FsProbe for FakeFs {
         {
             Ok(kind) => Ok(EntryMeta {
                 kind,
-                identity: None,
+                identity: self.identities.get(path).copied(),
             }),
             Err(kind) => Err(ProbeError::io(path, kind.into())),
         }
@@ -343,7 +345,7 @@ impl Integration for RootReader {
 fn insert(roots: &mut Roots, root: SymbolicRoot, path: &str) {
     let path = PathBuf::from(path);
     let source = RootSource::Env("TEST");
-    roots.insert(root, Ok(ResolvedRoot { root, path, source }));
+    roots.insert(root, Ok(ResolvedRoot::new(root, path, source)));
 }
 
 fn run(engine: &Engine, request: &ScanRequest) -> ScanReport {
@@ -367,6 +369,7 @@ fn roots_that_cannot_be_read_are_omissions_and_are_never_handed_to_the_integrati
         ]),
         // Its metadata can be read, but it can't be listed, like a directory with mode 000.
         unlistable: BTreeSet::from([PathBuf::from("/unlistable")]),
+        identities: BTreeMap::new(),
     };
     let mut roots = Roots::default();
     insert(&mut roots, SymbolicRoot::Home, "/home");
@@ -540,4 +543,65 @@ fn the_report_is_sorted_and_keeps_what_a_crashed_integration_found_before_it_cra
         [Omission::Crashed]
     ));
     assert_eq!(report.outcome, ScanOutcome::Completed);
+}
+
+/// A root resolved through a link to the directory with `identity` at `path` (D-041).
+fn insert_linked(roots: &mut Roots, root: SymbolicRoot, path: &str, identity: FileIdentity) {
+    let mut resolved = ResolvedRoot::new(root, PathBuf::from(path), RootSource::Env("TEST"));
+    resolved.link = Some(RootLink {
+        configured: PathBuf::from("/configured").join(root.name()),
+        identity,
+    });
+    roots.insert(root, Ok(resolved));
+}
+
+#[test]
+fn a_root_resolved_through_a_link_is_read_only_while_it_leads_to_the_same_directory() {
+    let resolved = FileIdentity { volume: 1, file: 1 };
+    let replaced = FileIdentity { volume: 1, file: 2 };
+    let fs = FakeFs {
+        entries: BTreeMap::from([(PathBuf::from("/gone"), Err(io::ErrorKind::NotFound))]),
+        unlistable: BTreeSet::new(),
+        identities: BTreeMap::from([
+            (PathBuf::from("/same"), resolved),
+            (PathBuf::from("/swapped"), replaced),
+        ]),
+    };
+    let mut roots = Roots::default();
+    insert_linked(&mut roots, SymbolicRoot::XdgCache, "/same", resolved);
+    insert_linked(&mut roots, SymbolicRoot::XdgData, "/swapped", resolved);
+    insert_linked(&mut roots, SymbolicRoot::XdgState, "/gone", resolved);
+    let seen = Arc::default();
+    let reader = RootReader {
+        roots: vec![
+            SymbolicRoot::XdgCache,
+            SymbolicRoot::XdgData,
+            SymbolicRoot::XdgState,
+        ],
+        seen: Arc::clone(&seen),
+        probes: Arc::default(),
+        probe: Vec::new(),
+    };
+    let engine = Engine::new(
+        Box::new(fs),
+        Box::new(FakeSizer::default()),
+        vec![Box::new(reader)],
+    );
+
+    let report = run(&engine, &ScanRequest { roots });
+
+    assert_eq!(*seen.lock().unwrap(), [PathBuf::from("/same")]);
+    assert!(matches!(
+        report.integrations[0].omissions.as_slice(),
+        [
+            Omission::RootChanged {
+                root: SymbolicRoot::XdgData,
+                ..
+            },
+            Omission::RootChanged {
+                root: SymbolicRoot::XdgState,
+                ..
+            },
+        ]
+    ));
 }
