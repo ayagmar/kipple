@@ -65,19 +65,27 @@ pub(crate) fn raw_bytes(text: &OsStr) -> Vec<u8> {
 }
 
 /// The directory an absolute `path` names, with its links and `..` resolved, in its usual
-/// `C:\` form rather than the `\\?\` one `fs::canonicalize` gives, so a root reached
-/// through a link and one given directly are the same path.
+/// `C:\` or `\\server\share` form rather than the `\\?\` one `fs::canonicalize` gives, so
+/// a root reached through a link and one given directly are the same path.
 pub(crate) fn physical(path: &Path) -> io::Result<PathBuf> {
     let canonical = fs::canonicalize(path)?;
     let mut components = canonical.components();
     let Some(Component::Prefix(prefix)) = components.next() else {
         return Ok(canonical);
     };
-    let Prefix::VerbatimDisk(disk) = prefix.kind() else {
-        return Ok(canonical);
-    };
-    let drive = PathBuf::from(format!("{}:", char::from(disk)));
-    Ok(drive.join(components.as_path()))
+    let mut usual = OsString::new();
+    match prefix.kind() {
+        Prefix::VerbatimDisk(disk) => usual.push(format!("{}:", char::from(disk))),
+        Prefix::VerbatimUNC(server, share) => {
+            for part in [OsStr::new(r"\\"), server, OsStr::new(r"\"), share] {
+                usual.push(part);
+            }
+        }
+        Prefix::Verbatim(_) | Prefix::DeviceNS(_) | Prefix::UNC(..) | Prefix::Disk(_) => {
+            return Ok(canonical);
+        }
+    }
+    Ok(PathBuf::from(usual).join(components.as_path()))
 }
 
 pub(crate) fn env_name_matches(key: &OsStr, name: &str) -> bool {
