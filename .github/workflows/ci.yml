@@ -39,6 +39,9 @@ jobs:
       - name: Run the gate
         run: cargo xtask check --skip deny
 
+      - name: Scan the demo home end to end
+        run: cargo xtask verify-demo
+
   native:
     name: native (${{ matrix.os }})
     strategy:

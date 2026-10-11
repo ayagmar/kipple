@@ -1,6 +1,6 @@
 # Engineering standards
 
-Status: the M0 steps (1–9) and §2–§3 are in place and enforced. The `native` nextest profile and `cargo xtask test-native` (§5) exist since M1. Later steps are planned.
+Status: steps 1–10 and §2–§3 are in place and enforced. The `native` nextest profile and `cargo xtask test-native` (§5) exist since M1, and so does `cargo xtask verify-demo`, the end-to-end check of the CLI with the `test-roots` feature, which CI runs beside the gate on all three OSes. Later steps are planned.
 
 ## 1. One gate
 
@@ -95,7 +95,7 @@ Test cases come from the spec, not from the implementation. The required failure
 - Integration layouts against `FixtureTree` fixtures, one per supported upstream version (06 §7)
 - Confinement, idempotence and dedup with `proptest`, since those are the invariants that matter
 - Manifest parsing and path normalization with `cargo-fuzz` (nightly CI job, not the gate)
-- CLI end-to-end against fixture homes with `assert_cmd` plus `insta` snapshots of human and JSON output
+- CLI end-to-end against the shared `demo-home` with every root redirected by the `test-roots` override, plus `insta` snapshots of the JSON report (`cargo xtask verify-demo`)
 - TUI state transitions, plus buffer snapshots at 80×24 and 160×48
 - Each platform executor and trash backend on its native OS, with disposable directories
 - The default path, not only edge cases

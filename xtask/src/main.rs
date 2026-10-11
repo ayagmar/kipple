@@ -5,7 +5,34 @@ mod arch;
 mod bench_tree;
 mod check;
 mod cmd;
+mod demo;
 mod gen_docs;
+
+// The demo tree, built from the same fixtures as the integration tests.
+#[path = "../../crates/kipple-adapters/tests/fixtures/node/bun_v1_4_2.rs"]
+mod bun_v1_4_2;
+#[path = "../../crates/kipple-adapters/tests/fixtures/cargo/v1_99_0.rs"]
+mod cargo_v1_99_0;
+#[path = "../../crates/kipple-adapters/tests/fixtures/claude-code/settings.rs"]
+mod claude_settings;
+#[path = "../../crates/kipple-adapters/tests/fixtures/demo_home.rs"]
+mod demo_home;
+#[path = "../../crates/kipple-adapters/tests/fixtures/journald/v262.rs"]
+mod journald_v262;
+#[path = "../../crates/kipple-adapters/tests/fixtures/node/npm_v11_19_0.rs"]
+mod npm_v11_19_0;
+#[path = "../../crates/kipple-adapters/tests/fixtures/pacman/v7_1_0.rs"]
+mod pacman_v7_1_0;
+#[path = "../../crates/kipple-adapters/tests/fixtures/node/pnpm_v12_9_1.rs"]
+mod pnpm_v12_9_1;
+#[path = "../../crates/kipple-adapters/tests/fixtures/trash/freedesktop_v1_0.rs"]
+mod trash_v1_0;
+#[path = "../../crates/kipple-adapters/tests/fixtures/tree.rs"]
+mod tree;
+#[path = "../../crates/kipple-adapters/tests/fixtures/python/uv_v0_12_23.rs"]
+mod uv_v0_12_23;
+#[path = "../../crates/kipple-adapters/tests/fixtures/python/venv_v3_14_8.rs"]
+mod venv_v3_14_8;
 
 use std::path::{Path, PathBuf};
 
@@ -45,6 +72,13 @@ enum Task {
     /// Run the native-backend tests (the `native` nextest profile). They read real OS
     /// state, so they refuse to run unless `KIPPLE_TEST_DISPOSABLE_HOST=1`.
     TestNative,
+    /// Build the shared demo tree, plus the `roots.txt` that points every root into it.
+    DemoHome {
+        /// Where to build it. Must be missing or empty.
+        dir: PathBuf,
+    },
+    /// Scan demo-home with the `test-roots` build and compare with the committed snapshot.
+    VerifyDemo,
     /// Regenerate the CLI reference, the JSON schemas and the support matrix.
     GenDocs {
         /// Fail if the committed reference differs from a fresh generation.
@@ -65,6 +99,8 @@ fn main() -> Result<()> {
                 std::env::var_os("KIPPLE_TEST_DISPOSABLE_HOST").is_some_and(|v| v == "1");
             check::test_native(root, disposable)
         }
+        Task::DemoHome { dir } => demo::build(&dir),
+        Task::VerifyDemo => demo::verify(root),
         Task::GenDocs { check } => gen_docs::run(root, check),
     }
 }

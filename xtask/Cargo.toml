@@ -12,10 +12,9 @@ publish.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 kipple = { path = "../crates/kipple" }
+insta.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-
-[dev-dependencies]
 tempfile.workspace = true
 
 [lints]
