@@ -3,7 +3,7 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::io::ErrorKind;
+use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -54,7 +54,8 @@ pub fn resolve_roots(env: &Environment, project_roots: &[PathBuf]) -> Roots {
 /// A project root given on the command line, below the directory its parent names: the
 /// parent's links and `..` resolved, so the same directory given two ways is one root and
 /// nothing below it has a `..` component. Its own name is kept, so a root that is itself
-/// a link is resolved once, keeping its identity (D-041).
+/// a link is resolved once, keeping its identity (D-041). A root that doesn't exist is
+/// unresolved: the user named it, so finding nothing there must not read as clean.
 fn command_line_root(path: &Path) -> Result<ResolvedRoot, UnresolvedRoot> {
     if !path.is_absolute() {
         return Err(UnresolvedRoot::NotAbsolute {
@@ -62,11 +63,13 @@ fn command_line_root(path: &Path) -> Result<ResolvedRoot, UnresolvedRoot> {
             value: path.to_string_lossy().into_owned(),
         });
     }
-    let resolved = match (path.parent(), path.file_name()) {
-        (Some(parent), Some(name)) => os::physical(parent).map(|parent| parent.join(name)),
-        // The file system root, or a path ending in `..`.
-        _ => os::physical(path),
-    };
+    let resolved = in_physical_parent(path).and_then(|resolved| {
+        match fs::symlink_metadata(exact(&resolved)) {
+            Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => Err(e),
+            // Anything else is reported when the root is opened.
+            _ => Ok(resolved),
+        }
+    });
     let resolved = resolved.map_err(|e| UnresolvedRoot::Unresolvable {
         path: path.to_owned(),
         source: Arc::new(e),
@@ -75,20 +78,54 @@ fn command_line_root(path: &Path) -> Result<ResolvedRoot, UnresolvedRoot> {
     Ok(ResolvedRoot::new(root, resolved, RootSource::CommandLine))
 }
 
+/// An absolute `path` below the directory its parent names, the parent's links and `..`
+/// resolved. Its own name is kept, so when it is a link [`follow_root_links`] resolves it
+/// and records its identity (D-041).
+pub(crate) fn in_physical_parent(path: &Path) -> io::Result<PathBuf> {
+    match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => os::physical(parent).map(|parent| parent.join(name)),
+        // The file system root, or a path ending in `..`.
+        _ => os::physical(path),
+    }
+}
+
 /// `roots` with each resolved path of a root once, such as two default project roots
-/// that are links to the same directory.
+/// that are links to the same directory. Whichever comes first, the one kept carries a
+/// link's identity check when either has one.
 fn each_path_once(roots: &Roots) -> Roots {
-    let mut once = Roots::default();
-    let mut seen = HashSet::new();
+    let mut kept: Vec<(SymbolicRoot, Result<ResolvedRoot, UnresolvedRoot>)> = Vec::new();
     for (root, resolution) in roots.iter() {
-        if let Ok(resolved) = resolution
-            && !seen.insert((root, resolved.path.clone()))
-        {
-            continue;
+        if let Ok(resolved) = resolution {
+            let earlier = kept.iter_mut().find_map(|(r, k)| {
+                k.as_mut()
+                    .ok()
+                    .filter(|k| *r == root && k.path == resolved.path)
+            });
+            if earlier.is_some_and(|earlier| absorbed(earlier, resolved)) {
+                continue;
+            }
         }
-        once.add(root, resolution.clone());
+        kept.push((root, resolution.clone()));
+    }
+    let mut once = Roots::default();
+    for (root, resolution) in kept {
+        once.add(root, resolution);
     }
     once
+}
+
+/// Whether `resolved` adds nothing to `earlier`, a root at the same path, once `earlier`
+/// carries whichever link identity check either has. Two different identities are both
+/// kept, so the scan re-checks each.
+fn absorbed(earlier: &mut ResolvedRoot, resolved: &ResolvedRoot) -> bool {
+    match (&earlier.link, &resolved.link) {
+        (_, None) => true,
+        (None, Some(_)) => {
+            resolved.clone_into(earlier);
+            true
+        }
+        (Some(first), Some(second)) => first.identity == second.identity,
+    }
 }
 
 /// Every root as the OS and the tools' own conventions place it.
@@ -218,8 +255,8 @@ fn follow_link(resolved: ResolvedRoot) -> Result<ResolvedRoot, UnresolvedRoot> {
         path: configured.clone(),
         problem,
     };
-    let target = fs::canonicalize(&configured)
-        .map_err(|e| problem(LinkProblem::Unresolvable(Arc::new(e))))?;
+    let target =
+        os::physical(&configured).map_err(|e| problem(LinkProblem::Unresolvable(Arc::new(e))))?;
     let meta = fs::symlink_metadata(&target)
         .map_err(|e| problem(LinkProblem::Unresolvable(Arc::new(e))))?;
     if !meta.is_dir() {

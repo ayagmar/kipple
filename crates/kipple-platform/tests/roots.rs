@@ -229,6 +229,8 @@ fn the_default_project_roots_are_those_that_exist_and_root_replaces_them() {
         home.join("code/../code"),
         PathBuf::from("relative"),
         home.join("gone/repo"),
+        // A root the user names that doesn't exist is never silently clean.
+        home.join("cod"),
     ];
     let replaced = project_roots(&resolve_roots(&env, &given));
     assert_eq!(
@@ -241,7 +243,12 @@ fn the_default_project_roots_are_those_that_exist_and_root_replaces_them() {
             .as_ref()
             .is_err_and(|e| e.contains("can't be resolved"))
     );
-    assert_eq!(replaced.len(), 3);
+    assert!(
+        replaced[3]
+            .as_ref()
+            .is_err_and(|e| e.contains("cod can't be resolved"))
+    );
+    assert_eq!(replaced.len(), 4);
 }
 
 #[test]
@@ -306,6 +313,55 @@ fn a_root_link_given_through_parent_components_keeps_its_link_and_identity() {
     assert_eq!(link.configured, base.join("linked"));
     let identity = NoFollowFs.metadata(&root.path).unwrap().identity;
     assert_eq!(Some(link.identity), identity);
+}
+
+#[test]
+fn the_same_directory_given_directly_and_through_a_link_keeps_the_links_identity_check() {
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path().canonicalize().unwrap();
+    fs::create_dir_all(base.join("ssd/projects")).unwrap();
+    symlink(base.join("ssd/projects"), base.join("linked")).unwrap();
+    let direct = base.join("ssd/projects");
+    let linked = base.join("linked");
+
+    for given in [[&direct, &linked], [&linked, &direct]] {
+        let given = given.map(Clone::clone);
+        let roots = resolve_roots(&env(&[]), &given);
+
+        let [Ok(root)] = roots.all(SymbolicRoot::ProjectRoots) else {
+            panic!("{:?}", roots.all(SymbolicRoot::ProjectRoots));
+        };
+        assert_eq!(root.path, direct);
+        // Without it, the root given first would decide whether the scan re-checks it.
+        let link = root.link.as_ref().unwrap();
+        assert_eq!(link.configured, linked);
+    }
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn a_pacman_cache_dir_link_spelled_with_parent_components_keeps_its_identity_check() {
+    let temp = tempfile::tempdir().unwrap();
+    let system = temp.path().canonicalize().unwrap();
+    fs::create_dir_all(system.join("etc")).unwrap();
+    fs::create_dir_all(system.join("hop")).unwrap();
+    fs::create_dir_all(system.join("srv/pkg")).unwrap();
+    symlink(system.join("srv/pkg"), system.join("linked")).unwrap();
+    fs::write(
+        system.join("etc/pacman.conf"),
+        "[options]\nCacheDir = /hop/../linked\n",
+    )
+    .unwrap();
+    let env = env(&[("HOME", "/home/u")]).with_system_root(system.clone());
+
+    let roots = resolve_roots(&env, &[]);
+
+    let [Ok(root)] = roots.all(SymbolicRoot::PacmanCache) else {
+        panic!("{:?}", roots.all(SymbolicRoot::PacmanCache));
+    };
+    assert_eq!(root.path, system.join("srv/pkg"));
+    let link = root.link.as_ref().unwrap();
+    assert_eq!(link.configured, system.join("linked"));
 }
 
 #[test]

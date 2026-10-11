@@ -19,7 +19,7 @@ pub(crate) use super::unix::{
 };
 use super::unix::{identity_of, xdg_roots};
 use crate::environment::Environment;
-use crate::roots::under;
+use crate::roots::{in_physical_parent, under};
 
 pub(crate) const PLATFORM: Platform = Platform::Linux;
 
@@ -107,13 +107,13 @@ fn pacman_cache(
         .collect()
 }
 
-/// `path`, resolved to the directory it names when it climbs with `..`, since nothing
-/// below a root may have a `..` component.
+/// `path`, placed in the directory its parent names when it climbs with `..`, since
+/// nothing below a root may have a `..` component, like a `--root`.
 fn without_parent_components(path: PathBuf) -> Result<PathBuf, UnresolvedRoot> {
     if !path.components().any(|c| c == Component::ParentDir) {
         return Ok(path);
     }
-    fs::canonicalize(&path).map_err(|e| UnresolvedRoot::Unresolvable {
+    in_physical_parent(&path).map_err(|e| UnresolvedRoot::Unresolvable {
         path,
         source: Arc::new(e),
     })

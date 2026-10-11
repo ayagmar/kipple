@@ -8,7 +8,7 @@ use std::io;
 use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
 use std::os::windows::fs::OpenOptionsExt as _;
 use std::os::windows::io::AsRawHandle as _;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf, Prefix};
 use std::sync::Arc;
 
 use kipple_core::{
@@ -64,11 +64,20 @@ pub(crate) fn raw_bytes(text: &OsStr) -> Vec<u8> {
     text.encode_wide().flat_map(u16::to_le_bytes).collect()
 }
 
-/// The directory an absolute `path` names, with `..` resolved the way Windows itself
-/// resolves it, by the text. Unlike `fs::canonicalize`, it keeps the path in its usual
-/// `C:\` form rather than the `\\?\` one.
+/// The directory an absolute `path` names, with its links and `..` resolved, in its usual
+/// `C:\` form rather than the `\\?\` one `fs::canonicalize` gives, so a root reached
+/// through a link and one given directly are the same path.
 pub(crate) fn physical(path: &Path) -> io::Result<PathBuf> {
-    std::path::absolute(path)
+    let canonical = fs::canonicalize(path)?;
+    let mut components = canonical.components();
+    let Some(Component::Prefix(prefix)) = components.next() else {
+        return Ok(canonical);
+    };
+    let Prefix::VerbatimDisk(disk) = prefix.kind() else {
+        return Ok(canonical);
+    };
+    let drive = PathBuf::from(format!("{}:", char::from(disk)));
+    Ok(drive.join(components.as_path()))
 }
 
 pub(crate) fn env_name_matches(key: &OsStr, name: &str) -> bool {
