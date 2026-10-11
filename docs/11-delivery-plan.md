@@ -50,7 +50,7 @@ Verify:
 
 ## M1: Core model and read-only scan
 
-Status (2026-10-10): sessions 1 and 2 of 3 are done. Built: spikes S2 and S3; the core types, ports and `Engine::scan` with its event contract; platform root resolution with sources, the no-follow probes, the D-035 process probe, the D-036 walker and the capability probes; `kipple doctor` (human output). Left for session 3: the rule loader and validator, the read-only integrations and advice, `scan`, `rules` and `explain`, `doctor --json`, `demo-home` and `verify-demo`, and the `gen-docs` schemas and support matrix.
+Status (2026-10-11): complete. Built over three sessions: spikes S2 and S3; the core types, ports and `Engine::scan` with its event contract and the shared project walk (D-044); platform root resolution with sources, the no-follow probes, the D-035 process probe, the D-036 walker and the capability probes; root links (D-041); the schema v1 loader and validator; the read-only Cargo, Node, Python and trash integrations with the pacman, journald and Claude Code advice (06 §5a); `kipple scan`, `rules`, `explain` and `doctor` with `--json` and `--events jsonl`; `cargo xtask demo-home` and `verify-demo` (D-046); and `gen-docs` for the JSON schemas and the support matrix. `dirs-matching` and `files-matching` are validated, and evaluated from M5 when third-party packs arrive (D-044). The S3 budget is recorded in decisions.md §4.3.
 
 Build:
 - core types, ports, and `Engine::scan` with the event contract (05 §2)
