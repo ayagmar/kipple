@@ -43,6 +43,7 @@ macro_rules! named {
 
 mod cancel;
 mod capability;
+mod discovery;
 mod engine;
 mod event;
 mod integration;
@@ -54,13 +55,15 @@ mod size;
 
 pub use cancel::CancelToken;
 pub use capability::{NativeTool, ToolError, ToolStatus, ToolVersion};
+pub use discovery::WalkStop;
 pub use engine::{
-    Engine, Finding, FindingId, IntegrationReport, Omission, ScanOutcome, ScanReport, ScanRequest,
+    Engine, EngineError, Finding, FindingId, IntegrationReport, Omission, ScanOutcome, ScanReport,
+    ScanRequest,
 };
 pub use event::{EventRx, EventTx, ScanEvent, Sequenced, event_channel};
 pub use integration::{
-    FindingSink, Integration, IntegrationDescriptor, IntegrationError, IntegrationId,
-    IntegrationSelector, ScanContext,
+    Advice, Evidence, FindingSink, Integration, IntegrationDescriptor, IntegrationError,
+    IntegrationId, IntegrationSelector, ScanContext,
 };
 pub use probe::{DirEntryMeta, EntryKind, EntryMeta, FileIdentity, FsProbe, ProbeError, Sizer};
 pub use process::{

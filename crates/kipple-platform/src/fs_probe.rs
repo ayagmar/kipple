@@ -1,7 +1,7 @@
 //! Read-only filesystem probes that never follow a link.
 
 use std::fs;
-use std::io;
+use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 
 use kipple_core::{DirEntryMeta, EntryKind, EntryMeta, FsProbe, ProbeError};
@@ -40,6 +40,22 @@ impl FsProbe for NoFollowFs {
 
     fn open_dir(&self, dir: &Path) -> Result<(), ProbeError> {
         open(dir).map(drop).map_err(|e| ProbeError::io(dir, e))
+    }
+
+    fn read_file(&self, path: &Path, limit: u64) -> Result<Vec<u8>, ProbeError> {
+        let read = || -> io::Result<Vec<u8>> {
+            let file = exact(path);
+            if !fs::symlink_metadata(&file)?.is_file() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "not a regular file",
+                ));
+            }
+            let mut bytes = Vec::new();
+            fs::File::open(file)?.take(limit).read_to_end(&mut bytes)?;
+            Ok(bytes)
+        };
+        read().map_err(|e| ProbeError::io(path, e))
     }
 }
 

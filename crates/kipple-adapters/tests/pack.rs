@@ -59,6 +59,7 @@ const PYTHON: IntegrationDescriptor = IntegrationDescriptor {
         meaning: "test selector",
     }],
     artifacts: &[],
+    verified: &[],
 };
 
 const CARGO: IntegrationDescriptor = IntegrationDescriptor {

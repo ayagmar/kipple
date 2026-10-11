@@ -56,6 +56,7 @@ pub trait FsProbe: Debug + Send + Sync {   // read-only, no-follow
     fn metadata(&self, path: &Path) -> Result<EntryMeta, ProbeError>;          // kind, identity
     fn read_dir(&self, dir: &Path) -> Result<Vec<DirEntryMeta>, ProbeError>;   // all or nothing
     fn open_dir(&self, dir: &Path) -> Result<(), ProbeError>;                    // listable, without listing
+    fn read_file(&self, path: &Path, limit: u64) -> Result<Vec<u8>, ProbeError>; // regular file only, bounded
 }
 
 pub trait Sizer: Debug + Send + Sync {     // the walker (D-036)
@@ -82,13 +83,15 @@ The probes are path-based. Spike S1 decides whether read-only probes become hand
 
 ```rust
 pub trait Integration: Debug + Send + Sync {
-    fn descriptor(&self) -> IntegrationDescriptor;   // id and the symbolic roots it reads
+    fn descriptor(&self) -> IntegrationDescriptor;   // id, lens, platforms, roots, selectors, artifacts, verified versions
     fn discover(&self, cx: &ScanContext<'_>, sink: &mut FindingSink<'_>) -> Result<(), IntegrationError>;
-    // planned: tools, OS support and upstream versions in the descriptor, and
+    // planned:
     // fn facts(&self, cx: &ScanContext<'_>, finding: &Finding) -> Result<FactSet, IntegrationError>;
     // fn propose(&self, finding: &Finding, facts: &FactSet) -> Vec<ProposedOp>;  // data only
 }
 ```
+
+`Engine::new` takes the integrations and the validated rules, and gives each integration its own rules; a rule whose integration isn't registered is refused. An integration reads the roots its descriptor declares plus its rules' roots. `ScanContext::project_artifacts(rule)` returns a `project-artifact` rule's candidates from the shared walk (§3), `walk_stops(root)` everything that walk stopped at, and `read_file` a bounded, no-follow read for evidence such as Cargo's `CACHEDIR.TAG`. `FindingSink::add(rule, path, evidence)` records a finding with its rule, category and `Evidence` (`Marker`, `Signature`, `NoSignature` or `Root`), and `advise` records `Advice`, which the report carries per integration and which kipple never runs.
 
 The engine opens each declared root without following links before `discover` runs. A root that doesn't exist is simply absent. One that is unresolved, unreadable (including a directory that can't be listed) or not a directory becomes an omission and is not handed to the integration, and so does a root resolved through a link whose directory is gone or no longer has the identity recorded when it was resolved. `ScanContext` exposes the roots that opened, read-only probes confined to them, and cancellation. A path outside every root, with a `..` component, or through a link below its root is refused. A trailing separator or `.` component is dropped first, since either would make the OS follow a link in the last component. `FindingSink::add` applies the same confinement, streams each finding as `FindingAdded` and fails once the scan stops, so the integration returns early. If `discover` panics, what it found until then is kept and the integration gets a `Crashed` omission. These checks are path-based until spike S1's handle-relative probes, so a link swapped in between check and use is not yet caught. Rules (TOML) are evaluated by the core against an integration's published selectors and facts. See [06-adapters-and-rules.md](06-adapters-and-rules.md).
 
@@ -110,7 +113,7 @@ These calls are synchronous and blocking, run on worker threads, and report thro
 ### Key types
 
 - **IDs:** `IntegrationId`, `FindingId`, `RuleId` and `PackId` exist; `PlanId` and `ReceiptId` are planned. All are distinct newtypes. IDs are references, never authorization. A `FindingId` is unique within one scan.
-- **`Finding`:** today its ID, integration, path and size. Planned: owner (integration, rule, pack and version), category, `PathRef` (lossless OS path plus escaped display), `SpaceEstimate`, evidence, loss and recovery description, eligibility with reasons, allowed methods, advice.
+- **`Finding`:** today its ID, integration, rule, category, path, evidence and size. Planned: pack and version in the owner, `PathRef` (lossless OS path plus escaped display), `SpaceEstimate`, loss and recovery description, eligibility with reasons, allowed methods, advice.
 - **`SpaceEstimate`:** apparent, allocated, unique-reclaim estimate, completeness (`Complete`, `Incomplete { unreadable }` or `Cancelled`). A hard-linked file counts once, and one with a link outside the item is left out of the unique-reclaim estimate. Windows reports neither allocation nor link counts cheaply, so there the last two are unknown.
 - **`Plan`:** schema version, creation time, entries (target identities and fingerprints, method, operation), policy, exclusion and pack digests, and a review DTO for display. Imported plan files are untrusted input: they are re-planned and revalidated, never executed as written.
 - **`Receipt`:** per-item `Done | Skipped(Reason) | Failed(ErrorDetail) | Cancelled | Indeterminate`, method, recovery handle where one exists, estimated bytes, and an optional observed free-space change.
@@ -135,8 +138,8 @@ planned: IntegrationProgress, PlanReady, ItemStarted, ItemCompleted(outcome), Ap
 ## 3. Performance design
 
 - **Targeted first.** Known integration roots are probed directly: a handful of `stat` and `read_dir` calls each. The first findings appear in under 250 ms.
-- **One walk per root.** A shared discovery pass walks each project root once and hands directory metadata to every interested integration. Integrations don't each crawl the same tree.
-- **Walker** (our own, in `kipple-platform`; spike S3, D-036). std `read_dir`, with metadata taken from each `DirEntry` without following links, and one task per directory on the bounded `rayon` pool. It reads no ignore file or git config and skips nothing hidden. It never follows symlinks or junctions and stays on the root's file system. Today it sizes findings. With the selectors it will also honour an explicit `max_depth` and prune candidate artifacts and user exclusions before descending. Fixtures cover gitignored `target/` and `node_modules`, hidden `.venv`, and `.claude/worktrees`.
+- **One walk per root.** Each root a `project-artifact` rule or an integration asks for is walked once per scan, by whichever integration asks first, while the others wait for it. The walk lists directories with the no-follow probe, never descends into a link, and stops at every candidate artifact of any rule (its name with one of that rule's markers beside it) and at every directory a registered integration always owns (`node_modules`, `.venv`, `__pycache__`). It goes as deep as the deepest rule's `max_depth`. A directory below the root it can't list becomes an `Unlisted` omission of each integration that used the walk. An integration's project findings arrive once its walk of that root is done.
+- **Walker** (our own, in `kipple-platform`; spike S3, D-036). std `read_dir`, with metadata taken from each `DirEntry` without following links, and one task per directory on the bounded `rayon` pool. It reads no ignore file or git config and skips nothing hidden. It never follows symlinks or junctions and stays on the root's file system. It sizes findings. The project walk that finds them is the core's shared walk above, over the `FsProbe`, which honours `max_depth` and stops at candidate artifacts; user exclusions come with M2's config. Fixtures cover gitignored `target/` and `node_modules`, hidden `.venv`, and `.claude/worktrees`.
 - **Bounded parallelism.** Size computation runs on a work-stealing pool, not unbounded: one thread per CPU today, to be tuned to the storage. It can be cancelled at directory granularity.
 - **Prune early.** Discovery skips into a recognised artifact directory only for sizing, never to look for nested projects inside `node_modules` or `target`.
 - **TUI decoupling.** The UI thread renders from a snapshot model updated by events at most once per frame (60 Hz cap). Large leaf sets are frozen inside the engine, not kept as UI rows.

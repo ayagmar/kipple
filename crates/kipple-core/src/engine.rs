@@ -1,6 +1,7 @@
 //! The engine every frontend calls (`docs/05-architecture.md` §2). Scanning is
 //! read-only: integrations propose findings, the engine sizes them and reports.
 
+use std::cell::RefCell;
 use std::fmt;
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
@@ -9,12 +10,15 @@ use std::sync::atomic::AtomicU64;
 use std::thread;
 
 use crate::cancel::CancelToken;
+use crate::discovery::{WalkPlan, Walks};
 use crate::event::{EventTx, ScanEvent, Stopped};
 use crate::integration::{
-    FindingSink, Integration, IntegrationDescriptor, IntegrationError, IntegrationId, ScanContext,
+    Advice, Evidence, FindingSink, Integration, IntegrationDescriptor, IntegrationError,
+    IntegrationId, ScanContext,
 };
 use crate::probe::{EntryKind, EntryMeta, FsProbe, ProbeError, Sizer};
 use crate::root::{ResolvedRoot, Roots, SymbolicRoot, UnresolvedRoot};
+use crate::rule::{Category, Lens, Rule, RuleId};
 use crate::size::SpaceEstimate;
 
 /// A finding's ID within one scan. IDs are references, never authorization.
@@ -34,8 +38,14 @@ pub struct Finding {
     pub id: FindingId,
     /// The integration that found it.
     pub integration: IntegrationId,
+    /// The rule it was found by.
+    pub rule: RuleId,
+    /// What it is, from the rule.
+    pub category: Category,
     /// Where it is.
     pub path: PathBuf,
+    /// Why the integration thinks it is what the rule says.
+    pub evidence: Vec<Evidence>,
     /// What removing it would free, once sized.
     pub size: Option<SpaceEstimate>,
 }
@@ -79,6 +89,12 @@ pub enum Omission {
         /// The path it was resolved to.
         path: PathBuf,
     },
+    /// A directory below a root could not be listed, so nothing inside it was found.
+    #[error("{error}")]
+    Unlisted {
+        /// The upstream error, with the directory's path.
+        error: ProbeError,
+    },
     /// The integration stopped on a probe failure.
     #[error("discovery stopped early: {error}")]
     DiscoveryFailed {
@@ -116,6 +132,8 @@ pub struct IntegrationReport {
     pub id: IntegrationId,
     /// What it could not cover.
     pub omissions: Vec<Omission>,
+    /// Native settings and commands it suggests.
+    pub advice: Vec<Advice>,
 }
 
 /// The result of a scan, sorted the same way every time.
@@ -134,6 +152,21 @@ pub struct ScanReport {
 pub struct ScanRequest {
     /// Every root on this platform, as the composition root resolved them.
     pub roots: Roots,
+    /// Only the integrations of this lens, or all of them.
+    pub lens: Option<Lens>,
+}
+
+/// Why an engine can't be built.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum EngineError {
+    /// A rule's integration isn't registered, so nothing could run it.
+    #[error("rule {rule} belongs to {integration}, which isn't registered")]
+    NoIntegration {
+        /// The rule.
+        rule: RuleId,
+        /// The integration it names.
+        integration: IntegrationId,
+    },
 }
 
 /// Runs scans over the registered integrations, through the injected ports.
@@ -141,7 +174,16 @@ pub struct ScanRequest {
 pub struct Engine {
     fs: Box<dyn FsProbe>,
     sizer: Box<dyn Sizer>,
-    integrations: Vec<Box<dyn Integration>>,
+    integrations: Vec<Registered>,
+    plan: WalkPlan,
+}
+
+/// An integration with its descriptor and its rules.
+#[derive(Debug)]
+struct Registered {
+    integration: Box<dyn Integration>,
+    descriptor: IntegrationDescriptor,
+    rules: Vec<Rule>,
 }
 
 /// What every integration run of one scan shares.
@@ -151,6 +193,7 @@ struct Shared<'a> {
     events: &'a EventTx,
     cancel: &'a CancelToken,
     next_id: &'a AtomicU64,
+    walks: &'a Walks,
 }
 
 /// One integration's findings and report.
@@ -161,18 +204,44 @@ struct IntegrationRun {
 }
 
 impl Engine {
-    /// An engine over these ports and integrations.
-    #[must_use]
+    /// An engine over these ports, integrations and rules. Each rule runs in its
+    /// integration's `discover`.
+    ///
+    /// # Errors
+    /// When a rule's integration isn't one of `integrations`.
     pub fn new(
         fs: Box<dyn FsProbe>,
         sizer: Box<dyn Sizer>,
         integrations: Vec<Box<dyn Integration>>,
-    ) -> Self {
-        Self {
+        rules: Vec<Rule>,
+    ) -> Result<Self, EngineError> {
+        let mut registered: Vec<Registered> = integrations
+            .into_iter()
+            .map(|integration| Registered {
+                descriptor: integration.descriptor(),
+                integration,
+                rules: Vec::new(),
+            })
+            .collect();
+        let plan = WalkPlan::new(registered.iter().map(|r| &r.descriptor), &rules);
+        for rule in rules {
+            let Some(owner) = registered
+                .iter_mut()
+                .find(|r| r.descriptor.id == rule.integration)
+            else {
+                return Err(EngineError::NoIntegration {
+                    integration: rule.integration,
+                    rule: rule.id,
+                });
+            };
+            owner.rules.push(rule);
+        }
+        Ok(Self {
             fs,
             sizer,
-            integrations,
-        }
+            integrations: registered,
+            plan,
+        })
     }
 
     /// Runs every integration concurrently, then sizes what each one found. Blocks until
@@ -183,8 +252,13 @@ impl Engine {
     /// what was found until then.
     #[must_use]
     pub fn scan(&self, req: &ScanRequest, events: &EventTx, cancel: &CancelToken) -> ScanReport {
+        let selected: Vec<&Registered> = self
+            .integrations
+            .iter()
+            .filter(|r| req.lens.is_none_or(|lens| r.descriptor.lens == lens))
+            .collect();
         let started = ScanEvent::ScanStarted {
-            integrations: self.integrations.len(),
+            integrations: selected.len(),
         };
         if events.send(started, cancel).is_err() {
             return ScanReport {
@@ -194,13 +268,15 @@ impl Engine {
             };
         }
         let next_id = AtomicU64::new(0);
+        let walks = Walks::default();
         let shared = Shared {
             roots: &req.roots,
             events,
             cancel,
             next_id: &next_id,
+            walks: &walks,
         };
-        let runs = self.run_all(shared);
+        let runs = self.run_all(&selected, shared);
         let outcome = if cancel.is_cancelled() {
             ScanOutcome::Cancelled
         } else {
@@ -210,20 +286,17 @@ impl Engine {
         report(outcome, runs)
     }
 
-    fn run_all(&self, shared: Shared<'_>) -> Vec<IntegrationRun> {
+    fn run_all(&self, selected: &[&Registered], shared: Shared<'_>) -> Vec<IntegrationRun> {
         thread::scope(|scope| {
             #[expect(
                 clippy::needless_collect,
                 reason = "every integration is spawned before the first join, or they would run one at a time"
             )]
-            let handles: Vec<_> = self
-                .integrations
+            let handles: Vec<_> = selected
                 .iter()
-                .map(|integration| {
-                    let descriptor = integration.descriptor();
-                    let id = descriptor.id;
-                    let handle = scope
-                        .spawn(move || self.run_one(integration.as_ref(), &descriptor, shared));
+                .map(|&registered| {
+                    let id = registered.descriptor.id;
+                    let handle = scope.spawn(move || self.run_one(registered, shared));
                     (id, handle)
                 })
                 .collect();
@@ -234,32 +307,34 @@ impl Engine {
         })
     }
 
-    fn run_one(
-        &self,
-        integration: &dyn Integration,
-        descriptor: &IntegrationDescriptor,
-        shared: Shared<'_>,
-    ) -> IntegrationRun {
+    fn run_one(&self, registered: &Registered, shared: Shared<'_>) -> IntegrationRun {
+        let id = registered.descriptor.id;
         let mut omissions = Vec::new();
         let opened = self
-            .open_roots(descriptor, shared, &mut omissions)
+            .open_roots(registered, shared, &mut omissions)
             .unwrap_or_default();
         let cx = ScanContext {
             roots: &opened,
+            rules: &registered.rules,
             fs: self.fs.as_ref(),
             cancel: shared.cancel,
+            plan: &self.plan,
+            walks: shared.walks,
+            walked: RefCell::default(),
         };
         let mut sink = FindingSink {
-            integration: descriptor.id,
+            integration: id,
             cx: &cx,
             events: shared.events,
             next_id: shared.next_id,
             found: Vec::new(),
+            advice: Vec::new(),
         };
         if !shared.cancel.is_cancelled() {
             // A panic is caught here so what the integration found before it is kept.
-            let discovered =
-                panic::catch_unwind(AssertUnwindSafe(|| integration.discover(&cx, &mut sink)));
+            let discovered = panic::catch_unwind(AssertUnwindSafe(|| {
+                registered.integration.discover(&cx, &mut sink)
+            }));
             match discovered {
                 Ok(Ok(()) | Err(IntegrationError::Stopped)) => {}
                 Ok(Err(IntegrationError::Probe(error))) => {
@@ -268,33 +343,44 @@ impl Engine {
                 Err(_) => omissions.push(Omission::Crashed),
             }
         }
-        let mut findings = sink.found;
+        for walk in cx.walked.take().into_values() {
+            let unlisted = walk.unreadable.iter().cloned();
+            omissions.extend(unlisted.map(|error| Omission::Unlisted { error }));
+        }
+        let (mut findings, advice) = (sink.found, sink.advice);
         findings.sort_by(|a, b| a.path.cmp(&b.path));
         self.size_all(&mut findings, shared, &mut omissions);
-        finish(descriptor.id, omissions, findings, shared)
+        finish(id, omissions, advice, findings, shared)
     }
 
-    /// The declared roots that exist and are directories that can be listed, announcing
-    /// each one. A root that doesn't exist is not an omission: the tool simply isn't there.
+    /// The roots of the integration and its rules that exist and are directories that can
+    /// be listed, announcing each one. A root that doesn't exist is not an omission: the
+    /// tool simply isn't there.
     fn open_roots(
         &self,
-        descriptor: &IntegrationDescriptor,
+        registered: &Registered,
         shared: Shared<'_>,
         omissions: &mut Vec<Omission>,
     ) -> Result<Vec<ResolvedRoot>, Stopped> {
+        let mut roots: Vec<SymbolicRoot> = registered.descriptor.roots.to_vec();
+        roots.extend(registered.rules.iter().map(|rule| rule.root));
+        roots.sort_unstable();
+        roots.dedup();
+        let resolutions = roots
+            .into_iter()
+            .flat_map(|root| shared.roots.all(root).iter().map(move |r| (root, r)));
         let mut opened = Vec::new();
-        for &root in descriptor.roots {
+        for (root, resolution) in resolutions {
             if shared.cancel.is_cancelled() {
                 return Err(Stopped::Cancelled);
             }
-            let resolved = match shared.roots.get(root) {
-                None => continue,
-                Some(Err(reason)) => {
+            let resolved = match resolution {
+                Err(reason) => {
                     let reason = reason.clone();
                     omissions.push(Omission::RootUnresolved { root, reason });
                     continue;
                 }
-                Some(Ok(resolved)) => resolved,
+                Ok(resolved) => resolved,
             };
             match self.open(&resolved.path) {
                 Ok(meta) if changed(resolved, &meta) => omissions.push(Omission::RootChanged {
@@ -303,7 +389,7 @@ impl Engine {
                 }),
                 Ok(meta) if meta.kind == EntryKind::Dir => {
                     let event = ScanEvent::RootOpened {
-                        integration: descriptor.id,
+                        integration: registered.descriptor.id,
                         root,
                         path: resolved.path.clone(),
                     };
@@ -383,6 +469,7 @@ fn changed(resolved: &ResolvedRoot, meta: &EntryMeta) -> bool {
 fn finish(
     id: IntegrationId,
     omissions: Vec<Omission>,
+    advice: Vec<Advice>,
     findings: Vec<Finding>,
     shared: Shared<'_>,
 ) -> IntegrationRun {
@@ -392,7 +479,11 @@ fn finish(
     };
     shared.events.deliver(event, shared.cancel);
     IntegrationRun {
-        report: IntegrationReport { id, omissions },
+        report: IntegrationReport {
+            id,
+            omissions,
+            advice,
+        },
         findings,
     }
 }
@@ -400,7 +491,7 @@ fn finish(
 /// The run of an integration whose sizing panicked. Its findings were streamed but are
 /// lost.
 fn crashed(id: IntegrationId, shared: Shared<'_>) -> IntegrationRun {
-    finish(id, vec![Omission::Crashed], Vec::new(), shared)
+    finish(id, vec![Omission::Crashed], Vec::new(), Vec::new(), shared)
 }
 
 fn report(outcome: ScanOutcome, runs: Vec<IntegrationRun>) -> ScanReport {

@@ -114,6 +114,12 @@ pub trait FsProbe: fmt::Debug + Send + Sync {
     /// # Errors
     /// When it can't be opened for listing.
     fn open_dir(&self, dir: &Path) -> Result<(), ProbeError>;
+
+    /// The first `limit` bytes of the regular file at `path`.
+    ///
+    /// # Errors
+    /// When it is not a regular file (a link is not followed) or can't be read.
+    fn read_file(&self, path: &Path, limit: u64) -> Result<Vec<u8>, ProbeError>;
 }
 
 /// Measures what removing an item would free.

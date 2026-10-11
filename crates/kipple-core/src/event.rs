@@ -6,7 +6,7 @@ use std::time::Duration;
 use crossbeam_channel::{Receiver, SendTimeoutError, Sender, TrySendError};
 
 use crate::cancel::CancelToken;
-use crate::engine::{FindingId, Omission, ScanOutcome};
+use crate::engine::{Finding, FindingId, Omission, ScanOutcome};
 use crate::integration::IntegrationId;
 use crate::root::SymbolicRoot;
 use crate::size::SpaceEstimate;
@@ -32,14 +32,10 @@ pub enum ScanEvent {
         /// Where it is.
         path: PathBuf,
     },
-    /// An integration found something.
+    /// An integration found something. It is not sized yet.
     FindingAdded {
-        /// Its ID within this scan.
-        id: FindingId,
-        /// The integration that found it.
-        integration: IntegrationId,
-        /// Where it is.
-        path: PathBuf,
+        /// What was found.
+        finding: Finding,
     },
     /// A finding was sized.
     FindingUpdated {
