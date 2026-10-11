@@ -4,7 +4,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::io::ErrorKind;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use kipple_core::{
@@ -48,11 +48,12 @@ pub fn resolve_roots(env: &Environment, project_roots: &[PathBuf]) -> Roots {
             roots.add(SymbolicRoot::ProjectRoots, command_line_root(path));
         }
     }
-    follow_root_links(&roots)
+    each_path_once(&follow_root_links(&roots))
 }
 
-/// A project root given on the command line. One that climbs with `..` is resolved to the
-/// directory it names, since nothing below a root may have a `..` component.
+/// A project root given on the command line, as the directory it names: its links and
+/// `..` components resolved, like `cd -P`, so the same directory given two ways is one
+/// root, and nothing below it has a `..` component.
 fn command_line_root(path: &Path) -> Result<ResolvedRoot, UnresolvedRoot> {
     if !path.is_absolute() {
         return Err(UnresolvedRoot::NotAbsolute {
@@ -60,16 +61,28 @@ fn command_line_root(path: &Path) -> Result<ResolvedRoot, UnresolvedRoot> {
             value: path.to_string_lossy().into_owned(),
         });
     }
-    let path = if path.components().any(|c| c == Component::ParentDir) {
-        fs::canonicalize(path).map_err(|e| UnresolvedRoot::Unresolvable {
-            path: path.to_owned(),
-            source: Arc::new(e),
-        })?
-    } else {
-        path.to_owned()
-    };
+    let resolved = fs::canonicalize(path).map_err(|e| UnresolvedRoot::Unresolvable {
+        path: path.to_owned(),
+        source: Arc::new(e),
+    })?;
     let root = SymbolicRoot::ProjectRoots;
-    Ok(ResolvedRoot::new(root, path, RootSource::CommandLine))
+    Ok(ResolvedRoot::new(root, resolved, RootSource::CommandLine))
+}
+
+/// `roots` with each resolved path of a root once, such as two default project roots
+/// that are links to the same directory.
+fn each_path_once(roots: &Roots) -> Roots {
+    let mut once = Roots::default();
+    let mut seen = HashSet::new();
+    for (root, resolution) in roots.iter() {
+        if let Ok(resolved) = resolution
+            && !seen.insert((root, resolved.path.clone()))
+        {
+            continue;
+        }
+        once.add(root, resolution.clone());
+    }
+    once
 }
 
 /// Every root as the OS and the tools' own conventions place it.

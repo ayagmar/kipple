@@ -181,8 +181,7 @@ pub enum UnresolvedRoot {
         /// What is wrong with it.
         problem: LinkProblem,
     },
-    /// A configured path that climbs with `..` could not be resolved to the directory it
-    /// names.
+    /// A configured path could not be resolved to the directory it names.
     #[error("{} can't be resolved: {source}", path.display())]
     Unresolvable {
         /// The configured path.

@@ -5,7 +5,7 @@
 use std::fs;
 use std::io;
 use std::os::unix::fs::MetadataExt as _;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use kipple_core::{
@@ -88,7 +88,8 @@ fn pacman_cache(
         .map(|dir| {
             let path = Path::new(dir);
             if path.is_absolute() {
-                Ok(ResolvedRoot::new(root, env.system_path(path), source))
+                let path = without_parent_components(env.system_path(path))?;
+                Ok(ResolvedRoot::new(root, path, source))
             } else {
                 Err(UnresolvedRoot::NotAbsolute {
                     var: "CacheDir",
@@ -97,6 +98,18 @@ fn pacman_cache(
             }
         })
         .collect()
+}
+
+/// `path`, resolved to the directory it names when it climbs with `..`, since nothing
+/// below a root may have a `..` component.
+fn without_parent_components(path: PathBuf) -> Result<PathBuf, UnresolvedRoot> {
+    if !path.components().any(|c| c == Component::ParentDir) {
+        return Ok(path);
+    }
+    fs::canonicalize(&path).map_err(|e| UnresolvedRoot::Unresolvable {
+        path,
+        source: Arc::new(e),
+    })
 }
 
 /// Every `CacheDir` value in the `[options]` section, in order. `None` when that section

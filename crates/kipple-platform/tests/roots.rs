@@ -223,14 +223,25 @@ fn the_default_project_roots_are_those_that_exist_and_root_replaces_them() {
         ]
     );
 
-    let given = [PathBuf::from("/elsewhere"), PathBuf::from("relative")];
+    // The same directory given twice, once through `..`, is one root.
+    let given = [
+        home.join("code"),
+        home.join("code/../code"),
+        PathBuf::from("relative"),
+        home.join("gone"),
+    ];
     let replaced = project_roots(&resolve_roots(&env, &given));
     assert_eq!(
         replaced[0],
-        Ok((PathBuf::from("/elsewhere"), RootSource::CommandLine))
+        Ok((home.join("code"), RootSource::CommandLine))
     );
     assert!(replaced[1].as_ref().is_err_and(|e| e.contains("--root")));
-    assert_eq!(replaced.len(), 2);
+    assert!(
+        replaced[2]
+            .as_ref()
+            .is_err_and(|e| e.contains("can't be resolved"))
+    );
+    assert_eq!(replaced.len(), 3);
 }
 
 #[test]
@@ -280,11 +291,13 @@ fn a_root_given_with_parent_components_is_the_directory_it_names() {
 #[cfg(target_os = "linux")]
 fn pacman_and_journal_roots_come_from_the_system_root_never_this_machines_own() {
     let temp = tempfile::tempdir().unwrap();
-    let system = temp.path().to_owned();
+    let system = temp.path().canonicalize().unwrap();
     fs::create_dir_all(system.join("etc")).unwrap();
+    fs::create_dir_all(system.join("srv/pkg")).unwrap();
+    fs::create_dir_all(system.join("srv/old")).unwrap();
     fs::write(
         system.join("etc/pacman.conf"),
-        "[options]\nCacheDir = /srv/pkg/\n",
+        "[options]\nCacheDir = /srv/pkg/ /srv/old/../pkg\n",
     )
     .unwrap();
     let env = env(&[("HOME", "/home/u")]).with_system_root(system.clone());
@@ -299,6 +312,8 @@ fn pacman_and_journal_roots_come_from_the_system_root_never_this_machines_own() 
         path(&roots, SymbolicRoot::PacmanCache),
         Ok((system.join("srv/pkg"), setting))
     );
+    // The second `CacheDir` names the same directory through `..`.
+    assert_eq!(roots.all(SymbolicRoot::PacmanCache).len(), 1);
     assert_eq!(
         path(&roots, SymbolicRoot::Journal),
         Ok((system.join("var/log/journal"), RootSource::Fixed))
