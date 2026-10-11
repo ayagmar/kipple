@@ -1,6 +1,6 @@
 # Integrations and rules
 
-Status: planned. §3 is the normative schema v1 contract that M1 implements. The TOML examples have been parse-checked only. No validator exists yet.
+Status: partly built. §3 is the normative schema v1 contract, and its validator exists since M1 (`kipple_adapters::pack::validate`, tested against every error case below). The rule types live in `kipple-core`. The other TOML examples have been parse-checked only.
 
 ## 1. Two layers
 
@@ -72,7 +72,7 @@ Unknown keys anywhere are an error. Every error carries the file, line and colum
 | `files-matching` | same as above | the same, for regular files |
 | `project-artifact` | `marker` (1–8 literal file names), `artifact` (one literal directory name), `max_depth` (integer 1–12, default 6, counted in directories below each project root) | Walks the configured project roots. A directory named `artifact` whose parent contains one of the `marker` files is a candidate. The walk never descends into a candidate artifact. |
 
-Pattern grammar: components separated by `/`. A component is 1–64 characters from `[A-Za-z0-9._@+-]` plus the wildcards `*` and `?`. Rejected (`invalid-pattern`): absolute paths, `.` and `..` components, empty components, drive or UNC prefixes, `\`, `:` (alternate streams), and NUL or control characters. Literal names (`marker`, `artifact`) use the same grammar without wildcards.
+Pattern grammar: components separated by `/`. A component is 1–64 characters from `[A-Za-z0-9._@+-]` and `_` (D-043), plus the wildcards `*` and `?`. Rejected (`invalid-pattern`): absolute paths, `.` and `..` components, empty components, `**` in a component, drive or UNC prefixes, `\`, `:` (alternate streams), and NUL or control characters. Literal names (`marker`, `artifact`) use the same grammar without wildcards.
 
 **Effective scope of `root = "home"`.** The first component must be a literal that isn't a dot-only name. The rule's effective scope, and so the most a grant can authorize, is the subtree under the longest literal prefix of the pattern. For `.bun/install/cache` that is `~/.bun/install/cache`, and for `.cache/*/tmp` it is `~/.cache`. A grant review shows this resolved subtree, never "home".
 
@@ -106,6 +106,7 @@ Predicates by type:
 - The host requires `activity = "idle"` and `git.tracked_files_in_item = "absent"` for every `remove-files` operation, whatever the rule says.
 - `requirements` uses the same forms as `eligibility`. The difference is how a failure is reported: a failed requirement means the rule doesn't apply to this machine (an omission), and a failed eligibility predicate blocks that item with a reason.
 - There is no negation, no `or` across facts, no arithmetic and no references between rules. A rule whose needs go beyond this is a typed integration, not a bigger language.
+- A dotted fact name may be written with or without quotes: `git.tracked_changes = "absent"` is the same predicate as `"git.tracked_changes" = "absent"`.
 
 ### Validation errors
 
@@ -131,6 +132,8 @@ Every error has one of these stable codes plus the file, line, column and a mess
 | `invalid-range` | a selector parameter or predicate bound out of range, or `min > max` |
 | `unknown-capability` | a root, selector, fact or operation this engine doesn't publish (the message names the engine version) |
 | `not-permitted` | a third-party pack using an integration selector or fact, a first-party-only operation, or the `builtin.` prefix |
+
+How the codes apply to the cases the table leaves open: a value outside a fixed set (a category, platform, method, enum fact value, `selection.default`) and a reference that isn't an HTTPS URL are `wrong-type`. Too many references or markers, an empty `platforms`, `methods` or enum list, and a duration over 100 years are `invalid-range`. A malformed duration or byte size is `wrong-type`. `retention` is `unknown-key` until an operation that keeps items exists, and first-party-only operations are `unknown-capability` until the integrations that carry them out ship (M4), so this engine publishes only `report` and `remove-files`. A pack with no `[[rule]]` is `missing-key`. Errors in the `[pack]` table and in the rules are reported together whenever the pack's ID and platforms are valid.
 
 ## 4. Hard cases
 

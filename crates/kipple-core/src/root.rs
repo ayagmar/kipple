@@ -7,47 +7,39 @@ use std::sync::Arc;
 
 use crate::probe::FileIdentity;
 
-/// A location kipple knows by meaning, not by path. The platform resolves it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum SymbolicRoot {
-    /// The user's home directory.
-    Home,
-    /// `$XDG_CONFIG_HOME`, default `~/.config`.
-    XdgConfig,
-    /// `$XDG_CACHE_HOME`, default `~/.cache`.
-    XdgCache,
-    /// `$XDG_DATA_HOME`, default `~/.local/share`.
-    XdgData,
-    /// `$XDG_STATE_HOME`, default `~/.local/state`.
-    XdgState,
-    /// The Windows Known Folder `LocalAppData`.
-    LocalAppData,
-    /// The Windows Known Folder `RoamingAppData`.
-    RoamingAppData,
-    /// `~/Library/Caches` on macOS.
-    MacosCaches,
-}
-
-impl SymbolicRoot {
-    /// The name rules and reports use for this root.
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Home => "home",
-            Self::XdgConfig => "xdg.config",
-            Self::XdgCache => "xdg.cache",
-            Self::XdgData => "xdg.data",
-            Self::XdgState => "xdg.state",
-            Self::LocalAppData => "known.local-app-data",
-            Self::RoamingAppData => "known.roaming-app-data",
-            Self::MacosCaches => "macos.caches",
-        }
-    }
-}
-
-impl fmt::Display for SymbolicRoot {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.name())
+named! {
+    /// A location kipple knows by meaning, not by path. The platform resolves it.
+    SymbolicRoot {
+        /// The user's home directory.
+        Home = "home",
+        /// `$XDG_CONFIG_HOME`, default `~/.config`.
+        XdgConfig = "xdg.config",
+        /// `$XDG_CACHE_HOME`, default `~/.cache`.
+        XdgCache = "xdg.cache",
+        /// `$XDG_DATA_HOME`, default `~/.local/share`.
+        XdgData = "xdg.data",
+        /// `$XDG_STATE_HOME`, default `~/.local/state`.
+        XdgState = "xdg.state",
+        /// The Windows Known Folder `LocalAppData`.
+        LocalAppData = "known.local-app-data",
+        /// The Windows Known Folder `RoamingAppData`.
+        RoamingAppData = "known.roaming-app-data",
+        /// `~/Library/Caches` on macOS.
+        MacosCaches = "macos.caches",
+        /// The project roots: the defaults that exist, or the ones given. A scan may have
+        /// several.
+        ProjectRoots = "config.project-roots",
+        /// The current user's trash: freedesktop's home trash on Linux, `~/.Trash` on
+        /// macOS.
+        Trash = "trash",
+        /// Claude Code's configuration directory: `$CLAUDE_CONFIG_DIR`, default
+        /// `~/.claude`.
+        ClaudeConfig = "claude.config",
+        /// pacman's package cache: `CacheDir` in `/etc/pacman.conf`, default
+        /// `/var/cache/pacman/pkg`.
+        PacmanCache = "pacman.cache",
+        /// systemd-journald's persistent journal, `/var/log/journal`.
+        Journal = "journald.journal",
     }
 }
 
@@ -169,26 +161,43 @@ pub enum UnresolvedRoot {
     },
 }
 
-/// Every root that exists on this platform, resolved or not.
+/// Every root that exists on this platform, resolved or not. Most symbolic roots have one
+/// path; [`SymbolicRoot::ProjectRoots`] may have several.
 #[derive(Debug, Clone, Default)]
-pub struct Roots(BTreeMap<SymbolicRoot, Result<ResolvedRoot, UnresolvedRoot>>);
+pub struct Roots(BTreeMap<SymbolicRoot, Vec<Result<ResolvedRoot, UnresolvedRoot>>>);
 
 impl Roots {
-    /// Records how `root` resolved.
+    /// Records how `root` resolved, replacing what was recorded before.
     pub fn insert(&mut self, root: SymbolicRoot, resolution: Result<ResolvedRoot, UnresolvedRoot>) {
-        self.0.insert(root, resolution);
+        self.0.insert(root, vec![resolution]);
     }
 
-    /// How `root` resolved, or `None` if it doesn't exist on this platform.
+    /// Adds another path for `root`, such as one more project root.
+    pub fn add(&mut self, root: SymbolicRoot, resolution: Result<ResolvedRoot, UnresolvedRoot>) {
+        self.0.entry(root).or_default().push(resolution);
+    }
+
+    /// How `root` resolved, or `None` if it doesn't exist on this platform. For a root
+    /// with several paths, the first.
     #[must_use]
     pub fn get(&self, root: SymbolicRoot) -> Option<&Result<ResolvedRoot, UnresolvedRoot>> {
-        self.0.get(&root)
+        self.0
+            .get(&root)
+            .and_then(|resolutions| resolutions.first())
+    }
+
+    /// Every path recorded for `root`, in the order they were added.
+    #[must_use]
+    pub fn all(&self, root: SymbolicRoot) -> &[Result<ResolvedRoot, UnresolvedRoot>] {
+        self.0.get(&root).map_or(&[], Vec::as_slice)
     }
 
     /// Every root on this platform, in a fixed order.
     pub fn iter(
         &self,
     ) -> impl Iterator<Item = (SymbolicRoot, &Result<ResolvedRoot, UnresolvedRoot>)> {
-        self.0.iter().map(|(root, resolution)| (*root, resolution))
+        self.0
+            .iter()
+            .flat_map(|(root, resolutions)| resolutions.iter().map(move |r| (*root, r)))
     }
 }

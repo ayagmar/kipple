@@ -33,7 +33,7 @@ pub fn resolve_roots(env: &Environment) -> Roots {
 pub fn follow_root_links(roots: &Roots) -> Roots {
     let mut followed = Roots::default();
     for (root, resolution) in roots.iter() {
-        followed.insert(root, resolution.clone().and_then(follow_link));
+        followed.add(root, resolution.clone().and_then(follow_link));
     }
     followed
 }

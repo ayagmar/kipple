@@ -283,7 +283,7 @@ impl Engine {
         omissions: &mut Vec<Omission>,
     ) -> Result<Vec<ResolvedRoot>, Stopped> {
         let mut opened = Vec::new();
-        for &root in &descriptor.roots {
+        for &root in descriptor.roots {
             if shared.cancel.is_cancelled() {
                 return Err(Stopped::Cancelled);
             }

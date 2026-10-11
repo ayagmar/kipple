@@ -12,10 +12,16 @@ use crate::engine::{Finding, FindingId};
 use crate::event::{EventTx, ScanEvent, Stopped};
 use crate::probe::{DirEntryMeta, EntryKind, EntryMeta, FsProbe, ProbeError};
 use crate::root::{ResolvedRoot, SymbolicRoot};
+use crate::rule::{Lens, Platform};
 
 /// A built-in integration's ID, such as `cargo`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct IntegrationId(pub &'static str);
+
+impl IntegrationId {
+    /// The owner of third-party rules, which use only generic selectors and facts.
+    pub const GENERIC: Self = Self("generic");
+}
 
 impl fmt::Display for IntegrationId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -28,8 +34,25 @@ impl fmt::Display for IntegrationId {
 pub struct IntegrationDescriptor {
     /// Its ID.
     pub id: IntegrationId,
-    /// The roots it reads. It may read nothing else.
-    pub roots: Vec<SymbolicRoot>,
+    /// Which home-screen lens its findings belong to.
+    pub lens: Lens,
+    /// The operating systems it supports.
+    pub platforms: &'static [Platform],
+    /// Roots it reads besides its rules' roots. It may read nothing else.
+    pub roots: &'static [SymbolicRoot],
+    /// Selectors it publishes, which only its own first-party rules may use.
+    pub selectors: &'static [IntegrationSelector],
+    /// Directory names that are always artifacts of its tool: no walk descends into them.
+    pub artifacts: &'static [&'static str],
+}
+
+/// A selector an integration publishes, with what it selects.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IntegrationSelector {
+    /// Its name, unique among all selectors.
+    pub name: &'static str,
+    /// What it selects, for the generated catalog.
+    pub meaning: &'static str,
 }
 
 /// Why an integration stopped before it finished.

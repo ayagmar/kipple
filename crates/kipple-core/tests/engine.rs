@@ -13,9 +13,9 @@ use std::time::Duration;
 use kipple_core::{
     Allocated, Apparent, CancelToken, Completeness, DirEntryMeta, Engine, EntryKind, EntryMeta,
     EventRx, FileIdentity, FindingSink, FsProbe, Integration, IntegrationDescriptor,
-    IntegrationError, IntegrationId, Omission, ProbeError, ResolvedRoot, RootLink, RootSource,
-    Roots, ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Sizer, SpaceEstimate,
-    SymbolicRoot, UnresolvedRoot, event_channel,
+    IntegrationError, IntegrationId, Lens, Omission, Platform, ProbeError, ResolvedRoot, RootLink,
+    RootSource, Roots, ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Sizer,
+    SpaceEstimate, SymbolicRoot, UnresolvedRoot, event_channel,
 };
 
 /// Ten times the 100 ms cancellation budget: long enough not to flake on a loaded CI
@@ -91,6 +91,18 @@ impl Sizer for FakeSizer {
     }
 }
 
+/// A descriptor for `id` that reads no roots.
+const fn descriptor(id: &'static str) -> IntegrationDescriptor {
+    IntegrationDescriptor {
+        id: IntegrationId(id),
+        lens: Lens::Dev,
+        platforms: &[Platform::Linux, Platform::Macos, Platform::Windows],
+        roots: &[],
+        selectors: &[],
+        artifacts: &[],
+    }
+}
+
 /// The root every emitter reads.
 const FOUND: &str = "/found";
 
@@ -118,8 +130,8 @@ impl Emitter {
 impl Integration for Emitter {
     fn descriptor(&self) -> IntegrationDescriptor {
         IntegrationDescriptor {
-            id: IntegrationId(self.id),
-            roots: vec![SymbolicRoot::XdgCache],
+            roots: &[SymbolicRoot::XdgCache],
+            ..descriptor(self.id)
         }
     }
 
@@ -296,7 +308,7 @@ fn a_consumer_that_goes_away_during_sizing_stops_the_walk_in_progress() {
 /// path in `probe`, how listing it and adding it as a finding went.
 #[derive(Debug)]
 struct RootReader {
-    roots: Vec<SymbolicRoot>,
+    roots: &'static [SymbolicRoot],
     seen: Arc<Mutex<Vec<PathBuf>>>,
     probes: Arc<Mutex<Vec<(&'static str, &'static str)>>>,
     probe: Vec<PathBuf>,
@@ -315,8 +327,8 @@ const fn outcome(error: Option<&ProbeError>) -> &'static str {
 impl Integration for RootReader {
     fn descriptor(&self) -> IntegrationDescriptor {
         IntegrationDescriptor {
-            id: IntegrationId("roots"),
-            roots: self.roots.clone(),
+            roots: self.roots,
+            ..descriptor("roots")
         }
     }
 
@@ -382,7 +394,7 @@ fn roots_that_cannot_be_read_are_omissions_and_are_never_handed_to_the_integrati
     let seen = Arc::default();
     let reader = RootReader {
         // macOS caches is not a root on this fake platform, so it is simply skipped.
-        roots: vec![
+        roots: &[
             SymbolicRoot::Home,
             SymbolicRoot::XdgCache,
             SymbolicRoot::XdgData,
@@ -436,7 +448,7 @@ fn an_integration_can_neither_probe_nor_report_anything_outside_its_roots() {
     };
     let probes = Arc::default();
     let reader = RootReader {
-        roots: vec![SymbolicRoot::XdgCache],
+        roots: &[SymbolicRoot::XdgCache],
         seen: Arc::default(),
         probes: Arc::clone(&probes),
         probe: [
@@ -488,8 +500,8 @@ struct Crashes;
 impl Integration for Crashes {
     fn descriptor(&self) -> IntegrationDescriptor {
         IntegrationDescriptor {
-            id: IntegrationId("crashes"),
-            roots: vec![SymbolicRoot::XdgCache],
+            roots: &[SymbolicRoot::XdgCache],
+            ..descriptor("crashes")
         }
     }
 
@@ -573,7 +585,7 @@ fn a_root_resolved_through_a_link_is_read_only_while_it_leads_to_the_same_direct
     insert_linked(&mut roots, SymbolicRoot::XdgState, "/gone", resolved);
     let seen = Arc::default();
     let reader = RootReader {
-        roots: vec![
+        roots: &[
             SymbolicRoot::XdgCache,
             SymbolicRoot::XdgData,
             SymbolicRoot::XdgState,

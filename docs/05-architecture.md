@@ -109,7 +109,7 @@ These calls are synchronous and blocking, run on worker threads, and report thro
 
 ### Key types
 
-- **IDs:** `IntegrationId` and `FindingId` exist; `RuleId`, `PackId`, `PlanId` and `ReceiptId` are planned. All are distinct newtypes. IDs are references, never authorization. A `FindingId` is unique within one scan.
+- **IDs:** `IntegrationId`, `FindingId`, `RuleId` and `PackId` exist; `PlanId` and `ReceiptId` are planned. All are distinct newtypes. IDs are references, never authorization. A `FindingId` is unique within one scan.
 - **`Finding`:** today its ID, integration, path and size. Planned: owner (integration, rule, pack and version), category, `PathRef` (lossless OS path plus escaped display), `SpaceEstimate`, evidence, loss and recovery description, eligibility with reasons, allowed methods, advice.
 - **`SpaceEstimate`:** apparent, allocated, unique-reclaim estimate, completeness (`Complete`, `Incomplete { unreadable }` or `Cancelled`). A hard-linked file counts once, and one with a link outside the item is left out of the unique-reclaim estimate. Windows reports neither allocation nor link counts cheaply, so there the last two are unknown.
 - **`Plan`:** schema version, creation time, entries (target identities and fingerprints, method, operation), policy, exclusion and pack digests, and a review DTO for display. Imported plan files are untrusted input: they are re-planned and revalidated, never executed as written.

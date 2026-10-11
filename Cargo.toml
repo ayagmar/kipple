@@ -68,10 +68,13 @@ clap = { version = "4.6.7", features = ["derive"] }
 crossbeam-channel = "0.5.17"
 kipple-core = { path = "crates/kipple-core" }
 kipple-platform = { path = "crates/kipple-platform" }
+kipple-adapters = { path = "crates/kipple-adapters" }
 libc = "0.2.190"
 rayon = "1.12.0"
+semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 tempfile = "3.27.0"
 thiserror = "2.0.21"
+toml = { version = "1.1.6", default-features = false, features = ["parse", "std"] }
 windows-sys = "0.61.2"
