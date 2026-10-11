@@ -22,6 +22,10 @@
       "description": "kipple's version.",
       "type": "string"
     },
+    "level": {
+      "description": "The carefulness level each finding's bucket was derived at.",
+      "type": "string"
+    },
     "outcome": {
       "description": "Whether the scan ran to the end.",
       "$ref": "#/$defs/OutcomeOut"
@@ -40,6 +44,7 @@
     "kipple",
     "platform",
     "outcome",
+    "level",
     "findings",
     "integrations"
   ],
@@ -78,6 +83,26 @@
         "references"
       ]
     },
+    "BucketOut": {
+      "description": "A bucket of the home screen (`docs/04-safety-model.md` §2a).",
+      "oneOf": [
+        {
+          "description": "Passes every check at the level.",
+          "type": "string",
+          "const": "safe"
+        },
+        {
+          "description": "Eligible, but loses something beyond the level or changed recently.",
+          "type": "string",
+          "const": "review"
+        },
+        {
+          "description": "Blocked, unknown, report-only or advice only.",
+          "type": "string",
+          "const": "protected"
+        }
+      ]
+    },
     "CompletenessOut": {
       "description": "How much of an item was measured.",
       "oneOf": [
@@ -96,6 +121,32 @@
           "type": "string",
           "const": "cancelled"
         }
+      ]
+    },
+    "ConsequenceOut": {
+      "description": "What removing a finding costs (`docs/04-safety-model.md` §2a).",
+      "type": "object",
+      "properties": {
+        "cost": {
+          "description": "How expensive coming back is: `low`, `high` or `unknown`.",
+          "type": "string"
+        },
+        "loss": {
+          "description": "What is lost besides the bytes: `cache-warmth`, `rollback-ability`,\n`offline-ability`, `history`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "recovery": {
+          "description": "How it comes back: `automatic`, `rebuild-local`, `reinstall`, `redownload` or\n`none`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "recovery",
+        "loss",
+        "cost"
       ]
     },
     "EvidenceOut": {
@@ -178,6 +229,17 @@
           "description": "What it is. Display only.",
           "type": "string"
         },
+        "consequence": {
+          "description": "What removing it costs, once measured, when its integration verified that.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConsequenceOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "evidence": {
           "description": "Why the integration thinks it is what the rule says.",
           "type": "array",
@@ -206,6 +268,17 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SizeOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verdict": {
+          "description": "Its bucket at the report's level, once measured.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VerdictOut"
             },
             {
               "type": "null"
@@ -392,6 +465,27 @@
       "required": [
         "apparent",
         "completeness"
+      ]
+    },
+    "VerdictOut": {
+      "description": "A finding's bucket and every reason for it.",
+      "type": "object",
+      "properties": {
+        "bucket": {
+          "description": "The bucket.",
+          "$ref": "#/$defs/BucketOut"
+        },
+        "reasons": {
+          "description": "Why it isn't Safe: for Review, what falls short of the level (`recent`, `recovery`,\n`loss`, `high-cost`); for Protected, what holds it (`report-only`, `advice`,\n`unknown-layout`, `unknown-consequence`, `unknown-git`, `in-use`,\n`unknown-activity`, `unknown-modified`). Empty when Safe.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "bucket",
+        "reasons"
       ]
     }
   }

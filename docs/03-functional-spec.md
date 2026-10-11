@@ -150,7 +150,7 @@ kipple completions SHELL
 Global flags: `--json`, `--events jsonl`, `--no-color` (and `NO_COLOR`), `--ascii`, `-q/--quiet`, `-v/--verbose`, `--config FILE`.
 
 Today (M1) only these exist, and nothing changes anything:
-- `kipple scan [--lens L] [--root PATH]... [--json | --events jsonl]` scans every root of the built-in integrations and reports each finding with its rule, evidence and size, then each integration's advice and omissions. `--root` replaces the default project roots. Findings carry no bucket yet: every built-in rule is report-only.
+- `kipple scan [--lens L] [--root PATH]... [--json | --events jsonl]` scans every root of the built-in integrations and reports each finding with its rule, evidence and size, then each integration's advice and omissions. `--root` replaces the default project roots. Each finding carries its bucket at the Balanced level with every reason (`verdict`), and the consequence its integration verified; the human report shows the bucket beside each finding. The Cargo, Node and Python rules propose removal, but nothing removes anything yet.
 - `kipple rules [--json]` lists the built-in integrations, packs and rules with their lens, roots, platforms and verified upstream versions, and the published capability set.
 - `kipple explain RULE` shows what a rule selects, why, and what is lost; `kipple explain PATH` runs a scan and shows what was found there and the evidence for it, or what it lies inside, or, when nothing was, what the scan couldn't cover. An unknown rule ID exits 2.
 - `kipple doctor [--json]` (J7).

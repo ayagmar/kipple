@@ -29,4 +29,5 @@ marker = ["package.json"]
 artifact = "node_modules"
 
 [rule.operation]
-kind = "report"
+kind = "remove-files"
+methods = ["delete", "trash"]

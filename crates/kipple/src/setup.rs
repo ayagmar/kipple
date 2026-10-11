@@ -4,8 +4,8 @@
 use std::collections::BTreeMap;
 
 use kipple_adapters::builtin;
-use kipple_core::{Engine, IntegrationDescriptor, IntegrationId, Lens, Pack, Rule};
-use kipple_platform::{NoFollowFs, PLATFORM, Walker};
+use kipple_core::{Engine, IntegrationDescriptor, IntegrationId, Lens, Pack, Ports, Rule};
+use kipple_platform::{Environment, NoFollowFs, PLATFORM, Walker, clock, processes};
 
 /// The built-in integrations and packs, whatever platform they support.
 #[derive(Debug)]
@@ -59,12 +59,13 @@ impl Builtin {
         self.descriptors.iter().map(|d| (d.id, d.lens)).collect()
     }
 
-    /// An engine over the integrations and rules that run on this platform.
+    /// An engine over the integrations and rules that run on this platform, reading the
+    /// machine `env` describes.
     ///
     /// # Errors
     /// When the sizing thread pool can't start, or a built-in rule's integration doesn't
     /// run where the rule does, which is a bug in kipple.
-    pub fn engine(&self) -> Result<Engine, String> {
+    pub fn engine(&self, env: &Environment) -> Result<Engine, String> {
         let integrations = builtin::integrations()
             .into_iter()
             .filter(|i| i.descriptor().platforms.contains(&PLATFORM))
@@ -75,7 +76,12 @@ impl Builtin {
             .map(|(_, rule)| rule.clone())
             .collect();
         let walker = Walker::new().map_err(|e| format!("could not start sizing: {e}"))?;
-        Engine::new(Box::new(NoFollowFs), Box::new(walker), integrations, rules)
-            .map_err(|e| e.to_string())
+        let ports = Ports {
+            fs: Box::new(NoFollowFs),
+            sizer: Box::new(walker),
+            processes: processes(env),
+            clock: clock(env),
+        };
+        Engine::new(ports, integrations, rules).map_err(|e| e.to_string())
     }
 }

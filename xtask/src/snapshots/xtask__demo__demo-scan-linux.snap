@@ -1,11 +1,19 @@
 ---
 source: xtask/src/demo.rs
+assertion_line: 78
 expression: "serde_json::to_string_pretty(&report)?"
 ---
 {
   "findings": [
     {
       "category": "build-artifact",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "cache-warmth"
+        ],
+        "recovery": "rebuild-local"
+      },
       "evidence": [
         {
           "file": "Cargo.toml",
@@ -27,10 +35,21 @@ expression: "serde_json::to_string_pretty(&report)?"
         "apparent": 8388787,
         "completeness": "complete",
         "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "safe",
+        "reasons": []
       }
     },
     {
       "category": "build-artifact",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "cache-warmth"
+        ],
+        "recovery": "rebuild-local"
+      },
       "evidence": [
         {
           "file": "Cargo.toml",
@@ -52,10 +71,15 @@ expression: "serde_json::to_string_pretty(&report)?"
         "apparent": 8388787,
         "completeness": "complete",
         "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "safe",
+        "reasons": []
       }
     },
     {
       "category": "dependency-install",
+      "consequence": null,
       "evidence": [
         {
           "file": "package.json",
@@ -76,10 +100,24 @@ expression: "serde_json::to_string_pretty(&report)?"
         "apparent": 102414,
         "completeness": "complete",
         "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "unknown-layout",
+          "unknown-consequence"
+        ]
       }
     },
     {
       "category": "dependency-install",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "offline-ability"
+        ],
+        "recovery": "reinstall"
+      },
       "evidence": [
         {
           "file": "package.json",
@@ -101,10 +139,21 @@ expression: "serde_json::to_string_pretty(&report)?"
         "apparent": 204833,
         "completeness": "complete",
         "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "safe",
+        "reasons": []
       }
     },
     {
       "category": "dependency-install",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "offline-ability"
+        ],
+        "recovery": "reinstall"
+      },
       "evidence": [
         {
           "file": "package.json",
@@ -126,10 +175,23 @@ expression: "serde_json::to_string_pretty(&report)?"
         "apparent": 307235,
         "completeness": "complete",
         "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "review",
+        "reasons": [
+          "recent"
+        ]
       }
     },
     {
       "category": "cache",
+      "consequence": {
+        "cost": "low",
+        "loss": [
+          "cache-warmth"
+        ],
+        "recovery": "automatic"
+      },
       "evidence": [
         {
           "entry": "*.pyc",
@@ -147,10 +209,21 @@ expression: "serde_json::to_string_pretty(&report)?"
         "apparent": 2048,
         "completeness": "complete",
         "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "safe",
+        "reasons": []
       }
     },
     {
       "category": "dependency-install",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "offline-ability"
+        ],
+        "recovery": "reinstall"
+      },
       "evidence": [
         {
           "file": "pyproject.toml",
@@ -172,10 +245,21 @@ expression: "serde_json::to_string_pretty(&report)?"
         "apparent": 1572947,
         "completeness": "complete",
         "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "safe",
+        "reasons": []
       }
     },
     {
       "category": "dependency-install",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "offline-ability"
+        ],
+        "recovery": "reinstall"
+      },
       "evidence": [
         {
           "file": "pyproject.toml",
@@ -197,10 +281,15 @@ expression: "serde_json::to_string_pretty(&report)?"
         "apparent": 185,
         "completeness": "complete",
         "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "safe",
+        "reasons": []
       }
     },
     {
       "category": "log",
+      "consequence": null,
       "evidence": [
         {
           "kind": "root",
@@ -218,10 +307,17 @@ expression: "serde_json::to_string_pretty(&report)?"
         "apparent": 50331648,
         "completeness": "complete",
         "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "advice"
+        ]
       }
     },
     {
       "category": "package-cache",
+      "consequence": null,
       "evidence": [
         {
           "kind": "root",
@@ -239,10 +335,17 @@ expression: "serde_json::to_string_pretty(&report)?"
         "apparent": 16777454,
         "completeness": "complete",
         "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "advice"
+        ]
       }
     },
     {
       "category": "trash",
+      "consequence": null,
       "evidence": [
         {
           "kind": "root",
@@ -260,6 +363,12 @@ expression: "serde_json::to_string_pretty(&report)?"
         "apparent": 67108864,
         "completeness": "complete",
         "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
       }
     }
   ],
@@ -345,6 +454,7 @@ expression: "serde_json::to_string_pretty(&report)?"
     }
   ],
   "kipple": "0.0.0",
+  "level": "balanced",
   "outcome": "completed",
   "platform": "linux",
   "schema": "kipple.scan/v1"

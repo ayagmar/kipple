@@ -3,11 +3,12 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use crossbeam_channel::{Receiver, SendTimeoutError, Sender, TrySendError};
+use crossbeam_channel::{Receiver, RecvTimeoutError, SendTimeoutError, Sender, TrySendError};
 
 use crate::cancel::CancelToken;
 use crate::engine::{Finding, FindingId, Omission, ScanOutcome};
 use crate::integration::IntegrationId;
+use crate::policy::Facts;
 use crate::root::SymbolicRoot;
 use crate::size::SpaceEstimate;
 
@@ -37,12 +38,14 @@ pub enum ScanEvent {
         /// What was found.
         finding: Finding,
     },
-    /// A finding was sized.
+    /// A finding was measured and its facts established, which decide its bucket.
     FindingUpdated {
         /// Its ID within this scan.
         id: FindingId,
-        /// What removing it would free.
-        size: SpaceEstimate,
+        /// What removing it would free, unless it couldn't be sized.
+        size: Option<SpaceEstimate>,
+        /// What the host learned about it.
+        facts: Facts,
     },
     /// An integration finished, with what it could not cover.
     IntegrationCompleted {
@@ -141,6 +144,34 @@ impl EventTx {
     }
 }
 
+impl EventRx {
+    /// The next event, waiting at most `timeout` for one. `None` when none arrived in
+    /// time, or the stream [has ended](Self::ended). A frontend that also reads keys polls
+    /// with this instead of blocking.
+    pub fn poll(&mut self, timeout: Duration) -> Option<Sequenced> {
+        match self.receiver.recv_timeout(timeout) {
+            Ok(event) => Some(self.sequenced(event)),
+            Err(RecvTimeoutError::Timeout) => None,
+            Err(RecvTimeoutError::Disconnected) => {
+                self.ended = true;
+                None
+            }
+        }
+    }
+
+    /// Whether the engine has finished and every event was received.
+    #[must_use]
+    pub const fn ended(&self) -> bool {
+        self.ended
+    }
+
+    const fn sequenced(&mut self, event: ScanEvent) -> Sequenced {
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        Sequenced { seq, event }
+    }
+}
+
 impl Iterator for EventRx {
     type Item = Sequenced;
 
@@ -151,9 +182,7 @@ impl Iterator for EventRx {
             self.ended = true;
             return None;
         };
-        let seq = self.next_seq;
-        self.next_seq += 1;
-        Some(Sequenced { seq, event })
+        Some(self.sequenced(event))
     }
 }
 

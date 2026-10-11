@@ -31,12 +31,14 @@ mod venv_v3_14_8;
 use std::fs;
 use std::io::{self, Read as _};
 use std::path::Path;
+use std::time::SystemTime;
 
 use kipple_adapters::builtin;
 use kipple_core::{
-    Advice, Apparent, CancelToken, Completeness, DirEntryMeta, Engine, EntryKind, EntryMeta,
-    Evidence, FsProbe, ProbeError, ResolvedRoot, RootSource, Roots, ScanReport, ScanRequest, Sizer,
-    SpaceEstimate, SymbolicRoot, event_channel,
+    Advice, Apparent, CancelToken, Clock, Completeness, DirEntryMeta, Engine, EntryKind, EntryMeta,
+    Evidence, FsProbe, Inventory, Measurement, Ports, ProbeError, ProcessProbe, ProcessSnapshot,
+    ResolvedRoot, RootSource, Roots, ScanReport, ScanRequest, Sizer, SpaceEstimate, SymbolicRoot,
+    event_channel,
 };
 use tree::FixtureTree;
 
@@ -96,18 +98,46 @@ impl FsProbe for TempFs {
     }
 }
 
-/// Sizes nothing: these tests are about what is found, not how big it is.
+/// Sizes nothing: these tests are about what is found, not how big it is or when it
+/// changed.
 #[derive(Debug)]
 struct NoSizer;
 
 impl Sizer for NoSizer {
-    fn size(&self, _: &Path, _: &CancelToken) -> Result<SpaceEstimate, ProbeError> {
-        Ok(SpaceEstimate {
+    fn size(&self, _: &Path, _: &CancelToken) -> Result<Measurement, ProbeError> {
+        let size = SpaceEstimate {
             apparent: Apparent(0),
             allocated: None,
             unique_reclaim: None,
             completeness: Completeness::Complete,
+        };
+        Ok(Measurement {
+            size,
+            modified: None,
         })
+    }
+}
+
+/// A host that runs nothing.
+#[derive(Debug)]
+struct NoProcesses;
+
+impl ProcessProbe for NoProcesses {
+    fn snapshot(&self) -> Result<ProcessSnapshot, ProbeError> {
+        Ok(ProcessSnapshot {
+            processes: Vec::new(),
+            inventory: Inventory::Complete,
+        })
+    }
+}
+
+/// A clock that never moves.
+#[derive(Debug)]
+struct Epoch;
+
+impl Clock for Epoch {
+    fn now(&self) -> SystemTime {
+        SystemTime::UNIX_EPOCH
     }
 }
 
@@ -137,13 +167,13 @@ fn scan_built(temp: tempfile::TempDir) -> (tempfile::TempDir, ScanReport) {
     }
     let packs = builtin::packs(&semver::Version::new(0, 0, 0)).unwrap();
     let rules = packs.into_iter().flat_map(|pack| pack.rules).collect();
-    let engine = Engine::new(
-        Box::new(TempFs),
-        Box::new(NoSizer),
-        builtin::integrations(),
-        rules,
-    )
-    .unwrap();
+    let ports = Ports {
+        fs: Box::new(TempFs),
+        sizer: Box::new(NoSizer),
+        processes: Box::new(NoProcesses),
+        clock: Box::new(Epoch),
+    };
+    let engine = Engine::new(ports, builtin::integrations(), rules).unwrap();
     let cancel = CancelToken::new();
     let (events, rx) = event_channel(4096, &cancel);
     let report = engine.scan(&ScanRequest { roots, lens: None }, &events, &cancel);
@@ -187,7 +217,7 @@ fn signature(name: &str) -> Evidence {
 
 #[test]
 fn every_supported_layout_in_the_demo_home_is_found_with_its_evidence_and_nothing_inside_one() {
-    let (temp, report) = scan(&demo_home::tree());
+    let (temp, report) = scan(&demo_home::tree(demo_home::looked_at()));
 
     let mut found = found(temp.path(), &report);
     found.sort();

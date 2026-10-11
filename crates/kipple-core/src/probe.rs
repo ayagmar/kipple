@@ -5,9 +5,10 @@ use std::fmt;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use crate::cancel::CancelToken;
-use crate::size::SpaceEstimate;
+use crate::size::Measurement;
 
 /// A file's identity: device and inode on Unix, volume serial and file index on Windows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -134,11 +135,18 @@ pub trait FsProbe: fmt::Debug + Send + Sync {
 /// Measures what removing an item would free.
 pub trait Sizer: fmt::Debug + Send + Sync {
     /// Sizes `path` and everything below it, without following links or leaving its file
-    /// system. Stops at the next entry once `cancel` is set.
+    /// system, and finds when any of it last changed. Stops at the next entry once
+    /// `cancel` is set.
     ///
     /// # Errors
     /// When the metadata of `path` itself can't be read. A directory that can't be listed,
     /// at `path` or below it, makes the estimate
     /// [`Incomplete`](crate::Completeness::Incomplete) instead.
-    fn size(&self, path: &Path, cancel: &CancelToken) -> Result<SpaceEstimate, ProbeError>;
+    fn size(&self, path: &Path, cancel: &CancelToken) -> Result<Measurement, ProbeError>;
+}
+
+/// The current time, injected so tests fix it.
+pub trait Clock: fmt::Debug + Send + Sync {
+    /// Now.
+    fn now(&self) -> SystemTime;
 }

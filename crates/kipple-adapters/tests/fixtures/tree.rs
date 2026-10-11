@@ -5,12 +5,14 @@
 use std::fs;
 use std::io;
 use std::path::Path;
+use std::time::SystemTime;
 
 /// Directories and files to create, relative to the directory the tree is built in.
 #[derive(Debug, Default)]
 pub(crate) struct FixtureTree {
     dirs: Vec<String>,
     files: Vec<(String, Content)>,
+    modified: Vec<(String, SystemTime)>,
 }
 
 #[derive(Debug)]
@@ -45,6 +47,13 @@ impl FixtureTree {
         self
     }
 
+    /// Every file below `dir` was last modified `at`, which overrides earlier calls for the
+    /// same files. Directories keep the time they were created.
+    pub(crate) fn modified(&mut self, dir: &str, at: SystemTime) -> &mut Self {
+        self.modified.push((dir.to_owned(), at));
+        self
+    }
+
     /// Creates everything inside `root`, which must exist.
     pub(crate) fn build_in(&self, root: &Path) -> io::Result<()> {
         for dir in &self.dirs {
@@ -58,6 +67,16 @@ impl FixtureTree {
             match content {
                 Content::Bytes(bytes) => fs::write(&path, bytes)?,
                 Content::Sized(len) => fs::File::create(&path)?.set_len(*len)?,
+            }
+        }
+        for (dir, at) in &self.modified {
+            let below = self
+                .files
+                .iter()
+                .filter(|(path, _)| Path::new(path).starts_with(dir));
+            for (path, _) in below {
+                let file = fs::File::options().write(true).open(root.join(path))?;
+                file.set_modified(*at)?;
             }
         }
         Ok(())

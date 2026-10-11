@@ -1,6 +1,6 @@
 # Integrations and rules
 
-Status: partly built. §3 is the normative schema v1 contract, and its validator exists since M1 (`kipple_adapters::pack::validate`, tested against every error case below). The rule types live in `kipple-core`. The read-only built-in integrations of §5a, their packs in `rules/` and the advice of §6 for pacman, journald and Claude Code exist since M1. The other TOML examples have been parse-checked only.
+Status: partly built. §3 is the normative schema v1 contract, and its validator exists since M1 (`kipple_adapters::pack::validate`, tested against every error case below). The rule types live in `kipple-core`. The built-in integrations of §5a, their packs in `rules/` and the advice of §6 for pacman, journald and Claude Code exist since M1, and their findings are classified into buckets since M2. The other TOML examples have been parse-checked only.
 
 ## 1. Two layers
 
@@ -248,19 +248,19 @@ Every integration descriptor declares its **protected subresources** (04 §3.9),
 | Ollama, LM Studio, Hugging Face | Report-only model inventory | Model removal deferred (shared blobs and manifests) |
 | Trash | Report size and age | Emptying deferred to v0.2 (`trash` crate purge with review) |
 
-### 5a. Built today (M1, report only)
+### 5a. Built today
 
-Every built-in rule today is `operation = "report"`. kipple finds and sizes, and proposes nothing. Each integration lists the upstream versions its fixtures were built from, and `kipple rules` and the generated support matrix show them.
+The Cargo, Node and Python rules propose `remove-files` with `delete` or `trash`; the trash, pacman and journald rules only report. Nothing is removed yet: kipple finds, sizes and classifies each finding into its bucket (D-047), and the executor arrives in M3. Each integration lists the upstream versions its fixtures were built from, and `kipple rules` and the generated support matrix show them. The consequence column is what the integration verified for a finding whose layout it recognised (04 §2a); an unrecognised layout and a report-only finding have none.
 
-| Integration | Lens | Finds | Evidence | Verified against |
-| --- | --- | --- | --- | --- |
-| Cargo | dev | `target` beside `Cargo.toml` | Cargo's `CACHEDIR.TAG` signature, else unknown layout | Cargo 1.99.0 |
-| Node | dev | `node_modules` beside `package.json` | `.package-lock.json` (npm) or `.modules.yaml` (pnpm); none for Bun | npm 11.19.0, pnpm 12.9.1, Bun 1.4.2 |
-| Python | dev | `.venv` beside `pyproject.toml`, `requirements.txt`, `setup.py`, `setup.cfg` or `Pipfile`; `__pycache__` holding only `*.pyc`, outside any virtual environment (any directory holding `pyvenv.cfg`) | `pyvenv.cfg`; the bytecode itself | Python 3.14.8 `venv`, uv 0.12.23 |
-| Trash | system | the trash root, when not empty: on Linux the home trash's `files`, where the trashed files are (Linux, macOS) | the root | freedesktop Trash spec 1.0 |
-| Pacman | system | the package cache, when not empty (Linux) | the root | pacman 7.1.0 |
-| journald | system | the persistent journal, when not empty (Linux) | the root | systemd 262 |
-| Claude Code | agents | nothing yet; advice only | — | Claude Code settings docs, checked 2026-10-11 |
+| Integration | Lens | Finds | Evidence | Consequence | Verified against |
+| --- | --- | --- | --- | --- | --- |
+| Cargo | dev | `target` beside `Cargo.toml` | Cargo's `CACHEDIR.TAG` signature, else unknown layout | `rebuild-local`, loses `cache-warmth` | Cargo 1.99.0 |
+| Node | dev | `node_modules` beside `package.json` | `.package-lock.json` (npm) or `.modules.yaml` (pnpm); none for Bun | `reinstall`, loses `offline-ability` | npm 11.19.0, pnpm 12.9.1, Bun 1.4.2 |
+| Python | dev | `.venv` beside `pyproject.toml`, `requirements.txt`, `setup.py`, `setup.cfg` or `Pipfile`; `__pycache__` holding only `*.pyc`, outside any virtual environment (any directory holding `pyvenv.cfg`) | `pyvenv.cfg`; the bytecode itself | `.venv`: `reinstall`, loses `offline-ability`; `__pycache__`: `automatic`, loses `cache-warmth`, cost `low` | Python 3.14.8 `venv`, uv 0.12.23 |
+| Trash | system | the trash root, when not empty: on Linux the home trash's `files`, where the trashed files are (Linux, macOS) | the root | — (report only) | freedesktop Trash spec 1.0 |
+| Pacman | system | the package cache, when not empty (Linux) | the root | — (report only, advice) | pacman 7.1.0 |
+| journald | system | the persistent journal, when not empty (Linux) | the root | — (report only, advice) | systemd 262 |
+| Claude Code | agents | nothing yet; advice only | — | — | Claude Code settings docs, checked 2026-10-11 |
 
 A `target`, `node_modules` or `.venv` with no recognised signature is still reported, with `no-signature` evidence, so an unknown layout is visible but can never become eligible. A candidate that can't be listed, including a `__pycache__`, is reported with no layout evidence at all. Generic `dirs-matching` and `files-matching` rules from third-party packs are validated but not evaluated before M5.
 

@@ -8,13 +8,14 @@ use std::thread;
 
 use kipple_core::{
     CancelToken, Engine, IntegrationId, Lens, ScanEvent, ScanReport, ScanRequest, Sequenced,
-    event_channel,
+    classify, event_channel,
 };
 use kipple_platform::{Environment, resolve_roots};
 
 use crate::human::{bytes, escaped, size};
 use crate::json::{
-    EVENT, EventBody, EventOut, FindingOut, LensOut, OmissionOut, PathOut, ScanOut, SizeOut,
+    BucketOut, EVENT, EventBody, EventOut, FindingOut, LEVEL, LensOut, OmissionOut, PathOut,
+    ScanOut, SizeOut, VerdictOut,
 };
 
 /// How many undelivered events the stream holds before the scan waits.
@@ -83,9 +84,10 @@ pub(crate) fn write_event(
             id: finding.id.0,
             finding: FindingOut::new(finding, lens(finding.integration)),
         },
-        ScanEvent::FindingUpdated { id, size } => EventBody::FindingUpdated {
+        ScanEvent::FindingUpdated { id, size, facts } => EventBody::FindingUpdated {
             id: id.0,
-            size: SizeOut::from(size),
+            size: size.as_ref().map(SizeOut::from),
+            verdict: VerdictOut::from(&classify(facts, LEVEL)),
         },
         ScanEvent::IntegrationCompleted {
             integration,
@@ -123,9 +125,13 @@ pub(crate) fn write_human(out: &mut dyn Write, report: &ScanOut) -> io::Result<(
             writeln!(out, "  nothing found")?;
         }
         for finding in found {
+            let bucket = finding
+                .verdict
+                .as_ref()
+                .map_or("unsized", |v| bucket_word(v.bucket));
             writeln!(
                 out,
-                "  {:>12}  {:<26}  {}",
+                "  {:>12}  {bucket:<9}  {:<26}  {}",
                 size(finding.size.as_ref()),
                 finding.rule,
                 escaped(&finding.path.display)
@@ -147,6 +153,14 @@ pub(crate) fn write_human(out: &mut dyn Write, report: &ScanOut) -> io::Result<(
         bytes(total)
     )?;
     out.flush()
+}
+
+const fn bucket_word(bucket: BucketOut) -> &'static str {
+    match bucket {
+        BucketOut::Safe => "safe",
+        BucketOut::Review => "review",
+        BucketOut::Protected => "protected",
+    }
 }
 
 const fn lens_title(lens: LensOut) -> &'static str {

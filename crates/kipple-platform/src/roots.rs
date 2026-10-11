@@ -131,8 +131,8 @@ fn absorbed(earlier: &mut ResolvedRoot, resolved: &ResolvedRoot) -> bool {
 /// Every root as the OS and the tools' own conventions place it.
 fn upstream_roots(env: &Environment) -> Roots {
     #[cfg(feature = "test-roots")]
-    if let Some(file) = env.get(test_roots::VAR) {
-        return test_roots::read(Path::new(file));
+    if let Some(file) = crate::test_host::file(env) {
+        return crate::test_host::roots(file);
     }
     let mut roots = os::resolve_roots(env);
     let claude = match absolute(env, "CLAUDE_CONFIG_DIR") {
@@ -307,44 +307,5 @@ pub fn kipple_dirs(roots: &Roots) -> KippleDirs {
         config,
         data,
         cache,
-    }
-}
-
-/// The hidden test-roots override (`docs/11-delivery-plan.md`, M1): every root comes from
-/// a file, so an end-to-end scan resolves nothing of the real account. Compiled only with
-/// the `test-roots` feature, so release builds can't use it.
-#[cfg(feature = "test-roots")]
-mod test_roots {
-    use std::fs;
-    use std::path::{Path, PathBuf};
-
-    use kipple_core::{ResolvedRoot, RootSource, Roots, SymbolicRoot, UnresolvedRoot};
-
-    /// The variable naming the file.
-    pub(super) const VAR: &str = "KIPPLE_TEST_ROOTS";
-
-    /// The roots in `file`, one `name = path` per line. A root that isn't listed is
-    /// absent, and so is every root when the file can't be read. A line that doesn't name
-    /// a root is ignored; a relative path leaves its root unknown.
-    pub(super) fn read(file: &Path) -> Roots {
-        let mut roots = Roots::default();
-        let text = fs::read_to_string(file).unwrap_or_default();
-        let lines = text.lines().filter_map(|line| line.split_once('='));
-        for (name, value) in lines {
-            let Some(root) = SymbolicRoot::from_name(name.trim()) else {
-                continue;
-            };
-            let path = PathBuf::from(value.trim());
-            let resolved = if path.is_absolute() {
-                Ok(ResolvedRoot::new(root, path, RootSource::Env(VAR)))
-            } else {
-                Err(UnresolvedRoot::NotAbsolute {
-                    var: VAR,
-                    value: value.trim().to_owned(),
-                })
-            };
-            roots.add(root, resolved);
-        }
-        roots
     }
 }

@@ -5,14 +5,23 @@
 use std::path::Path;
 
 use kipple_core::{
-    DirEntryMeta, FindingSink, Integration, IntegrationDescriptor, IntegrationError, IntegrationId,
-    Lens, Platform, ScanContext,
+    Consequence, Cost, DirEntryMeta, FindingSink, Integration, IntegrationDescriptor,
+    IntegrationError, IntegrationId, Lens, Loss, Platform, Recovery, ScanContext,
 };
 
 use super::project;
 
 /// The tag's required first line, from the Cache Directory Tagging Specification.
 const CACHEDIR_SIGNATURE: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55";
+
+/// A target directory comes back with the next build, from the sources and the
+/// dependencies Cargo keeps in its own cache, without the network. Only the incremental
+/// state is lost, so that build is slower.
+const REBUILT: Consequence = Consequence {
+    recovery: Recovery::RebuildLocal,
+    loss: &[Loss::CacheWarmth],
+    cost: Cost::Unknown,
+};
 
 /// The Cargo integration.
 #[derive(Debug)]
@@ -37,7 +46,7 @@ impl Integration for Cargo {
         cx: &ScanContext<'_>,
         sink: &mut FindingSink<'_>,
     ) -> Result<(), IntegrationError> {
-        project::add_artifacts(cx, sink, cachedir_tag)
+        project::add_artifacts(cx, sink, cachedir_tag, REBUILT)
     }
 }
 

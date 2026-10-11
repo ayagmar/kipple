@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use kipple_core::{
-    Advice, Completeness, Evidence, Finding, IntegrationId, IntegrationReport, Lens, Omission,
-    ScanOutcome, ScanReport, SpaceEstimate, SymbolicRoot, UnresolvedRoot,
+    Advice, Completeness, Consequence, Evidence, Finding, IntegrationId, IntegrationReport, Lens,
+    Level, Omission, ScanOutcome, ScanReport, SpaceEstimate, SymbolicRoot, UnresolvedRoot, Verdict,
 };
 use kipple_platform::{PLATFORM, raw_path};
 use schemars::JsonSchema;
@@ -102,6 +102,8 @@ pub struct ScanOut {
     pub platform: &'static str,
     /// Whether the scan ran to the end.
     pub outcome: OutcomeOut,
+    /// The carefulness level each finding's bucket was derived at.
+    pub level: &'static str,
     /// Every finding, sorted by lens, rule, then path.
     pub findings: Vec<FindingOut>,
     /// Every integration that ran, sorted by lens, then ID.
@@ -130,6 +132,7 @@ impl ScanOut {
             kipple: VERSION,
             platform: PLATFORM.name(),
             outcome: report.outcome.into(),
+            level: LEVEL.name(),
             findings,
             integrations,
         }
@@ -158,6 +161,75 @@ impl From<Lens> for LensOut {
     }
 }
 
+/// The carefulness level buckets are derived at, until it can be configured.
+pub(crate) const LEVEL: Level = Level::Balanced;
+
+/// A bucket of the home screen (`docs/04-safety-model.md` §2a).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum BucketOut {
+    /// Passes every check at the level.
+    Safe,
+    /// Eligible, but loses something beyond the level or changed recently.
+    Review,
+    /// Blocked, unknown, report-only or advice only.
+    Protected,
+}
+
+/// A finding's bucket and every reason for it.
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct VerdictOut {
+    /// The bucket.
+    pub bucket: BucketOut,
+    /// Why it isn't Safe: for Review, what falls short of the level (`recent`, `recovery`,
+    /// `loss`, `high-cost`); for Protected, what holds it (`report-only`, `advice`,
+    /// `unknown-layout`, `unknown-consequence`, `unknown-git`, `in-use`,
+    /// `unknown-activity`, `unknown-modified`). Empty when Safe.
+    pub reasons: Vec<&'static str>,
+}
+
+impl From<&Verdict> for VerdictOut {
+    fn from(verdict: &Verdict) -> Self {
+        match verdict {
+            Verdict::Safe => Self {
+                bucket: BucketOut::Safe,
+                reasons: Vec::new(),
+            },
+            Verdict::Review(cautions) => Self {
+                bucket: BucketOut::Review,
+                reasons: cautions.iter().map(|c| c.name()).collect(),
+            },
+            Verdict::Protected(holds) => Self {
+                bucket: BucketOut::Protected,
+                reasons: holds.iter().map(|h| h.name()).collect(),
+            },
+        }
+    }
+}
+
+/// What removing a finding costs (`docs/04-safety-model.md` §2a).
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+pub struct ConsequenceOut {
+    /// How it comes back: `automatic`, `rebuild-local`, `reinstall`, `redownload` or
+    /// `none`.
+    pub recovery: &'static str,
+    /// What is lost besides the bytes: `cache-warmth`, `rollback-ability`,
+    /// `offline-ability`, `history`.
+    pub loss: Vec<&'static str>,
+    /// How expensive coming back is: `low`, `high` or `unknown`.
+    pub cost: &'static str,
+}
+
+impl From<&Consequence> for ConsequenceOut {
+    fn from(consequence: &Consequence) -> Self {
+        Self {
+            recovery: consequence.recovery.name(),
+            loss: consequence.loss.iter().map(|loss| loss.name()).collect(),
+            cost: consequence.cost.name(),
+        }
+    }
+}
+
 /// Something an integration found.
 #[derive(Debug, Clone, Serialize, JsonSchema)]
 pub struct FindingOut {
@@ -175,6 +247,10 @@ pub struct FindingOut {
     pub evidence: Vec<EvidenceOut>,
     /// What removing it would free, once sized.
     pub size: Option<SizeOut>,
+    /// Its bucket at the report's level, once measured.
+    pub verdict: Option<VerdictOut>,
+    /// What removing it costs, once measured, when its integration verified that.
+    pub consequence: Option<ConsequenceOut>,
 }
 
 impl FindingOut {
@@ -189,6 +265,12 @@ impl FindingOut {
             path: PathOut::new(&finding.path),
             evidence: finding.evidence.iter().map(EvidenceOut::from).collect(),
             size: finding.size.as_ref().map(SizeOut::from),
+            verdict: finding.verdict(LEVEL).as_ref().map(VerdictOut::from),
+            consequence: finding
+                .facts
+                .as_ref()
+                .and_then(|facts| facts.consequence.as_ref())
+                .map(ConsequenceOut::from),
         }
     }
 
@@ -414,12 +496,14 @@ pub enum EventBody {
         /// What was found.
         finding: FindingOut,
     },
-    /// A finding was sized.
+    /// A finding was measured, and its bucket derived.
     FindingUpdated {
         /// The finding's ID within this scan.
         id: u64,
-        /// What removing it would free.
-        size: SizeOut,
+        /// What removing it would free, unless it couldn't be sized.
+        size: Option<SizeOut>,
+        /// Its bucket at the report's level.
+        verdict: VerdictOut,
     },
     /// An integration finished.
     IntegrationCompleted {

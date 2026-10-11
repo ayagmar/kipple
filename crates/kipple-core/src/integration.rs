@@ -12,8 +12,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::cancel::CancelToken;
 use crate::discovery::{Walk, WalkPlan, WalkStop, Walks};
-use crate::engine::{Finding, FindingId};
+use crate::engine::{Finding, FindingId, Found};
 use crate::event::{EventTx, ScanEvent, Stopped};
+use crate::policy::Consequence;
 use crate::probe::{DirEntryMeta, EntryKind, EntryMeta, FsProbe, ProbeError};
 use crate::root::{ResolvedRoot, SymbolicRoot};
 use crate::rule::{Lens, Platform, Rule, Selector};
@@ -294,12 +295,14 @@ pub struct FindingSink<'a> {
     pub(crate) cx: &'a ScanContext<'a>,
     pub(crate) events: &'a EventTx,
     pub(crate) next_id: &'a AtomicU64,
-    pub(crate) found: Vec<Finding>,
+    pub(crate) found: Vec<Found>,
     pub(crate) advice: Vec<Advice>,
 }
 
 impl FindingSink<'_> {
-    /// Adds a finding of `rule` at `path`, which must lie inside the integration's roots.
+    /// Adds a finding of `rule` at `path`, which must lie inside the integration's roots,
+    /// with what removing it costs when the integration verified that. Report-only
+    /// findings and unrecognised layouts have no consequence.
     ///
     /// # Errors
     /// [`IntegrationError::Stopped`] when the scan was cancelled or its consumer went
@@ -310,6 +313,7 @@ impl FindingSink<'_> {
         rule: &Rule,
         path: &Path,
         evidence: Vec<Evidence>,
+        consequence: Option<Consequence>,
     ) -> Result<(), IntegrationError> {
         let finding = Finding {
             id: FindingId(self.next_id.fetch_add(1, Ordering::Relaxed)),
@@ -319,6 +323,7 @@ impl FindingSink<'_> {
             path: self.cx.confined(path)?,
             evidence,
             size: None,
+            facts: None,
         };
         let event = ScanEvent::FindingAdded {
             finding: finding.clone(),
@@ -326,7 +331,10 @@ impl FindingSink<'_> {
         self.events
             .send(event, self.cx.cancel)
             .map_err(|_: Stopped| IntegrationError::Stopped)?;
-        self.found.push(finding);
+        self.found.push(Found {
+            finding,
+            consequence,
+        });
         Ok(())
     }
 

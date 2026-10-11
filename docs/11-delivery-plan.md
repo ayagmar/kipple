@@ -70,6 +70,8 @@ Verify:
 
 ## M2: TUI home
 
+Status (2026-10-11): in progress. Built: bucket classification at Balanced with the facts it needs (D-047), and the 80% check on `demo-home`.
+
 Build:
 - state machine plus a pure renderer: Safe / Review / Protected buckets with Agents / Dev / System grouping, detail pane (what it is, why it's here, why kipple thinks it's safe, what you lose, how it comes back), streaming sizes, fuzzy filter, selection and the `c` Safe shortcut, help, narrow layout, `NO_COLOR` and `--ascii`
 - a lens-first variant behind a dev flag, used only for the M2 comparison and then deleted

@@ -32,7 +32,7 @@ fn add_roots(
             if !holds_anything(cx, &root.path)? {
                 continue;
             }
-            sink.add(rule, &root.path, vec![Evidence::Root(rule.root)])?;
+            sink.add(rule, &root.path, vec![Evidence::Root(rule.root)], None)?;
         }
     }
     Ok(opened)

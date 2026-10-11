@@ -5,6 +5,7 @@
 use std::fmt::Write as _;
 use std::fs;
 use std::path::Path;
+use std::time::SystemTime;
 
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
@@ -13,19 +14,23 @@ use crate::cmd;
 use crate::demo_home;
 
 /// Builds `demo-home` in `dir`, which must be missing or empty, and writes the roots
-/// file that points every root into it.
+/// file that points every root into it and fixes the clock at the time the demo is
+/// looked at.
 pub(crate) fn build(dir: &Path) -> Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("could not create {}", dir.display()))?;
     if fs::read_dir(dir)?.next().is_some() {
         bail!("{} is not empty", dir.display());
     }
-    demo_home::tree()
+    let now = demo_home::looked_at();
+    demo_home::tree(now)
         .build_in(dir)
         .with_context(|| format!("could not build demo-home in {}", dir.display()))?;
     let mut roots = String::new();
     for (name, relative) in demo_home::ROOTS {
         writeln!(roots, "{name} = {}", dir.join(relative).display())?;
     }
+    let seconds = now.duration_since(SystemTime::UNIX_EPOCH)?.as_secs();
+    writeln!(roots, "now = {seconds}")?;
     fs::write(dir.join("roots.txt"), roots)?;
     Ok(())
 }

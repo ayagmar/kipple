@@ -9,15 +9,17 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use kipple_core::{
-    Allocated, Apparent, CancelToken, Category, Completeness, DirEntryMeta, Engine, EngineError,
-    EntryKind, EntryMeta, EventRx, Evidence, FileIdentity, FindingSink, FsProbe, Integration,
-    IntegrationDescriptor, IntegrationError, IntegrationId, Lens, Name, Omission, Operation,
-    Platform, ProbeError, ResolvedRoot, RootLink, RootSource, Roots, Rule, RuleId, RuleText,
+    Activity, ActivityGap, Allocated, Apparent, CancelToken, Category, Clock, Completeness,
+    Consequence, Cost, DirEntryMeta, Engine, EngineError, EntryKind, EntryMeta, EventRx, Evidence,
+    Facts, FileIdentity, FindingSink, FsProbe, Integration, IntegrationDescriptor,
+    IntegrationError, IntegrationId, Inventory, Lens, Measurement, Method, Modified, Name,
+    Omission, Operation, Platform, Ports, ProbeError, ProcessOutcome, ProcessProbe, ProcessRecord,
+    ProcessSnapshot, Recovery, ResolvedRoot, RootLink, RootSource, Roots, Rule, RuleId, RuleText,
     ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Selector, Sizer, SpaceEstimate,
-    SymbolicRoot, UnresolvedRoot, event_channel,
+    SymbolicRoot, Tracked, UnresolvedRoot, event_channel,
 };
 
 /// Ten times the 100 ms cancellation budget: long enough not to flake on a loaded CI
@@ -32,9 +34,11 @@ const SIZE: SpaceEstimate = SpaceEstimate {
 };
 
 /// Every path is an empty directory that can be listed, with no identity, unless listed
-/// otherwise. Counts how often each directory is listed.
+/// otherwise, or it is a `.git` and `no_git` is set. Counts how often each directory is
+/// listed.
 #[derive(Debug, Default)]
 struct FakeFs {
+    no_git: bool,
     entries: BTreeMap<PathBuf, Result<EntryKind, io::ErrorKind>>,
     unlistable: BTreeSet<PathBuf>,
     identities: BTreeMap<PathBuf, FileIdentity>,
@@ -87,12 +91,13 @@ impl FakeFs {
 
 impl FsProbe for FakeFs {
     fn metadata(&self, path: &Path) -> Result<EntryMeta, ProbeError> {
-        match self
-            .entries
-            .get(path)
-            .copied()
-            .unwrap_or(Ok(EntryKind::Dir))
-        {
+        let absent = self.no_git && path.file_name() == Some(".git".as_ref());
+        let default = if absent {
+            Err(io::ErrorKind::NotFound)
+        } else {
+            Ok(EntryKind::Dir)
+        };
+        match self.entries.get(path).copied().unwrap_or(default) {
             Ok(kind) => Ok(EntryMeta {
                 kind,
                 identity: self.identities.get(path).copied(),
@@ -121,28 +126,79 @@ impl FsProbe for FakeFs {
     }
 }
 
-/// Sizes everything as [`SIZE`]. With `block_first`, the first call meets the test at the
-/// barrier and then waits for cancellation, like a walk of a huge tree.
+/// Sizes everything as [`SIZE`], last modified at [`NOW`], unless `measurement` says
+/// otherwise. With `block_first`, the first call meets the test at the barrier and then
+/// waits for cancellation, like a walk of a huge tree.
 #[derive(Debug, Default)]
 struct FakeSizer {
     calls: Arc<AtomicUsize>,
     block_first: Option<Arc<Barrier>>,
+    measurement: Option<Measurement>,
 }
 
 impl Sizer for FakeSizer {
-    fn size(&self, _: &Path, cancel: &CancelToken) -> Result<SpaceEstimate, ProbeError> {
+    fn size(&self, _: &Path, cancel: &CancelToken) -> Result<Measurement, ProbeError> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
         let Some(started) = self.block_first.as_ref().filter(|_| call == 0) else {
-            return Ok(SIZE);
+            return Ok(self.measurement.unwrap_or(measured(SIZE)));
         };
         started.wait();
         while !cancel.is_cancelled() {
             thread::yield_now();
         }
-        Ok(SpaceEstimate {
+        Ok(measured(SpaceEstimate {
             completeness: Completeness::Cancelled,
             ..SIZE
-        })
+        }))
+    }
+}
+
+/// `size`, last modified at [`NOW`].
+const fn measured(size: SpaceEstimate) -> Measurement {
+    Measurement {
+        size,
+        modified: Some(NOW),
+    }
+}
+
+/// When every test scan runs.
+const NOW: SystemTime = SystemTime::UNIX_EPOCH;
+
+/// A clock stopped at [`NOW`].
+#[derive(Debug)]
+struct FixedClock;
+
+impl Clock for FixedClock {
+    fn now(&self) -> SystemTime {
+        NOW
+    }
+}
+
+/// The processes a host runs.
+#[derive(Debug)]
+struct FakeProcesses(Result<ProcessSnapshot, ProbeError>);
+
+impl ProcessProbe for FakeProcesses {
+    fn snapshot(&self) -> Result<ProcessSnapshot, ProbeError> {
+        self.0.clone()
+    }
+}
+
+/// A host that runs nothing.
+const fn no_processes() -> FakeProcesses {
+    FakeProcesses(Ok(ProcessSnapshot {
+        processes: Vec::new(),
+        inventory: Inventory::Complete,
+    }))
+}
+
+/// The engine's ports over `fs` and `sizer`, on a host that runs nothing, at [`NOW`].
+fn ports(fs: FakeFs, sizer: FakeSizer) -> Ports {
+    Ports {
+        fs: Box::new(fs),
+        sizer: Box::new(sizer),
+        processes: Box::new(no_processes()),
+        clock: Box::new(FixedClock),
     }
 }
 
@@ -237,7 +293,7 @@ impl Integration for Emitter {
                 first_add.wait();
             }
             let path = PathBuf::from(format!("/found/{}/{n:05}", self.id));
-            sink.add(&any_rule(self.id), &path, Vec::new())?;
+            sink.add(&any_rule(self.id), &path, Vec::new(), None)?;
         }
         Ok(())
     }
@@ -255,13 +311,7 @@ fn found() -> ScanRequest {
     reason = "a fixture that fails to build fails the test"
 )]
 fn engine(sizer: FakeSizer, integrations: Vec<Box<dyn Integration>>) -> Engine {
-    Engine::new(
-        Box::new(FakeFs::default()),
-        Box::new(sizer),
-        integrations,
-        Vec::new(),
-    )
-    .unwrap()
+    Engine::new(ports(FakeFs::default(), sizer), integrations, Vec::new()).unwrap()
 }
 
 /// Runs the scan on its own thread, so the test can act as a stalled or departing consumer.
@@ -444,7 +494,7 @@ impl Integration for RootReader {
         if let Ok(mut probes) = self.probes.lock() {
             for path in &self.probe {
                 let read = cx.read_dir(path).err();
-                let add = match sink.add(&any_rule("roots"), path, Vec::new()) {
+                let add = match sink.add(&any_rule("roots"), path, Vec::new(), None) {
                     Ok(()) | Err(IntegrationError::Stopped) => None,
                     Err(IntegrationError::Probe(error)) => Some(error),
                 };
@@ -509,8 +559,7 @@ fn roots_that_cannot_be_read_are_omissions_and_are_never_handed_to_the_integrati
         probe: Vec::new(),
     };
     let engine = Engine::new(
-        Box::new(fs),
-        Box::new(FakeSizer::default()),
+        ports(fs, FakeSizer::default()),
         vec![Box::new(reader)],
         Vec::new(),
     )
@@ -567,8 +616,7 @@ fn an_integration_can_neither_probe_nor_report_anything_outside_its_roots() {
         .to_vec(),
     };
     let engine = Engine::new(
-        Box::new(fs),
-        Box::new(FakeSizer::default()),
+        ports(fs, FakeSizer::default()),
         vec![Box::new(reader)],
         Vec::new(),
     )
@@ -621,7 +669,7 @@ impl Integration for Crashes {
         sink: &mut FindingSink<'_>,
     ) -> Result<(), IntegrationError> {
         let path = Path::new("/found/crashes/00000");
-        sink.add(&any_rule("crashes"), path, Vec::new())?;
+        sink.add(&any_rule("crashes"), path, Vec::new(), None)?;
         panic!("integration bug");
     }
 }
@@ -701,8 +749,7 @@ fn a_root_resolved_through_a_link_is_read_only_while_it_leads_to_the_same_direct
         probe: Vec::new(),
     };
     let engine = Engine::new(
-        Box::new(fs),
-        Box::new(FakeSizer::default()),
+        ports(fs, FakeSizer::default()),
         vec![Box::new(reader)],
         Vec::new(),
     )
@@ -749,7 +796,7 @@ impl Integration for ProjectFinder {
         for rule in cx.rules() {
             for stop in cx.project_artifacts(rule)? {
                 let evidence = stop.markers.into_iter().map(Evidence::Marker).collect();
-                sink.add(rule, &stop.path, evidence)?;
+                sink.add(rule, &stop.path, evidence, None)?;
             }
         }
         Ok(())
@@ -810,8 +857,7 @@ fn project_artifacts_are_found_in_one_walk_that_never_looks_inside_one_or_goes_t
         project_rule("cargo", "Cargo.toml", "target"),
         project_rule("node", "package.json", "node_modules"),
     ];
-    let sizer = Box::new(FakeSizer::default());
-    let engine = Engine::new(Box::new(fs), sizer, integrations, rules).unwrap();
+    let engine = Engine::new(ports(fs, FakeSizer::default()), integrations, rules).unwrap();
 
     let report = run(&engine, &ScanRequest { roots, lens: None });
 
@@ -851,8 +897,7 @@ fn project_artifacts_are_found_in_one_walk_that_never_looks_inside_one_or_goes_t
 #[test]
 fn a_rule_whose_integration_is_not_registered_is_refused_instead_of_never_running() {
     let built = Engine::new(
-        Box::new(FakeFs::default()),
-        Box::new(FakeSizer::default()),
+        ports(FakeFs::default(), FakeSizer::default()),
         vec![Box::new(Emitter::new("cargo", 0))],
         vec![any_rule("cargo"), any_rule("node")],
     );
@@ -864,4 +909,222 @@ fn a_rule_whose_integration_is_not_registered_is_refused_instead_of_never_runnin
             ..
         })
     ));
+}
+
+/// Proposes removing each of `paths`, recognised and with a known consequence, under a
+/// `remove-files` rule of its own.
+#[derive(Debug)]
+struct Proposer {
+    paths: &'static [&'static str],
+}
+
+impl Proposer {
+    fn rule() -> Rule {
+        Rule {
+            operation: Operation::RemoveFiles(vec![Method::Delete]),
+            ..rule(
+                "proposer",
+                SymbolicRoot::XdgCache,
+                Selector::Integration("test"),
+            )
+        }
+    }
+}
+
+impl Integration for Proposer {
+    fn descriptor(&self) -> IntegrationDescriptor {
+        IntegrationDescriptor {
+            roots: &[SymbolicRoot::XdgCache],
+            ..descriptor("proposer")
+        }
+    }
+
+    fn discover(
+        &self,
+        _: &ScanContext<'_>,
+        sink: &mut FindingSink<'_>,
+    ) -> Result<(), IntegrationError> {
+        let consequence = Consequence {
+            recovery: Recovery::RebuildLocal,
+            loss: &[],
+            cost: Cost::Unknown,
+        };
+        for path in self.paths {
+            let evidence = vec![Evidence::Signature("TAG".to_owned())];
+            sink.add(&Self::rule(), Path::new(path), evidence, Some(consequence))?;
+        }
+        Ok(())
+    }
+}
+
+/// Scans what `proposer` proposes under `/found` with `ports`, and returns each finding's
+/// facts by path.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a fixture that fails to build fails the test"
+)]
+fn facts(ports: Ports, proposer: Proposer) -> BTreeMap<PathBuf, Facts> {
+    let engine = Engine::new(ports, vec![Box::new(proposer)], vec![Proposer::rule()]).unwrap();
+    let report = run(&engine, &found());
+    report
+        .findings
+        .into_iter()
+        .map(|finding| (finding.path, finding.facts.unwrap()))
+        .collect()
+}
+
+#[test]
+fn a_git_directory_in_or_above_a_finding_leaves_what_it_tracks_unknown() {
+    let fs = FakeFs {
+        no_git: true,
+        entries: BTreeMap::from([
+            (PathBuf::from("/found/repo/.git"), Ok(EntryKind::File)),
+            (PathBuf::from("/found/self/.git"), Ok(EntryKind::Dir)),
+            (
+                PathBuf::from("/found/locked/.git"),
+                Err(io::ErrorKind::PermissionDenied),
+            ),
+        ]),
+        ..FakeFs::default()
+    };
+    let proposer = Proposer {
+        paths: &[
+            "/found/repo/target",
+            "/found/self",
+            "/found/locked/target",
+            "/found/plain/target",
+        ],
+    };
+
+    let facts = facts(ports(fs, FakeSizer::default()), proposer);
+
+    let tracked = |path: &str| &facts[Path::new(path)].tracked;
+    assert!(matches!(
+        tracked("/found/repo/target"),
+        Tracked::InsideRepository { work_tree } if work_tree == Path::new("/found/repo")
+    ));
+    assert!(matches!(
+        tracked("/found/self"),
+        Tracked::InsideRepository { work_tree } if work_tree == Path::new("/found/self")
+    ));
+    assert!(matches!(
+        tracked("/found/locked/target"),
+        Tracked::Unchecked(error) if error.io_kind() == Some(io::ErrorKind::PermissionDenied)
+    ));
+    assert!(matches!(
+        tracked("/found/plain/target"),
+        Tracked::NoRepository
+    ));
+}
+
+#[test]
+fn a_program_running_from_a_finding_marks_it_in_use_and_any_unidentified_one_unknown() {
+    let identified = |pid, path: &str| ProcessRecord {
+        pid,
+        outcome: ProcessOutcome::Identified {
+            path: PathBuf::from(path),
+            identity: FileIdentity {
+                volume: 1,
+                file: u64::from(pid),
+            },
+            deleted: false,
+        },
+    };
+    let denied = ProcessRecord {
+        pid: 1,
+        outcome: ProcessOutcome::Denied(Arc::new(io::ErrorKind::PermissionDenied.into())),
+    };
+    let snapshot = |processes, inventory| {
+        FakeProcesses(Ok(ProcessSnapshot {
+            processes,
+            inventory,
+        }))
+    };
+    let activity = |processes: FakeProcesses| {
+        let ports = Ports {
+            processes: Box::new(processes),
+            ..ports(FakeFs::default(), FakeSizer::default())
+        };
+        let proposer = Proposer {
+            paths: &["/found/app/target"],
+        };
+        facts(ports, proposer)
+            .remove(Path::new("/found/app/target"))
+            .map(|facts| facts.activity)
+    };
+    let running = vec![
+        identified(7, "/usr/bin/cargo"),
+        identified(4121, "/found/app/target/debug/app"),
+        denied.clone(),
+    ];
+    let partial = Inventory::Partial {
+        reason: "hidepid=2".to_owned(),
+    };
+    let unlisted = FakeProcesses(Err(ProbeError::io(
+        Path::new("/proc"),
+        io::ErrorKind::PermissionDenied.into(),
+    )));
+
+    assert!(matches!(
+        activity(snapshot(running, Inventory::Complete)),
+        Some(Activity::InUse { pid: 4121, .. })
+    ));
+    assert!(matches!(
+        activity(snapshot(
+            vec![identified(7, "/usr/bin/cargo")],
+            Inventory::Complete
+        )),
+        Some(Activity::Idle)
+    ));
+    assert!(matches!(
+        activity(snapshot(vec![denied], Inventory::Complete)),
+        Some(Activity::Unknown(ActivityGap::Uninspected(1)))
+    ));
+    assert!(matches!(
+        activity(snapshot(Vec::new(), partial)),
+        Some(Activity::Unknown(ActivityGap::Partial(_)))
+    ));
+    assert!(matches!(
+        activity(unlisted),
+        Some(Activity::Unknown(ActivityGap::NoListing(_)))
+    ));
+}
+
+#[test]
+fn only_a_complete_measurement_dates_a_finding_and_a_future_time_counts_as_now() {
+    let modified = |completeness, at: SystemTime| {
+        let sizer = FakeSizer {
+            measurement: Some(Measurement {
+                size: SpaceEstimate {
+                    completeness,
+                    ..SIZE
+                },
+                modified: Some(at),
+            }),
+            ..FakeSizer::default()
+        };
+        let clock = Box::new(FixedClock);
+        let ports = Ports {
+            clock,
+            ..ports(FakeFs::default(), sizer)
+        };
+        let proposer = Proposer {
+            paths: &["/found/target"],
+        };
+        facts(ports, proposer)
+            .remove(Path::new("/found/target"))
+            .map(|facts| facts.modified)
+    };
+    let day = Duration::from_hours(24);
+    let incomplete = Completeness::Incomplete { unreadable: 1 };
+
+    assert_eq!(
+        modified(Completeness::Complete, NOW - 3 * day),
+        Some(Modified::Ago(3 * day))
+    );
+    assert_eq!(
+        modified(Completeness::Complete, NOW + day),
+        Some(Modified::Ago(Duration::ZERO))
+    );
+    assert_eq!(modified(incomplete, NOW - 3 * day), Some(Modified::Unknown));
 }

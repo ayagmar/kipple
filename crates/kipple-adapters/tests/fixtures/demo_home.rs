@@ -1,6 +1,8 @@
 //! `demo-home`: the one shared tree used by the end-to-end tests, the docs demo and the
 //! tapes (`docs/06-adapters-and-rules.md` §7), built from the upstream layout fixtures.
 
+use std::time::{Duration, SystemTime};
+
 use super::tree::FixtureTree;
 use super::{
     bun_v1_4_2, cargo_v1_99_0, claude_settings, journald_v262, npm_v11_19_0, pacman_v7_1_0,
@@ -21,9 +23,19 @@ pub(crate) const ROOTS: &[(&str, &str)] = &[
     ("journald.journal", "var/log/journal"),
 ];
 
-/// The demo tree: a home with projects for each supported layout, plus the system
-/// locations kipple reports.
-pub(crate) fn tree() -> FixtureTree {
+const DAY: Duration = Duration::from_hours(24);
+
+/// When a demo built now is looked at: long enough after it was built that its
+/// directories, which keep the time they were created, are older than any recent window.
+/// A scan of it runs with its clock fixed here.
+pub(crate) fn looked_at() -> SystemTime {
+    SystemTime::now() + 60 * DAY
+}
+
+/// The demo tree, looked at `now`: a home with projects for each supported layout, plus
+/// the system locations kipple reports. Its files were last modified 41 days before
+/// `now`, except one project's dependencies, installed 2 days before.
+pub(crate) fn tree(now: SystemTime) -> FixtureTree {
     let mut tree = FixtureTree::new();
     let projects = "home/projects";
     cargo_v1_99_0::project(&mut tree, &format!("{projects}/rust-app"));
@@ -42,5 +54,8 @@ pub(crate) fn tree() -> FixtureTree {
     claude_settings::config(&mut tree, "home/.claude", 14);
     pacman_v7_1_0::cache(&mut tree, "var/cache/pacman/pkg");
     journald_v262::journal(&mut tree, "var/log/journal");
+    tree.modified("home", now - 41 * DAY)
+        .modified("var", now - 41 * DAY)
+        .modified(&format!("{projects}/web/node_modules"), now - 2 * DAY);
     tree
 }

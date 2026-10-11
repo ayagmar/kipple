@@ -6,11 +6,19 @@
 use std::path::Path;
 
 use kipple_core::{
-    DirEntryMeta, FindingSink, Integration, IntegrationDescriptor, IntegrationError, IntegrationId,
-    Lens, Platform, ScanContext,
+    Consequence, Cost, DirEntryMeta, FindingSink, Integration, IntegrationDescriptor,
+    IntegrationError, IntegrationId, Lens, Loss, Platform, Recovery, ScanContext,
 };
 
 use super::project;
+
+/// The package manager installs the dependencies again from the lockfile, downloading
+/// whatever its own cache doesn't hold, so it may need the network.
+const REINSTALLED: Consequence = Consequence {
+    recovery: Recovery::Reinstall,
+    loss: &[Loss::OfflineAbility],
+    cost: Cost::Unknown,
+};
 
 /// The Node integration.
 #[derive(Debug)]
@@ -36,7 +44,7 @@ impl Integration for Node {
         cx: &ScanContext<'_>,
         sink: &mut FindingSink<'_>,
     ) -> Result<(), IntegrationError> {
-        project::add_artifacts(cx, sink, install_record)
+        project::add_artifacts(cx, sink, install_record, REINSTALLED)
     }
 }
 

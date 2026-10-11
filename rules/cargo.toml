@@ -29,4 +29,5 @@ marker = ["Cargo.toml"]
 artifact = "target"
 
 [rule.operation]
-kind = "report"
+kind = "remove-files"
+methods = ["delete", "trash"]

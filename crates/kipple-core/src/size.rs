@@ -1,5 +1,7 @@
 //! Byte counts and space estimates (`docs/04-safety-model.md` §8).
 
+use std::time::SystemTime;
+
 /// The sum of file lengths: what a listing shows, not what the disk holds.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Apparent(pub u64);
@@ -35,4 +37,14 @@ pub struct SpaceEstimate {
     pub unique_reclaim: Option<Allocated>,
     /// Whether every entry was measured.
     pub completeness: Completeness,
+}
+
+/// What measuring an item found.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Measurement {
+    /// What removing it would free.
+    pub size: SpaceEstimate,
+    /// The newest modification time of the item and everything measured inside it, where
+    /// the platform reports one.
+    pub modified: Option<SystemTime>,
 }

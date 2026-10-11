@@ -28,7 +28,8 @@ marker = ["pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfil
 artifact = ".venv"
 
 [rule.operation]
-kind = "report"
+kind = "remove-files"
+methods = ["delete", "trash"]
 
 [[rule]]
 id = "builtin.python.bytecode"
@@ -47,4 +48,5 @@ root = "config.project-roots"
 selection = "bytecode-caches"
 
 [rule.operation]
-kind = "report"
+kind = "remove-files"
+methods = ["delete", "trash"]

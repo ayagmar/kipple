@@ -44,7 +44,7 @@ These boundaries are enforced by Cargo itself (no dependency means no access) pl
 
 `#[cfg(target_os)]` appears only in `kipple-platform`: its `src/os.rs` picks one of `src/os/{linux,macos,windows}.rs` (`src/os/unix.rs` holds what Linux and macOS share), and a few platform tests are gated to one OS. Core and adapters are platform-neutral. Integrations ask the platform for symbolic roots (`SymbolicRoot::XdgCache`, `SymbolicRoot::LocalAppData`, and tool roots such as Codex's later), never for hard-coded paths.
 
-**Roots today.** `resolve_roots` turns one environment snapshot into every symbolic root the OS has, each with its source: `home` from `HOME` and the XDG roots from their variables or their `$HOME` defaults on Linux and macOS, `macos.caches` (`~/Library/Caches`), and on Windows `home`, `known.local-app-data` and `known.roaming-app-data` from the Known Folder API. A relative `XDG_*` value leaves its root unknown. Tool roots follow: `config.project-roots` (the defaults of 03 §6 that exist, each directory once even where the file system ignores case, or the `--root` paths instead; a default that can't be checked, or is a link, is kept so opening it reports what is wrong; each `--root` is placed in the directory its parent names, the parent's links and `..` resolved (on Windows in the usual `C:\` or `\\server\share` form, not the `\\?\` one), and keeps its own name, so a `--root` that is itself a link is resolved once like any root; one that doesn't exist, or whose parent can't be resolved, is unknown), `claude.config` (`CLAUDE_CONFIG_DIR`, default `~/.claude`), `trash` (`$XDG_DATA_HOME/Trash/files` on Linux, where the home trash keeps the trashed files, `~/.Trash` on macOS; none on Windows yet), and on Linux `pacman.cache` (every `CacheDir` in `/etc/pacman.conf`'s `[options]`, default `/var/cache/pacman/pkg`; an `Include` there leaves it unknown, since the setting may be in the included file) and `journald.journal` (`/var/log/journal`). Those fixed system paths are read below the environment's system root, `/` unless a test moves it with `Environment::with_system_root`, and a `CacheDir` with `..` is resolved like a `--root`. Each root keeps a path it resolved to only once; when the same directory is reached directly and through a link, the one kept carries the link's identity check, whichever came first. With the `test-roots` feature, `KIPPLE_TEST_ROOTS=<file>` replaces every root with the `name = path` lines of that file, for end-to-end tests; release builds don't have it. kipple's own directories hang off the same roots (D-037). A root whose own path is a link is resolved once, there (D-041): the root becomes the directory the link chain leads to, with the configured path and that directory's identity kept in its `RootLink`. Only the root's own path is resolved. A chain that can't be followed, or that leads to something other than a directory, leaves the root unknown.
+**Roots today.** `resolve_roots` turns one environment snapshot into every symbolic root the OS has, each with its source: `home` from `HOME` and the XDG roots from their variables or their `$HOME` defaults on Linux and macOS, `macos.caches` (`~/Library/Caches`), and on Windows `home`, `known.local-app-data` and `known.roaming-app-data` from the Known Folder API. A relative `XDG_*` value leaves its root unknown. Tool roots follow: `config.project-roots` (the defaults of 03 §6 that exist, each directory once even where the file system ignores case, or the `--root` paths instead; a default that can't be checked, or is a link, is kept so opening it reports what is wrong; each `--root` is placed in the directory its parent names, the parent's links and `..` resolved (on Windows in the usual `C:\` or `\\server\share` form, not the `\\?\` one), and keeps its own name, so a `--root` that is itself a link is resolved once like any root; one that doesn't exist, or whose parent can't be resolved, is unknown), `claude.config` (`CLAUDE_CONFIG_DIR`, default `~/.claude`), `trash` (`$XDG_DATA_HOME/Trash/files` on Linux, where the home trash keeps the trashed files, `~/.Trash` on macOS; none on Windows yet), and on Linux `pacman.cache` (every `CacheDir` in `/etc/pacman.conf`'s `[options]`, default `/var/cache/pacman/pkg`; an `Include` there leaves it unknown, since the setting may be in the included file) and `journald.journal` (`/var/log/journal`). Those fixed system paths are read below the environment's system root, `/` unless a test moves it with `Environment::with_system_root`, and a `CacheDir` with `..` is resolved like a `--root`. Each root keeps a path it resolved to only once; when the same directory is reached directly and through a link, the one kept carries the link's identity check, whichever came first. With the `test-roots` feature, `KIPPLE_TEST_ROOTS=<file>` replaces every root with the `name = path` lines of that file, for end-to-end tests: a `now = <seconds since the Unix epoch>` line there fixes the clock, and while the file is in use the process table is empty and complete, so a test reads no real process. Release builds don't have it. kipple's own directories hang off the same roots (D-037). A root whose own path is a link is resolved once, there (D-041): the root becomes the directory the link chain leads to, with the configured path and that directory's identity kept in its `RootLink`. Only the root's own path is resolved. A chain that can't be followed, or that leads to something other than a directory, leaves the root unknown.
 
 **Capabilities today.** `probe_tools` finds `git`, `paccache` and `journalctl` on the absolute entries of `PATH` and runs `--version` through the platform runner (D-038). A tool counts only with a parsed version. Which versions an integration supports is decided with that integration.
 
@@ -61,19 +61,22 @@ pub trait FsProbe: Debug + Send + Sync {   // read-only, no-follow
 }
 
 pub trait Sizer: Debug + Send + Sync {     // the walker (D-036)
-    fn size(&self, path: &Path, cancel: &CancelToken) -> Result<SpaceEstimate, ProbeError>;
-}
+    fn size(&self, path: &Path, cancel: &CancelToken) -> Result<Measurement, ProbeError>;
+}                                          // size, plus the newest modification time inside
 
 pub trait ProcessProbe: Debug + Send + Sync {
     fn snapshot(&self) -> Result<ProcessSnapshot, ProbeError>;  // one outcome per process (D-035)
 }
+
+pub trait Clock: Debug + Send + Sync { fn now(&self) -> SystemTime; }
+
+pub struct Ports { pub fs, pub sizer, pub processes, pub clock }   // boxed, what Engine::new takes
 
 // planned, with their first consumers:
 pub trait Executor: Send + Sync {          // the only mutation boundary (M3)
     fn execute(&self, op: &AuthorizedOp, journal: &mut dyn Journal) -> ItemOutcome;
 }
 
-pub trait Clock: Send + Sync { fn now(&self) -> Timestamp; }   // with `modified_age` (rules)
 ```
 
 The probes are path-based. Spike S1 decides whether read-only probes become handle-relative like the executor.
@@ -92,7 +95,7 @@ pub trait Integration: Debug + Send + Sync {
 }
 ```
 
-`Engine::new` takes the integrations and the validated rules, and gives each integration its own rules; a rule whose integration isn't registered is refused. An integration reads the roots its descriptor declares plus its rules' roots. `ScanContext::project_artifacts(rule)` returns a `project-artifact` rule's candidates from the shared walk (§3), `walk_stops(root)` everything that walk stopped at, and `read_file` a bounded, no-follow read for evidence such as Cargo's `CACHEDIR.TAG`. `FindingSink::add(rule, path, evidence)` records a finding with its rule, category and `Evidence` (`Marker`, `Signature`, `NoSignature` or `Root`), and `advise` records `Advice`, which the report carries per integration and which kipple never runs.
+`Engine::new` takes the ports, the integrations and the validated rules, and gives each integration its own rules; a rule whose integration isn't registered is refused. An integration reads the roots its descriptor declares plus its rules' roots. `ScanContext::project_artifacts(rule)` returns a `project-artifact` rule's candidates from the shared walk (§3), `walk_stops(root)` everything that walk stopped at, and `read_file` a bounded, no-follow read for evidence such as Cargo's `CACHEDIR.TAG`. `FindingSink::add(rule, path, evidence, consequence)` records a finding with its rule, category, `Evidence` (`Marker`, `Signature`, `NoSignature` or `Root`) and, when the integration verified what its tool wrote there, the `Consequence` of removing it (04 §2a), and `advise` records `Advice`, which the report carries per integration and which kipple never runs.
 
 The engine opens each declared root without following links before `discover` runs. A root that doesn't exist is simply absent. One that is unresolved, unreadable (including a directory that can't be listed) or not a directory becomes an omission and is not handed to the integration, and so does a root resolved through a link whose directory is gone or no longer has the identity recorded when it was resolved. `ScanContext` exposes the roots that opened, read-only probes confined to them, and cancellation. A path outside every root, with a `..` component, or through a link below its root is refused. A trailing separator or `.` component is dropped first, since either would make the OS follow a link in the last component. `FindingSink::add` applies the same confinement, streams each finding as `FindingAdded` and fails once the scan stops, so the integration returns early. If `discover` panics, what it found until then is kept and the integration gets a `Crashed` omission. These checks are path-based until spike S1's handle-relative probes, so a link swapped in between check and use is not yet caught. Rules (TOML) are evaluated by the core against an integration's published selectors and facts. See [06-adapters-and-rules.md](06-adapters-and-rules.md).
 
@@ -111,10 +114,14 @@ impl Engine {
 
 These calls are synchronous and blocking, run on worker threads, and report through a bounded event channel. `scan` runs every integration on its own thread, then sizes each integration's findings through the `Sizer`. There is no async runtime in core. Filesystem work is blocking, and a bounded thread pool is enough. Async may appear later in the binary for pack downloads only.
 
+### Buckets
+
+When the engine measures a finding it also establishes its `Facts` (D-047): what its rule proposes (`report`, `advice` when the integration gave advice, or `remove` with its methods), whether the integration recognised the layout (a `Signature`), the consequence it verified, whether a git repository could track files inside it (`.git` looked for in the item and every directory above it, through the `FsProbe`), whether a running program uses it (one process snapshot per scan, D-035), and how long ago anything inside it last changed (the walker's newest modification time against the `Clock`). `classify(&facts, level)` is a pure function that turns them into a `Verdict`: `Safe`, `Review` with every `Caution`, or `Protected` with every `Hold` (04 §2a). Frontends call it, so the CLI, the TUI and a future GUI agree, and a frontend can compare levels without scanning again. Only `Level::Balanced` exists today.
+
 ### Key types
 
 - **IDs:** `IntegrationId`, `FindingId`, `RuleId` and `PackId` exist; `PlanId` and `ReceiptId` are planned. All are distinct newtypes. IDs are references, never authorization. A `FindingId` is unique within one scan.
-- **`Finding`:** today its ID, integration, rule, category, path, evidence and size. Planned: pack and version in the owner, `PathRef` (lossless OS path plus escaped display), `SpaceEstimate`, loss and recovery description, eligibility with reasons, allowed methods, advice.
+- **`Finding`:** today its ID, integration, rule, category, path, evidence, size and `Facts`. Planned: pack and version in the owner, `PathRef` (lossless OS path plus escaped display), `SpaceEstimate`, loss and recovery description, eligibility with reasons, allowed methods, advice.
 - **`SpaceEstimate`:** apparent, allocated, unique-reclaim estimate, completeness (`Complete`, `Incomplete { unreadable }` or `Cancelled`). A hard-linked file counts once, and one with a link outside the item is left out of the unique-reclaim estimate. Windows reports neither allocation nor link counts cheaply, so there the last two are unknown.
 - **`Plan`:** schema version, creation time, entries (target identities and fingerprints, method, operation), policy, exclusion and pack digests, and a review DTO for display. Imported plan files are untrusted input: they are re-planned and revalidated, never executed as written.
 - **`Receipt`:** per-item `Done | Skipped(Reason) | Failed(ErrorDetail) | Cancelled | Indeterminate`, method, recovery handle where one exists, estimated bytes, and an optional observed free-space change.
@@ -123,7 +130,7 @@ These calls are synchronous and blocking, run on worker threads, and report thro
 ### Events
 
 ```text
-ScanStarted, RootOpened, FindingAdded, FindingUpdated(size),
+ScanStarted, RootOpened, FindingAdded, FindingUpdated(size, facts),
 IntegrationCompleted{omissions}, ScanCompleted
 planned: IntegrationProgress, PlanReady, ItemStarted, ItemCompleted(outcome), ApplyCompleted
 ```

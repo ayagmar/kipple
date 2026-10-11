@@ -3,6 +3,7 @@
 
 use std::fs;
 use std::path::Path;
+use std::time::{Duration, SystemTime};
 
 use kipple_core::{Apparent, CancelToken, Completeness, EntryKind, FsProbe, Sizer};
 use kipple_platform::{NoFollowFs, Walker};
@@ -68,10 +69,46 @@ fn an_item_is_sized_completely_and_links_out_of_it_are_never_followed() {
     let size = Walker::new()
         .unwrap()
         .size(&temp.path().join("item"), &CancelToken::new())
-        .unwrap();
+        .unwrap()
+        .size;
 
     assert_eq!(size.apparent, Apparent(expected));
     assert_eq!(size.completeness, Completeness::Complete);
+}
+
+#[test]
+fn an_item_last_changed_when_anything_inside_it_did_a_file_deep_down_or_a_directory() {
+    let temp = TempDir::new().unwrap();
+    let item = temp.path().join("item");
+    let file = item.join("pkg/lib/index.js");
+    write(&file, 10);
+    let set = |at: SystemTime| {
+        let handle = fs::File::options().write(true).open(&file).unwrap();
+        handle.set_modified(at).unwrap();
+    };
+    let newest_dir = ["item", "item/pkg", "item/pkg/lib"]
+        .iter()
+        .map(|dir| {
+            fs::metadata(temp.path().join(dir))
+                .unwrap()
+                .modified()
+                .unwrap()
+        })
+        .max()
+        .unwrap();
+    let modified = || {
+        let walker = Walker::new().unwrap();
+        walker.size(&item, &CancelToken::new()).unwrap().modified
+    };
+
+    // A package manager may give every file an old fixed time: the directories it
+    // created still date the install.
+    set(SystemTime::UNIX_EPOCH);
+    assert_eq!(modified(), Some(newest_dir));
+
+    let later = newest_dir + Duration::from_secs(3600);
+    set(later);
+    assert_eq!(modified(), Some(later));
 }
 
 #[test]
@@ -83,7 +120,8 @@ fn a_cancelled_walk_is_never_reported_as_complete() {
     let size = Walker::new()
         .unwrap()
         .size(&temp.path().join("item"), &cancel)
-        .unwrap();
+        .unwrap()
+        .size;
 
     assert_eq!(size.completeness, Completeness::Cancelled);
 }
@@ -165,7 +203,8 @@ mod unix {
         let size = Walker::new()
             .unwrap()
             .size(&item, &CancelToken::new())
-            .unwrap();
+            .unwrap()
+            .size;
 
         // `own` has two names inside the item: one file, freed with the item.
         assert_eq!(size.apparent, Apparent(128 << 10));
@@ -187,7 +226,8 @@ mod unix {
         let size = Walker::new()
             .unwrap()
             .size(temp.path(), &CancelToken::new())
-            .unwrap();
+            .unwrap()
+            .size;
 
         assert_eq!(size.apparent, Apparent(256 << 20));
         assert!(size.allocated.unwrap().0 < 1 << 20);
@@ -205,7 +245,7 @@ mod unix {
             .size(temp.path(), &CancelToken::new());
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
 
-        let completeness = size.unwrap().completeness;
+        let completeness = size.unwrap().size.completeness;
         assert_eq!(completeness, Completeness::Incomplete { unreadable: 1 });
     }
 }

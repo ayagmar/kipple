@@ -13,14 +13,17 @@ use std::thread;
 use crate::cancel::CancelToken;
 use crate::discovery::{WalkPlan, Walks};
 use crate::event::{EventTx, ScanEvent, Stopped};
+use crate::facts::{Processes, Repositories};
 use crate::integration::{
     Advice, Evidence, FindingSink, Integration, IntegrationDescriptor, IntegrationError,
     IntegrationId, ScanContext,
 };
-use crate::probe::{EntryKind, EntryMeta, FsProbe, ProbeError, Sizer};
+use crate::policy::{Consequence, Facts, Level, Modified, Proposal, Verdict, classify};
+use crate::probe::{Clock, EntryKind, EntryMeta, FsProbe, ProbeError, Sizer};
+use crate::process::ProcessProbe;
 use crate::root::{ResolvedRoot, Roots, SymbolicRoot, UnresolvedRoot};
-use crate::rule::{Category, Lens, Rule, RuleId};
-use crate::size::SpaceEstimate;
+use crate::rule::{Category, Lens, Operation, Rule, RuleId};
+use crate::size::{Completeness, Measurement, SpaceEstimate};
 
 /// A finding's ID within one scan. IDs are references, never authorization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -33,7 +36,7 @@ impl fmt::Display for FindingId {
 }
 
 /// Something an integration found.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct Finding {
     /// Its ID within this scan.
     pub id: FindingId,
@@ -49,6 +52,17 @@ pub struct Finding {
     pub evidence: Vec<Evidence>,
     /// What removing it would free, once sized.
     pub size: Option<SpaceEstimate>,
+    /// What the host learned about it once it was measured, which its bucket is derived
+    /// from ([`classify`](crate::classify)).
+    pub facts: Option<Facts>,
+}
+
+impl Finding {
+    /// Its bucket at `level`, once measured.
+    #[must_use]
+    pub fn verdict(&self, level: Level) -> Option<Verdict> {
+        self.facts.as_ref().map(|facts| classify(facts, level))
+    }
 }
 
 /// Something a scan could not cover, and why. Omissions make a report partial; they
@@ -170,11 +184,24 @@ pub enum EngineError {
     },
 }
 
+/// The ports an engine reads the machine through. The platform implements them; tests
+/// fake them.
+#[derive(Debug)]
+pub struct Ports {
+    /// Read-only, no-follow file system probes.
+    pub fs: Box<dyn FsProbe>,
+    /// Sizes findings and finds when they last changed.
+    pub sizer: Box<dyn Sizer>,
+    /// Lists the running executables.
+    pub processes: Box<dyn ProcessProbe>,
+    /// The current time.
+    pub clock: Box<dyn Clock>,
+}
+
 /// Runs scans over the registered integrations, through the injected ports.
 #[derive(Debug)]
 pub struct Engine {
-    fs: Box<dyn FsProbe>,
-    sizer: Box<dyn Sizer>,
+    ports: Ports,
     integrations: Vec<Registered>,
     plan: WalkPlan,
 }
@@ -195,6 +222,8 @@ struct Shared<'a> {
     cancel: &'a CancelToken,
     next_id: &'a AtomicU64,
     walks: &'a Walks,
+    repositories: &'a Repositories,
+    processes: &'a Processes,
 }
 
 /// One integration's findings and report.
@@ -211,8 +240,7 @@ impl Engine {
     /// # Errors
     /// When a rule's integration isn't one of `integrations`.
     pub fn new(
-        fs: Box<dyn FsProbe>,
-        sizer: Box<dyn Sizer>,
+        ports: Ports,
         integrations: Vec<Box<dyn Integration>>,
         rules: Vec<Rule>,
     ) -> Result<Self, EngineError> {
@@ -238,8 +266,7 @@ impl Engine {
             owner.rules.push(rule);
         }
         Ok(Self {
-            fs,
-            sizer,
+            ports,
             integrations: registered,
             plan,
         })
@@ -270,12 +297,16 @@ impl Engine {
         }
         let next_id = AtomicU64::new(0);
         let walks = Walks::default();
+        let repositories = Repositories::default();
+        let processes = Processes::default();
         let shared = Shared {
             roots: &req.roots,
             events,
             cancel,
             next_id: &next_id,
             walks: &walks,
+            repositories: &repositories,
+            processes: &processes,
         };
         let runs = self.run_all(&selected, shared);
         let outcome = if cancel.is_cancelled() {
@@ -317,7 +348,7 @@ impl Engine {
         let cx = ScanContext {
             roots: &opened,
             rules: &registered.rules,
-            fs: self.fs.as_ref(),
+            fs: self.ports.fs.as_ref(),
             cancel: shared.cancel,
             plan: &self.plan,
             walks: shared.walks,
@@ -356,9 +387,13 @@ impl Engine {
                 .into_values()
                 .map(|error| Omission::Unlisted { error }),
         );
-        let (mut findings, advice) = (sink.found, sink.advice);
-        findings.sort_by(|a, b| a.path.cmp(&b.path));
-        self.size_all(&mut findings, shared, &mut omissions);
+        let (mut found, advice) = (sink.found, sink.advice);
+        found.sort_by(|a, b| a.finding.path.cmp(&b.finding.path));
+        let owner = Owner {
+            registered,
+            advised: !advice.is_empty(),
+        };
+        let findings = self.measure_all(found, owner, shared, &mut omissions);
         finish(id, omissions, advice, findings, shared)
     }
 
@@ -426,41 +461,119 @@ impl Engine {
     /// What is at `path`. A directory that can't be listed is unreadable, even when its
     /// metadata can be read.
     fn open(&self, path: &Path) -> Result<EntryMeta, ProbeError> {
-        let meta = self.fs.metadata(path)?;
+        let meta = self.ports.fs.metadata(path)?;
         if meta.kind == EntryKind::Dir {
-            self.fs.open_dir(path)?;
+            self.ports.fs.open_dir(path)?;
         }
         Ok(meta)
     }
 
-    fn size_all(
+    /// Measures each finding in turn and establishes its facts, streaming each result.
+    /// Stops at the first one once the scan is cancelled; those not reached stay
+    /// unmeasured.
+    fn measure_all(
         &self,
-        findings: &mut [Finding],
+        found: Vec<Found>,
+        owner: Owner<'_>,
         shared: Shared<'_>,
         omissions: &mut Vec<Omission>,
-    ) {
-        for finding in findings {
-            if shared.cancel.is_cancelled() {
-                return;
+    ) -> Vec<Finding> {
+        let mut findings = Vec::with_capacity(found.len());
+        let mut stopped = false;
+        for one in found {
+            stopped = stopped || shared.cancel.is_cancelled();
+            if stopped {
+                findings.push(one.finding);
+                continue;
             }
-            let size = match self.sizer.size(&finding.path, shared.cancel) {
-                Ok(size) => size,
+            let measured = self.ports.sizer.size(&one.finding.path, shared.cancel);
+            let measurement = match measured {
+                Ok(measurement) => Some(measurement),
                 Err(error) => {
-                    let finding = finding.id;
+                    let finding = one.finding.id;
                     omissions.push(Omission::SizingFailed { finding, error });
-                    continue;
+                    None
                 }
             };
-            finding.size = Some(size);
+            let facts = self.facts(&one, measurement, owner, shared);
+            let mut finding = one.finding;
+            finding.size = measurement.map(|m| m.size);
+            finding.facts = Some(facts.clone());
             let event = ScanEvent::FindingUpdated {
                 id: finding.id,
-                size,
+                size: finding.size,
+                facts,
             };
-            if shared.events.send(event, shared.cancel).is_err() {
-                return;
-            }
+            stopped = shared.events.send(event, shared.cancel).is_err();
+            findings.push(finding);
+        }
+        findings
+    }
+
+    /// What the host knows about a finding once measured. One that couldn't be measured
+    /// completely has no known modification time.
+    fn facts(
+        &self,
+        found: &Found,
+        measurement: Option<Measurement>,
+        owner: Owner<'_>,
+        shared: Shared<'_>,
+    ) -> Facts {
+        let path = &found.finding.path;
+        let modified = measurement
+            .filter(|m| m.size.completeness == Completeness::Complete)
+            .and_then(|m| m.modified)
+            .map_or(Modified::Unknown, |at| {
+                let age = self.ports.clock.now().duration_since(at);
+                Modified::Ago(age.unwrap_or_default())
+            });
+        let processes = self.ports.processes.as_ref();
+        let rule = owner.rule(&found.finding.rule);
+        let layout_verified = found
+            .finding
+            .evidence
+            .iter()
+            .any(|evidence| matches!(evidence, Evidence::Signature(_)));
+        Facts {
+            proposal: owner.proposal(rule),
+            layout_verified,
+            consequence: found.consequence,
+            tracked: shared.repositories.tracked(self.ports.fs.as_ref(), path),
+            activity: shared.processes.activity(processes, path),
+            modified,
+            recent_days: rule.and_then(|rule| rule.recent_days),
         }
     }
+}
+
+/// The integration whose findings are measured, and whether it gave advice.
+#[derive(Debug, Clone, Copy)]
+struct Owner<'a> {
+    registered: &'a Registered,
+    advised: bool,
+}
+
+impl<'a> Owner<'a> {
+    fn rule(&self, id: &RuleId) -> Option<&'a Rule> {
+        self.registered.rules.iter().find(|rule| &rule.id == id)
+    }
+
+    /// What `rule` proposes: a report rule of an integration that gave advice points to
+    /// that advice.
+    fn proposal(&self, rule: Option<&Rule>) -> Proposal {
+        match rule.map(|rule| &rule.operation) {
+            Some(Operation::RemoveFiles(methods)) => Proposal::Remove(methods.clone()),
+            Some(Operation::Report) | None if self.advised => Proposal::Advice,
+            Some(Operation::Report) | None => Proposal::Report,
+        }
+    }
+}
+
+/// A finding as its integration added it, with the consequence it verified.
+#[derive(Debug)]
+pub(crate) struct Found {
+    pub(crate) finding: Finding,
+    pub(crate) consequence: Option<Consequence>,
 }
 
 fn missing(error: &ProbeError) -> bool {

@@ -34,6 +34,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write};
 use std::process::ExitCode;
+use std::time::SystemTime;
 
 use clap::Parser as _;
 use kipple::{CANCELLED, Cli, USAGE};
@@ -47,11 +48,17 @@ use serde_json::Value;
 )]
 fn demo() -> (tempfile::TempDir, Environment) {
     let temp = tempfile::tempdir().unwrap();
-    demo_home::tree().build_in(temp.path()).unwrap();
+    let now = demo_home::looked_at();
+    demo_home::tree(now).build_in(temp.path()).unwrap();
     let mut file = String::new();
     for (name, relative) in demo_home::ROOTS {
         writeln!(file, "{name} = {}", temp.path().join(relative).display()).unwrap();
     }
+    let seconds = now
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    writeln!(file, "now = {seconds}").unwrap();
     let roots = temp.path().join("roots.txt");
     fs::write(&roots, file).unwrap();
     let env =
@@ -132,6 +139,37 @@ fn the_event_stream_is_numbered_in_emission_order_and_ends_with_the_sorted_repor
     let report: Value = serde_json::from_str(&json).unwrap();
     assert_eq!(last["report"]["findings"], report["findings"]);
     assert_eq!(added.len(), report["findings"].as_array().unwrap().len());
+}
+
+#[test]
+fn balanced_puts_at_least_80_percent_of_regenerable_bytes_of_the_demo_home_in_safe() {
+    let (_temp, env) = demo();
+
+    let (code, json, _) = kipple(&env, &["scan", "--json"]);
+
+    assert_eq!(code, ExitCode::SUCCESS);
+    let report: Value = serde_json::from_str(&json).unwrap();
+    assert_eq!(report["level"], "balanced");
+    let (mut regenerable, mut safe) = (0, 0);
+    for finding in report["findings"].as_array().unwrap() {
+        let recovery = finding.pointer("/consequence/recovery");
+        let comes_back = ["rebuild-local", "reinstall", "redownload"]
+            .iter()
+            .any(|kind| recovery == Some(&Value::from(*kind)));
+        if !comes_back {
+            continue;
+        }
+        let bytes = finding.pointer("/size/apparent").unwrap().as_u64().unwrap();
+        regenerable += bytes;
+        if finding.pointer("/verdict/bucket") == Some(&Value::from("safe")) {
+            safe += bytes;
+        }
+    }
+    assert!(regenerable > 0, "{json}");
+    assert!(
+        safe * 10 >= regenerable * 8,
+        "{safe} of {regenerable}: {json}"
+    );
 }
 
 #[test]

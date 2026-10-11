@@ -46,7 +46,9 @@ mod capability;
 mod discovery;
 mod engine;
 mod event;
+mod facts;
 mod integration;
+mod policy;
 mod probe;
 mod process;
 mod root;
@@ -57,15 +59,21 @@ pub use cancel::CancelToken;
 pub use capability::{NativeTool, ToolError, ToolStatus, ToolVersion};
 pub use discovery::WalkStop;
 pub use engine::{
-    Engine, EngineError, Finding, FindingId, IntegrationReport, Omission, ScanOutcome, ScanReport,
-    ScanRequest,
+    Engine, EngineError, Finding, FindingId, IntegrationReport, Omission, Ports, ScanOutcome,
+    ScanReport, ScanRequest,
 };
 pub use event::{EventRx, EventTx, ScanEvent, Sequenced, event_channel};
 pub use integration::{
     Advice, Evidence, FindingSink, Integration, IntegrationDescriptor, IntegrationError,
     IntegrationId, IntegrationSelector, ScanContext,
 };
-pub use probe::{DirEntryMeta, EntryKind, EntryMeta, FileIdentity, FsProbe, ProbeError, Sizer};
+pub use policy::{
+    Activity, ActivityGap, Bucket, Caution, Consequence, Cost, Facts, Hold, Level, Loss, Modified,
+    Proposal, Recovery, Tracked, Verdict, classify,
+};
+pub use probe::{
+    Clock, DirEntryMeta, EntryKind, EntryMeta, FileIdentity, FsProbe, ProbeError, Sizer,
+};
 pub use process::{
     Inventory, ProcessClass, ProcessOutcome, ProcessProbe, ProcessRecord, ProcessSnapshot,
 };
@@ -78,4 +86,4 @@ pub use rule::{
     OPERATIONS, Operation, Pack, PackId, Pattern, Platform, Predicate, Rule, RuleId, RuleText,
     Selector, Test,
 };
-pub use size::{Allocated, Apparent, Completeness, SpaceEstimate};
+pub use size::{Allocated, Apparent, Completeness, Measurement, SpaceEstimate};

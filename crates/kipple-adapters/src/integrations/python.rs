@@ -5,14 +5,29 @@
 use std::path::Path;
 
 use kipple_core::{
-    DirEntryMeta, EntryKind, Evidence, FindingSink, Integration, IntegrationDescriptor,
-    IntegrationError, IntegrationId, IntegrationSelector, Lens, Platform, Rule, ScanContext,
-    Selector,
+    Consequence, Cost, DirEntryMeta, EntryKind, Evidence, FindingSink, Integration,
+    IntegrationDescriptor, IntegrationError, IntegrationId, IntegrationSelector, Lens, Loss,
+    Platform, Recovery, Rule, ScanContext, Selector,
 };
 
 use super::project;
 
 const BYTECODE_CACHES: &str = "bytecode-caches";
+
+/// A virtual environment is created again and its packages installed, downloading
+/// whatever the installer's cache doesn't hold.
+const REINSTALLED: Consequence = Consequence {
+    recovery: Recovery::Reinstall,
+    loss: &[Loss::OfflineAbility],
+    cost: Cost::Unknown,
+};
+
+/// Python compiles a module again the next time it is imported.
+const RECOMPILED: Consequence = Consequence {
+    recovery: Recovery::Automatic,
+    loss: &[Loss::CacheWarmth],
+    cost: Cost::Low,
+};
 
 /// The Python integration.
 #[derive(Debug)]
@@ -42,9 +57,10 @@ impl Integration for Python {
         cx: &ScanContext<'_>,
         sink: &mut FindingSink<'_>,
     ) -> Result<(), IntegrationError> {
-        project::add_artifacts(cx, sink, |_, _, entries| {
+        let venv = |_: &ScanContext<'_>, _: &Path, entries: &[DirEntryMeta]| {
             project::file_inside(entries, &["pyvenv.cfg"])
-        })?;
+        };
+        project::add_artifacts(cx, sink, venv, REINSTALLED)?;
         let rules = cx
             .rules()
             .iter()
@@ -66,7 +82,9 @@ fn add_bytecode_caches(
     let caches = cx.walk_stops(rule.root)?;
     for cache in caches.iter().filter(|stop| stop.is_named("__pycache__")) {
         if let Some(evidence) = bytecode_evidence(cx, &cache.path) {
-            sink.add(rule, &cache.path, evidence)?;
+            let verified = !evidence.is_empty();
+            let consequence = verified.then_some(RECOMPILED);
+            sink.add(rule, &cache.path, evidence, consequence)?;
         }
     }
     Ok(())

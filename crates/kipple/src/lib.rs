@@ -154,7 +154,7 @@ fn scan(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> ExitCode {
-    let engine = match builtin.engine() {
+    let engine = match builtin.engine(env) {
         Ok(engine) => engine,
         Err(message) => return fail(stderr, &message),
     };
@@ -209,7 +209,7 @@ fn explain(
         writeln!(stderr, "{message}").ok();
         return ExitCode::from(USAGE);
     }
-    let engine = match builtin.engine() {
+    let engine = match builtin.engine(env) {
         Ok(engine) => engine,
         Err(message) => return fail(stderr, &message),
     };

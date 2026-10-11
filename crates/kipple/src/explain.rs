@@ -5,11 +5,11 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use kipple_core::{Pack, Rule, ScanOutcome, ScanReport, Selector};
+use kipple_core::{Operation, Pack, Rule, ScanOutcome, ScanReport, Selector};
 use kipple_platform::PLATFORM;
 
-use crate::human::{bytes, escaped, size};
-use crate::json::{EvidenceOut, FindingOut, LensOut};
+use crate::human::{self, bytes, escaped, size};
+use crate::json::{EvidenceOut, FindingOut, LEVEL, LensOut};
 use crate::rules::lens;
 use crate::setup::Builtin;
 
@@ -49,10 +49,7 @@ pub(crate) fn write_rule(
         ("Selects", selects(&rule.selector)),
         ("Why it's there", rule.text.why.clone()),
         ("What you lose", rule.text.loss.clone()),
-        (
-            "Operation",
-            "report only: kipple shows it and never changes it".to_owned(),
-        ),
+        ("Operation", operation(&rule.operation)),
     ];
     writeln!(out, "{}: {}", rule.id, escaped(&rule.text.title))?;
     if !rule.text.description.is_empty() {
@@ -65,6 +62,20 @@ pub(crate) fn write_rule(
         writeln!(out, "  {:<15} {}", "Reference", escaped(reference))?;
     }
     Ok(())
+}
+
+fn operation(operation: &Operation) -> String {
+    match operation {
+        Operation::Report => "report only: kipple shows it and never changes it".to_owned(),
+        Operation::RemoveFiles(methods) => {
+            let names: Vec<&str> = methods.iter().map(|m| m.name()).collect();
+            format!(
+                "remove its files ({}) once you select and confirm it; this version only \
+                 finds and explains",
+                names.join(" or ")
+            )
+        }
+    }
 }
 
 fn selects(selector: &Selector) -> String {
@@ -140,6 +151,19 @@ pub(crate) fn write_path(
             "Evidence",
             escaped(&evidence_line(evidence))
         )?;
+    }
+    if let Some(verdict) = finding.verdict(LEVEL) {
+        let reasons = human::reasons(&verdict);
+        let bucket = human::bucket(verdict.bucket());
+        let line = if reasons.is_empty() {
+            format!("{bucket} at the {LEVEL} level")
+        } else {
+            format!("{bucket} at the {LEVEL} level: {reasons}")
+        };
+        writeln!(out, "  {:<15} {line}", "Bucket")?;
+    }
+    for (label, text) in finding.facts.iter().flat_map(|f| human::facts(f, LEVEL)) {
+        writeln!(out, "  {label:<15} {text}")?;
     }
     writeln!(out)?;
     match find_rule(builtin, &finding.rule.0) {

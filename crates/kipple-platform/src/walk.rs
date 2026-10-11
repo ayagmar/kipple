@@ -8,9 +8,11 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::thread;
+use std::time::SystemTime;
 
 use kipple_core::{
-    Allocated, Apparent, CancelToken, Completeness, FileIdentity, ProbeError, Sizer, SpaceEstimate,
+    Allocated, Apparent, CancelToken, Completeness, FileIdentity, Measurement, ProbeError, Sizer,
+    SpaceEstimate,
 };
 
 use crate::fs_probe::exact;
@@ -41,7 +43,7 @@ impl Walker {
 }
 
 impl Sizer for Walker {
-    fn size(&self, path: &Path, cancel: &CancelToken) -> Result<SpaceEstimate, ProbeError> {
+    fn size(&self, path: &Path, cancel: &CancelToken) -> Result<Measurement, ProbeError> {
         let item = exact(path);
         let meta = fs::symlink_metadata(&item).map_err(|e| ProbeError::io(path, e))?;
         let tally = Tally::default();
@@ -53,7 +55,7 @@ impl Sizer for Walker {
             self.pool
                 .scope(|scope| visit(scope, &item, device, &tally, cancel));
         }
-        Ok(tally.estimate())
+        Ok(tally.measurement())
     }
 }
 
@@ -111,10 +113,12 @@ struct Counts {
     allocation_unknown: bool,
     unreadable: u64,
     linked: Vec<(FileIdentity, Linked)>,
+    newest: Newest,
 }
 
 impl Counts {
     fn add(&mut self, meta: &fs::Metadata) {
+        self.newest.add(meta.modified().ok());
         let apparent = if meta.is_dir() { 0 } else { meta.len() };
         let allocated = os::allocated(meta);
         self.allocation_unknown |= allocated.is_none();
@@ -134,6 +138,33 @@ impl Counts {
     }
 }
 
+/// The newest modification time seen. One entry without a time leaves it unknown.
+#[derive(Debug, Default, Clone, Copy)]
+struct Newest {
+    seen: Option<SystemTime>,
+    unknown: bool,
+}
+
+impl Newest {
+    fn add(&mut self, modified: Option<SystemTime>) {
+        match modified {
+            Some(time) => self.seen = Some(self.seen.map_or(time, |seen| seen.max(time))),
+            None => self.unknown = true,
+        }
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.unknown |= other.unknown;
+        if let Some(time) = other.seen {
+            self.add(Some(time));
+        }
+    }
+
+    const fn time(self) -> Option<SystemTime> {
+        if self.unknown { None } else { self.seen }
+    }
+}
+
 /// Totals shared by every task of one walk.
 #[derive(Debug, Default)]
 struct Tally {
@@ -143,6 +174,7 @@ struct Tally {
     unreadable: AtomicU64,
     cancelled: AtomicBool,
     linked: Mutex<HashMap<FileIdentity, Linked>>,
+    newest: Mutex<Newest>,
 }
 
 impl Tally {
@@ -157,6 +189,8 @@ impl Tally {
         if counts.allocation_unknown {
             self.allocation_unknown.store(true, Ordering::Relaxed);
         }
+        let mut newest = self.newest.lock().unwrap_or_else(PoisonError::into_inner);
+        newest.merge(counts.newest);
     }
 
     /// Records hard-linked names and returns the apparent and allocated bytes of the files
@@ -178,6 +212,18 @@ impl Tally {
             }
         }
         (apparent, allocated)
+    }
+
+    fn measurement(self) -> Measurement {
+        let modified = self
+            .newest
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .time();
+        Measurement {
+            size: self.estimate(),
+            modified,
+        }
     }
 
     fn estimate(self) -> SpaceEstimate {
