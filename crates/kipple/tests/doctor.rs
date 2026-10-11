@@ -5,11 +5,11 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use kipple::doctor::{Report, RootCheck};
+use kipple::doctor::{IntegrationRoots, Report, RootCheck};
 use kipple::{CANCELLED, exit_code};
 use kipple_core::{
-    FileIdentity, Inventory, ProbeError, ProcessSnapshot, ResolvedRoot, RootLink, RootSource,
-    SymbolicRoot, UnresolvedRoot,
+    FileIdentity, IntegrationId, Inventory, Lens, ProbeError, ProcessSnapshot, ResolvedRoot,
+    RootLink, RootSource, SymbolicRoot, UnresolvedRoot,
 };
 use kipple_platform::{KippleDir, KippleDirs};
 
@@ -127,4 +127,22 @@ fn a_root_resolved_through_a_link_shows_the_link_and_where_it_leads() {
         PathBuf::from("/mnt/ssd/cache").display()
     );
     assert!(output.contains(&shown), "{output}");
+}
+
+#[test]
+fn each_integration_is_listed_with_the_roots_it_reads_in_its_own_column() {
+    let mut report = report(io::ErrorKind::NotFound);
+    report.integrations = vec![IntegrationRoots {
+        id: IntegrationId("claude-code"),
+        lens: Lens::Agents,
+        supported: true,
+        roots: vec![SymbolicRoot::ClaudeConfig],
+    }];
+
+    let output = printed(&report);
+
+    assert!(
+        output.contains("\n  claude-code reads claude.config\n"),
+        "{output}"
+    );
 }

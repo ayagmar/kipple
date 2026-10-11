@@ -6,8 +6,8 @@
 use std::path::Path;
 
 use kipple_core::{
-    FindingSink, Integration, IntegrationDescriptor, IntegrationError, IntegrationId, Lens,
-    Platform, ScanContext,
+    DirEntryMeta, FindingSink, Integration, IntegrationDescriptor, IntegrationError, IntegrationId,
+    Lens, Platform, ScanContext,
 };
 
 use super::project;
@@ -26,6 +26,7 @@ impl Integration for Node {
             selectors: &[],
             // Packages inside hold their own `package.json` and `node_modules`.
             artifacts: &["node_modules"],
+            owner_files: &[],
             verified: &["npm 11.19.0", "pnpm 12.9.1", "Bun 1.4.2"],
         }
     }
@@ -39,6 +40,6 @@ impl Integration for Node {
     }
 }
 
-fn install_record(cx: &ScanContext<'_>, dir: &Path) -> Option<String> {
-    project::file_inside(cx, dir, &[".package-lock.json", ".modules.yaml"])
+fn install_record(_: &ScanContext<'_>, _: &Path, entries: &[DirEntryMeta]) -> Option<String> {
+    project::file_inside(entries, &[".package-lock.json", ".modules.yaml"])
 }

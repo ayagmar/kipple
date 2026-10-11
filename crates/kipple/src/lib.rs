@@ -216,7 +216,7 @@ fn explain(
     let (report, _) = scan::run(&engine, env, &[], None, &mut |_| Ok(()));
     let path = PathBuf::from(target);
     let written =
-        explain::write_path(stdout, builtin, &path, &report.findings).and_then(|()| stdout.flush());
+        explain::write_path(stdout, builtin, &path, &report).and_then(|()| stdout.flush());
     exit_code(written, stderr)
 }
 

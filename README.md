@@ -11,7 +11,7 @@
 
 kipple finds what your tools leave behind, explains what each thing is and what you lose by removing it, and removes what is safe to remove, with a record of everything it did. It is a fast, cross-platform CLI and TUI written in Rust for Linux, macOS and Windows. It knows the footprint of coding agents (Claude Code, Codex, Pi, Cursor) and developer toolchains, and you can extend it with declarative rule packs.
 
-**Status: M1 (core model and read-only scan) complete; M2 (TUI home) next.** `kipple scan` finds and sizes Cargo `target`, Node `node_modules`, Python `.venv` and `__pycache__`, the trash, and on Arch the pacman cache and the journal, with the evidence for each, and shows retention advice for pacman, journald and Claude Code. It changes nothing. `kipple rules` lists what kipple knows, `kipple explain` says why, and `kipple doctor` shows where kipple looks and what it can read. `scan`, `rules` and `doctor` have `--json`, and `scan` streams `--events jsonl`. The docs below are the plan, with a status line on each.
+**Status: M1 (core model and read-only scan) complete; M2 (TUI home) next.** `kipple scan` finds and sizes Cargo `target`, Node `node_modules`, Python `.venv` and `__pycache__`, the trash, and on Linux the pacman cache and the persistent journal, with the evidence for each, and shows retention advice for pacman, journald and Claude Code. It changes nothing. `kipple rules` lists what kipple knows, `kipple explain` says why, and `kipple doctor` shows where kipple looks and what it can read. `scan`, `rules` and `doctor` have `--json`, and `scan` streams `--events jsonl`. The docs below are the plan, with a status line on each.
 
 ## Development
 

@@ -2,6 +2,7 @@
 //! read-only: integrations propose findings, the engine sizes them and reports.
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
@@ -343,10 +344,18 @@ impl Engine {
                 Err(_) => omissions.push(Omission::Crashed),
             }
         }
+        // A directory under two paths of a root is one gap, in path order.
+        let mut unlisted = BTreeMap::new();
         for walk in cx.walked.take().into_values() {
-            let unlisted = walk.unreadable.iter().cloned();
-            omissions.extend(unlisted.map(|error| Omission::Unlisted { error }));
+            for error in &walk.unreadable {
+                unlisted.insert(error.path().to_owned(), error.clone());
+            }
         }
+        omissions.extend(
+            unlisted
+                .into_values()
+                .map(|error| Omission::Unlisted { error }),
+        );
         let (mut findings, advice) = (sink.found, sink.advice);
         findings.sort_by(|a, b| a.path.cmp(&b.path));
         self.size_all(&mut findings, shared, &mut omissions);

@@ -40,19 +40,19 @@
       "platforms": [
         {
           "platform": "linux",
-          "discover": true,
+          "discover": false,
           "report": true,
           "mutate": false
         },
         {
           "platform": "macos",
-          "discover": true,
+          "discover": false,
           "report": true,
           "mutate": false
         },
         {
           "platform": "windows",
-          "discover": true,
+          "discover": false,
           "report": true,
           "mutate": false
         }

@@ -3,10 +3,12 @@
 
 use std::path::Path;
 
-use kipple_core::{EntryKind, Evidence, FindingSink, IntegrationError, ScanContext, Selector};
+use kipple_core::{
+    DirEntryMeta, EntryKind, Evidence, FindingSink, IntegrationError, ScanContext, Selector,
+};
 
-/// How an integration recognises its tool's output inside a candidate.
-pub(super) type Signature = fn(&ScanContext<'_>, &Path) -> Option<String>;
+/// How an integration recognises its tool's output inside a candidate, given its entries.
+pub(super) type Signature = fn(&ScanContext<'_>, &Path, &[DirEntryMeta]) -> Option<String>;
 
 /// Adds every candidate of the integration's `project-artifact` rules. A candidate whose
 /// contents can't be listed gets no layout evidence either way.
@@ -23,10 +25,9 @@ pub(super) fn add_artifacts(
         for stop in cx.project_artifacts(rule)? {
             let mut evidence: Vec<Evidence> =
                 stop.markers.into_iter().map(Evidence::Marker).collect();
-            if cx.read_dir(&stop.path).is_ok() {
-                evidence.push(
-                    signature(cx, &stop.path).map_or(Evidence::NoSignature, Evidence::Signature),
-                );
+            if let Ok(entries) = cx.read_dir(&stop.path) {
+                let found = signature(cx, &stop.path, &entries);
+                evidence.push(found.map_or(Evidence::NoSignature, Evidence::Signature));
             }
             sink.add(rule, &stop.path, evidence)?;
         }
@@ -34,9 +35,8 @@ pub(super) fn add_artifacts(
     Ok(())
 }
 
-/// The first of `names` that is a regular file directly inside `dir`.
-pub(super) fn file_inside(cx: &ScanContext<'_>, dir: &Path, names: &[&str]) -> Option<String> {
-    let entries = cx.read_dir(dir).ok()?;
+/// The first of `names` that is a regular file among `entries`.
+pub(super) fn file_inside(entries: &[DirEntryMeta], names: &[&str]) -> Option<String> {
     names
         .iter()
         .find(|name| {

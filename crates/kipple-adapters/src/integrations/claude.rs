@@ -27,6 +27,7 @@ impl Integration for ClaudeCode {
             roots: &[SymbolicRoot::ClaudeConfig],
             selectors: &[],
             artifacts: &[],
+            owner_files: &[],
             verified: &[],
         }
     }

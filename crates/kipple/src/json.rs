@@ -7,7 +7,7 @@ use std::path::Path;
 
 use kipple_core::{
     Advice, Completeness, Evidence, Finding, IntegrationId, IntegrationReport, Lens, Omission,
-    ScanOutcome, ScanReport, SpaceEstimate, SymbolicRoot,
+    ScanOutcome, ScanReport, SpaceEstimate, SymbolicRoot, UnresolvedRoot,
 };
 use kipple_platform::{PLATFORM, raw_path};
 use schemars::JsonSchema;
@@ -319,22 +319,35 @@ pub struct OmissionOut {
 
 impl From<&Omission> for OmissionOut {
     fn from(omission: &Omission) -> Self {
-        let (kind, root, path) = match omission {
-            Omission::RootUnresolved { root, .. } => ("root-unresolved", Some(*root), None),
-            Omission::RootUnreadable { root, .. } => ("root-unreadable", Some(*root), None),
+        let (kind, root, path): (_, _, Option<&Path>) = match omission {
+            Omission::RootUnresolved { root, reason } => {
+                let path = match reason {
+                    UnresolvedRoot::Link { path, .. }
+                    | UnresolvedRoot::Unresolvable { path, .. } => Some(path.as_path()),
+                    UnresolvedRoot::NotSet { .. }
+                    | UnresolvedRoot::NotAbsolute { .. }
+                    | UnresolvedRoot::BaseUnresolved { .. }
+                    | UnresolvedRoot::Setting { .. }
+                    | UnresolvedRoot::Os { .. } => None,
+                };
+                ("root-unresolved", Some(*root), path)
+            }
+            Omission::RootUnreadable { root, error } => {
+                ("root-unreadable", Some(*root), Some(error.path()))
+            }
             Omission::RootNotDirectory { root, path, .. } => {
                 ("root-not-directory", Some(*root), Some(path))
             }
             Omission::RootChanged { root, path } => ("root-changed", Some(*root), Some(path)),
-            Omission::Unlisted { .. } => ("unlisted", None, None),
-            Omission::DiscoveryFailed { .. } => ("discovery-failed", None, None),
-            Omission::SizingFailed { .. } => ("sizing-failed", None, None),
+            Omission::Unlisted { error } => ("unlisted", None, Some(error.path())),
+            Omission::DiscoveryFailed { error } => ("discovery-failed", None, Some(error.path())),
+            Omission::SizingFailed { error, .. } => ("sizing-failed", None, Some(error.path())),
             Omission::Crashed => ("crashed", None, None),
         };
         Self {
             kind,
             root: root.map(SymbolicRoot::name),
-            path: path.map(|p| PathOut::new(p)),
+            path: path.map(PathOut::new),
             message: omission.to_string(),
         }
     }

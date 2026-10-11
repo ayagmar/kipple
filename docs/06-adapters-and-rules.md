@@ -256,23 +256,23 @@ Every built-in rule today is `operation = "report"`. kipple finds and sizes, and
 | --- | --- | --- | --- | --- |
 | Cargo | dev | `target` beside `Cargo.toml` | Cargo's `CACHEDIR.TAG` signature, else unknown layout | Cargo 1.99.0 |
 | Node | dev | `node_modules` beside `package.json` | `.package-lock.json` (npm) or `.modules.yaml` (pnpm); none for Bun | npm 11.19.0, pnpm 12.9.1, Bun 1.4.2 |
-| Python | dev | `.venv` beside `pyproject.toml`, `requirements.txt`, `setup.py`, `setup.cfg` or `Pipfile`; `__pycache__` holding only `*.pyc`, outside any virtual environment | `pyvenv.cfg`; the bytecode itself | Python 3.14.8 `venv`, uv 0.12.23 |
-| Trash | system | the trash root, when not empty (Linux, macOS) | the root | freedesktop Trash spec 1.0 |
+| Python | dev | `.venv` beside `pyproject.toml`, `requirements.txt`, `setup.py`, `setup.cfg` or `Pipfile`; `__pycache__` holding only `*.pyc`, outside any virtual environment (any directory holding `pyvenv.cfg`) | `pyvenv.cfg`; the bytecode itself | Python 3.14.8 `venv`, uv 0.12.23 |
+| Trash | system | the trash root, when it holds anything: on Linux, when its `files` directory isn't empty (Linux, macOS) | the root | freedesktop Trash spec 1.0 |
 | Pacman | system | the package cache, when not empty (Linux) | the root | pacman 7.1.0 |
 | journald | system | the persistent journal, when not empty (Linux) | the root | systemd 262 |
 | Claude Code | agents | nothing yet; advice only | — | Claude Code settings docs, checked 2026-10-11 |
 
-A `target`, `node_modules` or `.venv` with no recognised signature is still reported, with `no-signature` evidence, so an unknown layout is visible but can never become eligible. Generic `dirs-matching` and `files-matching` rules from third-party packs are validated but not evaluated before M5.
+A `target`, `node_modules` or `.venv` with no recognised signature is still reported, with `no-signature` evidence, so an unknown layout is visible but can never become eligible. A candidate that can't be listed, including a `__pycache__`, is reported with no layout evidence at all. Generic `dirs-matching` and `files-matching` rules from third-party packs are validated but not evaluated before M5.
 
 Roadmap integrations, each added only with layout fixtures: Gemini CLI, OpenCode, Copilot CLI, Aider, Docker and Podman (native prune as a semantic plan), Flatpak, Snap, Homebrew, Scoop, Xcode DerivedData, Android SDK and emulators, Go build cache, Bun, Deno.
 
 ## 6. Advice catalog (v0.1)
 
 Advice is text plus an exact command or config snippet, checked against supported tool versions, and never run by kipple:
-- Claude Code (built): `cleanupPeriodDays` (default 30, minimum 1; `0` fails validation). Show the resolved value and its source, or "unknown" if it can't be determined. Explain the exceptions: memory directories, `history.jsonl`, Desktop and Cowork transcripts (`desktopSessionCleanupPeriodDays`), `--bare` sessions, and versions before v2.1.228 deleting memory files. Source: code.claude.com settings reference and claude-directory docs, checked 2026-10-09.
+- Claude Code (built): `cleanupPeriodDays` (default 30, minimum 1; `0` fails validation). Show the resolved value and its source, or "unknown" if it can't be determined. Explain the exceptions: memory directories, `history.jsonl`, Desktop and Cowork transcripts (`desktopSessionCleanupPeriodDays`), `--bare` sessions, and versions before v2.1.228 deleting memory files. Source: code.claude.com settings reference and claude-directory docs, checked 2026-10-11.
 - Codex: `history.max_bytes` caps `history.jsonl` by dropping the oldest entries. It does *not* bound session rollouts (`sessions/`, `archived_sessions/`), which have no documented retention.
 - pacman (built): `paccache -rk N` and `paccache.timer`, with the ArchWiki rollback caveat
-- journald (built): `SystemMaxUse=` or `journalctl --vacuum-size`
+- journald (built): `SystemMaxUse=` or `journalctl --rotate --vacuum-size` (vacuuming alone never touches the active files), checked against systemd 262's `journalctl(1)`
 - Cargo: global cache auto-GC (`cache.auto-clean-frequency`)
 - git worktrees: `git worktree prune` and `git worktree repair` for registration anomalies
 

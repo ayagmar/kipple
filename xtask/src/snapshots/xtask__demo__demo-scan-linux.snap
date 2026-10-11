@@ -308,10 +308,10 @@ expression: "serde_json::to_string_pretty(&report)?"
             "https://www.freedesktop.org/software/systemd/man/latest/journalctl.html"
           ],
           "snippets": [
-            "sudo journalctl --vacuum-size=500M",
+            "sudo journalctl --rotate --vacuum-size=500M",
             "# /etc/systemd/journald.conf.d/size.conf\n[Journal]\nSystemMaxUse=500M"
           ],
-          "text": "journalctl --vacuum-size removes the oldest archived journal files until the journal fits the size once. SystemMaxUse= in a journald.conf drop-in caps it from then on. Both delete old log entries. kipple never runs them: they need root.",
+          "text": "journalctl --vacuum-size removes the oldest archived journal files until the archived ones fit the size. It leaves the active files alone, so the journal can stay larger; --rotate first archives them too. SystemMaxUse= in a journald.conf drop-in caps the journal from then on. Both delete old log entries. kipple never runs them: they need root.",
           "title": "Cap the journal's size"
         }
       ],

@@ -6,7 +6,7 @@
 
 use std::ffi::OsString;
 use std::fs;
-use std::os::unix::fs::symlink;
+use std::os::unix::fs::{PermissionsExt as _, symlink};
 use std::path::{Path, PathBuf};
 
 use kipple_core::{FsProbe as _, LinkProblem, RootSource, Roots, SymbolicRoot, UnresolvedRoot};
@@ -16,11 +16,14 @@ fn roots(vars: &[(&str, &str)]) -> Roots {
     resolve_roots(&env(vars), &[])
 }
 
+/// `vars`, with the system's fixed paths somewhere that doesn't exist, so no test reads
+/// this machine's `/etc` or `/var`.
 fn env(vars: &[(&str, &str)]) -> Environment {
     Environment::from_vars(
         vars.iter()
             .map(|(k, v)| (OsString::from(k), OsString::from(v))),
     )
+    .with_system_root(PathBuf::from("/nonexistent/kipple-test-system"))
 }
 
 fn path(roots: &Roots, root: SymbolicRoot) -> Result<(PathBuf, RootSource), String> {
@@ -228,6 +231,78 @@ fn the_default_project_roots_are_those_that_exist_and_root_replaces_them() {
     );
     assert!(replaced[1].as_ref().is_err_and(|e| e.contains("--root")));
     assert_eq!(replaced.len(), 2);
+}
+
+#[test]
+fn a_default_project_root_that_cant_be_checked_or_is_a_broken_link_is_kept_for_the_scan_to_report()
+{
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().canonicalize().unwrap();
+    fs::create_dir_all(home.join("source/repos")).unwrap();
+    symlink(home.join("unmounted"), home.join("work")).unwrap();
+    // As root the directory stays searchable, and it is kept just the same.
+    fs::set_permissions(home.join("source"), fs::Permissions::from_mode(0o000)).unwrap();
+
+    let roots = resolve_roots(&env(&[("HOME", home.to_str().unwrap())]), &[]);
+    fs::set_permissions(home.join("source"), fs::Permissions::from_mode(0o755)).unwrap();
+
+    let found = project_roots(&roots);
+    let source = RootSource::Default {
+        base: SymbolicRoot::Home,
+        relative: "source/repos",
+    };
+    assert_eq!(found.len(), 2, "{found:?}");
+    assert!(
+        found[0].as_ref().is_err_and(|e| e.contains("work")),
+        "{found:?}"
+    );
+    assert_eq!(found[1], Ok((home.join("source/repos"), source)));
+}
+
+#[test]
+fn a_root_given_with_parent_components_is_the_directory_it_names() {
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path().canonicalize().unwrap();
+    fs::create_dir_all(base.join("a/b")).unwrap();
+    let given = [base.join("a/b/.."), base.join("gone/..")];
+
+    let found = project_roots(&resolve_roots(&env(&[]), &given));
+
+    assert_eq!(found[0], Ok((base.join("a"), RootSource::CommandLine)));
+    assert!(
+        found[1]
+            .as_ref()
+            .is_err_and(|e| e.contains("can't be resolved"))
+    );
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn pacman_and_journal_roots_come_from_the_system_root_never_this_machines_own() {
+    let temp = tempfile::tempdir().unwrap();
+    let system = temp.path().to_owned();
+    fs::create_dir_all(system.join("etc")).unwrap();
+    fs::write(
+        system.join("etc/pacman.conf"),
+        "[options]\nCacheDir = /srv/pkg/\n",
+    )
+    .unwrap();
+    let env = env(&[("HOME", "/home/u")]).with_system_root(system.clone());
+
+    let roots = resolve_roots(&env, &[]);
+
+    let setting = RootSource::Setting {
+        file: "/etc/pacman.conf",
+        key: "CacheDir",
+    };
+    assert_eq!(
+        path(&roots, SymbolicRoot::PacmanCache),
+        Ok((system.join("srv/pkg"), setting))
+    );
+    assert_eq!(
+        path(&roots, SymbolicRoot::Journal),
+        Ok((system.join("var/log/journal"), RootSource::Fixed))
+    );
 }
 
 #[test]

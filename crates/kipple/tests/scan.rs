@@ -171,3 +171,82 @@ fn explaining_a_found_path_shows_its_evidence_and_an_unknown_rule_is_a_usage_err
     assert_eq!(unknown, ExitCode::from(USAGE));
     assert!(err.contains("builtin.cargo.nope"), "{err}");
 }
+
+/// The paths of the findings in a `--json` report.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a fixture that fails to build fails the test"
+)]
+fn finding_paths(json: &str) -> Vec<String> {
+    let report: Value = serde_json::from_str(json).unwrap();
+    report
+        .get("findings")
+        .and_then(Value::as_array)
+        .unwrap()
+        .iter()
+        .map(|f| {
+            f.pointer("/path/display")
+                .and_then(Value::as_str)
+                .unwrap()
+                .to_owned()
+        })
+        .collect()
+}
+
+#[test]
+fn a_project_root_given_twice_or_through_its_parent_finds_each_artifact_once() {
+    let (temp, env) = demo();
+    let projects = temp.path().join("home/projects");
+    let via_parent = projects.join("clients/..");
+    let nested = projects.join("clients");
+
+    let (_, alone, _) = kipple(
+        &env,
+        &[
+            "scan",
+            "--json",
+            "--lens",
+            "dev",
+            "--root",
+            projects.to_str().unwrap(),
+        ],
+    );
+    let given = [&projects, &via_parent, &nested].map(|p| p.to_str().unwrap().to_owned());
+    let mut args = vec!["scan", "--json", "--lens", "dev"];
+    for root in &given {
+        args.extend(["--root", root]);
+    }
+    let (code, repeated, _) = kipple(&env, &args);
+    let (_, parent, _) = kipple(
+        &env,
+        &["scan", "--json", "--lens", "dev", "--root", &given[1]],
+    );
+
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(finding_paths(&alone).len(), 8, "{alone}");
+    assert_eq!(finding_paths(&repeated), finding_paths(&alone));
+    assert_eq!(finding_paths(&parent), finding_paths(&alone));
+}
+
+#[test]
+#[cfg(unix)]
+fn explaining_a_path_the_scan_couldnt_read_says_so_instead_of_that_nothing_is_there() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let (temp, env) = demo();
+    let project = temp.path().join("home/projects/rust-app");
+    fs::set_permissions(&project, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read_dir(&project).is_ok() {
+        // Permissions don't bind root, so there is nothing unreadable to test.
+        return;
+    }
+
+    let target = project.join("target");
+    let (code, out, _) = kipple(&env, &["explain", target.to_str().unwrap()]);
+    fs::set_permissions(&project, fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert!(out.contains("kipple found nothing at"), "{out}");
+    assert!(out.contains("couldn't cover everything"), "{out}");
+    assert!(out.contains("rust-app"), "{out}");
+}

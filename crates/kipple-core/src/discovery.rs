@@ -2,7 +2,8 @@
 //!
 //! Each root is walked once per scan, however many integrations ask for it. The walk never
 //! descends into a candidate artifact of any rule, nor into a directory a registered tool
-//! always owns, so nested projects inside `node_modules` or `target` are never looked for.
+//! owns (by its name, or by a file in it such as `pyvenv.cfg`), so nested projects inside
+//! `node_modules`, `target` or a virtual environment are never looked for.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::ffi::OsStr;
@@ -49,6 +50,8 @@ pub(crate) struct Walk {
 pub(crate) struct WalkPlan {
     /// Directory names a registered tool always owns.
     always: BTreeSet<String>,
+    /// File names that make the directory holding them a registered tool's.
+    owner_files: BTreeSet<String>,
     /// Each artifact name, with every marker that makes it a candidate.
     artifacts: BTreeMap<String, BTreeSet<String>>,
     /// The deepest `max_depth` of any rule.
@@ -64,6 +67,8 @@ impl WalkPlan {
         for descriptor in descriptors {
             let names = descriptor.artifacts.iter().map(|&name| name.to_owned());
             plan.always.extend(names);
+            let files = descriptor.owner_files.iter().map(|&name| name.to_owned());
+            plan.owner_files.extend(files);
         }
         for rule in rules {
             if let Selector::ProjectArtifact {
@@ -115,6 +120,7 @@ impl WalkPlan {
             }
         }
         walk.stops.sort_by(|a, b| a.path.cmp(&b.path));
+        walk.unreadable.sort_by(|a, b| a.path().cmp(b.path()));
         walk
     }
 
@@ -132,6 +138,10 @@ impl WalkPlan {
             .filter(|entry| entry.kind == EntryKind::File)
             .filter_map(|entry| entry.name.to_str().map(str::to_owned))
             .collect();
+        // A directory a tool owns holds no projects and no artifacts of anyone else.
+        if !self.owner_files.is_disjoint(&files) {
+            return Vec::new();
+        }
         let mut below = Vec::new();
         for entry in entries.iter().filter(|entry| entry.kind == EntryKind::Dir) {
             let path = dir.join(&entry.name);

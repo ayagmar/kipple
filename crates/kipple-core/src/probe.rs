@@ -92,6 +92,15 @@ impl ProbeError {
             Self::OutsideRoots { .. } | Self::ThroughLink { .. } => None,
         }
     }
+
+    /// The path the error is about.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        match self {
+            Self::Io { path, .. } | Self::OutsideRoots { path } => path,
+            Self::ThroughLink { link } => link,
+        }
+    }
 }
 
 /// Read-only filesystem probes. None of them follows a symbolic link or junction.

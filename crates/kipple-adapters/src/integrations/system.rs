@@ -3,17 +3,23 @@
 //! and-rules.md` §5 and §6). Emptying or pruning them needs the tool or root, so kipple
 //! only reports.
 
+use std::path::Path;
+
 use kipple_core::{
-    Advice, Evidence, FindingSink, Integration, IntegrationDescriptor, IntegrationError,
-    IntegrationId, IntegrationSelector, Lens, Platform, ScanContext, Selector,
+    Advice, EntryKind, Evidence, FindingSink, Integration, IntegrationDescriptor, IntegrationError,
+    IntegrationId, IntegrationSelector, Lens, Platform, ProbeError, ScanContext, Selector,
 };
 
-/// Adds each path of the root of every rule using `selector`, unless it is empty.
+/// Whether the root at a path holds anything worth reporting.
+type HoldsAnything = fn(&ScanContext<'_>, &Path) -> Result<bool, ProbeError>;
+
+/// Adds each path of the root of every rule using `selector`, when it holds anything.
 /// Returns whether any of those roots opened, which is when advice applies.
 fn add_roots(
     cx: &ScanContext<'_>,
     sink: &mut FindingSink<'_>,
     selector: &'static str,
+    holds_anything: HoldsAnything,
 ) -> Result<bool, IntegrationError> {
     let mut opened = false;
     let rules = cx
@@ -23,13 +29,31 @@ fn add_roots(
     for rule in rules {
         for root in cx.roots_of(rule.root) {
             opened = true;
-            if cx.read_dir(&root.path)?.is_empty() {
+            if !holds_anything(cx, &root.path)? {
                 continue;
             }
             sink.add(rule, &root.path, vec![Evidence::Root(rule.root)])?;
         }
     }
     Ok(opened)
+}
+
+/// Whether the directory at `path` has any entry.
+fn not_empty(cx: &ScanContext<'_>, path: &Path) -> Result<bool, ProbeError> {
+    Ok(!cx.read_dir(path)?.is_empty())
+}
+
+/// Whether the trash holds anything. A freedesktop trash keeps each trashed file in
+/// `files`, and keeps `files` and `info` themselves once it has been used, even empty.
+fn trash_holds_anything(cx: &ScanContext<'_>, path: &Path) -> Result<bool, ProbeError> {
+    let entries = cx.read_dir(path)?;
+    let files = entries
+        .iter()
+        .any(|entry| entry.kind == EntryKind::Dir && entry.name == "files");
+    if files {
+        return not_empty(cx, &path.join("files"));
+    }
+    Ok(!entries.is_empty())
 }
 
 fn strings(items: &[&str]) -> Vec<String> {
@@ -54,6 +78,7 @@ impl Integration for Trash {
                 meaning: "the trash itself, when it holds anything",
             }],
             artifacts: &[],
+            owner_files: &[],
             verified: &["freedesktop.org Trash specification 1.0"],
         }
     }
@@ -63,7 +88,7 @@ impl Integration for Trash {
         cx: &ScanContext<'_>,
         sink: &mut FindingSink<'_>,
     ) -> Result<(), IntegrationError> {
-        add_roots(cx, sink, TRASH_CONTENTS).map(drop)
+        add_roots(cx, sink, TRASH_CONTENTS, trash_holds_anything).map(drop)
     }
 }
 
@@ -85,6 +110,7 @@ impl Integration for Pacman {
                 meaning: "pacman's package cache itself, when it holds anything",
             }],
             artifacts: &[],
+            owner_files: &[],
             verified: &["pacman 7.1.0"],
         }
     }
@@ -94,7 +120,7 @@ impl Integration for Pacman {
         cx: &ScanContext<'_>,
         sink: &mut FindingSink<'_>,
     ) -> Result<(), IntegrationError> {
-        if add_roots(cx, sink, PACKAGE_CACHE)? {
+        if add_roots(cx, sink, PACKAGE_CACHE, not_empty)? {
             sink.advise(Advice {
                 title: "Keep fewer old packages with paccache".to_owned(),
                 text: "paccache, from pacman-contrib, removes cached packages except the \
@@ -134,6 +160,7 @@ impl Integration for Journald {
                 meaning: "the persistent journal itself, when it holds anything",
             }],
             artifacts: &[],
+            owner_files: &[],
             verified: &["systemd 262"],
         }
     }
@@ -143,16 +170,18 @@ impl Integration for Journald {
         cx: &ScanContext<'_>,
         sink: &mut FindingSink<'_>,
     ) -> Result<(), IntegrationError> {
-        if add_roots(cx, sink, JOURNAL_FILES)? {
+        if add_roots(cx, sink, JOURNAL_FILES, not_empty)? {
             sink.advise(Advice {
                 title: "Cap the journal's size".to_owned(),
                 text: "journalctl --vacuum-size removes the oldest archived journal files \
-                       until the journal fits the size once. SystemMaxUse= in a journald.conf \
-                       drop-in caps it from then on. Both delete old log entries. kipple \
-                       never runs them: they need root."
+                       until the archived ones fit the size. It leaves the active files alone, \
+                       so the journal can stay larger; --rotate first archives them too. \
+                       SystemMaxUse= in a journald.conf drop-in caps the journal from then \
+                       on. Both delete old log entries. kipple never runs them: they need \
+                       root."
                     .to_owned(),
                 snippets: strings(&[
-                    "sudo journalctl --vacuum-size=500M",
+                    "sudo journalctl --rotate --vacuum-size=500M",
                     "# /etc/systemd/journald.conf.d/size.conf\n[Journal]\nSystemMaxUse=500M",
                 ]),
                 references: strings(&[

@@ -35,7 +35,7 @@ macro_rules! named {
 
         impl fmt::Display for $name {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str(self.name())
+                f.pad(self.name())
             }
         }
     };

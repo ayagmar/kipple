@@ -3,7 +3,8 @@
 
 use std::collections::HashSet;
 use std::fs;
-use std::path::PathBuf;
+use std::io::ErrorKind;
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use kipple_core::{
@@ -44,30 +45,38 @@ pub fn resolve_roots(env: &Environment, project_roots: &[PathBuf]) -> Roots {
     if !project_roots.is_empty() {
         roots.remove(SymbolicRoot::ProjectRoots);
         for path in project_roots {
-            let resolved = if path.is_absolute() {
-                let root = SymbolicRoot::ProjectRoots;
-                Ok(ResolvedRoot::new(
-                    root,
-                    path.clone(),
-                    RootSource::CommandLine,
-                ))
-            } else {
-                Err(UnresolvedRoot::NotAbsolute {
-                    var: "--root",
-                    value: path.to_string_lossy().into_owned(),
-                })
-            };
-            roots.add(SymbolicRoot::ProjectRoots, resolved);
+            roots.add(SymbolicRoot::ProjectRoots, command_line_root(path));
         }
     }
     follow_root_links(&roots)
+}
+
+/// A project root given on the command line. One that climbs with `..` is resolved to the
+/// directory it names, since nothing below a root may have a `..` component.
+fn command_line_root(path: &Path) -> Result<ResolvedRoot, UnresolvedRoot> {
+    if !path.is_absolute() {
+        return Err(UnresolvedRoot::NotAbsolute {
+            var: "--root",
+            value: path.to_string_lossy().into_owned(),
+        });
+    }
+    let path = if path.components().any(|c| c == Component::ParentDir) {
+        fs::canonicalize(path).map_err(|e| UnresolvedRoot::Unresolvable {
+            path: path.to_owned(),
+            source: Arc::new(e),
+        })?
+    } else {
+        path.to_owned()
+    };
+    let root = SymbolicRoot::ProjectRoots;
+    Ok(ResolvedRoot::new(root, path, RootSource::CommandLine))
 }
 
 /// Every root as the OS and the tools' own conventions place it.
 fn upstream_roots(env: &Environment) -> Roots {
     #[cfg(feature = "test-roots")]
     if let Some(file) = env.get(test_roots::VAR) {
-        return test_roots::read(std::path::Path::new(file));
+        return test_roots::read(Path::new(file));
     }
     let mut roots = os::resolve_roots(env);
     let claude = match absolute(env, "CLAUDE_CONFIG_DIR") {
@@ -107,9 +116,22 @@ fn default_project_roots(roots: &Roots) -> Vec<Result<ResolvedRoot, UnresolvedRo
             // Home is unknown, so the project roots are too.
             return vec![resolved];
         };
-        let Ok(meta) = fs::metadata(exact(&resolved.path)) else {
-            continue;
+        let meta = match fs::symlink_metadata(exact(&resolved.path)) {
+            Ok(meta) => meta,
+            Err(e) if matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory) => {
+                continue;
+            }
+            // It may exist: opening it reports why it can't be read.
+            Err(_) => {
+                found.push(Ok(resolved));
+                continue;
+            }
         };
+        // A link is resolved, or reported as unusable, by `follow_root_links`.
+        if meta.file_type().is_symlink() {
+            found.push(Ok(resolved));
+            continue;
+        }
         let identity = os::identity(&resolved.path, &meta);
         if meta.is_dir() && identity.is_none_or(|identity| seen.insert(identity)) {
             found.push(Ok(resolved));

@@ -29,7 +29,7 @@ impl IntegrationId {
 
 impl fmt::Display for IntegrationId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.0)
+        f.pad(self.0)
     }
 }
 
@@ -48,6 +48,9 @@ pub struct IntegrationDescriptor {
     pub selectors: &'static [IntegrationSelector],
     /// Directory names that are always artifacts of its tool: no walk descends into them.
     pub artifacts: &'static [&'static str],
+    /// File names that make the directory holding them its tool's, such as a virtual
+    /// environment's `pyvenv.cfg`: no walk looks for anything inside that directory.
+    pub owner_files: &'static [&'static str],
     /// The upstream versions whose layouts it was verified against, with a fixture each.
     pub verified: &'static [&'static str],
 }
@@ -188,7 +191,9 @@ impl ScanContext<'_> {
     /// # Errors
     /// [`IntegrationError::Stopped`] when the scan was cancelled during the walk.
     pub fn walk_stops(&self, root: SymbolicRoot) -> Result<Vec<WalkStop>, IntegrationError> {
-        let mut stops = Vec::new();
+        // A directory under two paths of the root, given twice or one inside the other,
+        // is one stop, as near its root as it is anywhere.
+        let mut stops: BTreeMap<PathBuf, WalkStop> = BTreeMap::new();
         for resolved in self.roots_of(root) {
             let walk = self
                 .walks
@@ -196,10 +201,10 @@ impl ScanContext<'_> {
             if walk.cancelled {
                 return Err(IntegrationError::Stopped);
             }
-            stops.extend(walk.stops.iter().cloned());
+            keep_nearest(&mut stops, &walk.stops);
             self.walked.borrow_mut().insert(resolved.path.clone(), walk);
         }
-        Ok(stops)
+        Ok(stops.into_values().collect())
     }
 
     /// The candidates of a `project-artifact` rule under its root: directories named like
@@ -266,6 +271,18 @@ impl ScanContext<'_> {
             }
         }
         Ok(path)
+    }
+}
+
+/// Adds `found` to `stops`, keeping each directory where it is nearest its root.
+fn keep_nearest(stops: &mut BTreeMap<PathBuf, WalkStop>, found: &[WalkStop]) {
+    for stop in found {
+        let nearer = stops
+            .get(&stop.path)
+            .is_none_or(|seen| stop.depth < seen.depth);
+        if nearer {
+            stops.insert(stop.path.clone(), stop.clone());
+        }
     }
 }
 

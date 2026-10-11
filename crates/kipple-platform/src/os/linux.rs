@@ -45,10 +45,11 @@ pub(crate) fn resolve_roots(env: &Environment) -> Roots {
     let mut roots = xdg_roots(env);
     let trash = under(&roots, SymbolicRoot::XdgData, SymbolicRoot::Trash, "Trash");
     roots.insert(SymbolicRoot::Trash, trash);
-    for resolved in pacman_cache(fs::read_to_string(PACMAN_CONF)) {
+    let conf = fs::read_to_string(env.system_path(Path::new(PACMAN_CONF)));
+    for resolved in pacman_cache(env, conf) {
         roots.add(SymbolicRoot::PacmanCache, resolved);
     }
-    let journal = PathBuf::from(JOURNAL);
+    let journal = env.system_path(Path::new(JOURNAL));
     let journal = ResolvedRoot::new(SymbolicRoot::Journal, journal, RootSource::Fixed);
     roots.insert(SymbolicRoot::Journal, Ok(journal));
     roots
@@ -56,7 +57,10 @@ pub(crate) fn resolve_roots(env: &Environment) -> Roots {
 
 /// pacman's cache directories, from the `CacheDir` settings in `conf`. None when there
 /// is no `pacman.conf`, since then there is no pacman.
-fn pacman_cache(conf: io::Result<String>) -> Vec<Result<ResolvedRoot, UnresolvedRoot>> {
+fn pacman_cache(
+    env: &Environment,
+    conf: io::Result<String>,
+) -> Vec<Result<ResolvedRoot, UnresolvedRoot>> {
     let root = SymbolicRoot::PacmanCache;
     let unusable = |problem| {
         vec![Err(UnresolvedRoot::Setting {
@@ -73,7 +77,7 @@ fn pacman_cache(conf: io::Result<String>) -> Vec<Result<ResolvedRoot, Unresolved
         return unusable(SettingProblem::Includes);
     };
     if dirs.is_empty() {
-        let path = PathBuf::from(PACMAN_CACHE);
+        let path = env.system_path(Path::new(PACMAN_CACHE));
         return vec![Ok(ResolvedRoot::new(root, path, RootSource::Fixed))];
     }
     let source = RootSource::Setting {
@@ -82,9 +86,9 @@ fn pacman_cache(conf: io::Result<String>) -> Vec<Result<ResolvedRoot, Unresolved
     };
     dirs.into_iter()
         .map(|dir| {
-            let path: PathBuf = Path::new(dir).components().collect();
+            let path = Path::new(dir);
             if path.is_absolute() {
-                Ok(ResolvedRoot::new(root, path, source))
+                Ok(ResolvedRoot::new(root, env.system_path(path), source))
             } else {
                 Err(UnresolvedRoot::NotAbsolute {
                     var: "CacheDir",
@@ -241,7 +245,7 @@ mod tests {
     use super::*;
 
     fn cache(conf: &str) -> Vec<String> {
-        pacman_cache(Ok(conf.to_owned()))
+        pacman_cache(&Environment::default(), Ok(conf.to_owned()))
             .into_iter()
             .map(|resolved| match resolved {
                 Ok(resolved) => resolved.path.display().to_string(),
@@ -256,7 +260,9 @@ mod tests {
                    CacheDir=/third\n[core]\nCacheDir = /not-an-option\n";
         assert_eq!(cache(set), ["/srv/pkg", "/mnt/pkg", "/third"]);
         assert_eq!(cache("[options]\nHoldPkg = pacman\n"), [PACMAN_CACHE]);
-        assert!(pacman_cache(Err(io::ErrorKind::NotFound.into())).is_empty());
+        assert!(
+            pacman_cache(&Environment::default(), Err(io::ErrorKind::NotFound.into())).is_empty()
+        );
     }
 
     #[test]
@@ -264,9 +270,12 @@ mod tests {
         let included = "[options]\nInclude = /etc/pacman.d/options\n";
         let [unknown] = cache(included).try_into().unwrap();
         assert!(unknown.contains("includes other files"), "{unknown}");
-        let [denied] = pacman_cache(Err(io::ErrorKind::PermissionDenied.into()))
-            .try_into()
-            .unwrap();
+        let [denied] = pacman_cache(
+            &Environment::default(),
+            Err(io::ErrorKind::PermissionDenied.into()),
+        )
+        .try_into()
+        .unwrap();
         assert!(denied.is_err());
     }
 

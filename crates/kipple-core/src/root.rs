@@ -181,6 +181,15 @@ pub enum UnresolvedRoot {
         /// What is wrong with it.
         problem: LinkProblem,
     },
+    /// A configured path that climbs with `..` could not be resolved to the directory it
+    /// names.
+    #[error("{} can't be resolved: {source}", path.display())]
+    Unresolvable {
+        /// The configured path.
+        path: PathBuf,
+        /// The upstream error.
+        source: Arc<std::io::Error>,
+    },
     /// The operating system could not say where the root is.
     #[error("the system could not resolve {folder}: {source}")]
     Os {

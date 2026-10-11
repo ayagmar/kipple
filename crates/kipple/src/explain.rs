@@ -5,10 +5,10 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use kipple_core::{Finding, Pack, Rule, Selector};
+use kipple_core::{Pack, Rule, ScanOutcome, ScanReport, Selector};
 use kipple_platform::PLATFORM;
 
-use crate::human::{escaped, size};
+use crate::human::{bytes, escaped, size};
 use crate::json::{EvidenceOut, FindingOut, LensOut};
 use crate::rules::lens;
 use crate::setup::Builtin;
@@ -93,8 +93,9 @@ pub(crate) fn write_path(
     out: &mut dyn Write,
     builtin: &Builtin,
     path: &Path,
-    findings: &[Finding],
+    report: &ScanReport,
 ) -> io::Result<()> {
+    let findings = &report.findings;
     let wanted = comparable(path);
     let at = findings.iter().find(|f| comparable(&f.path) == wanted);
     let Some(finding) = at else {
@@ -114,6 +115,7 @@ pub(crate) fn write_path(
             );
             writeln!(out, "{}", escaped(&line))?;
         }
+        write_gaps(out, report)?;
         return writeln!(
             out,
             "kipple only reports what its rules select: see `kipple rules`."
@@ -122,7 +124,15 @@ pub(crate) fn write_path(
     let lens = builtin.lenses().get(&finding.integration).copied();
     let shown = FindingOut::new(finding, lens.unwrap_or(kipple_core::Lens::System));
     writeln!(out, "{}", escaped(&shown.path.display))?;
-    writeln!(out, "  {:<15} {}", "Size", size(shown.size.as_ref()))?;
+    writeln!(out, "  {:<15} {}", "Storage", size(shown.size.as_ref()))?;
+    if let Some(measured) = &shown.size {
+        writeln!(
+            out,
+            "  {:<15} {}",
+            "Apparent size",
+            bytes(measured.apparent)
+        )?;
+    }
     for evidence in &shown.evidence {
         writeln!(
             out,
@@ -136,6 +146,29 @@ pub(crate) fn write_path(
         Some((pack, rule)) => write_rule(out, builtin, pack, rule),
         None => writeln!(out, "Found by {}.", finding.rule),
     }
+}
+
+/// What the scan couldn't cover, where the path may be after all.
+fn write_gaps(out: &mut dyn Write, report: &ScanReport) -> io::Result<()> {
+    let gaps: Vec<_> = report
+        .integrations
+        .iter()
+        .flat_map(|i| i.omissions.iter().map(move |omission| (i.id, omission)))
+        .collect();
+    if report.outcome == ScanOutcome::Cancelled {
+        writeln!(out, "The scan was cancelled before it finished.")?;
+    }
+    if gaps.is_empty() {
+        return Ok(());
+    }
+    writeln!(
+        out,
+        "The scan couldn't cover everything, so it may be there:"
+    )?;
+    for (integration, omission) in gaps {
+        writeln!(out, "  {}", escaped(&format!("{integration}: {omission}")))?;
+    }
+    Ok(())
 }
 
 fn evidence_line(evidence: &EvidenceOut) -> String {

@@ -155,6 +155,7 @@ const fn descriptor(id: &'static str) -> IntegrationDescriptor {
         roots: &[],
         selectors: &[],
         artifacts: &[],
+        owner_files: &[],
         verified: &[],
     }
 }

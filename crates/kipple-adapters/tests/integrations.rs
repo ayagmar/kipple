@@ -120,6 +120,15 @@ impl Sizer for NoSizer {
 fn scan(tree: &FixtureTree) -> (tempfile::TempDir, ScanReport) {
     let temp = tempfile::tempdir().unwrap();
     tree.build_in(temp.path()).unwrap();
+    scan_built(temp)
+}
+
+/// Scans the tree already built in `temp`, like [`scan`].
+#[expect(
+    clippy::unwrap_used,
+    reason = "a fixture that fails to build fails the test"
+)]
+fn scan_built(temp: tempfile::TempDir) -> (tempfile::TempDir, ScanReport) {
     let mut roots = Roots::default();
     for (name, relative) in demo_home::ROOTS {
         let root = SymbolicRoot::from_name(name).unwrap();
@@ -287,6 +296,8 @@ fn a_pycache_with_anything_but_bytecode_or_inside_any_virtual_environment_is_not
         .file("home/projects/p/pkg/__pycache__/notes.txt", b"mine")
         // An environment with no project beside it is still never looked into.
         .file("home/projects/loose/.venv/pkg/__pycache__/x.cpython-314.pyc", b"");
+    // Nor is one by another name: `pyvenv.cfg` makes it an environment.
+    venv_v3_14_8::environment(&mut tree, "home/projects/env");
 
     let (temp, report) = scan(&tree);
 
@@ -294,11 +305,37 @@ fn a_pycache_with_anything_but_bytecode_or_inside_any_virtual_environment_is_not
 }
 
 #[test]
+#[cfg(unix)]
+fn a_pycache_that_cant_be_listed_is_reported_without_layout_evidence_rather_than_dropped() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let mut tree = FixtureTree::new();
+    tree.file("home/projects/p/pkg/__pycache__/mod.cpython-314.pyc", b"");
+    let temp = tempfile::tempdir().unwrap();
+    tree.build_in(temp.path()).unwrap();
+    let cache = temp.path().join("home/projects/p/pkg/__pycache__");
+    fs::set_permissions(&cache, fs::Permissions::from_mode(0o000)).unwrap();
+    if fs::read_dir(&cache).is_ok() {
+        // Permissions don't bind root, so there is nothing unreadable to test.
+        return;
+    }
+
+    let (temp, report) = scan_built(temp);
+    fs::set_permissions(&cache, fs::Permissions::from_mode(0o755)).unwrap();
+
+    let path = "home/projects/p/pkg/__pycache__".to_owned();
+    let rule = "builtin.python.bytecode".to_owned();
+    assert_eq!(found(temp.path(), &report), [(rule, path, vec![])]);
+}
+
+#[test]
 fn system_locations_are_advised_on_when_present_and_reported_only_when_not_empty() {
     let mut tree = FixtureTree::new();
     tree.dir("var/cache/pacman/pkg")
         .dir("var/log/journal")
-        .dir("home/.local/share/Trash");
+        // A trash that has been used and emptied keeps its two directories.
+        .dir("home/.local/share/Trash/files")
+        .dir("home/.local/share/Trash/info");
 
     let (temp, report) = scan(&tree);
 
@@ -338,4 +375,26 @@ fn claude_code_advice_shows_the_retention_its_settings_resolve_to() {
     assert!(text(&unset).contains(": 30 days, the default"));
     assert!(text(&empty).contains(": 30 days, the default"));
     assert!(text(&invalid).contains(": unknown: "));
+}
+
+#[test]
+fn every_builtin_rule_applies_only_where_its_integration_runs() {
+    // Otherwise the engine refuses the rule on that platform alone, and every scan there
+    // fails while the gate on the others stays green.
+    let packs = builtin::packs(&semver::Version::new(0, 0, 0)).unwrap();
+    let descriptors = builtin::descriptors();
+    for rule in packs.iter().flat_map(|pack| &pack.rules) {
+        let integration = descriptors
+            .iter()
+            .find(|d| d.id == rule.integration)
+            .unwrap();
+        for platform in &rule.platforms {
+            assert!(
+                integration.platforms.contains(platform),
+                "{} applies on {platform}, where {} doesn't run",
+                rule.id,
+                integration.id
+            );
+        }
+    }
 }

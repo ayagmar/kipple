@@ -142,7 +142,7 @@ pub(crate) fn write_human(out: &mut dyn Write, report: &ScanOut) -> io::Result<(
         .sum();
     writeln!(
         out,
-        "\n{} findings, {} in all. Nothing was changed. `kipple explain PATH` says why each one is here.",
+        "\n{} findings taking {} of storage in all. Nothing was changed. `kipple explain PATH` says why each one is here.",
         report.findings.len(),
         bytes(total)
     )?;

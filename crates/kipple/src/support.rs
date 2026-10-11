@@ -67,9 +67,13 @@ impl SupportMatrixOut {
                     .iter()
                     .map(|&platform| {
                         let supported = d.platforms.contains(&platform);
+                        // Advice alone, as for Claude Code, finds nothing.
+                        let finds = builtin.rules().any(|(_, rule)| {
+                            rule.integration == d.id && rule.platforms.contains(&platform)
+                        });
                         PlatformSupport {
                             platform: platform.name(),
-                            discover: supported,
+                            discover: supported && finds,
                             report: supported,
                             mutate: false,
                         }

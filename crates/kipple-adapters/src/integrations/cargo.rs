@@ -5,8 +5,8 @@
 use std::path::Path;
 
 use kipple_core::{
-    FindingSink, Integration, IntegrationDescriptor, IntegrationError, IntegrationId, Lens,
-    Platform, ScanContext,
+    DirEntryMeta, FindingSink, Integration, IntegrationDescriptor, IntegrationError, IntegrationId,
+    Lens, Platform, ScanContext,
 };
 
 use super::project;
@@ -27,6 +27,7 @@ impl Integration for Cargo {
             roots: &[],
             selectors: &[],
             artifacts: &[],
+            owner_files: &[],
             verified: &["Cargo 1.99.0"],
         }
     }
@@ -41,7 +42,7 @@ impl Integration for Cargo {
 }
 
 /// `CACHEDIR.TAG`, when it starts with the specification's signature.
-fn cachedir_tag(cx: &ScanContext<'_>, dir: &Path) -> Option<String> {
+fn cachedir_tag(cx: &ScanContext<'_>, dir: &Path, _: &[DirEntryMeta]) -> Option<String> {
     let tag = "CACHEDIR.TAG";
     let limit = CACHEDIR_SIGNATURE.len() as u64;
     let head = cx.read_file(&dir.join(tag), limit).ok()?;
