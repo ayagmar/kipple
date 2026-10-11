@@ -138,22 +138,6 @@ fn each_unknown_or_blocking_fact_holds_the_finding_in_protected_and_never_in_rev
         ),
         (
             Facts {
-                tracked: Tracked::InsideRepository {
-                    work_tree: PathBuf::from("/p"),
-                },
-                ..build_output()
-            },
-            Hold::UnknownGit,
-        ),
-        (
-            Facts {
-                tracked: Tracked::Unchecked(denied("/home")),
-                ..build_output()
-            },
-            Hold::UnknownGit,
-        ),
-        (
-            Facts {
                 activity: Activity::InUse {
                     pid: 4121,
                     executable: PathBuf::from("/p/target/debug/app"),
@@ -208,4 +192,36 @@ fn a_protected_finding_shows_every_reason_it_is_held_not_only_the_first() {
         balanced(&facts),
         Verdict::Protected(vec![Hold::UnknownLayout, Hold::UnknownActivity])
     );
+}
+
+#[test]
+fn a_repository_around_or_inside_a_finding_or_one_not_ruled_out_holds_it_in_protected() {
+    let cases = [
+        (
+            Tracked::InsideRepository {
+                work_tree: PathBuf::from("/p"),
+            },
+            Hold::UnknownGit,
+        ),
+        (Tracked::Unchecked(denied("/home")), Hold::UnknownGit),
+        (Tracked::Unwalked, Hold::UnknownGit),
+        (
+            Tracked::HoldsRepository {
+                work_tree: PathBuf::from("/p/.venv/src/pkg"),
+            },
+            Hold::HoldsRepository,
+        ),
+    ];
+
+    for (tracked, hold) in cases {
+        let facts = Facts {
+            tracked,
+            ..build_output()
+        };
+        assert_eq!(
+            balanced(&facts),
+            Verdict::Protected(vec![hold]),
+            "{facts:?}"
+        );
+    }
 }

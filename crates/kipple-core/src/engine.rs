@@ -18,7 +18,7 @@ use crate::integration::{
     Advice, Evidence, FindingSink, Integration, IntegrationDescriptor, IntegrationError,
     IntegrationId, ScanContext,
 };
-use crate::policy::{Consequence, Facts, Level, Modified, Proposal, Verdict, classify};
+use crate::policy::{Consequence, Facts, Level, Modified, Proposal, Tracked, Verdict, classify};
 use crate::probe::{Clock, EntryKind, EntryMeta, FsProbe, ProbeError, Sizer};
 use crate::process::ProcessProbe;
 use crate::root::{ResolvedRoot, Roots, SymbolicRoot, UnresolvedRoot};
@@ -495,9 +495,10 @@ impl Engine {
                     None
                 }
             };
+            let size = measurement.as_ref().map(|m| m.size);
             let facts = self.facts(&one, measurement, owner, shared);
             let mut finding = one.finding;
-            finding.size = measurement.map(|m| m.size);
+            finding.size = size;
             finding.facts = Some(facts.clone());
             let event = ScanEvent::FindingUpdated {
                 id: finding.id,
@@ -511,7 +512,7 @@ impl Engine {
     }
 
     /// What the host knows about a finding once measured. One that couldn't be measured
-    /// completely has no known modification time.
+    /// completely has no known modification time, and can't rule out a checkout inside.
     fn facts(
         &self,
         found: &Found,
@@ -520,13 +521,27 @@ impl Engine {
         shared: Shared<'_>,
     ) -> Facts {
         let path = &found.finding.path;
-        let modified = measurement
-            .filter(|m| m.size.completeness == Completeness::Complete)
+        let complete = measurement.filter(|m| m.size.completeness == Completeness::Complete);
+        let modified = complete
+            .as_ref()
             .and_then(|m| m.modified)
             .map_or(Modified::Unknown, |at| {
                 let age = self.ports.clock.now().duration_since(at);
                 Modified::Ago(age.unwrap_or_default())
             });
+        let above = shared.repositories.tracked(self.ports.fs.as_ref(), path);
+        let tracked = if matches!(above, Tracked::NoRepository) {
+            match complete {
+                None => Tracked::Unwalked,
+                Some(Measurement {
+                    repository: Some(work_tree),
+                    ..
+                }) => Tracked::HoldsRepository { work_tree },
+                Some(_) => Tracked::NoRepository,
+            }
+        } else {
+            above
+        };
         let processes = self.ports.processes.as_ref();
         let rule = owner.rule(&found.finding.rule);
         let layout_verified = found
@@ -538,7 +553,7 @@ impl Engine {
             proposal: owner.proposal(rule),
             layout_verified,
             consequence: found.consequence,
-            tracked: shared.repositories.tracked(self.ports.fs.as_ref(), path),
+            tracked,
             activity: shared.processes.activity(processes, path),
             modified,
             recent_days: rule.and_then(|rule| rule.recent_days),

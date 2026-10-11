@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use kipple_core::{Lens, Verdict};
+use kipple_core::{Lens, ScanOutcome, Verdict};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout as Split, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -183,6 +183,9 @@ pub(crate) fn render(app: &App, look: Look, frame: &mut Frame<'_>) {
 fn header(app: &App, look: Look) -> Paragraph<'static> {
     let state = match app.progress {
         Progress::Scanning => "scanning…".to_owned(),
+        Progress::Done { outcome, .. } if outcome != ScanOutcome::Completed => {
+            "scan stopped early".to_owned()
+        }
         Progress::Done { elapsed, .. } => {
             format!(
                 "scanned in {}.{} s",
@@ -228,10 +231,6 @@ fn render_list(app: &App, look: Look, tree: &Tree<'_>, area: Rect, frame: &mut F
     let (lines, at) = (tree.lines, tree.at);
     let rows = usize::from(area.height);
     let first = offset(app.scroll, at, rows, lines.len());
-    if lines.is_empty() {
-        frame.render_widget(Paragraph::new("Scanning…"), area);
-        return;
-    }
     let shown = lines.iter().enumerate().skip(first).take(rows);
     for (y, (index, line)) in (area.y..).zip(shown) {
         let row = Rect::new(area.x, y, area.width, 1);
@@ -473,7 +472,7 @@ fn detail(app: &App, look: Look, node: Node) -> Vec<Text<'static>> {
         Node::Gaps => vec![
             heading("Not covered"),
             Text::from(
-                "The scan couldn't read everything, so this report is partial. Nothing here means there is nothing to clean.",
+                "The scan couldn't read everything, so this report is partial. An empty bucket doesn't mean there is nothing to clean.",
             ),
         ],
         Node::Gap(index) => app.gaps.get(index).map_or_else(Vec::new, |gap| {

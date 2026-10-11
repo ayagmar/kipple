@@ -118,8 +118,9 @@ pub enum Proposal {
 /// (`git.tracked_files_in_item`, `docs/06-adapters-and-rules.md` §3).
 #[derive(Debug, Clone)]
 pub enum Tracked {
-    /// No `.git` in the finding or in any directory above it, up to the file system's
-    /// root, and every one of them could be checked: nothing inside is tracked.
+    /// No `.git` in the finding, in any directory above it up to the file system's root,
+    /// or anywhere inside it, and every one of them could be checked: nothing inside is
+    /// tracked.
     NoRepository,
     /// A repository holds it: whether it tracks anything inside is not known yet.
     InsideRepository {
@@ -128,6 +129,13 @@ pub enum Tracked {
     },
     /// A directory above it couldn't be checked for `.git`.
     Unchecked(ProbeError),
+    /// A git checkout lives inside it, so it holds files git may track.
+    HoldsRepository {
+        /// The directory inside it holding `.git`.
+        work_tree: PathBuf,
+    },
+    /// Not everything inside could be read, so a checkout inside it can't be ruled out.
+    Unwalked,
 }
 
 /// Whether a program is using the finding, from the running executables (D-035).
@@ -201,6 +209,8 @@ named! {
         UnknownConsequence = "unknown-consequence",
         /// A git repository holds it, and whether it tracks files inside isn't known.
         UnknownGit = "unknown-git",
+        /// A git checkout lives inside it.
+        HoldsRepository = "holds-repository",
         /// A program runs a file inside it.
         InUse = "in-use",
         /// Not every running program could be identified.
@@ -298,8 +308,12 @@ fn holds(facts: &Facts) -> Vec<Hold> {
     if facts.consequence.is_none() {
         holds.push(Hold::UnknownConsequence);
     }
-    if !matches!(facts.tracked, Tracked::NoRepository) {
-        holds.push(Hold::UnknownGit);
+    match facts.tracked {
+        Tracked::NoRepository => {}
+        Tracked::HoldsRepository { .. } => holds.push(Hold::HoldsRepository),
+        Tracked::InsideRepository { .. } | Tracked::Unchecked(_) | Tracked::Unwalked => {
+            holds.push(Hold::UnknownGit);
+        }
     }
     match facts.activity {
         Activity::Idle => {}

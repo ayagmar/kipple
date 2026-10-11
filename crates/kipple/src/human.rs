@@ -78,6 +78,7 @@ pub(crate) const fn hold(hold: Hold) -> &'static str {
         Hold::UnknownLayout => "unknown: layout",
         Hold::UnknownConsequence => "unknown: what is lost",
         Hold::UnknownGit => "unknown: git",
+        Hold::HoldsRepository => "blocked: git checkout",
         Hold::InUse => "blocked: in use",
         Hold::UnknownActivity => "unknown: in use",
         Hold::UnknownModified => "unknown: last change",
@@ -159,7 +160,17 @@ fn losses(losses: &[Loss]) -> String {
 
 fn tracked(tracked: &Tracked) -> String {
     match tracked {
-        Tracked::NoRepository => "no repository holds it, so git tracks nothing inside".to_owned(),
+        Tracked::NoRepository => {
+            "no repository holds it or lives inside it, so git tracks nothing inside".to_owned()
+        }
+        Tracked::HoldsRepository { work_tree } => format!(
+            "a git checkout lives inside it at {}",
+            escaped(&work_tree.display().to_string())
+        ),
+        Tracked::Unwalked => {
+            "it couldn't be measured completely, so a git checkout inside can't be ruled out"
+                .to_owned()
+        }
         Tracked::InsideRepository { work_tree } => format!(
             "inside the repository at {}; whether git tracks files in it isn't checked yet",
             escaped(&work_tree.display().to_string())
@@ -194,7 +205,7 @@ fn activity(activity: &Activity) -> String {
 
 fn modified(facts: &Facts, level: Level) -> String {
     let Modified::Ago(age) = facts.modified else {
-        return "unknown: not everything inside could be read".to_owned();
+        return "unknown: it couldn't be measured completely".to_owned();
     };
     let days = age.as_secs() / (24 * 60 * 60);
     let ago = match days {

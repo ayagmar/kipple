@@ -140,7 +140,7 @@ impl Sizer for FakeSizer {
     fn size(&self, _: &Path, cancel: &CancelToken) -> Result<Measurement, ProbeError> {
         let call = self.calls.fetch_add(1, Ordering::SeqCst);
         let Some(started) = self.block_first.as_ref().filter(|_| call == 0) else {
-            return Ok(self.measurement.unwrap_or(measured(SIZE)));
+            return Ok(self.measurement.clone().unwrap_or(measured(SIZE)));
         };
         started.wait();
         while !cancel.is_cancelled() {
@@ -158,6 +158,7 @@ const fn measured(size: SpaceEstimate) -> Measurement {
     Measurement {
         size,
         modified: Some(NOW),
+        repository: None,
     }
 }
 
@@ -1100,6 +1101,7 @@ fn only_a_complete_measurement_dates_a_finding_and_a_future_time_counts_as_now()
                     ..SIZE
                 },
                 modified: Some(at),
+                repository: None,
             }),
             ..FakeSizer::default()
         };
@@ -1127,4 +1129,43 @@ fn only_a_complete_measurement_dates_a_finding_and_a_future_time_counts_as_now()
         Some(Modified::Ago(Duration::ZERO))
     );
     assert_eq!(modified(incomplete, NOW - 3 * day), Some(Modified::Unknown));
+}
+
+#[test]
+fn a_checkout_inside_a_finding_holds_it_and_an_incomplete_walk_cant_rule_one_out() {
+    let tracked = |measurement: Measurement| {
+        let sizer = FakeSizer {
+            measurement: Some(measurement),
+            ..FakeSizer::default()
+        };
+        let fs = FakeFs {
+            no_git: true,
+            ..FakeFs::default()
+        };
+        let proposer = Proposer {
+            paths: &["/found/.venv"],
+        };
+        facts(ports(fs, sizer), proposer)
+            .remove(Path::new("/found/.venv"))
+            .map(|facts| facts.tracked)
+    };
+    let editable = Measurement {
+        // `pip install -e git+…` checks a package out inside the venv.
+        repository: Some(PathBuf::from("/found/.venv/src/pkg")),
+        ..measured(SIZE)
+    };
+    let unreadable = measured(SpaceEstimate {
+        completeness: Completeness::Incomplete { unreadable: 1 },
+        ..SIZE
+    });
+
+    assert!(matches!(
+        tracked(editable),
+        Some(Tracked::HoldsRepository { work_tree }) if work_tree == Path::new("/found/.venv/src/pkg")
+    ));
+    assert!(matches!(tracked(unreadable), Some(Tracked::Unwalked)));
+    assert!(matches!(
+        tracked(measured(SIZE)),
+        Some(Tracked::NoRepository)
+    ));
 }

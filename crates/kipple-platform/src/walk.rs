@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::thread;
@@ -88,6 +88,9 @@ fn visit<'s>(
             continue;
         };
         counts.add(&meta);
+        if entry.file_name() == ".git" {
+            counts.repository(dir);
+        }
         if meta.is_dir() && os::device(&meta) == device {
             let sub = entry.path();
             scope.spawn(move |scope| visit(scope, &sub, device, tally, cancel));
@@ -114,9 +117,15 @@ struct Counts {
     unreadable: u64,
     linked: Vec<(FileIdentity, Linked)>,
     newest: Newest,
+    repository: Option<PathBuf>,
 }
 
 impl Counts {
+    /// Records that `dir` holds a `.git` entry.
+    fn repository(&mut self, dir: &Path) {
+        self.repository = Some(dir.to_owned());
+    }
+
     fn add(&mut self, meta: &fs::Metadata) {
         self.newest.add(meta.modified().ok());
         let apparent = if meta.is_dir() { 0 } else { meta.len() };
@@ -175,6 +184,7 @@ struct Tally {
     cancelled: AtomicBool,
     linked: Mutex<HashMap<FileIdentity, Linked>>,
     newest: Mutex<Newest>,
+    repository: Mutex<Option<PathBuf>>,
 }
 
 impl Tally {
@@ -191,6 +201,17 @@ impl Tally {
         }
         let mut newest = self.newest.lock().unwrap_or_else(PoisonError::into_inner);
         newest.merge(counts.newest);
+        drop(newest);
+        if let Some(found) = counts.repository {
+            let mut repository = self
+                .repository
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner);
+            // The first in path order, whichever task met it first.
+            if repository.as_ref().is_none_or(|known| found < *known) {
+                *repository = Some(found);
+            }
+        }
     }
 
     /// Records hard-linked names and returns the apparent and allocated bytes of the files
@@ -220,9 +241,15 @@ impl Tally {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .time();
+        let repository = self
+            .repository
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .take();
         Measurement {
             size: self.estimate(),
             modified,
+            repository,
         }
     }
 

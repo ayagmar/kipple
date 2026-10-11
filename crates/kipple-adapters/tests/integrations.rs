@@ -114,6 +114,7 @@ impl Sizer for NoSizer {
         Ok(Measurement {
             size,
             modified: None,
+            repository: None,
         })
     }
 }

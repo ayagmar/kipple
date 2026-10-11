@@ -1,5 +1,6 @@
 //! Byte counts and space estimates (`docs/04-safety-model.md` §8).
 
+use std::path::PathBuf;
 use std::time::SystemTime;
 
 /// The sum of file lengths: what a listing shows, not what the disk holds.
@@ -40,11 +41,14 @@ pub struct SpaceEstimate {
 }
 
 /// What measuring an item found.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Measurement {
     /// What removing it would free.
     pub size: SpaceEstimate,
     /// The newest modification time of the item and everything measured inside it, where
     /// the platform reports one.
     pub modified: Option<SystemTime>,
+    /// A directory inside the item that holds a `.git` entry (a directory, file or link),
+    /// so a git checkout lives inside it. The first in path order when there are several.
+    pub repository: Option<PathBuf>,
 }

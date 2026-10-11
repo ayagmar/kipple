@@ -112,6 +112,28 @@ fn an_item_last_changed_when_anything_inside_it_did_a_file_deep_down_or_a_direct
 }
 
 #[test]
+fn a_git_checkout_anywhere_inside_an_item_is_reported_whether_dot_git_is_a_dir_or_a_file() {
+    let temp = TempDir::new().unwrap();
+    let repository = |item: &Path| {
+        let walker = Walker::new().unwrap();
+        walker.size(item, &CancelToken::new()).unwrap().repository
+    };
+    // `pip install -e git+…` clones into the venv; a submodule or linked worktree has a
+    // `.git` file instead of a directory.
+    let venv = temp.path().join(".venv");
+    write(&venv.join("src/pkg/.git/HEAD"), 10);
+    write(&venv.join("lib/site.py"), 10);
+    let modules = temp.path().join("node_modules");
+    write(&modules.join("dep/.git"), 10);
+    let plain = temp.path().join("target");
+    write(&plain.join("debug/app"), 10);
+
+    assert_eq!(repository(&venv), Some(venv.join("src/pkg")));
+    assert_eq!(repository(&modules), Some(modules.join("dep")));
+    assert_eq!(repository(&plain), None);
+}
+
+#[test]
 fn a_cancelled_walk_is_never_reported_as_complete() {
     let (temp, _) = tree_with_links_out();
     let cancel = CancelToken::new();
