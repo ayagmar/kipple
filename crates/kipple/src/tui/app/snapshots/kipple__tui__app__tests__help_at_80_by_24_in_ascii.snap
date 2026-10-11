@@ -1,0 +1,28 @@
+---
+source: crates/kipple/src/tui/app/tests.rs
+expression: "screen(&app, look, 80, 24)"
+---
+kipple - read-only - level: Balanced - scanned in 1.2 s
+  v Safe to clean (2)                            514.0 MiB passes every check
+    v Dev (2)                                    514.0 MiB
+      api/target  Cargo build output             512.0 MiB
++ Keys ------------------------------------------------------------------------+
+|j k  dn up move                                                               |
+|h l  lt rt fold and unfold a group                                            |
+|g G        first and last line                                                |
+|/          filter by name or path; enter keeps it, esc clears it              |
+|tab        show one lens: Agents, Dev, System, then all                       |
+|s          select or unselect the finding                                     |
+|a          add the group's Safe and Review findings                           |
+|c          select the whole Safe bucket                                       |
+|enter      show what is selected                                              |
+|?          this help                                                          |
+|q          quit                                                               |
+|                                                                              |
+|This version only finds and explains: selecting removes nothing.              |
+|                                                                              |
++------------------------------------------------------------------------------+
+
+
+found 1.7 GiB - eligible 814.0 MiB - selected 0 (0 B) - frees 0 B
+j/k move  h/l fold  / filter  tab lens  s select  c safe  ? help  q quit

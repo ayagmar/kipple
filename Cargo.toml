@@ -71,6 +71,7 @@ kipple-core = { path = "crates/kipple-core" }
 kipple-platform = { path = "crates/kipple-platform" }
 kipple-adapters = { path = "crates/kipple-adapters" }
 libc = "0.2.190"
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
 rayon = "1.12.0"
 schemars = "1.2.2"
 semver = "1.0.28"

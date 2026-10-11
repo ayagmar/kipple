@@ -288,3 +288,25 @@ fn explaining_a_path_the_scan_couldnt_read_says_so_instead_of_that_nothing_is_th
     assert!(out.contains("couldn't cover everything"), "{out}");
     assert!(out.contains("rust-app"), "{out}");
 }
+
+#[test]
+fn kipple_without_a_terminal_prints_each_buckets_total_instead_of_the_home_screen() {
+    let (_temp, env) = demo();
+
+    let (code, out, err) = kipple(&env, &[]);
+
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert_eq!(err, "");
+    assert!(!out.contains('\u{1b}'), "terminal control in {out}");
+    let line = |title: &str| {
+        out.lines()
+            .find(|line| line.trim_start().starts_with(title))
+            .unwrap_or_else(|| panic!("no {title} line in {out}"))
+            .to_owned()
+    };
+    // The six project artifacts of demo-home are Safe, the recent one is Review.
+    assert!(line("Safe to clean").ends_with("6 findings"), "{out}");
+    assert!(line("Review").ends_with("1 finding"), "{out}");
+    assert!(line("Protected").contains("finding"), "{out}");
+    assert!(out.contains("Nothing was changed."), "{out}");
+}

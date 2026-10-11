@@ -35,7 +35,7 @@ kipple must always be able to explain why it believes something is safe to remov
 
 ## Capabilities and Constraints
 
-- Specification: `docs/01`–`11` and `docs/decisions.md`. Status: M1 (read-only scan, `rules`, `explain`, `doctor`) is complete; M2 (the TUI home) is in progress, with findings sorted into Safe, Review and Protected at the Balanced level. Nothing is removed yet.
+- Specification: `docs/01`–`11` and `docs/decisions.md`. Status: M1 (read-only scan, `rules`, `explain`, `doctor`) is complete; M2 (the TUI home) is in progress: `kipple` in a terminal opens the home screen, with findings sorted into Safe, Review and Protected at the Balanced level. Nothing is removed yet.
 - Vocabulary is fixed in `docs/03-functional-spec.md` §1: finding, rule, pack, category, eligibility, method, selection, plan, receipt, grant, advice, consequence, bucket, profile.
 - Never in scope: system "optimisation", killing processes, running as root (until a separate design), secure wipe, telemetry.
 - Undecided: custom domain, Homebrew tap name.

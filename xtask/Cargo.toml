@@ -12,7 +12,9 @@ publish.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 kipple = { path = "../crates/kipple" }
+kipple-platform.workspace = true
 insta.workspace = true
+ratatui.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true

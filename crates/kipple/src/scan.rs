@@ -155,6 +155,55 @@ pub(crate) fn write_human(out: &mut dyn Write, report: &ScanOut) -> io::Result<(
     out.flush()
 }
 
+/// Writes `kipple` without a terminal: each bucket's findings and size, and whether the
+/// report is partial (`docs/03-functional-spec.md` §2 J1).
+pub(crate) fn write_summary(out: &mut dyn Write, report: &ScanOut) -> io::Result<()> {
+    writeln!(
+        out,
+        "kipple {} (read-only, level: {})",
+        report.kipple, report.level
+    )?;
+    let rows = [
+        ("Safe to clean", Some(BucketOut::Safe)),
+        ("Review", Some(BucketOut::Review)),
+        ("Protected", Some(BucketOut::Protected)),
+        ("Not measured", None),
+    ];
+    for (title, bucket) in rows {
+        let found: Vec<&FindingOut> = report
+            .findings
+            .iter()
+            .filter(|f| f.verdict.as_ref().map(|v| v.bucket) == bucket)
+            .collect();
+        if bucket.is_none() && found.is_empty() {
+            continue;
+        }
+        let total: u64 = found
+            .iter()
+            .filter_map(|f| f.size.as_ref())
+            .map(|s| s.allocated.unwrap_or(s.apparent))
+            .sum();
+        writeln!(
+            out,
+            "  {title:<14} {:>12}  {}",
+            bytes(total),
+            crate::human::findings(found.len())
+        )?;
+    }
+    let gaps: usize = report.integrations.iter().map(|i| i.omissions.len()).sum();
+    if gaps > 0 {
+        writeln!(
+            out,
+            "Partial: {gaps} places couldn't be covered; `kipple scan` lists them."
+        )?;
+    }
+    writeln!(
+        out,
+        "Run `kipple` in a terminal to browse them, or `kipple scan` to list every finding. Nothing was changed."
+    )?;
+    out.flush()
+}
+
 const fn bucket_word(bucket: BucketOut) -> &'static str {
     match bucket {
         BucketOut::Safe => "safe",

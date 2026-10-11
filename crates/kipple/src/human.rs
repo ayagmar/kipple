@@ -52,6 +52,15 @@ pub(crate) fn size(size: Option<&SizeOut>) -> String {
     }
 }
 
+/// `count` findings, in words.
+pub(crate) fn findings(count: usize) -> String {
+    if count == 1 {
+        "1 finding".to_owned()
+    } else {
+        format!("{count} findings")
+    }
+}
+
 /// A bucket's name on screen.
 pub(crate) const fn bucket(bucket: Bucket) -> &'static str {
     match bucket {

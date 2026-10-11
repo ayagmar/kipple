@@ -14,6 +14,7 @@ pub mod rules;
 mod scan;
 pub mod setup;
 pub mod support;
+pub mod tui;
 
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -28,11 +29,41 @@ use crate::setup::Builtin;
 
 /// Command-line arguments for `kipple`.
 #[derive(Debug, Parser)]
-#[command(name = "kipple", version, about, subcommand_required = true)]
+#[command(
+    name = "kipple",
+    version,
+    about,
+    args_conflicts_with_subcommands = true,
+    after_help = "Without a command, kipple opens the home screen in a terminal, or prints a \
+                  summary when its output isn't a terminal. Read-only: nothing is changed."
+)]
 pub struct Cli {
-    /// What to do.
+    /// The home screen's options.
+    #[command(flatten)]
+    pub home: HomeArgs,
+    /// What to do. Without one, the home screen.
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
+}
+
+/// Options of the home screen.
+#[derive(Debug, Args)]
+pub struct HomeArgs {
+    /// Draw the home screen with ASCII characters only.
+    #[arg(long)]
+    pub ascii: bool,
+    /// The home screen's layout. A development flag for comparing layouts.
+    #[arg(long, value_enum, default_value_t = LayoutArg::Buckets, hide = true)]
+    pub layout: LayoutArg,
+}
+
+/// A home screen layout.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum LayoutArg {
+    /// Safe, Review and Protected first.
+    Buckets,
+    /// Agents, Dev and System first.
+    Lenses,
 }
 
 /// kipple's commands.
@@ -124,8 +155,9 @@ pub fn run(
         Err(message) => return fail(stderr, &message),
     };
     match &cli.command {
-        Command::Scan(args) => scan(args, &builtin, env, stdout, stderr),
-        Command::Rules { json } => {
+        None => summary(&builtin, env, stdout, stderr),
+        Some(Command::Scan(args)) => scan(args, &builtin, env, stdout, stderr),
+        Some(Command::Rules { json }) => {
             let rules = rules::RulesOut::new(&builtin);
             let written = if *json {
                 write_json(stdout, &rules)
@@ -134,8 +166,8 @@ pub fn run(
             };
             exit_code(written, stderr)
         }
-        Command::Explain { target } => explain(target, &builtin, env, stdout, stderr),
-        Command::Doctor { json } => {
+        Some(Command::Explain { target }) => explain(target, &builtin, env, stdout, stderr),
+        Some(Command::Doctor { json }) => {
             let report = doctor::gather(env, &builtin);
             let written = if *json {
                 write_json(stdout, &report.to_json())
@@ -145,6 +177,41 @@ pub fn run(
             exit_code(written, stderr)
         }
     }
+}
+
+/// Opens the home screen in this terminal (`docs/03-functional-spec.md` §2 J1). Colour
+/// follows `NO_COLOR`.
+pub fn home(args: &HomeArgs, env: &Environment, stderr: &mut dyn Write) -> ExitCode {
+    let options = tui::Options {
+        layout: match args.layout {
+            LayoutArg::Buckets => tui::Layout::Buckets,
+            LayoutArg::Lenses => tui::Layout::Lenses,
+        },
+        look: tui::Look {
+            color: env.get("NO_COLOR").is_none(),
+            ascii: args.ascii,
+        },
+    };
+    match tui::open(env, options) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => fail(stderr, &format!("the home screen failed: {error}")),
+    }
+}
+
+/// `kipple` without a terminal: the buckets' totals, never the home screen.
+fn summary(
+    builtin: &Builtin,
+    env: &Environment,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> ExitCode {
+    let engine = match builtin.engine(env) {
+        Ok(engine) => engine,
+        Err(message) => return fail(stderr, &message),
+    };
+    let (report, _) = scan::run(&engine, env, &[], None, &mut |_| Ok(()));
+    let out = ScanOut::new(&report, &builtin.lenses());
+    exit_code(scan::write_summary(stdout, &out), stderr)
 }
 
 fn scan(

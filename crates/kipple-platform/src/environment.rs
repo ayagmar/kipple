@@ -54,7 +54,8 @@ impl Environment {
 
     /// The value of `name`, or `None` when it is unset or empty. Names compare the way
     /// the OS compares them (case-insensitively on Windows).
-    pub(crate) fn get(&self, name: &str) -> Option<&OsStr> {
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<&OsStr> {
         self.vars
             .iter()
             .find(|(key, _)| os::env_name_matches(key, name))

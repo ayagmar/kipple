@@ -162,7 +162,7 @@ planned: IntegrationProgress, PlanReady, ItemStarted, ItemCompleted(outcome), Ap
 ## 4. Frontends
 
 - **CLI** (clap): parses arguments, builds requests, renders reports, events or JSON. No policy.
-- **TUI** (ratatui and crossterm): a state machine, `AppState + Event -> AppState`, plus a pure `render(&AppState) -> Frame`. Effects (engine calls) happen at the edge, so state transitions are unit-testable and rendering is snapshot-testable.
+- **TUI** (ratatui and crossterm, in `crates/kipple/src/tui/`): a state machine, `App::update(Msg)` over keys, resizes and scan events, plus a pure `render(&App, Look, &mut Frame)`. Effects happen at the edge: `tui::run` starts the scan on its own thread and drives one loop that reads a key (or waits at most one 16 ms frame), applies at most 256 scan events, and draws at once after a key and at most once a frame otherwise. It is generic over the ratatui backend and the key source, so `cargo xtask bench-tui` runs the same loop on a test terminal (D-048). The terminal is restored on quit, error and panic.
 - **GUI** (later): links the library crates directly and subscribes to the same event stream. It does not shell out to the CLI or parse its JSON. Other languages can use `kipple --events jsonl` as a stable protocol.
 
 ## 5. Persistence
@@ -183,6 +183,6 @@ Every on-disk format carries a schema version. A newer unknown version is read-o
 - Integrations are tested against `FixtureTree` layouts in `crates/kipple-adapters/tests/fixtures/` (see 06 §7), through the engine over a small std-based probe.
 - The platform executor and trash get disposable integration tests on each native OS in CI.
 - The CLI gets end-to-end tests on `demo-home` with every root redirected by the `test-roots` override: `kipple::run` in-process for the event stream, broken pipe and `explain`, and the built binary's `scan --json` against a per-platform `insta` snapshot in `cargo xtask verify-demo`.
-- The TUI gets state-transition tests and `insta` snapshots of rendered buffers at fixed sizes.
+- The TUI gets state-transition tests and `insta` snapshots of rendered buffers at 80×24 and 160×48, fed with scan events built in the test (`crates/kipple/src/tui/app/tests.rs`).
 
 See [08-engineering-standards.md](08-engineering-standards.md) for what not to test.

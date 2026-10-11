@@ -7,7 +7,8 @@
 ```text
 Find what your tools leave behind and keep what matters
 
-Usage: kipple <COMMAND>
+Usage: kipple [OPTIONS]
+       kipple <COMMAND>
 
 Commands:
   scan     Find what your tools left behind. Read-only: nothing is changed
@@ -17,8 +18,11 @@ Commands:
   help     Print this message or the help of the given subcommand(s)
 
 Options:
+      --ascii    Draw the home screen with ASCII characters only
   -h, --help     Print help
   -V, --version  Print version
+
+Without a command, kipple opens the home screen in a terminal, or prints a summary when its output isn't a terminal. Read-only: nothing is changed.
 ```
 
 ## `kipple --version`

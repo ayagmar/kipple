@@ -18,12 +18,14 @@ clap.workspace = true
 kipple-adapters.workspace = true
 kipple-core.workspace = true
 kipple-platform.workspace = true
+ratatui.workspace = true
 schemars.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 
 [dev-dependencies]
+insta.workspace = true
 tempfile.workspace = true
 
 [[test]]

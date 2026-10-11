@@ -3,6 +3,7 @@
 
 mod arch;
 mod bench_tree;
+mod bench_tui;
 mod check;
 mod cmd;
 mod demo;
@@ -69,6 +70,14 @@ enum Task {
         #[arg(long, value_parser = clap::value_parser!(u64).range(1..))]
         entries: u64,
     },
+    /// Measure the home screen's keypress-to-frame latency while it scans the 1M reference
+    /// tree, over repeated scans. Fails when the 95th percentile reaches 50 ms.
+    BenchTui {
+        /// Scan this reference tree instead of building one. Its projects get the markers
+        /// the integrations need.
+        #[arg(long)]
+        tree: Option<PathBuf>,
+    },
     /// Run the native-backend tests (the `native` nextest profile). They read real OS
     /// state, so they refuse to run unless `KIPPLE_TEST_DISPOSABLE_HOST=1`.
     TestNative,
@@ -94,6 +103,7 @@ fn main() -> Result<()> {
         Task::Fix => check::fix(root),
         Task::CheckArch => arch::run(root),
         Task::BenchTree { dir, entries } => bench_tree::run(&dir, entries),
+        Task::BenchTui { tree } => bench_tui::run(root, tree.as_deref()),
         Task::TestNative => {
             let disposable =
                 std::env::var_os("KIPPLE_TEST_DISPOSABLE_HOST").is_some_and(|v| v == "1");
