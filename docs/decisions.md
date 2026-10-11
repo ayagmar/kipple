@@ -63,8 +63,8 @@ Rule: newest stable release that is at least 7 days old. Verified 2026-10-10 (M0
 | clap (derive) | 4.6.7 | 2026-09-14 | `kipple`, `xtask` | CLI parsing, and the source of the CLI reference |
 | anyhow | 1.0.104 | 2026-07-18 | `xtask` only | error context in the dev tool (08 §4) |
 | serde (derive) | 1.0.229 | 2026-07-18 | `xtask` | typed `cargo metadata` for `check-arch` |
-| serde_json | 1.0.151 | 2026-07-20 | `xtask` | parsing `cargo metadata` |
-| tempfile | 3.27.0 | 2026-03-11 | `xtask`, `kipple-platform` (dev) | disposable directories for the `bench-tree` and platform tests, removed on drop. Added 2026-10-10 (M1) |
+| serde_json | 1.0.151 | 2026-07-20 | `xtask`, `kipple-adapters` | parsing `cargo metadata`; reading Claude Code's `settings.json` for its advice. `kipple-adapters` since 2026-10-11 (M1); 1.0.152 was published on 2026-10-10 |
+| tempfile | 3.27.0 | 2026-03-11 | `xtask`, `kipple-platform` (dev), `kipple-adapters` (dev) | disposable directories for the `bench-tree` and the platform and integration tests, removed on drop. Added 2026-10-10 (M1) |
 | thiserror | 2.0.21 | 2026-09-23 | `kipple-core` | structured error enums that keep the upstream error (08 §4). Added 2026-10-10 (M1) |
 | crossbeam-channel | 0.5.17 | 2026-09-05 | `kipple-core` | the bounded event stream (05 §2). A producer must wait on a full stream yet still notice a cancel, and std's `SyncSender::send_timeout` is unstable in Rust 1.99. Added 2026-10-10 (M1) |
 | rayon | 1.12.0 | 2026-04-14 | `kipple-platform` | the walker's bounded thread pool (D-036). Its `either` dependency is held at 1.18.0 (2026-08-20) in `Cargo.lock`: 1.19.0 was published on 2026-10-06. Added 2026-10-10 (M1) |

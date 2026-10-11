@@ -238,6 +238,8 @@ version = "0.0.0"
 dependencies = [
  "kipple-core",
  "semver",
+ "serde_json",
+ "tempfile",
  "thiserror",
  "toml",
 ]

@@ -1,0 +1,32 @@
+schema_version = 1
+
+[pack]
+id = "builtin.cargo"
+version = "1.0.0"
+publisher = "kipple"
+description = "Build output of Cargo projects"
+license = "MIT"
+kipple = ">=0.0.0"
+platforms = ["linux", "macos", "windows"]
+
+[[rule]]
+id = "builtin.cargo.target"
+integration = "cargo"
+title = "Cargo build output"
+description = "A target directory next to a Cargo.toml. Cargo marks the ones it creates with a CACHEDIR.TAG."
+why = "Cargo writes compiled crates, incremental state and binaries here when it builds the project."
+loss = "The next build compiles the project and its dependencies again, which can take minutes."
+references = [
+  "https://doc.rust-lang.org/cargo/reference/build-cache.html",
+  "https://bford.info/cachedir/",
+]
+category = "build-artifact"
+
+[rule.scope]
+root = "config.project-roots"
+selection = "project-artifact"
+marker = ["Cargo.toml"]
+artifact = "target"
+
+[rule.operation]
+kind = "report"

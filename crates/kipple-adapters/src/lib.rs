@@ -4,4 +4,6 @@
 //! `docs/05-architecture.md`).
 #![forbid(unsafe_code)]
 
+pub mod builtin;
+mod integrations;
 pub mod pack;

@@ -1,0 +1,29 @@
+schema_version = 1
+
+[pack]
+id = "builtin.trash"
+version = "1.0.0"
+publisher = "kipple"
+description = "The current user's trash"
+license = "MIT"
+kipple = ">=0.0.0"
+platforms = ["linux", "macos"]
+
+[[rule]]
+id = "builtin.trash.contents"
+integration = "trash"
+title = "Trash"
+description = "Everything in the current user's trash."
+why = "Files moved to the trash stay on disk until the trash is emptied."
+loss = "Emptying the trash deletes them for good."
+references = [
+  "https://specifications.freedesktop.org/trash-spec/latest/",
+]
+category = "trash"
+
+[rule.scope]
+root = "trash"
+selection = "trash-contents"
+
+[rule.operation]
+kind = "report"

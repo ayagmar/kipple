@@ -1,6 +1,6 @@
 # Integrations and rules
 
-Status: partly built. §3 is the normative schema v1 contract, and its validator exists since M1 (`kipple_adapters::pack::validate`, tested against every error case below). The rule types live in `kipple-core`. The other TOML examples have been parse-checked only.
+Status: partly built. §3 is the normative schema v1 contract, and its validator exists since M1 (`kipple_adapters::pack::validate`, tested against every error case below). The rule types live in `kipple-core`. The read-only built-in integrations of §5a, their packs in `rules/` and the advice of §6 for pacman, journald and Claude Code exist since M1. The other TOML examples have been parse-checked only.
 
 ## 1. Two layers
 
@@ -248,32 +248,50 @@ Every integration descriptor declares its **protected subresources** (04 §3.9),
 | Ollama, LM Studio, Hugging Face | Report-only model inventory | Model removal deferred (shared blobs and manifests) |
 | Trash | Report size and age | Emptying deferred to v0.2 (`trash` crate purge with review) |
 
+### 5a. Built today (M1, report only)
+
+Every built-in rule today is `operation = "report"`. kipple finds and sizes, and proposes nothing. Each integration lists the upstream versions its fixtures were built from, and `kipple rules` and the generated support matrix show them.
+
+| Integration | Lens | Finds | Evidence | Verified against |
+| --- | --- | --- | --- | --- |
+| Cargo | dev | `target` beside `Cargo.toml` | Cargo's `CACHEDIR.TAG` signature, else unknown layout | Cargo 1.99.0 |
+| Node | dev | `node_modules` beside `package.json` | `.package-lock.json` (npm) or `.modules.yaml` (pnpm); none for Bun | npm 11.19.0, pnpm 12.9.1, Bun 1.4.2 |
+| Python | dev | `.venv` beside `pyproject.toml`, `requirements.txt`, `setup.py`, `setup.cfg` or `Pipfile`; `__pycache__` holding only `*.pyc`, outside any virtual environment | `pyvenv.cfg`; the bytecode itself | Python 3.14.8 `venv`, uv 0.12.23 |
+| Trash | system | the trash root, when not empty (Linux, macOS) | the root | freedesktop Trash spec 1.0 |
+| Pacman | system | the package cache, when not empty (Linux) | the root | pacman 7.1.0 |
+| journald | system | the persistent journal, when not empty (Linux) | the root | systemd 262 |
+| Claude Code | agents | nothing yet; advice only | — | Claude Code settings docs, checked 2026-10-11 |
+
+A `target`, `node_modules` or `.venv` with no recognised signature is still reported, with `no-signature` evidence, so an unknown layout is visible but can never become eligible. Generic `dirs-matching` and `files-matching` rules from third-party packs are validated but not evaluated before M5.
+
 Roadmap integrations, each added only with layout fixtures: Gemini CLI, OpenCode, Copilot CLI, Aider, Docker and Podman (native prune as a semantic plan), Flatpak, Snap, Homebrew, Scoop, Xcode DerivedData, Android SDK and emulators, Go build cache, Bun, Deno.
 
 ## 6. Advice catalog (v0.1)
 
 Advice is text plus an exact command or config snippet, checked against supported tool versions, and never run by kipple:
-- Claude Code: `cleanupPeriodDays` (default 30, minimum 1; `0` fails validation). Show the resolved value and its source, or "unknown" if it can't be determined. Explain the exceptions: memory directories, `history.jsonl`, Desktop and Cowork transcripts (`desktopSessionCleanupPeriodDays`), `--bare` sessions, and versions before v2.1.228 deleting memory files. Source: code.claude.com settings reference and claude-directory docs, checked 2026-10-09.
+- Claude Code (built): `cleanupPeriodDays` (default 30, minimum 1; `0` fails validation). Show the resolved value and its source, or "unknown" if it can't be determined. Explain the exceptions: memory directories, `history.jsonl`, Desktop and Cowork transcripts (`desktopSessionCleanupPeriodDays`), `--bare` sessions, and versions before v2.1.228 deleting memory files. Source: code.claude.com settings reference and claude-directory docs, checked 2026-10-09.
 - Codex: `history.max_bytes` caps `history.jsonl` by dropping the oldest entries. It does *not* bound session rollouts (`sessions/`, `archived_sessions/`), which have no documented retention.
-- pacman: `paccache -rk N` and `paccache.timer`, with the ArchWiki rollback caveat
-- journald: `SystemMaxUse=` or `journalctl --vacuum-size`
+- pacman (built): `paccache -rk N` and `paccache.timer`, with the ArchWiki rollback caveat
+- journald (built): `SystemMaxUse=` or `journalctl --vacuum-size`
 - Cargo: global cache auto-GC (`cache.auto-clean-frequency`)
 - git worktrees: `git worktree prune` and `git worktree repair` for registration anomalies
 
 ## 7. Integration fixtures
 
-Fixtures are built by test code, not described in a new file format. A small `FixtureTree` builder, local to the `kipple-adapters` tests, creates directories, files (sparse via `set_len` for large sizes), symlinks and mtimes in a temp dir:
+Fixtures are built by test code, not described in a new file format. A small `FixtureTree` builder (`tests/fixtures/tree.rs`), local to the `kipple-adapters` tests, creates directories, files with given contents, and sparse files of a given size (via `set_len`) in a temp dir:
 
 ```rust
-let home = FixtureTree::new()
-    .dir(".codex/packages/standalone/releases/0.160.1-x86_64-unknown-linux-musl")
-    .file(".codex/packages/standalone/releases/0.160.1-x86_64-unknown-linux-musl/codex", 280 * MB)
-    .symlink(".codex/packages/standalone/current", "releases/0.161.0-x86_64-unknown-linux-musl")
-    .build()?;
+let mut tree = FixtureTree::new();
+tree.file("projects/rust-app/Cargo.toml", b"[package]\nname = \"demo\"\n")
+    .file("projects/rust-app/target/CACHEDIR.TAG", CARGO_TAG)
+    .sized("projects/rust-app/target/debug/demo", 4 * MIB)
+    .dir("projects/rust-app/target/debug/incremental");
+tree.build_in(home)?;
 ```
 
-- Fixtures live in `crates/kipple-adapters/tests/fixtures/<integration>/v<upstream-version>.rs`, one per supported upstream layout.
-- Each fixture comes with a positive case and at least one negative case (an unknown layout blocks, a running release is kept).
-- Expected findings, eligibility and retained sets are `insta` snapshots of the deterministic `--json` report.
-- Supporting a new upstream version means adding a fixture file and snapshots.
-- `fixtures/demo-home` at the repo root is the one shared tree, used by the end-to-end tests, the docs demo and the tapes. It is built by `cargo xtask demo-home <dir>` from the same builder.
+Symlinks and mtimes come with the first integration whose layout needs them.
+
+- Fixtures live in `crates/kipple-adapters/tests/fixtures/<integration>/`, one file per supported upstream layout named after the tool and version (`node/pnpm_v12_9_1.rs`), each adding its layout to a `FixtureTree`.
+- Each fixture comes with a positive case and at least one negative case (an unknown layout blocks, a running release is kept). `tests/integrations.rs` runs them through the engine.
+- Supporting a new upstream version means adding a fixture file and its cases.
+- `tests/fixtures/demo_home.rs` composes every layout into the one shared tree, `demo-home`, with the roots each tool would resolve there.

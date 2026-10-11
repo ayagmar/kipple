@@ -1,0 +1,30 @@
+schema_version = 1
+
+[pack]
+id = "builtin.pacman"
+version = "1.0.0"
+publisher = "kipple"
+description = "pacman's package cache"
+license = "MIT"
+kipple = ">=0.0.0"
+platforms = ["linux"]
+
+[[rule]]
+id = "builtin.pacman.cache"
+integration = "pacman"
+title = "pacman package cache"
+description = "Every package pacman downloaded, including older versions of installed ones."
+why = "pacman keeps each package it downloads so it can install it again without the network."
+loss = "Older package versions can't be reinstalled offline to roll back an upgrade."
+references = [
+  "https://wiki.archlinux.org/title/Pacman#Cleaning_the_package_cache",
+  "https://man.archlinux.org/man/pacman.conf.5",
+]
+category = "package-cache"
+
+[rule.scope]
+root = "pacman.cache"
+selection = "package-cache"
+
+[rule.operation]
+kind = "report"

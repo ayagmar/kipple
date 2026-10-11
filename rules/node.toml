@@ -1,0 +1,32 @@
+schema_version = 1
+
+[pack]
+id = "builtin.node"
+version = "1.0.0"
+publisher = "kipple"
+description = "Installed dependencies of Node projects"
+license = "MIT"
+kipple = ">=0.0.0"
+platforms = ["linux", "macos", "windows"]
+
+[[rule]]
+id = "builtin.node.node-modules"
+integration = "node"
+title = "Node dependencies"
+description = "A node_modules directory next to a package.json. npm and pnpm leave a file inside that records the install."
+why = "npm, pnpm, Yarn or Bun installed the project's dependencies here."
+loss = "The project can't run or build until its dependencies are installed again, which downloads them unless a package cache still holds them."
+references = [
+  "https://docs.npmjs.com/cli/v11/configuring-npm/folders",
+  "https://pnpm.io/symlinked-node-modules-structure",
+]
+category = "dependency-install"
+
+[rule.scope]
+root = "config.project-roots"
+selection = "project-artifact"
+marker = ["package.json"]
+artifact = "node_modules"
+
+[rule.operation]
+kind = "report"

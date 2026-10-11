@@ -171,7 +171,7 @@ Every on-disk format carries a schema version. A newer unknown version is read-o
 ## 6. Testing seams
 
 - Core policy and planning are unit-tested with fake ports and built `FactSet`s. No disk is involved.
-- Integrations are tested against `FixtureTree` layouts in `crates/kipple-adapters/tests/fixtures/` (see 06 §7).
+- Integrations are tested against `FixtureTree` layouts in `crates/kipple-adapters/tests/fixtures/` (see 06 §7), through the engine over a small std-based probe.
 - The platform executor and trash get disposable integration tests on each native OS in CI.
 - The CLI gets end-to-end tests with `assert_cmd` against fixture homes (`HOME`, `XDG_*`, `APPDATA` redirected), plus `insta` snapshots of human and JSON output.
 - The TUI gets state-transition tests and `insta` snapshots of rendered buffers at fixed sizes.

@@ -1,0 +1,50 @@
+schema_version = 1
+
+[pack]
+id = "builtin.python"
+version = "1.0.0"
+publisher = "kipple"
+description = "Virtual environments and bytecode caches of Python projects"
+license = "MIT"
+kipple = ">=0.0.0"
+platforms = ["linux", "macos", "windows"]
+
+[[rule]]
+id = "builtin.python.venv"
+integration = "python"
+title = "Python virtual environment"
+description = "A .venv directory next to a Python project file. venv and uv write a pyvenv.cfg inside."
+why = "venv, uv or another tool created an isolated environment with the project's packages here."
+loss = "The environment has to be created and its packages installed again before the project runs."
+references = [
+  "https://docs.python.org/3/library/venv.html",
+]
+category = "dependency-install"
+
+[rule.scope]
+root = "config.project-roots"
+selection = "project-artifact"
+marker = ["pyproject.toml", "requirements.txt", "setup.py", "setup.cfg", "Pipfile"]
+artifact = ".venv"
+
+[rule.operation]
+kind = "report"
+
+[[rule]]
+id = "builtin.python.bytecode"
+integration = "python"
+title = "Python bytecode cache"
+description = "A __pycache__ directory that holds only compiled .pyc files."
+why = "Python caches the compiled form of each imported module here."
+loss = "Python compiles the modules again the next time they are imported, which is quick."
+references = [
+  "https://peps.python.org/pep-3147/",
+]
+category = "cache"
+
+[rule.scope]
+root = "config.project-roots"
+selection = "bytecode-caches"
+
+[rule.operation]
+kind = "report"

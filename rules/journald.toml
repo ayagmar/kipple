@@ -1,0 +1,29 @@
+schema_version = 1
+
+[pack]
+id = "builtin.journald"
+version = "1.0.0"
+publisher = "kipple"
+description = "systemd-journald's persistent journal"
+license = "MIT"
+kipple = ">=0.0.0"
+platforms = ["linux"]
+
+[[rule]]
+id = "builtin.journald.journal"
+integration = "journald"
+title = "System journal"
+description = "The persistent system and user logs systemd-journald keeps."
+why = "systemd-journald stores logs here so they survive a reboot."
+loss = "Older log entries are gone, including those that explain past failures."
+references = [
+  "https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html",
+]
+category = "log"
+
+[rule.scope]
+root = "journald.journal"
+selection = "journal-files"
+
+[rule.operation]
+kind = "report"
