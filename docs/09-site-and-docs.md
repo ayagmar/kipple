@@ -108,10 +108,10 @@ Anything that can drift from the binary is generated from it, and CI fails if th
 
 | Output | Generated from | Target |
 | --- | --- | --- |
-| CLI reference | clap command tree (help text, args, defaults, examples) | `site/src/content/docs/reference/cli.mdx`; until the site exists, `site/src/generated/cli.md` (M0: `--help` and `--version` only) |
-| JSON envelope and event schemas | Rust DTOs via JSON Schema derive | `site/src/generated/schema/*.json` + reference pages |
+| CLI reference | clap command tree (help text, args, defaults, examples) | `site/src/content/docs/reference/cli.mdx`; until the site exists, `site/src/generated/cli.md` (today: `scan`, `rules`, `explain` and `doctor`) |
+| JSON envelope and event schemas | Rust DTOs via JSON Schema derive (`schemars`) | `site/src/generated/schema/{scan,event,rules,doctor,support-matrix}.json` today; reference pages from M6 |
 | Rule-pack schema and capability catalog | manifest types + published selector/fact/operation registry | reference + rule-pack pages |
-| Support matrix | adapter descriptors (id, OS support, operations, verified tool versions) | `site/src/generated/support-matrix.json`, rendered by an Astro component |
+| Support matrix | adapter descriptors (id, OS support, operations, verified tool versions) | `site/src/generated/support-matrix.json` today (integration × platform × lens, roots, rule operations, verified versions); rendered by an Astro component from M6 |
 | **Rule catalog: one page per built-in rule** | rule packs plus integration descriptors | `site/src/content/docs/rules/<rule-id>.mdx`, covering what it finds, why it exists, the evidence kipple checks, what you lose, how it comes back, its bucket at each carefulness level, upstream references, and how to tune or disable it (exact config snippet). A rule without `why` and `loss` text fails `gen-docs --check` |
 | Hero scan and demo text | `kipple scan` against `fixtures/demo-home` | `site/src/generated/demo-scan.txt` |
 

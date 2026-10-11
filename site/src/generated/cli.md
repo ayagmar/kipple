@@ -10,8 +10,11 @@ Find what your tools leave behind and keep what matters
 Usage: kipple <COMMAND>
 
 Commands:
-  doctor  Show where kipple looks, what it can read and which tools it found. Read-only
-  help    Print this message or the help of the given subcommand(s)
+  scan     Find what your tools left behind. Read-only: nothing is changed
+  rules    List the integrations and rules, and which of them run on this OS
+  explain  Explain a rule, or what kipple found at a path and why. A path runs a scan
+  doctor   Show where kipple looks, what it can read and which tools it found. Read-only
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help
@@ -24,13 +27,72 @@ Options:
 kipple 0.0.0
 ```
 
+## `kipple scan --help`
+
+```text
+Find what your tools left behind. Read-only: nothing is changed
+
+Usage: kipple scan [OPTIONS]
+
+Options:
+      --lens <LENS>
+          Only this lens
+
+          Possible values:
+          - agents: What AI coding agents leave behind
+          - dev:    Developer tools and projects
+          - system: The operating system and its package managers
+
+      --root <PATH>
+          Scan this project root instead of the defaults. Repeat for several
+
+      --json
+          Print one JSON envelope when the scan finishes
+
+      --events <FORMAT>
+          Stream versioned events as they happen, one JSON object per line
+
+          Possible values:
+          - jsonl: One JSON object per line
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## `kipple rules --help`
+
+```text
+List the integrations and rules, and which of them run on this OS
+
+Usage: kipple rules [OPTIONS]
+
+Options:
+      --json  Print one JSON envelope, with the capability catalog rules may use
+  -h, --help  Print help
+```
+
+## `kipple explain --help`
+
+```text
+Explain a rule, or what kipple found at a path and why. A path runs a scan
+
+Usage: kipple explain <TARGET>
+
+Arguments:
+  <TARGET>  A rule ID such as `builtin.cargo.target`, or a path
+
+Options:
+  -h, --help  Print help
+```
+
 ## `kipple doctor --help`
 
 ```text
 Show where kipple looks, what it can read and which tools it found. Read-only
 
-Usage: kipple doctor
+Usage: kipple doctor [OPTIONS]
 
 Options:
+      --json  Print one JSON envelope
   -h, --help  Print help
 ```

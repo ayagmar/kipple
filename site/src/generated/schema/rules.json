@@ -1,0 +1,374 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "RulesOut",
+  "description": "`kipple rules --json`.",
+  "type": "object",
+  "properties": {
+    "capabilities": {
+      "description": "What rules may reference.",
+      "$ref": "#/$defs/Capabilities"
+    },
+    "integrations": {
+      "description": "Every built-in integration, sorted by ID.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/IntegrationInfo"
+      }
+    },
+    "kipple": {
+      "description": "kipple's version.",
+      "type": "string"
+    },
+    "platform": {
+      "description": "The platform it runs on.",
+      "type": "string"
+    },
+    "rules": {
+      "description": "Every built-in rule, sorted by pack, then document order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RuleOut"
+      }
+    },
+    "schema": {
+      "description": "`kipple.rules/v1`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "kipple",
+    "platform",
+    "integrations",
+    "rules",
+    "capabilities"
+  ],
+  "$defs": {
+    "Capabilities": {
+      "description": "The published capability set.",
+      "type": "object",
+      "properties": {
+        "facts": {
+          "description": "Facts rules may test.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FactInfo"
+          }
+        },
+        "operations": {
+          "description": "Operations.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "roots": {
+          "description": "Symbolic roots.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "selectors": {
+          "description": "Selectors: the generic ones, then each integration's.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SelectorInfo"
+          }
+        }
+      },
+      "required": [
+        "roots",
+        "selectors",
+        "facts",
+        "operations"
+      ]
+    },
+    "FactInfo": {
+      "description": "A fact rules may test.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "Its type: `enum`, `bool`, `duration`, `bytes` or `count`.",
+          "type": "string"
+        },
+        "meaning": {
+          "description": "What it means.",
+          "type": "string"
+        },
+        "name": {
+          "description": "Its name.",
+          "type": "string"
+        },
+        "selector": {
+          "description": "The one selector it applies to, or `None` for every selector.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "values": {
+          "description": "An enum fact's values.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "kind",
+        "meaning"
+      ]
+    },
+    "IntegrationInfo": {
+      "description": "A built-in integration.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Its ID.",
+          "type": "string"
+        },
+        "lens": {
+          "description": "Its lens.",
+          "$ref": "#/$defs/LensOut"
+        },
+        "platforms": {
+          "description": "The platforms it supports.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "roots": {
+          "description": "Roots it reads besides its rules' roots.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "supported": {
+          "description": "Whether it runs on this platform.",
+          "type": "boolean"
+        },
+        "verified": {
+          "description": "The upstream versions its layouts were verified against.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "lens",
+        "platforms",
+        "supported",
+        "roots",
+        "verified"
+      ]
+    },
+    "LensOut": {
+      "description": "A lens, as `--lens` names it.",
+      "oneOf": [
+        {
+          "description": "What AI coding agents leave behind.",
+          "type": "string",
+          "const": "agents"
+        },
+        {
+          "description": "Developer tools and projects.",
+          "type": "string",
+          "const": "dev"
+        },
+        {
+          "description": "The operating system and its package managers.",
+          "type": "string",
+          "const": "system"
+        }
+      ]
+    },
+    "RuleOut": {
+      "description": "A rule.",
+      "type": "object",
+      "properties": {
+        "category": {
+          "description": "What its findings are. Display only.",
+          "type": "string"
+        },
+        "description": {
+          "description": "A longer description, possibly empty.",
+          "type": "string"
+        },
+        "id": {
+          "description": "Its ID.",
+          "type": "string"
+        },
+        "integration": {
+          "description": "The integration that runs it.",
+          "type": "string"
+        },
+        "loss": {
+          "description": "What removing it loses.",
+          "type": "string"
+        },
+        "operation": {
+          "description": "What may be done with its findings.",
+          "type": "string"
+        },
+        "pack": {
+          "description": "Its pack.",
+          "type": "string"
+        },
+        "pack_version": {
+          "description": "Its pack's version.",
+          "type": "string"
+        },
+        "platforms": {
+          "description": "Where it applies.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "references": {
+          "description": "Upstream documentation.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "root": {
+          "description": "The root it selects under.",
+          "type": "string"
+        },
+        "selector": {
+          "description": "How it selects.",
+          "$ref": "#/$defs/SelectorOut"
+        },
+        "supported": {
+          "description": "Whether it runs on this platform.",
+          "type": "boolean"
+        },
+        "title": {
+          "description": "A short title.",
+          "type": "string"
+        },
+        "why": {
+          "description": "Why this exists on the machine.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "pack",
+        "pack_version",
+        "integration",
+        "title",
+        "description",
+        "why",
+        "loss",
+        "references",
+        "category",
+        "platforms",
+        "supported",
+        "root",
+        "selector",
+        "operation"
+      ]
+    },
+    "SelectorInfo": {
+      "description": "A selector rules may use.",
+      "type": "object",
+      "properties": {
+        "integration": {
+          "description": "The integration that publishes it, or `None` for a generic selector any pack\nmay use.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "meaning": {
+          "description": "What it selects, for an integration's selector.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "name": {
+          "description": "Its name.",
+          "type": "string"
+        },
+        "parameters": {
+          "description": "Its parameters.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "parameters"
+      ]
+    },
+    "SelectorOut": {
+      "description": "A rule's selector and its parameters.",
+      "type": "object",
+      "properties": {
+        "artifact": {
+          "description": "`project-artifact`: the artifact directory's name.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "marker": {
+          "description": "`project-artifact`: the marker files.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "max_depth": {
+          "description": "`project-artifact`: how deep a candidate may be.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "max_matches": {
+          "description": "`dirs-matching` and `files-matching`: how many matches are kept.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "pattern": {
+          "description": "`dirs-matching` and `files-matching`: the pattern.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "selection": {
+          "description": "The selector's name.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "selection"
+      ]
+    }
+  }
+}

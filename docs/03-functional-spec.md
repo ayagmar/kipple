@@ -1,6 +1,6 @@
 # Functional specification
 
-Status: planned. Commands, flags and screens below are the target contract for v0.1 unless marked later.
+Status: partly built. Commands, flags and screens below are the target contract for v0.1 unless marked later. `kipple scan`, `rules`, `explain` and `doctor` exist since M1, read-only, as each "Today" note says.
 
 ## 1. Vocabulary
 
@@ -126,7 +126,7 @@ On every run:
 
 Secrets are redacted. Version probes run through the platform runner with deadlines.
 
-Today `doctor` reports kipple's own directories and config file, every symbolic root of the platform with its path (for a root that is itself a link, the link and the directory it leads to), source and what a no-follow probe found there (with the OS error when it can't be read), `git`, `paccache` and `journalctl` with their versions, and how many running processes could be identified, with whether the process listing is complete. The macOS Full Disk Access hint appears only after a permission failure. Integration roots, omissions and pack compatibility arrive with the integrations and packs, and `--json` with the generated schemas.
+Today `doctor` reports kipple's own directories and config file, every symbolic root of the platform with its path (for a root that is itself a link, the link and the directory it leads to), source and what a no-follow probe found there (with the OS error when it can't be read), `git`, `paccache` and `journalctl` with their versions, and how many running processes could be identified, with whether the process listing is complete. The macOS Full Disk Access hint appears only after a permission failure. It also lists each built-in integration with the roots it reads on this platform, or that it has none here. `doctor --json` writes the same as a `kipple.doctor/v1` record. Detected tool versions per integration, omissions and pack compatibility arrive with third-party packs and the M2 support status.
 
 ## 3. CLI surface
 
@@ -148,6 +148,14 @@ kipple completions SHELL
 ```
 
 Global flags: `--json`, `--events jsonl`, `--no-color` (and `NO_COLOR`), `--ascii`, `-q/--quiet`, `-v/--verbose`, `--config FILE`.
+
+Today (M1) only these exist, and nothing changes anything:
+- `kipple scan [--lens L] [--root PATH]... [--json | --events jsonl]` scans every root of the built-in integrations and reports each finding with its rule, evidence and size, then each integration's advice and omissions. `--root` replaces the default project roots. Findings carry no bucket yet: every built-in rule is report-only.
+- `kipple rules [--json]` lists the built-in integrations, packs and rules with their lens, roots, platforms and verified upstream versions, and the published capability set.
+- `kipple explain RULE` shows what a rule selects, why, and what is lost; `kipple explain PATH` runs a scan and shows what was found there and the evidence for it, or what it lies inside. An unknown rule ID exits 2.
+- `kipple doctor [--json]` (J7).
+
+The global flags, `--require-complete`, and every other command come later.
 
 There is no `clean --all --force`. `--yes` suppresses the prompt only. It never changes the method, never unblocks anything and never widens scope.
 

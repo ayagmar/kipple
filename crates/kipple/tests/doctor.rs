@@ -51,6 +51,7 @@ fn report(cache_error: io::ErrorKind) -> Report {
             root: SymbolicRoot::XdgCache,
             status: Ok((cache, Err(failure))),
         }],
+        integrations: Vec::new(),
         tools: Vec::new(),
         processes: Ok(ProcessSnapshot {
             processes: Vec::new(),

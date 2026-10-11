@@ -45,7 +45,7 @@ enum Task {
     /// Run the native-backend tests (the `native` nextest profile). They read real OS
     /// state, so they refuse to run unless `KIPPLE_TEST_DISPOSABLE_HOST=1`.
     TestNative,
-    /// Regenerate the CLI reference.
+    /// Regenerate the CLI reference, the JSON schemas and the support matrix.
     GenDocs {
         /// Fail if the committed reference differs from a fresh generation.
         #[arg(long)]

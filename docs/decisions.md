@@ -62,19 +62,20 @@ Rule: newest stable release that is at least 7 days old. Verified 2026-10-10 (M0
 | Rust toolchain | 1.99.0 | 2026-10-01 | `rust-toolchain.toml` (with clippy, rustfmt) | edition 2024, newest stable |
 | clap (derive) | 4.6.7 | 2026-09-14 | `kipple`, `xtask` | CLI parsing, and the source of the CLI reference |
 | anyhow | 1.0.104 | 2026-07-18 | `xtask` only | error context in the dev tool (08 §4) |
-| serde (derive) | 1.0.229 | 2026-07-18 | `xtask` | typed `cargo metadata` for `check-arch` |
-| serde_json | 1.0.151 | 2026-07-20 | `xtask`, `kipple-adapters` | parsing `cargo metadata`; reading Claude Code's `settings.json` for its advice. `kipple-adapters` since 2026-10-11 (M1); 1.0.152 was published on 2026-10-10 |
-| tempfile | 3.27.0 | 2026-03-11 | `xtask`, `kipple-platform` (dev), `kipple-adapters` (dev) | disposable directories for the `bench-tree` and the platform and integration tests, removed on drop. Added 2026-10-10 (M1) |
+| serde (derive) | 1.0.229 | 2026-07-18 | `xtask`, `kipple` | typed `cargo metadata` for `check-arch`; the CLI's JSON output types. `kipple` since 2026-10-11 (M1) |
+| serde_json | 1.0.151 | 2026-07-20 | `xtask`, `kipple`, `kipple-adapters` | parsing `cargo metadata`; writing `--json` and `--events jsonl`; reading Claude Code's `settings.json` for its advice. `kipple` and `kipple-adapters` since 2026-10-11 (M1); 1.0.152 was published on 2026-10-10 |
+| tempfile | 3.27.0 | 2026-03-11 | `xtask`, `kipple-platform` (dev), `kipple-adapters` (dev), `kipple` (dev) | disposable directories for the `bench-tree` and the platform, integration and CLI tests, removed on drop. Added 2026-10-10 (M1) |
 | thiserror | 2.0.21 | 2026-09-23 | `kipple-core` | structured error enums that keep the upstream error (08 §4). Added 2026-10-10 (M1) |
 | crossbeam-channel | 0.5.17 | 2026-09-05 | `kipple-core` | the bounded event stream (05 §2). A producer must wait on a full stream yet still notice a cancel, and std's `SyncSender::send_timeout` is unstable in Rust 1.99. Added 2026-10-10 (M1) |
 | rayon | 1.12.0 | 2026-04-14 | `kipple-platform` | the walker's bounded thread pool (D-036). Its `either` dependency is held at 1.18.0 (2026-08-20) in `Cargo.lock`: 1.19.0 was published on 2026-10-06. Added 2026-10-10 (M1) |
 | libc | 0.2.190 | 2026-10-02 | `kipple-platform`, macOS only | `proc_listallpids`, `proc_pidpath` and `proc_pidinfo` (D-035). The 1.0.0 releases are still alphas. Added 2026-10-10 (M1) |
 | windows-sys | 0.61.2 | 2025-10-06 | `kipple-platform`, Windows only | process identity and file identity (D-035), Known Folders (D-037). Added 2026-10-10 (M1) |
 | toml | 1.1.6 | 2026-09-10 | `kipple-adapters` | parses rule packs into a table with byte spans (`toml::de::DeTable`, features `parse` and `std` only), so every validation error carries a line and column. Its `toml_parser` is held at 1.1.3 (2026-07-27), `toml_datetime` at 1.1.1 (2026-03-31) and `serde_spanned` at 1.1.1 (2026-03-31) in `Cargo.lock`, because 1.1.4, 1.1.2 and 1.1.2 were published on 2026-10-08. Added 2026-10-11 (M1) |
-| semver | 1.0.28 | 2026-04-04 | `kipple-adapters` | a pack's `version` and its `kipple` requirement on the engine version (06 §3). Added 2026-10-11 (M1) |
+| semver | 1.0.28 | 2026-04-04 | `kipple-adapters`, `kipple` | a pack's `version` and its `kipple` requirement on the engine version (06 §3), which the CLI passes in. Added 2026-10-11 (M1) |
+| schemars | 1.2.2 | 2026-07-27 | `kipple` | JSON Schemas generated from the `--json`, event, rules, doctor and support-matrix types (`gen-docs`; 09 §6). New transitives, each the newest allowed and at least 7 days old: `schemars_derive` 1.2.2 (2026-07-27), `dyn-clone` 1.0.20 (2025-07-27), `ref-cast` and `ref-cast-impl` 1.0.27 (2026-08-19), `serde_derive_internals` 0.30.0 (2026-07-25). Added 2026-10-11 (M1) |
 | syn (transitive) | 3.0.6 | 2026-09-16 | via clap_derive, serde_derive | held at 3.0.6 in `Cargo.lock`: 3.0.7 was published on 2026-10-10 |
 
-Every other crate in `Cargo.lock` is the newest stable release its dependents allow, and at least 7 days old on 2026-10-10.
+Every other crate in `Cargo.lock` is the newest stable release its dependents allow, and at least 7 days old on 2026-10-10; the M1 session 3 additions were re-verified on 2026-10-11.
 
 | Tool or action | Version | Published | Where |
 | --- | --- | --- | --- |
@@ -96,7 +97,7 @@ Spike-only crates, used on the `spike/m1-s2-s3` branch for S2 and S3 and not a d
 
 ## 3. Candidate dependencies (verified 2026-10-08, not yet added)
 
-Rule: newest stable release that is at least 7 days old. Recheck each one when it is added.
+Rule: newest stable release that is at least 7 days old. Recheck each one when it is added. Crates added since have moved to §2.
 
 | Crate | Version | Published | Use | Note |
 | --- | --- | --- | --- | --- |
@@ -104,13 +105,9 @@ Rule: newest stable release that is at least 7 days old. Recheck each one when i
 | clap / clap_complete | 4.6.7 / 4.6.11 | 2026-09-14/15 | CLI, completions | |
 | ratatui (+ ratatui-crossterm) | 0.30.2 | 2026-06-19 | TUI | |
 | crossterm | 0.29.0 | 2025-04-05 | terminal backend | slow release cadence, active repo |
-| serde / serde_json | 1.0.229 / 1.0.151 | 2026-07 | serialization | |
-| toml | 1.1.6 | 2026-09-10 | config, rules, lockfile | 1.1.7 too new |
-| schemars | 1.2.2 | 2026-07-27 | JSON Schemas for `--json` and rules | |
 | cap-std / cap-fs-ext | 4.0.3 | 2026-08-20 | confined executor (spike S1) | **>= 4.0.3 required**: [GHSA-hp8f-xmx4-4qrg](https://github.com/sunfishcode/cap-std/security/advisories/GHSA-hp8f-xmx4-4qrg) (published 2026-08-20), `manually::open` follows symlinks through a trailing slash. Also GHSA-hxf5-99xg-86hw (Windows device names, fixed in 3.4.1) |
 | rustix | 1.1.5 | 2026-09-16 | Unix syscalls not covered by cap-std | |
 | trash | 5.2.9 | 2026-09-13 | OS trash | list/restore only on Windows and freedesktop, **not macOS** (see Q4) |
-| semver | 1.0.28 | 2026-04-04 | release ordering | |
 | jiff | 0.2.37 | 2026-09-12 | timestamps | |
 | ulid | 3.0.0 | 2026-07-16 | receipt and plan IDs (sortable) | |
 | sha2 | 0.11.0 | 2026-03-25 | pack digests (`--sha256`) | |

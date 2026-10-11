@@ -1,0 +1,398 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ScanOut",
+  "description": "`kipple scan --json`: one envelope once the scan finished.",
+  "type": "object",
+  "properties": {
+    "findings": {
+      "description": "Every finding, sorted by lens, rule, then path.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/FindingOut"
+      }
+    },
+    "integrations": {
+      "description": "Every integration that ran, sorted by lens, then ID.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/IntegrationOut"
+      }
+    },
+    "kipple": {
+      "description": "kipple's version.",
+      "type": "string"
+    },
+    "outcome": {
+      "description": "Whether the scan ran to the end.",
+      "$ref": "#/$defs/OutcomeOut"
+    },
+    "platform": {
+      "description": "The platform it ran on.",
+      "type": "string"
+    },
+    "schema": {
+      "description": "`kipple.scan/v1`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "kipple",
+    "platform",
+    "outcome",
+    "findings",
+    "integrations"
+  ],
+  "$defs": {
+    "AdviceOut": {
+      "description": "A native setting or command, shown and never run.",
+      "type": "object",
+      "properties": {
+        "references": {
+          "description": "Upstream documentation.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "snippets": {
+          "description": "Exact commands or settings to copy.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "text": {
+          "description": "What it does and what to watch out for.",
+          "type": "string"
+        },
+        "title": {
+          "description": "A short title.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "text",
+        "snippets",
+        "references"
+      ]
+    },
+    "CompletenessOut": {
+      "description": "How much of an item was measured.",
+      "oneOf": [
+        {
+          "description": "Every entry was read.",
+          "type": "string",
+          "const": "complete"
+        },
+        {
+          "description": "Some entries couldn't be read, so the sizes are lower bounds.",
+          "type": "string",
+          "const": "incomplete"
+        },
+        {
+          "description": "Sizing stopped because the scan was cancelled.",
+          "type": "string",
+          "const": "cancelled"
+        }
+      ]
+    },
+    "EvidenceOut": {
+      "description": "One piece of evidence.",
+      "oneOf": [
+        {
+          "description": "A file beside it marks a project.",
+          "type": "object",
+          "properties": {
+            "file": {
+              "description": "The file's name.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "marker"
+            }
+          },
+          "required": [
+            "kind",
+            "file"
+          ]
+        },
+        {
+          "description": "An entry inside it is one its tool writes.",
+          "type": "object",
+          "properties": {
+            "entry": {
+              "description": "The entry's name.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "signature"
+            }
+          },
+          "required": [
+            "kind",
+            "entry"
+          ]
+        },
+        {
+          "description": "None of the entries its tool writes is inside: its layout is unknown.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "no-signature"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "It is the root itself.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "root"
+            },
+            "root": {
+              "description": "The symbolic root.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "root"
+          ]
+        }
+      ]
+    },
+    "FindingOut": {
+      "description": "Something an integration found.",
+      "type": "object",
+      "properties": {
+        "category": {
+          "description": "What it is. Display only.",
+          "type": "string"
+        },
+        "evidence": {
+          "description": "Why the integration thinks it is what the rule says.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceOut"
+          }
+        },
+        "integration": {
+          "description": "The integration that found it.",
+          "type": "string"
+        },
+        "lens": {
+          "description": "Its integration's lens.",
+          "$ref": "#/$defs/LensOut"
+        },
+        "path": {
+          "description": "Where it is.",
+          "$ref": "#/$defs/PathOut"
+        },
+        "rule": {
+          "description": "The rule it was found by.",
+          "type": "string"
+        },
+        "size": {
+          "description": "What removing it would free, once sized.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SizeOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "integration",
+        "lens",
+        "rule",
+        "category",
+        "path",
+        "evidence"
+      ]
+    },
+    "IntegrationOut": {
+      "description": "One integration's part of a scan.",
+      "type": "object",
+      "properties": {
+        "advice": {
+          "description": "Native settings and commands it suggests. kipple never runs them.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdviceOut"
+          }
+        },
+        "id": {
+          "description": "Its ID.",
+          "type": "string"
+        },
+        "lens": {
+          "description": "Its lens.",
+          "$ref": "#/$defs/LensOut"
+        },
+        "omissions": {
+          "description": "What it could not cover. Omissions make a report partial, never anything safe.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OmissionOut"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "lens",
+        "omissions",
+        "advice"
+      ]
+    },
+    "LensOut": {
+      "description": "A lens, as `--lens` names it.",
+      "oneOf": [
+        {
+          "description": "What AI coding agents leave behind.",
+          "type": "string",
+          "const": "agents"
+        },
+        {
+          "description": "Developer tools and projects.",
+          "type": "string",
+          "const": "dev"
+        },
+        {
+          "description": "The operating system and its package managers.",
+          "type": "string",
+          "const": "system"
+        }
+      ]
+    },
+    "OmissionOut": {
+      "description": "Something a scan couldn't cover, and why.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "What kind of gap it is.",
+          "type": "string"
+        },
+        "message": {
+          "description": "What happened, with the upstream error. For people; not a stable value.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The path it concerns, if any.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "root": {
+          "description": "The symbolic root it concerns, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "message"
+      ]
+    },
+    "OutcomeOut": {
+      "description": "Whether a scan ran to the end.",
+      "oneOf": [
+        {
+          "description": "Every integration finished and every finding was sized.",
+          "type": "string",
+          "const": "completed"
+        },
+        {
+          "description": "The scan was cancelled; the report holds what was found until then.",
+          "type": "string",
+          "const": "cancelled"
+        }
+      ]
+    },
+    "PathOut": {
+      "description": "A path: its display form, plus its exact bytes when it isn't valid Unicode.",
+      "type": "object",
+      "properties": {
+        "display": {
+          "description": "The path, with anything that isn't valid Unicode replaced.",
+          "type": "string"
+        },
+        "raw": {
+          "description": "Base64 of the exact bytes (Unix) or UTF-16LE code units (Windows), present only\nwhen `display` lost something.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "display"
+      ]
+    },
+    "SizeOut": {
+      "description": "What removing an item would free, in bytes.",
+      "type": "object",
+      "properties": {
+        "allocated": {
+          "description": "Allocated storage, where the platform reports it.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "apparent": {
+          "description": "The sum of file lengths.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "completeness": {
+          "description": "Whether every entry was measured.",
+          "$ref": "#/$defs/CompletenessOut"
+        },
+        "unique_reclaim": {
+          "description": "Allocated storage that only this item holds, where the platform reports it.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "unreadable": {
+          "description": "How many entries couldn't be read, when incomplete.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "apparent",
+        "completeness"
+      ]
+    }
+  }
+}

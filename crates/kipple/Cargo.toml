@@ -8,10 +8,27 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# The hidden `KIPPLE_TEST_ROOTS` override `cargo xtask verify-demo` scans with. Never in a
+# release build.
+test-roots = ["kipple-platform/test-roots"]
+
 [dependencies]
 clap.workspace = true
+kipple-adapters.workspace = true
 kipple-core.workspace = true
 kipple-platform.workspace = true
+schemars.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[test]]
+name = "scan"
+required-features = ["test-roots"]
 
 [lints]
 workspace = true

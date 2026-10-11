@@ -9,25 +9,42 @@ use anyhow::{Context, Result, bail};
 use clap::CommandFactory as _;
 use clap::error::ErrorKind;
 
-/// Where the CLI reference lives until the site exists (`docs/09-site-and-docs.md` §9).
-const CLI_REFERENCE: &str = "site/src/generated/cli.md";
+/// Where the generated docs live until the site exists (`docs/09-site-and-docs.md` §9).
+const GENERATED: &str = "site/src/generated";
 
-/// Writes the CLI reference, or with `check` fails if the committed one is stale.
+/// Writes the CLI reference, the JSON schemas and the support matrix, or with `check`
+/// fails if a committed one is stale.
 pub(crate) fn run(root: &Path, check: bool) -> Result<()> {
-    let path = root.join(CLI_REFERENCE);
-    let fresh = cli_reference()?;
-    if check {
-        let committed =
-            fs::read_to_string(&path).with_context(|| format!("could not read {CLI_REFERENCE}"))?;
-        if committed != fresh {
-            bail!("{CLI_REFERENCE} is out of date; run `cargo xtask gen-docs`");
+    let builtin = kipple::setup::Builtin::load().map_err(anyhow::Error::msg)?;
+    let mut files = vec![("cli.md".to_owned(), cli_reference()?)];
+    for (name, schema) in kipple::json::schemas() {
+        files.push((format!("schema/{name}.json"), pretty(&schema)?));
+    }
+    let matrix = kipple::support::SupportMatrixOut::new(&builtin);
+    files.push(("support-matrix.json".to_owned(), pretty(&matrix)?));
+    for (name, fresh) in files {
+        let relative = format!("{GENERATED}/{name}");
+        let path = root.join(&relative);
+        if check {
+            let committed =
+                fs::read_to_string(&path).with_context(|| format!("could not read {relative}"))?;
+            if committed != fresh {
+                bail!("{relative} is out of date; run `cargo xtask gen-docs`");
+            }
+            continue;
         }
-        return Ok(());
+        if let Some(dir) = path.parent() {
+            fs::create_dir_all(dir)
+                .with_context(|| format!("could not create {}", dir.display()))?;
+        }
+        fs::write(&path, fresh).with_context(|| format!("could not write {relative}"))?;
     }
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir).with_context(|| format!("could not create {}", dir.display()))?;
-    }
-    fs::write(&path, fresh).with_context(|| format!("could not write {CLI_REFERENCE}"))
+    Ok(())
+}
+
+/// `value` as pretty JSON with a trailing newline.
+fn pretty(value: &impl serde::Serialize) -> Result<String> {
+    Ok(format!("{}\n", serde_json::to_string_pretty(value)?))
 }
 
 fn cli_reference() -> Result<String> {
