@@ -257,7 +257,7 @@ Every built-in rule today is `operation = "report"`. kipple finds and sizes, and
 | Cargo | dev | `target` beside `Cargo.toml` | Cargo's `CACHEDIR.TAG` signature, else unknown layout | Cargo 1.99.0 |
 | Node | dev | `node_modules` beside `package.json` | `.package-lock.json` (npm) or `.modules.yaml` (pnpm); none for Bun | npm 11.19.0, pnpm 12.9.1, Bun 1.4.2 |
 | Python | dev | `.venv` beside `pyproject.toml`, `requirements.txt`, `setup.py`, `setup.cfg` or `Pipfile`; `__pycache__` holding only `*.pyc`, outside any virtual environment (any directory holding `pyvenv.cfg`) | `pyvenv.cfg`; the bytecode itself | Python 3.14.8 `venv`, uv 0.12.23 |
-| Trash | system | the trash root, when it holds anything: when it has a freedesktop `files` directory, when that isn't empty (Linux, macOS) | the root | freedesktop Trash spec 1.0 |
+| Trash | system | the trash root, when not empty: on Linux the home trash's `files`, where the trashed files are (Linux, macOS) | the root | freedesktop Trash spec 1.0 |
 | Pacman | system | the package cache, when not empty (Linux) | the root | pacman 7.1.0 |
 | journald | system | the persistent journal, when not empty (Linux) | the root | systemd 262 |
 | Claude Code | agents | nothing yet; advice only | — | Claude Code settings docs, checked 2026-10-11 |

@@ -2,9 +2,10 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::io;
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use kipple_core::{FileIdentity, ResolvedRoot, RootSource, Roots, SymbolicRoot, UnresolvedRoot};
 
@@ -28,6 +29,12 @@ const XDG: [(SymbolicRoot, &str, &str); 4] = [
 
 pub(crate) fn raw_bytes(text: &OsStr) -> Vec<u8> {
     text.as_bytes().to_vec()
+}
+
+/// The directory an absolute `path` names, with its links and `..` resolved: a `..` after
+/// a link climbs from where the link leads.
+pub(crate) fn physical(path: &Path) -> io::Result<PathBuf> {
+    fs::canonicalize(path)
 }
 
 pub(crate) fn env_name_matches(key: &OsStr, name: &str) -> bool {

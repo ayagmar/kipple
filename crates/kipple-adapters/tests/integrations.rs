@@ -246,7 +246,7 @@ fn every_supported_layout_in_the_demo_home_is_found_with_its_evidence_and_nothin
         ),
         (
             "builtin.trash.contents",
-            "home/.local/share/Trash",
+            "home/.local/share/Trash/files",
             root("trash"),
         ),
     ]

@@ -64,6 +64,13 @@ pub(crate) fn raw_bytes(text: &OsStr) -> Vec<u8> {
     text.encode_wide().flat_map(u16::to_le_bytes).collect()
 }
 
+/// The directory an absolute `path` names, with `..` resolved the way Windows itself
+/// resolves it, by the text. Unlike `fs::canonicalize`, it keeps the path in its usual
+/// `C:\` form rather than the `\\?\` one.
+pub(crate) fn physical(path: &Path) -> io::Result<PathBuf> {
+    std::path::absolute(path)
+}
+
 pub(crate) fn env_name_matches(key: &OsStr, name: &str) -> bool {
     key.eq_ignore_ascii_case(name)
 }

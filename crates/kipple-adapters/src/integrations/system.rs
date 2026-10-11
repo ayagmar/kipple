@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use kipple_core::{
-    Advice, EntryKind, Evidence, FindingSink, Integration, IntegrationDescriptor, IntegrationError,
+    Advice, Evidence, FindingSink, Integration, IntegrationDescriptor, IntegrationError,
     IntegrationId, IntegrationSelector, Lens, Platform, ProbeError, ScanContext, Selector,
 };
 
@@ -43,19 +43,6 @@ fn not_empty(cx: &ScanContext<'_>, path: &Path) -> Result<bool, ProbeError> {
     Ok(!cx.read_dir(path)?.is_empty())
 }
 
-/// Whether the trash holds anything. A freedesktop trash keeps each trashed file in
-/// `files`, and keeps `files` and `info` themselves once it has been used, even empty.
-fn trash_holds_anything(cx: &ScanContext<'_>, path: &Path) -> Result<bool, ProbeError> {
-    let entries = cx.read_dir(path)?;
-    let files = entries
-        .iter()
-        .any(|entry| entry.kind == EntryKind::Dir && entry.name == "files");
-    if files {
-        return not_empty(cx, &path.join("files"));
-    }
-    Ok(!entries.is_empty())
-}
-
 fn strings(items: &[&str]) -> Vec<String> {
     items.iter().map(|&item| item.to_owned()).collect()
 }
@@ -88,7 +75,7 @@ impl Integration for Trash {
         cx: &ScanContext<'_>,
         sink: &mut FindingSink<'_>,
     ) -> Result<(), IntegrationError> {
-        add_roots(cx, sink, TRASH_CONTENTS, trash_holds_anything).map(drop)
+        add_roots(cx, sink, TRASH_CONTENTS, not_empty).map(drop)
     }
 }
 

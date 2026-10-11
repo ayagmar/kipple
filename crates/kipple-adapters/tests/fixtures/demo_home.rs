@@ -15,7 +15,7 @@ pub(crate) const ROOTS: &[(&str, &str)] = &[
     ("xdg.data", "home/.local/share"),
     ("xdg.state", "home/.local/state"),
     ("config.project-roots", "home/projects"),
-    ("trash", "home/.local/share/Trash"),
+    ("trash", "home/.local/share/Trash/files"),
     ("claude.config", "home/.claude"),
     ("pacman.cache", "var/cache/pacman/pkg"),
     ("journald.journal", "var/log/journal"),

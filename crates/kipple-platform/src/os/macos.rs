@@ -15,7 +15,7 @@ use kipple_core::{
 
 use super::unix::xdg_roots;
 pub(crate) use super::unix::{
-    KIPPLE_DIRS, allocated, device, env_name_matches, hard_link, identity, is_executable,
+    KIPPLE_DIRS, allocated, device, env_name_matches, hard_link, identity, is_executable, physical,
     process_env, raw_bytes,
 };
 use crate::environment::Environment;

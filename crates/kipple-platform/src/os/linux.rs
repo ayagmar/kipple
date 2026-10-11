@@ -14,7 +14,7 @@ use kipple_core::{
 };
 
 pub(crate) use super::unix::{
-    KIPPLE_DIRS, allocated, device, env_name_matches, hard_link, identity, is_executable,
+    KIPPLE_DIRS, allocated, device, env_name_matches, hard_link, identity, is_executable, physical,
     process_env, raw_bytes,
 };
 use super::unix::{identity_of, xdg_roots};
@@ -43,7 +43,14 @@ const PF_KTHREAD: u64 = 0x0020_0000;
 /// The XDG roots, the freedesktop home trash, pacman's cache and the journal.
 pub(crate) fn resolve_roots(env: &Environment) -> Roots {
     let mut roots = xdg_roots(env);
-    let trash = under(&roots, SymbolicRoot::XdgData, SymbolicRoot::Trash, "Trash");
+    // The freedesktop home trash keeps the trashed files themselves in `files`, beside
+    // `info` and the size cache, which it keeps even when emptied.
+    let trash = under(
+        &roots,
+        SymbolicRoot::XdgData,
+        SymbolicRoot::Trash,
+        "Trash/files",
+    );
     roots.insert(SymbolicRoot::Trash, trash);
     let conf = fs::read_to_string(env.system_path(Path::new(PACMAN_CONF)));
     for resolved in pacman_cache(env, conf) {

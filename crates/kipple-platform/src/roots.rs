@@ -51,9 +51,10 @@ pub fn resolve_roots(env: &Environment, project_roots: &[PathBuf]) -> Roots {
     each_path_once(&follow_root_links(&roots))
 }
 
-/// A project root given on the command line, as the directory it names: its links and
-/// `..` components resolved, like `cd -P`, so the same directory given two ways is one
-/// root, and nothing below it has a `..` component.
+/// A project root given on the command line, below the directory its parent names: the
+/// parent's links and `..` resolved, so the same directory given two ways is one root and
+/// nothing below it has a `..` component. Its own name is kept, so a root that is itself
+/// a link is resolved once, keeping its identity (D-041).
 fn command_line_root(path: &Path) -> Result<ResolvedRoot, UnresolvedRoot> {
     if !path.is_absolute() {
         return Err(UnresolvedRoot::NotAbsolute {
@@ -61,7 +62,12 @@ fn command_line_root(path: &Path) -> Result<ResolvedRoot, UnresolvedRoot> {
             value: path.to_string_lossy().into_owned(),
         });
     }
-    let resolved = fs::canonicalize(path).map_err(|e| UnresolvedRoot::Unresolvable {
+    let resolved = match (path.parent(), path.file_name()) {
+        (Some(parent), Some(name)) => os::physical(parent).map(|parent| parent.join(name)),
+        // The file system root, or a path ending in `..`.
+        _ => os::physical(path),
+    };
+    let resolved = resolved.map_err(|e| UnresolvedRoot::Unresolvable {
         path: path.to_owned(),
         source: Arc::new(e),
     })?;

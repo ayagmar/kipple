@@ -228,7 +228,7 @@ fn the_default_project_roots_are_those_that_exist_and_root_replaces_them() {
         home.join("code"),
         home.join("code/../code"),
         PathBuf::from("relative"),
-        home.join("gone"),
+        home.join("gone/repo"),
     ];
     let replaced = project_roots(&resolve_roots(&env, &given));
     assert_eq!(
@@ -288,6 +288,27 @@ fn a_root_given_with_parent_components_is_the_directory_it_names() {
 }
 
 #[test]
+fn a_root_link_given_through_parent_components_keeps_its_link_and_identity() {
+    let temp = tempfile::tempdir().unwrap();
+    let base = temp.path().canonicalize().unwrap();
+    fs::create_dir_all(base.join("hop")).unwrap();
+    fs::create_dir_all(base.join("ssd/projects")).unwrap();
+    symlink(base.join("ssd/projects"), base.join("linked")).unwrap();
+
+    let roots = resolve_roots(&env(&[]), &[base.join("hop/../linked")]);
+
+    let [Ok(root)] = roots.all(SymbolicRoot::ProjectRoots) else {
+        panic!("{:?}", roots.all(SymbolicRoot::ProjectRoots));
+    };
+    assert_eq!(root.path, base.join("ssd/projects"));
+    // The engine re-checks this identity before reading the root (D-041).
+    let link = root.link.as_ref().unwrap();
+    assert_eq!(link.configured, base.join("linked"));
+    let identity = NoFollowFs.metadata(&root.path).unwrap().identity;
+    assert_eq!(Some(link.identity), identity);
+}
+
+#[test]
 #[cfg(target_os = "linux")]
 fn pacman_and_journal_roots_come_from_the_system_root_never_this_machines_own() {
     let temp = tempfile::tempdir().unwrap();
@@ -337,16 +358,16 @@ fn claude_code_config_follows_claude_config_dir_and_defaults_under_home() {
 
 #[test]
 #[cfg(target_os = "linux")]
-fn the_linux_trash_is_the_freedesktop_home_trash_under_xdg_data_home() {
+fn the_linux_trash_is_where_the_freedesktop_home_trash_keeps_the_trashed_files() {
     let roots = roots(&[("HOME", "/home/u"), ("XDG_DATA_HOME", "/data")]);
 
     assert_eq!(
         path(&roots, SymbolicRoot::Trash),
         Ok((
-            PathBuf::from("/data/Trash"),
+            PathBuf::from("/data/Trash/files"),
             RootSource::Default {
                 base: SymbolicRoot::XdgData,
-                relative: "Trash",
+                relative: "Trash/files",
             }
         ))
     );

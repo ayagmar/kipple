@@ -252,12 +252,12 @@ expression: "serde_json::to_string_pretty(&report)?"
       "integration": "trash",
       "lens": "system",
       "path": {
-        "display": "<demo>/home/.local/share/Trash"
+        "display": "<demo>/home/.local/share/Trash/files"
       },
       "rule": "builtin.trash.contents",
       "size": {
         "allocated": "[redacted]",
-        "apparent": 67108940,
+        "apparent": 67108864,
         "completeness": "complete",
         "unique_reclaim": "[redacted]"
       }
