@@ -9,26 +9,34 @@ use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use kipple_core::{FileIdentity, Inventory, ProbeError, ProcessOutcome, Roots, SymbolicRoot};
+use kipple_core::{
+    FileIdentity, Inventory, Platform, ProbeError, ProcessOutcome, Roots, SymbolicRoot,
+};
 
+use super::unix::xdg_roots;
 pub(crate) use super::unix::{
     KIPPLE_DIRS, allocated, device, env_name_matches, hard_link, identity, is_executable,
-    process_env,
+    process_env, raw_bytes,
 };
-use super::unix::{home, under, xdg_roots};
 use crate::environment::Environment;
+use crate::roots::under;
+
+pub(crate) const PLATFORM: Platform = Platform::Macos;
 
 pub(crate) const PERMISSION_HINT: Option<&str> = Some(
     "macOS may be blocking access: give the terminal that runs kipple Full Disk Access in \
      System Settings > Privacy & Security > Full Disk Access.",
 );
 
-/// The XDG roots, which CLI tools use on macOS too, plus `~/Library/Caches`.
+/// The XDG roots, which CLI tools use on macOS too, plus `~/Library/Caches` and the
+/// trash, `~/.Trash`.
 pub(crate) fn resolve_roots(env: &Environment) -> Roots {
-    let home = home(env);
-    let mut roots = xdg_roots(env, &home);
-    let caches = under(&home, SymbolicRoot::MacosCaches, "Library/Caches");
+    let mut roots = xdg_roots(env);
+    let home = SymbolicRoot::Home;
+    let caches = under(&roots, home, SymbolicRoot::MacosCaches, "Library/Caches");
     roots.insert(SymbolicRoot::MacosCaches, caches);
+    let trash = under(&roots, home, SymbolicRoot::Trash, ".Trash");
+    roots.insert(SymbolicRoot::Trash, trash);
     roots
 }
 

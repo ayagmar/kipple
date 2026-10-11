@@ -1,11 +1,14 @@
 //! Symbolic roots, resolved upstream-first with their sources (`docs/05-architecture.md`
 //! §1), and kipple's own directories (`docs/03-functional-spec.md` §6, D-037).
 
+use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use kipple_core::{LinkProblem, ResolvedRoot, RootLink, Roots, SymbolicRoot, UnresolvedRoot};
+use kipple_core::{
+    LinkProblem, ResolvedRoot, RootLink, RootSource, Roots, SymbolicRoot, UnresolvedRoot,
+};
 
 use crate::environment::Environment;
 use crate::fs_probe::exact;
@@ -14,14 +17,140 @@ use crate::os;
 /// The config file's name inside kipple's config directory.
 pub const CONFIG_FILE: &str = "config.toml";
 
-/// Resolves every root this OS has.
+/// The default project roots below home, whichever exist (`docs/03-functional-spec.md`
+/// §6).
+const PROJECT_ROOTS: [&str; 10] = [
+    "projects",
+    "Projects",
+    "code",
+    "src",
+    "dev",
+    "work",
+    "repos",
+    "git",
+    "Developer",
+    "source/repos",
+];
+
+/// Resolves every root this OS has. `project_roots`, when given, replace the default
+/// project roots.
 ///
 /// A malformed explicit setting leaves its root unresolved; it never falls back to the
 /// default. A root whose own path is a link is resolved to where the link leads (see
 /// [`follow_root_links`]).
 #[must_use]
-pub fn resolve_roots(env: &Environment) -> Roots {
-    follow_root_links(&os::resolve_roots(env))
+pub fn resolve_roots(env: &Environment, project_roots: &[PathBuf]) -> Roots {
+    let mut roots = upstream_roots(env);
+    if !project_roots.is_empty() {
+        roots.remove(SymbolicRoot::ProjectRoots);
+        for path in project_roots {
+            let resolved = if path.is_absolute() {
+                let root = SymbolicRoot::ProjectRoots;
+                Ok(ResolvedRoot::new(
+                    root,
+                    path.clone(),
+                    RootSource::CommandLine,
+                ))
+            } else {
+                Err(UnresolvedRoot::NotAbsolute {
+                    var: "--root",
+                    value: path.to_string_lossy().into_owned(),
+                })
+            };
+            roots.add(SymbolicRoot::ProjectRoots, resolved);
+        }
+    }
+    follow_root_links(&roots)
+}
+
+/// Every root as the OS and the tools' own conventions place it.
+fn upstream_roots(env: &Environment) -> Roots {
+    #[cfg(feature = "test-roots")]
+    if let Some(file) = env.get(test_roots::VAR) {
+        return test_roots::read(std::path::Path::new(file));
+    }
+    let mut roots = os::resolve_roots(env);
+    let claude = match absolute(env, "CLAUDE_CONFIG_DIR") {
+        Ok(Some(path)) => Ok(ResolvedRoot::new(
+            SymbolicRoot::ClaudeConfig,
+            path,
+            RootSource::Env("CLAUDE_CONFIG_DIR"),
+        )),
+        Ok(None) => under(
+            &roots,
+            SymbolicRoot::Home,
+            SymbolicRoot::ClaudeConfig,
+            ".claude",
+        ),
+        Err(unusable) => Err(unusable),
+    };
+    roots.insert(SymbolicRoot::ClaudeConfig, claude);
+    for resolved in default_project_roots(&roots) {
+        roots.add(SymbolicRoot::ProjectRoots, resolved);
+    }
+    roots
+}
+
+/// The default project roots that exist, each directory once even where the file system
+/// ignores case and `~/projects` is `~/Projects`.
+fn default_project_roots(roots: &Roots) -> Vec<Result<ResolvedRoot, UnresolvedRoot>> {
+    let mut seen = HashSet::new();
+    let mut found = Vec::new();
+    for relative in PROJECT_ROOTS {
+        let resolved = under(
+            roots,
+            SymbolicRoot::Home,
+            SymbolicRoot::ProjectRoots,
+            relative,
+        );
+        let Ok(resolved) = resolved else {
+            // Home is unknown, so the project roots are too.
+            return vec![resolved];
+        };
+        let Ok(meta) = fs::metadata(exact(&resolved.path)) else {
+            continue;
+        };
+        let identity = os::identity(&resolved.path, &meta);
+        if meta.is_dir() && identity.is_none_or(|identity| seen.insert(identity)) {
+            found.push(Ok(resolved));
+        }
+    }
+    found
+}
+
+/// `root` as the default `relative` path (`/`-separated) under the root `base`.
+pub(crate) fn under(
+    roots: &Roots,
+    base: SymbolicRoot,
+    root: SymbolicRoot,
+    relative: &'static str,
+) -> Result<ResolvedRoot, UnresolvedRoot> {
+    let Some(Ok(resolved)) = roots.get(base) else {
+        return Err(UnresolvedRoot::BaseUnresolved { base });
+    };
+    let path = relative
+        .split('/')
+        .fold(resolved.path.clone(), |path, part| path.join(part));
+    let source = RootSource::Default { base, relative };
+    Ok(ResolvedRoot::new(root, path, source))
+}
+
+/// The value of `var` as an absolute path, `None` when unset or empty.
+pub(crate) fn absolute(
+    env: &Environment,
+    var: &'static str,
+) -> Result<Option<PathBuf>, UnresolvedRoot> {
+    let Some(value) = env.get(var) else {
+        return Ok(None);
+    };
+    let path = PathBuf::from(value);
+    if path.is_absolute() {
+        return Ok(Some(path));
+    }
+    Err(UnresolvedRoot::NotAbsolute {
+        var,
+        value: value.to_string_lossy().into_owned(),
+    })
 }
 
 /// Resolves, once, each root whose configured path is itself a link (D-041).
@@ -100,5 +229,44 @@ pub fn kipple_dirs(roots: &Roots) -> KippleDirs {
         config,
         data,
         cache,
+    }
+}
+
+/// The hidden test-roots override (`docs/11-delivery-plan.md`, M1): every root comes from
+/// a file, so an end-to-end scan resolves nothing of the real account. Compiled only with
+/// the `test-roots` feature, so release builds can't use it.
+#[cfg(feature = "test-roots")]
+mod test_roots {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+
+    use kipple_core::{ResolvedRoot, RootSource, Roots, SymbolicRoot, UnresolvedRoot};
+
+    /// The variable naming the file.
+    pub(super) const VAR: &str = "KIPPLE_TEST_ROOTS";
+
+    /// The roots in `file`, one `name = path` per line. A root that isn't listed is
+    /// absent, and so is every root when the file can't be read. A line that doesn't name
+    /// a root is ignored; a relative path leaves its root unknown.
+    pub(super) fn read(file: &Path) -> Roots {
+        let mut roots = Roots::default();
+        let text = fs::read_to_string(file).unwrap_or_default();
+        let lines = text.lines().filter_map(|line| line.split_once('='));
+        for (name, value) in lines {
+            let Some(root) = SymbolicRoot::from_name(name.trim()) else {
+                continue;
+            };
+            let path = PathBuf::from(value.trim());
+            let resolved = if path.is_absolute() {
+                Ok(ResolvedRoot::new(root, path, RootSource::Env(VAR)))
+            } else {
+                Err(UnresolvedRoot::NotAbsolute {
+                    var: VAR,
+                    value: value.trim().to_owned(),
+                })
+            };
+            roots.add(root, resolved);
+        }
+        roots
     }
 }

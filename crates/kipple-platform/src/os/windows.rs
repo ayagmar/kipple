@@ -5,14 +5,14 @@
 use std::ffi::{OsStr, OsString, c_void};
 use std::fs;
 use std::io;
-use std::os::windows::ffi::OsStringExt as _;
+use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
 use std::os::windows::fs::OpenOptionsExt as _;
 use std::os::windows::io::AsRawHandle as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use kipple_core::{
-    FileIdentity, Inventory, ProbeError, ProcessOutcome, ResolvedRoot, RootSource, Roots,
+    FileIdentity, Inventory, Platform, ProbeError, ProcessOutcome, ResolvedRoot, RootSource, Roots,
     SymbolicRoot, UnresolvedRoot,
 };
 use windows_sys::Win32::Foundation::{
@@ -34,6 +34,8 @@ use windows_sys::Win32::UI::Shell::{
 use windows_sys::core::{GUID, PWSTR};
 
 use crate::environment::Environment;
+
+pub(crate) const PLATFORM: Platform = Platform::Windows;
 
 pub(crate) const PERMISSION_HINT: Option<&str> = None;
 
@@ -57,6 +59,10 @@ const KNOWN_FOLDERS: [(SymbolicRoot, &GUID, &str); 3] = [
         "FOLDERID_RoamingAppData",
     ),
 ];
+
+pub(crate) fn raw_bytes(text: &OsStr) -> Vec<u8> {
+    text.encode_wide().flat_map(u16::to_le_bytes).collect()
+}
 
 pub(crate) fn env_name_matches(key: &OsStr, name: &str) -> bool {
     key.eq_ignore_ascii_case(name)

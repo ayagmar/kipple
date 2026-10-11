@@ -8,16 +8,31 @@ use std::os::unix::fs::MetadataExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use kipple_core::{Inventory, ProbeError, ProcessOutcome, Roots};
+use kipple_core::{
+    Inventory, Platform, ProbeError, ProcessOutcome, ResolvedRoot, RootSource, Roots,
+    SettingProblem, SymbolicRoot, UnresolvedRoot,
+};
 
 pub(crate) use super::unix::{
     KIPPLE_DIRS, allocated, device, env_name_matches, hard_link, identity, is_executable,
-    process_env,
+    process_env, raw_bytes,
 };
-use super::unix::{home, identity_of, xdg_roots};
+use super::unix::{identity_of, xdg_roots};
 use crate::environment::Environment;
+use crate::roots::under;
+
+pub(crate) const PLATFORM: Platform = Platform::Linux;
 
 pub(crate) const PERMISSION_HINT: Option<&str> = None;
+
+/// pacman's config file, which may set `CacheDir`.
+const PACMAN_CONF: &str = "/etc/pacman.conf";
+
+/// pacman's package cache when `CacheDir` is not set.
+const PACMAN_CACHE: &str = "/var/cache/pacman/pkg";
+
+/// systemd-journald's persistent journal.
+const JOURNAL: &str = "/var/log/journal";
 
 /// `ESRCH`: the process no longer exists.
 const ESRCH: i32 = 3;
@@ -25,8 +40,80 @@ const ESRCH: i32 = 3;
 /// `PF_KTHREAD` in the flags field of `/proc/<pid>/stat`.
 const PF_KTHREAD: u64 = 0x0020_0000;
 
+/// The XDG roots, the freedesktop home trash, pacman's cache and the journal.
 pub(crate) fn resolve_roots(env: &Environment) -> Roots {
-    xdg_roots(env, &home(env))
+    let mut roots = xdg_roots(env);
+    let trash = under(&roots, SymbolicRoot::XdgData, SymbolicRoot::Trash, "Trash");
+    roots.insert(SymbolicRoot::Trash, trash);
+    for resolved in pacman_cache(fs::read_to_string(PACMAN_CONF)) {
+        roots.add(SymbolicRoot::PacmanCache, resolved);
+    }
+    let journal = PathBuf::from(JOURNAL);
+    let journal = ResolvedRoot::new(SymbolicRoot::Journal, journal, RootSource::Fixed);
+    roots.insert(SymbolicRoot::Journal, Ok(journal));
+    roots
+}
+
+/// pacman's cache directories, from the `CacheDir` settings in `conf`. None when there
+/// is no `pacman.conf`, since then there is no pacman.
+fn pacman_cache(conf: io::Result<String>) -> Vec<Result<ResolvedRoot, UnresolvedRoot>> {
+    let root = SymbolicRoot::PacmanCache;
+    let unusable = |problem| {
+        vec![Err(UnresolvedRoot::Setting {
+            file: PACMAN_CONF,
+            problem,
+        })]
+    };
+    let text = match conf {
+        Ok(text) => text,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Vec::new(),
+        Err(error) => return unusable(SettingProblem::Unreadable(Arc::new(error))),
+    };
+    let Some(dirs) = cache_dirs(&text) else {
+        return unusable(SettingProblem::Includes);
+    };
+    if dirs.is_empty() {
+        let path = PathBuf::from(PACMAN_CACHE);
+        return vec![Ok(ResolvedRoot::new(root, path, RootSource::Fixed))];
+    }
+    let source = RootSource::Setting {
+        file: PACMAN_CONF,
+        key: "CacheDir",
+    };
+    dirs.into_iter()
+        .map(|dir| {
+            let path: PathBuf = Path::new(dir).components().collect();
+            if path.is_absolute() {
+                Ok(ResolvedRoot::new(root, path, source))
+            } else {
+                Err(UnresolvedRoot::NotAbsolute {
+                    var: "CacheDir",
+                    value: dir.to_owned(),
+                })
+            }
+        })
+        .collect()
+}
+
+/// Every `CacheDir` value in the `[options]` section, in order. `None` when that section
+/// includes another file, which may set it too.
+fn cache_dirs(text: &str) -> Option<Vec<&str>> {
+    let mut section = "";
+    let mut dirs = Vec::new();
+    for line in text.lines() {
+        let line = line.split('#').next().unwrap_or_default().trim();
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            section = name.trim();
+            continue;
+        }
+        let (key, value) = line.split_once('=').unwrap_or((line, ""));
+        match (section, key.trim()) {
+            ("options", "CacheDir") => dirs.extend(value.split_whitespace()),
+            ("options", "Include") => return None,
+            _ => {}
+        }
+    }
+    Some(dirs)
 }
 
 pub(crate) fn list_pids() -> Result<Vec<u32>, ProbeError> {
@@ -152,6 +239,36 @@ fn hides_processes(option: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn cache(conf: &str) -> Vec<String> {
+        pacman_cache(Ok(conf.to_owned()))
+            .into_iter()
+            .map(|resolved| match resolved {
+                Ok(resolved) => resolved.path.display().to_string(),
+                Err(unresolved) => unresolved.to_string(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn pacman_uses_every_cachedir_of_its_options_and_its_default_without_one() {
+        let set = "[options]\nCacheDir = /srv/pkg/ /mnt/pkg # two\n#CacheDir = /old\n\
+                   CacheDir=/third\n[core]\nCacheDir = /not-an-option\n";
+        assert_eq!(cache(set), ["/srv/pkg", "/mnt/pkg", "/third"]);
+        assert_eq!(cache("[options]\nHoldPkg = pacman\n"), [PACMAN_CACHE]);
+        assert!(pacman_cache(Err(io::ErrorKind::NotFound.into())).is_empty());
+    }
+
+    #[test]
+    fn an_include_in_pacman_options_leaves_the_cache_unknown_rather_than_guessed() {
+        let included = "[options]\nInclude = /etc/pacman.d/options\n";
+        let [unknown] = cache(included).try_into().unwrap();
+        assert!(unknown.contains("includes other files"), "{unknown}");
+        let [denied] = pacman_cache(Err(io::ErrorKind::PermissionDenied.into()))
+            .try_into()
+            .unwrap();
+        assert!(denied.is_err());
+    }
 
     const PLAIN: &str = "\
 22 1 0:21 / /sys rw,nosuid shared:7 - sysfs sysfs rw

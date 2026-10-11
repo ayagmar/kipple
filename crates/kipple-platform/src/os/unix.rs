@@ -2,12 +2,14 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
+use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use kipple_core::{FileIdentity, ResolvedRoot, RootSource, Roots, SymbolicRoot, UnresolvedRoot};
 
 use crate::environment::Environment;
+use crate::roots::{absolute, under};
 
 /// kipple's own directories: under the XDG roots on Linux and macOS alike (D-015).
 pub(crate) const KIPPLE_DIRS: [(SymbolicRoot, &str); 3] = [
@@ -24,12 +26,16 @@ const XDG: [(SymbolicRoot, &str, &str); 4] = [
     (SymbolicRoot::XdgState, "XDG_STATE_HOME", ".local/state"),
 ];
 
+pub(crate) fn raw_bytes(text: &OsStr) -> Vec<u8> {
+    text.as_bytes().to_vec()
+}
+
 pub(crate) fn env_name_matches(key: &OsStr, name: &str) -> bool {
     key == name
 }
 
 /// The home root, from `HOME`.
-pub(crate) fn home(env: &Environment) -> Result<ResolvedRoot, UnresolvedRoot> {
+fn home(env: &Environment) -> Result<ResolvedRoot, UnresolvedRoot> {
     let path = absolute(env, "HOME")?.ok_or(UnresolvedRoot::NotSet { var: "HOME" })?;
     Ok(ResolvedRoot::new(
         SymbolicRoot::Home,
@@ -38,51 +44,20 @@ pub(crate) fn home(env: &Environment) -> Result<ResolvedRoot, UnresolvedRoot> {
     ))
 }
 
-/// `home`, then the XDG roots: each variable when set, its default under home
+/// The home root, then the XDG roots: each variable when set, its default under home
 /// otherwise. A relative value leaves the root unknown instead of falling back.
-pub(crate) fn xdg_roots(env: &Environment, home: &Result<ResolvedRoot, UnresolvedRoot>) -> Roots {
+pub(crate) fn xdg_roots(env: &Environment) -> Roots {
     let mut roots = Roots::default();
-    roots.insert(SymbolicRoot::Home, home.clone());
+    roots.insert(SymbolicRoot::Home, home(env));
     for (root, var, relative) in XDG {
         let resolved = match absolute(env, var) {
             Ok(Some(path)) => Ok(ResolvedRoot::new(root, path, RootSource::Env(var))),
-            Ok(None) => under(home, root, relative),
+            Ok(None) => under(&roots, SymbolicRoot::Home, root, relative),
             Err(unusable) => Err(unusable),
         };
         roots.insert(root, resolved);
     }
     roots
-}
-
-/// `root` as the default `relative` path under the home root.
-pub(crate) fn under(
-    home: &Result<ResolvedRoot, UnresolvedRoot>,
-    root: SymbolicRoot,
-    relative: &'static str,
-) -> Result<ResolvedRoot, UnresolvedRoot> {
-    let home = home.as_ref().map_err(|_| UnresolvedRoot::BaseUnresolved {
-        base: SymbolicRoot::Home,
-    })?;
-    let source = RootSource::Default {
-        base: SymbolicRoot::Home,
-        relative,
-    };
-    Ok(ResolvedRoot::new(root, home.path.join(relative), source))
-}
-
-/// The value of `var` as an absolute path, `None` when unset or empty.
-fn absolute(env: &Environment, var: &'static str) -> Result<Option<PathBuf>, UnresolvedRoot> {
-    let Some(value) = env.get(var) else {
-        return Ok(None);
-    };
-    let path = PathBuf::from(value);
-    if path.is_absolute() {
-        return Ok(Some(path));
-    }
-    Err(UnresolvedRoot::NotAbsolute {
-        var,
-        value: value.to_string_lossy().into_owned(),
-    })
 }
 
 #[expect(clippy::unnecessary_wraps, reason = "Windows can't report it")]

@@ -57,6 +57,17 @@ pub enum RootSource {
     },
     /// A Windows Known Folder, by its `FOLDERID_` name.
     KnownFolder(&'static str),
+    /// A setting in the tool's own config file.
+    Setting {
+        /// The config file.
+        file: &'static str,
+        /// The setting.
+        key: &'static str,
+    },
+    /// The tool's fixed, documented location.
+    Fixed,
+    /// The command line, such as `kipple scan --root`.
+    CommandLine,
 }
 
 /// A symbolic root with the path it resolved to.
@@ -119,6 +130,17 @@ pub enum LinkProblem {
     NoIdentity,
 }
 
+/// Why a tool's config file can't say where a root is.
+#[derive(Debug, Clone, thiserror::Error)]
+pub enum SettingProblem {
+    /// It exists but can't be read.
+    #[error("can't be read: {0}")]
+    Unreadable(Arc<std::io::Error>),
+    /// It includes other files, which kipple doesn't read, and one of them may set it.
+    #[error("includes other files where the setting may be, which kipple doesn't read")]
+    Includes,
+}
+
 /// Why a root has no path. Every one of these makes the root unknown: kipple never
 /// falls back to a default when an explicit setting is unusable.
 #[derive(Debug, Clone, thiserror::Error)]
@@ -142,6 +164,14 @@ pub enum UnresolvedRoot {
     BaseUnresolved {
         /// The root it depends on.
         base: SymbolicRoot,
+    },
+    /// The tool's config file, which may set the root, can't be used.
+    #[error("{file} {problem}")]
+    Setting {
+        /// The config file.
+        file: &'static str,
+        /// What is wrong with it.
+        problem: SettingProblem,
     },
     /// The configured path is a link that can't be used as the root.
     #[error("{} is a link that {problem}", path.display())]
@@ -170,6 +200,11 @@ impl Roots {
     /// Records how `root` resolved, replacing what was recorded before.
     pub fn insert(&mut self, root: SymbolicRoot, resolution: Result<ResolvedRoot, UnresolvedRoot>) {
         self.0.insert(root, vec![resolution]);
+    }
+
+    /// Forgets every path recorded for `root`.
+    pub fn remove(&mut self, root: SymbolicRoot) {
+        self.0.remove(&root);
     }
 
     /// Adds another path for `root`, such as one more project root.

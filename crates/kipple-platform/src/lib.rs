@@ -23,6 +23,20 @@ pub use roots::{
 };
 pub use walk::Walker;
 
+/// The operating system kipple was built for.
+pub const PLATFORM: kipple_core::Platform = os::PLATFORM;
+
+/// The bytes of `path` exactly as the OS holds them, when it isn't valid Unicode.
+///
+/// They are the bytes on Unix, and the UTF-16 code units as little-endian bytes on
+/// Windows. `None` when it is valid Unicode, so its display string holds it whole.
+#[must_use]
+pub fn raw_path(path: &std::path::Path) -> Option<Vec<u8>> {
+    path.to_str()
+        .is_none()
+        .then(|| os::raw_bytes(path.as_os_str()))
+}
+
 /// A hint to show only after a permission failure was actually diagnosed, such as
 /// macOS Full Disk Access. `None` where the OS has no such setting.
 #[must_use]

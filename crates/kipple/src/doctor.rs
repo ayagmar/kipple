@@ -43,7 +43,7 @@ pub struct RootCheck {
 /// Probes everything `doctor` reports.
 #[must_use]
 pub fn gather(env: &Environment) -> Report {
-    let roots = resolve_roots(env);
+    let roots = resolve_roots(env, &[]);
     let dirs = kipple_dirs(&roots);
     let config_file = dirs.config.path.as_ref().ok().map(|dir| {
         let file = dir.join(CONFIG_FILE);
@@ -233,6 +233,9 @@ fn source(source: RootSource) -> String {
         RootSource::Env(var) => format!("from {var}"),
         RootSource::Default { base, relative } => format!("default: {base}/{relative}"),
         RootSource::KnownFolder(folder) => format!("Known Folder {folder}"),
+        RootSource::Setting { file, key } => format!("{key} in {file}"),
+        RootSource::Fixed => "the tool's fixed location".to_owned(),
+        RootSource::CommandLine => "the command line".to_owned(),
     }
 }
 

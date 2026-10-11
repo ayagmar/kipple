@@ -8,6 +8,10 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# The hidden `KIPPLE_TEST_ROOTS` override for end-to-end tests. Never in a release build.
+test-roots = []
+
 [dependencies]
 kipple-core.workspace = true
 rayon.workspace = true

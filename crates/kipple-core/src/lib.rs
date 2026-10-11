@@ -70,7 +70,8 @@ pub use process::{
     Inventory, ProcessClass, ProcessOutcome, ProcessProbe, ProcessRecord, ProcessSnapshot,
 };
 pub use root::{
-    LinkProblem, ResolvedRoot, RootLink, RootSource, Roots, SymbolicRoot, UnresolvedRoot,
+    LinkProblem, ResolvedRoot, RootLink, RootSource, Roots, SettingProblem, SymbolicRoot,
+    UnresolvedRoot,
 };
 pub use rule::{
     Bounds, Category, FactKind, FactSpec, GENERIC_FACTS, GENERIC_SELECTORS, Lens, Method, Name,

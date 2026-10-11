@@ -13,10 +13,14 @@ use kipple_core::{FsProbe as _, LinkProblem, RootSource, Roots, SymbolicRoot, Un
 use kipple_platform::{Environment, NoFollowFs, kipple_dirs, resolve_roots};
 
 fn roots(vars: &[(&str, &str)]) -> Roots {
-    resolve_roots(&Environment::from_vars(
+    resolve_roots(&env(vars), &[])
+}
+
+fn env(vars: &[(&str, &str)]) -> Environment {
+    Environment::from_vars(
         vars.iter()
             .map(|(k, v)| (OsString::from(k), OsString::from(v))),
-    ))
+    )
 }
 
 fn path(roots: &Roots, root: SymbolicRoot) -> Result<(PathBuf, RootSource), String> {
@@ -181,4 +185,79 @@ fn a_root_that_is_not_a_link_is_left_as_configured() {
     };
     assert_eq!(cache.path, temp.path().join("home/.cache"));
     assert_eq!(cache.link, None);
+}
+
+fn project_roots(roots: &Roots) -> Vec<Result<(PathBuf, RootSource), String>> {
+    roots
+        .all(SymbolicRoot::ProjectRoots)
+        .iter()
+        .map(|r| match r {
+            Ok(resolved) => Ok((resolved.path.clone(), resolved.source)),
+            Err(unresolved) => Err(unresolved.to_string()),
+        })
+        .collect()
+}
+
+#[test]
+fn the_default_project_roots_are_those_that_exist_and_root_replaces_them() {
+    let temp = tempfile::tempdir().unwrap();
+    let home = temp.path().canonicalize().unwrap();
+    fs::create_dir_all(home.join("code")).unwrap();
+    fs::create_dir_all(home.join("source/repos")).unwrap();
+    // A file is not a project root.
+    fs::write(home.join("projects"), "").unwrap();
+    let env = env(&[("HOME", home.to_str().unwrap())]);
+
+    let default = |relative| RootSource::Default {
+        base: SymbolicRoot::Home,
+        relative,
+    };
+    assert_eq!(
+        project_roots(&resolve_roots(&env, &[])),
+        [
+            Ok((home.join("code"), default("code"))),
+            Ok((home.join("source").join("repos"), default("source/repos"))),
+        ]
+    );
+
+    let given = [PathBuf::from("/elsewhere"), PathBuf::from("relative")];
+    let replaced = project_roots(&resolve_roots(&env, &given));
+    assert_eq!(
+        replaced[0],
+        Ok((PathBuf::from("/elsewhere"), RootSource::CommandLine))
+    );
+    assert!(replaced[1].as_ref().is_err_and(|e| e.contains("--root")));
+    assert_eq!(replaced.len(), 2);
+}
+
+#[test]
+fn claude_code_config_follows_claude_config_dir_and_defaults_under_home() {
+    let set = roots(&[("HOME", "/home/u"), ("CLAUDE_CONFIG_DIR", "/cfg/claude")]);
+    assert_eq!(
+        path(&set, SymbolicRoot::ClaudeConfig),
+        Ok((
+            PathBuf::from("/cfg/claude"),
+            RootSource::Env("CLAUDE_CONFIG_DIR")
+        ))
+    );
+    let unset = roots(&[("HOME", "/home/u")]);
+    let (default, _) = path(&unset, SymbolicRoot::ClaudeConfig).unwrap();
+    assert_eq!(default, PathBuf::from("/home/u/.claude"));
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn the_linux_trash_is_the_freedesktop_home_trash_under_xdg_data_home() {
+    let roots = roots(&[("HOME", "/home/u"), ("XDG_DATA_HOME", "/data")]);
+
+    assert_eq!(
+        path(&roots, SymbolicRoot::Trash),
+        Ok((
+            PathBuf::from("/data/Trash"),
+            RootSource::Default {
+                base: SymbolicRoot::XdgData,
+                relative: "Trash",
+            }
+        ))
+    );
 }

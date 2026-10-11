@@ -30,7 +30,7 @@ fn this_process_is_identified_by_the_file_it_runs() {
 fn the_home_root_resolves_to_an_existing_directory() {
     let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();
 
-    let roots = resolve_roots(&Environment::from_vars(vars));
+    let roots = resolve_roots(&Environment::from_vars(vars), &[]);
 
     let Some(Ok(home)) = roots.get(SymbolicRoot::Home) else {
         panic!("home did not resolve: {:?}", roots.get(SymbolicRoot::Home));
