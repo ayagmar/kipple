@@ -566,11 +566,14 @@ fn a_root_command_line_path_inside_the_artifact_marks_it_in_use_even_for_a_built
     // `sudo /home/u/code/app/target/release/x`: root runs a program built there.
     let built = "/home/u/code/app/target/release/x";
     let host = Host::new(vec![uninspectable(9, ProcessOwner::Root, &[built])]);
+    let activity = host.activity(CARGO, TARGET);
 
-    assert_eq!(
-        seen(&host.activity(CARGO, TARGET)),
-        Some(&Seen::Argument(built.into()))
-    );
+    // Windows takes a path without a drive as relative, so it can't be placed and blocks.
+    if Path::new(built).is_absolute() {
+        assert_eq!(seen(&activity), Some(&Seen::Argument(built.into())));
+    } else {
+        assert!(is_unknown(&activity), "{activity:?}");
+    }
 }
 
 #[test]
