@@ -25,3 +25,27 @@ fn a_unicode_path_needs_no_raw_form() {
     assert_eq!(out.display, "données/été");
     assert_eq!(out.raw, None);
 }
+
+/// Automation reads the schema to learn what a reason can be, so it names every one.
+#[test]
+fn the_schema_names_every_reason_a_verdict_can_carry() {
+    let schemas = kipple::json::schemas();
+    let (_, scan) = schemas.iter().find(|(name, _)| *name == "scan").unwrap();
+    let described = scan
+        .as_value()
+        .pointer("/$defs/VerdictOut/properties/reasons/description")
+        .and_then(|description| description.as_str())
+        .unwrap();
+
+    let names = kipple_core::Hold::ALL.iter().map(|hold| hold.name()).chain(
+        kipple_core::Caution::ALL
+            .iter()
+            .map(|caution| caution.name()),
+    );
+    for name in names {
+        assert!(
+            described.contains(&format!("`{name}`")),
+            "the reasons description lacks `{name}`"
+        );
+    }
+}

@@ -669,7 +669,7 @@
           "$ref": "#/$defs/BucketOut"
         },
         "reasons": {
-          "description": "Why it isn't Safe: for Review, what falls short of the level (`recent`, `recovery`,\n`loss`, `high-cost`); for Protected, what holds it (`report-only`, `advice`,\n`unknown-layout`, `unknown-consequence`, `unknown-git`, `in-use`,\n`unknown-activity`, `unknown-modified`). Empty when Safe.",
+          "description": "Why it isn't Safe: for Review, what falls short of the level (`recent`, `recovery`,\n`loss`, `high-cost`); for Protected, what holds it (`report-only`, `advice`,\n`unknown-layout`, `unknown-consequence`, `unknown-git`, `holds-repository`,\n`in-use`, `unknown-activity`, `unknown-modified`). Empty when Safe.",
           "type": "array",
           "items": {
             "type": "string"

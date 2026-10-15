@@ -183,8 +183,8 @@ pub struct VerdictOut {
     pub bucket: BucketOut,
     /// Why it isn't Safe: for Review, what falls short of the level (`recent`, `recovery`,
     /// `loss`, `high-cost`); for Protected, what holds it (`report-only`, `advice`,
-    /// `unknown-layout`, `unknown-consequence`, `unknown-git`, `in-use`,
-    /// `unknown-activity`, `unknown-modified`). Empty when Safe.
+    /// `unknown-layout`, `unknown-consequence`, `unknown-git`, `holds-repository`,
+    /// `in-use`, `unknown-activity`, `unknown-modified`). Empty when Safe.
     pub reasons: Vec<&'static str>,
 }
 
