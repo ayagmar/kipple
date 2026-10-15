@@ -241,9 +241,19 @@ impl Keys for TerminalKeys {
     }
 }
 
+/// The home screen's key for a key press. Ctrl-C interrupts; any other key held with
+/// Ctrl or Alt means nothing, so Ctrl-S doesn't select and Alt-Q doesn't quit.
 const fn key_of(key: KeyEvent) -> Option<Key> {
+    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
+        return Some(Key::Interrupt);
+    }
+    if key
+        .modifiers
+        .intersects(KeyModifiers::CONTROL.union(KeyModifiers::ALT))
+    {
+        return None;
+    }
     Some(match key.code {
-        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Key::Interrupt,
         KeyCode::Char(c) => Key::Char(c),
         KeyCode::Up => Key::Up,
         KeyCode::Down => Key::Down,
@@ -272,4 +282,47 @@ const fn key_of(key: KeyEvent) -> Option<Key> {
         | KeyCode::Media(_)
         | KeyCode::Modifier(_) => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn press(code: KeyCode, modifiers: KeyModifiers) -> Option<Key> {
+        key_of(KeyEvent::new(code, modifiers))
+    }
+
+    // Catches a held Ctrl or Alt being dropped from the key, so Ctrl-S selects a
+    // finding and Alt-Q closes the screen.
+    #[test]
+    fn keys_held_with_ctrl_or_alt_do_nothing() {
+        for modifiers in [KeyModifiers::CONTROL, KeyModifiers::ALT] {
+            for code in [
+                KeyCode::Char('s'),
+                KeyCode::Char('q'),
+                KeyCode::Char(' '),
+                KeyCode::Enter,
+            ] {
+                assert_eq!(press(code, modifiers), None, "{modifiers:?} {code:?}");
+            }
+        }
+        assert_eq!(press(KeyCode::Char('c'), KeyModifiers::ALT), None);
+    }
+
+    // Catches the modifier check swallowing the one modified key the screen answers.
+    #[test]
+    fn ctrl_c_interrupts_and_plain_keys_still_act() {
+        assert_eq!(
+            press(KeyCode::Char('c'), KeyModifiers::CONTROL),
+            Some(Key::Interrupt)
+        );
+        assert_eq!(
+            press(KeyCode::Char('q'), KeyModifiers::NONE),
+            Some(Key::Char('q'))
+        );
+        assert_eq!(
+            press(KeyCode::Char('S'), KeyModifiers::SHIFT),
+            Some(Key::Char('S'))
+        );
+    }
 }
