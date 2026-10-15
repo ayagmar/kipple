@@ -16,7 +16,7 @@ test-roots = []
 kipple-core.workspace = true
 rayon.workspace = true
 
-[target.'cfg(target_os = "macos")'.dependencies]
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]

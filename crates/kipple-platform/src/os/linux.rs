@@ -3,13 +3,14 @@
 //! count of the file the process is actually running, even after it was replaced. The
 //! rest of `/proc/<pid>` gives its owner and what else it can be seen using.
 
-use std::ffi::OsStr;
+use std::ffi::{CStr, OsStr};
 use std::fs;
 use std::io;
 use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+use std::{mem, ptr};
 
 use kipple_core::{
     Capabilities, Inventory, MountNamespace, Platform, ProbeError, Probed, ProcessOutcome,
@@ -17,8 +18,8 @@ use kipple_core::{
 };
 
 pub(crate) use super::unix::{
-    KIPPLE_DIRS, allocated, device, env_name_matches, hard_link, identity, is_executable, physical,
-    process_env, raw_bytes,
+    KIPPLE_DIRS, allocated, device, dir_access, env_name_matches, hard_link, identity,
+    is_executable, physical, process_env, raw_bytes,
 };
 use super::unix::{env_paths, identity_of, nul_separated, owner, path_args, unread, xdg_roots};
 use crate::environment::Environment;
@@ -368,6 +369,59 @@ fn map_path(line: &[u8]) -> Option<&[u8]> {
     }
     let path = rest.trim_ascii_start();
     path.starts_with(b"/").then_some(path)
+}
+
+/// The extended attribute holding a POSIX access control list.
+const POSIX_ACL: &CStr = c"system.posix_acl_access";
+
+/// The `statfs` magic numbers of network and user-space file systems: NFS, SMB, CIFS,
+/// SMB2, AFS, Ceph, FUSE, 9p, Coda and NCP.
+const NETWORK_FILE_SYSTEMS: [i64; 10] = [
+    0x6969,
+    0x517B,
+    0xFF53_4D42,
+    0xFE53_4D42,
+    0x5346_414F,
+    0x00C3_6400,
+    0x6573_5546,
+    0x0102_1997,
+    0x7375_7245,
+    0x564C,
+];
+
+/// Whether the entry at `path` carries a POSIX access control list. Its absence, or a file
+/// system without them, means none.
+#[expect(unsafe_code, reason = "libc's lgetxattr is a raw call")]
+pub(crate) fn grants_acl(path: &CStr) -> io::Result<bool> {
+    // SAFETY: both strings are NUL-terminated, and a null buffer of size 0 only asks for
+    // the value's size.
+    let size = unsafe { libc::lgetxattr(path.as_ptr(), POSIX_ACL.as_ptr(), ptr::null_mut(), 0) };
+    if size >= 0 {
+        return Ok(true);
+    }
+    let error = io::Error::last_os_error();
+    match error.raw_os_error() {
+        Some(libc::ENODATA | libc::ENOTSUP) => Ok(false),
+        _ => Err(error),
+    }
+}
+
+/// Whether `path` is on a network or user-space file system.
+#[expect(unsafe_code, reason = "libc's statfs is a raw call")]
+pub(crate) fn on_network(path: &CStr) -> io::Result<bool> {
+    let mut stat = mem::MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: the path is NUL-terminated and `stat` is large enough for the result.
+    if unsafe { libc::statfs(path.as_ptr(), stat.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `statfs` succeeded, so it filled `stat`.
+    let kind = magic(unsafe { stat.assume_init() }.f_type);
+    Ok(NETWORK_FILE_SYSTEMS.contains(&kind))
+}
+
+/// A `statfs` magic number as its 32 bits, whatever integer type this target gives it.
+fn magic(f_type: impl Into<i64>) -> i64 {
+    f_type.into() & 0xFFFF_FFFF
 }
 
 pub(crate) fn inventory() -> Inventory {

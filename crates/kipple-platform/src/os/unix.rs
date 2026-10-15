@@ -1,6 +1,6 @@
 //! What Linux and macOS share: XDG roots, `stat` fields and process error codes.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::{CString, OsStr, OsString};
 use std::fs;
 use std::io;
 use std::os::unix::ffi::OsStrExt as _;
@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use kipple_core::{
-    EnvPath, FileIdentity, ProcessOwner, ResolvedRoot, RootSource, Roots, SymbolicRoot, Unread,
-    UnresolvedRoot, UserId,
+    DirAccess, EnvPath, FileIdentity, FileSystem, ProcessOwner, ResolvedRoot, RootSource, Roots,
+    SymbolicRoot, Unread, UnresolvedRoot, UserId,
 };
 
 use crate::environment::Environment;
@@ -179,6 +179,29 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack
         .windows(needle.len())
         .any(|window| window == needle)
+}
+
+/// Who may enter the directory at `dir`, from its owner and mode bits, whether it has an
+/// access control list that grants something, and its file system. A link is not followed.
+pub(crate) fn dir_access(dir: &Path) -> io::Result<DirAccess> {
+    let meta = fs::symlink_metadata(dir)?;
+    let path = CString::new(dir.as_os_str().as_bytes())?;
+    Ok(DirAccess {
+        owned_by_current_user: meta.uid() == effective_uid(),
+        open_to_others: meta.mode() & 0o011 != 0,
+        acl: super::grants_acl(&path)?,
+        file_system: if super::on_network(&path)? {
+            FileSystem::Remote
+        } else {
+            FileSystem::Local
+        },
+    })
+}
+
+#[expect(unsafe_code, reason = "libc's geteuid is a raw call")]
+fn effective_uid() -> u32 {
+    // SAFETY: it always succeeds.
+    unsafe { libc::geteuid() }
 }
 
 /// Creates `dir` and any missing parent, each readable by its owner only.

@@ -14,8 +14,8 @@ use std::path::{Component, Path, PathBuf, Prefix};
 use std::sync::Arc;
 
 use kipple_core::{
-    FileIdentity, Inventory, Platform, ProbeError, ProcessOutcome, ProcessOwner, ResolvedRoot,
-    RootSource, Roots, SymbolicRoot, Unread, UnresolvedRoot, UserId,
+    DirAccess, FileIdentity, Inventory, Platform, ProbeError, ProcessOutcome, ProcessOwner,
+    ResolvedRoot, RootSource, Roots, SymbolicRoot, Unread, UnresolvedRoot, UserId,
 };
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE, LocalFree, STILL_ACTIVE,
@@ -176,6 +176,11 @@ unsafe fn from_wide_nul(raw: PWSTR) -> OsString {
     }
     // SAFETY: `raw` holds `len` initialised units before the NUL.
     OsString::from_wide(unsafe { std::slice::from_raw_parts(raw, len) })
+}
+
+/// Who may enter a directory isn't read on Windows, so every other user's process counts.
+pub(crate) fn dir_access(_: &Path) -> io::Result<DirAccess> {
+    Err(io::ErrorKind::Unsupported.into())
 }
 
 /// The identity of the entry at `path` itself, through a handle that does not follow a

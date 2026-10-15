@@ -4,7 +4,7 @@
 //! The vnode survives the path being deleted or replaced; a later `stat(path)` does not.
 //! `proc_pidinfo` and `KERN_PROCARGS2` give its owner and what else it can be seen using.
 
-use std::ffi::{OsStr, c_int, c_void};
+use std::ffi::{CStr, OsStr, c_char, c_int, c_void};
 use std::io;
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
@@ -16,8 +16,8 @@ use kipple_core::{
 };
 
 pub(crate) use super::unix::{
-    KIPPLE_DIRS, allocated, device, env_name_matches, hard_link, identity, is_executable, physical,
-    process_env, raw_bytes,
+    KIPPLE_DIRS, allocated, device, dir_access, env_name_matches, hard_link, identity,
+    is_executable, physical, process_env, raw_bytes,
 };
 use super::unix::{env_paths, nul_separated, owner, path_args, unread, xdg_roots};
 use crate::environment::Environment;
@@ -291,6 +291,76 @@ fn is_zombie(raw_pid: c_int) -> bool {
     filled == size && info.pbi_status == libc::SZOMB
 }
 
+#[expect(
+    unsafe_code,
+    reason = "libc doesn't declare the ACL functions of libSystem"
+)]
+unsafe extern "C" {
+    fn acl_get_link_np(path: *const c_char, kind: c_int) -> *mut c_void;
+    fn acl_get_entry(acl: *mut c_void, entry_id: c_int, entry: *mut *mut c_void) -> c_int;
+    fn acl_get_tag_type(entry: *mut c_void, tag: *mut c_int) -> c_int;
+    fn acl_free(object: *mut c_void) -> c_int;
+}
+
+/// `ACL_TYPE_EXTENDED`, the only kind of ACL macOS has.
+const ACL_TYPE_EXTENDED: c_int = 0x100;
+const ACL_FIRST_ENTRY: c_int = 0;
+const ACL_NEXT_ENTRY: c_int = -1;
+/// `ACL_EXTENDED_DENY`: an entry that only takes rights away.
+const ACL_EXTENDED_DENY: c_int = 2;
+
+/// Whether the entry at `path` carries an ACL with an entry that grants something. An
+/// ACL made only of deny entries, such as the `everyone deny delete` of a home directory,
+/// grants nothing.
+#[expect(unsafe_code, reason = "the ACL functions are raw calls")]
+pub(crate) fn grants_acl(path: &CStr) -> io::Result<bool> {
+    // SAFETY: the path is NUL-terminated.
+    let acl = unsafe { acl_get_link_np(path.as_ptr(), ACL_TYPE_EXTENDED) };
+    if acl.is_null() {
+        let error = io::Error::last_os_error();
+        // Without an ACL the call fails with ENOENT.
+        return match error.raw_os_error() {
+            Some(libc::ENOENT | libc::ENOTSUP) => Ok(false),
+            _ => Err(error),
+        };
+    }
+    let mut tags = Vec::new();
+    let mut entry: *mut c_void = std::ptr::null_mut();
+    let mut which = ACL_FIRST_ENTRY;
+    // SAFETY: `acl` is a valid ACL until it is freed below, and each entry it hands out
+    // is valid while it is.
+    while unsafe { acl_get_entry(acl, which, &raw mut entry) } == 0 {
+        which = ACL_NEXT_ENTRY;
+        let mut tag: c_int = -1;
+        // SAFETY: `entry` was just handed out by `acl_get_entry`.
+        let read = unsafe { acl_get_tag_type(entry, &raw mut tag) };
+        tags.push((read == 0).then_some(tag));
+    }
+    // SAFETY: `acl` came from `acl_get_link_np` and is freed once.
+    unsafe { acl_free(acl) };
+    Ok(grants(&tags))
+}
+
+/// Whether ACL entries with these tags grant anything: any entry that isn't known to
+/// be a deny entry might.
+fn grants(tags: &[Option<c_int>]) -> bool {
+    tags.iter().any(|&tag| tag != Some(ACL_EXTENDED_DENY))
+}
+
+/// Whether `path` is on a file system macOS doesn't mark local, such as NFS, SMB or a
+/// user-space one.
+#[expect(unsafe_code, reason = "libc's statfs is a raw call")]
+pub(crate) fn on_network(path: &CStr) -> io::Result<bool> {
+    let mut stat = std::mem::MaybeUninit::<libc::statfs>::uninit();
+    // SAFETY: the path is NUL-terminated and `stat` is large enough for the result.
+    if unsafe { libc::statfs(path.as_ptr(), stat.as_mut_ptr()) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: `statfs` succeeded, so it filled `stat`.
+    let flags = unsafe { stat.assume_init() }.f_flags;
+    Ok(flags & libc::MNT_LOCAL.cast_unsigned() == 0)
+}
+
 /// Who kipple runs as, to tell the current user's processes from others'.
 pub(crate) struct Owners {
     current: Option<u32>,
@@ -455,6 +525,17 @@ pub(crate) const fn inventory() -> Inventory {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_an_acl_of_deny_entries_grants_nothing() {
+        let allow = 1;
+        assert!(!grants(&[]));
+        assert!(!grants(&[Some(ACL_EXTENDED_DENY)]));
+        assert!(!grants(&[Some(ACL_EXTENDED_DENY), Some(ACL_EXTENDED_DENY)]));
+        assert!(grants(&[Some(ACL_EXTENDED_DENY), Some(allow)]));
+        // An entry whose tag couldn't be read might grant something.
+        assert!(grants(&[Some(ACL_EXTENDED_DENY), None]));
+    }
 
     fn record(argc: c_int, rest: &[u8]) -> Vec<u8> {
         let mut buf = argc.to_ne_bytes().to_vec();

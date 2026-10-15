@@ -58,6 +58,7 @@ pub trait FsProbe: Debug + Send + Sync {   // read-only, no-follow
     fn read_dir(&self, dir: &Path) -> Result<Vec<DirEntryMeta>, ProbeError>;   // all or nothing
     fn open_dir(&self, dir: &Path) -> Result<(), ProbeError>;                    // listable, without listing
     fn read_file(&self, path: &Path, limit: u64) -> Result<Vec<u8>, ProbeError>; // regular file only, bounded
+    fn access(&self, dir: &Path) -> Result<DirAccess, ProbeError>;  // owner, execute bits, ACL, network fs (D-050)
 }
 
 pub trait Sizer: Debug + Send + Sync {     // the walker (D-036)

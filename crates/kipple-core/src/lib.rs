@@ -72,7 +72,8 @@ pub use policy::{
     Lineage, Loss, Modified, Policy, Proposal, Recovery, RuleSettings, Tracked, Verdict, WalkGap,
 };
 pub use probe::{
-    Clock, DirEntryMeta, EntryKind, EntryMeta, FileIdentity, FsProbe, ProbeError, Sizer,
+    Clock, DirAccess, DirEntryMeta, EntryKind, EntryMeta, FileIdentity, FileSystem, FsProbe,
+    ProbeError, Sizer,
 };
 pub use process::{
     Capabilities, EnvPath, Inventory, MountNamespace, Probed, ProcessClass, ProcessOutcome,

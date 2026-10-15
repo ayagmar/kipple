@@ -41,6 +41,31 @@ pub struct EntryMeta {
     pub identity: Option<FileIdentity>,
 }
 
+/// Who may enter a directory, as far as it decides whether another user's process could
+/// be using what is inside (D-050).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DirAccess {
+    /// The user kipple runs as owns it.
+    pub owned_by_current_user: bool,
+    /// Its group or other users may enter it: it has a group or other execute bit.
+    pub open_to_others: bool,
+    /// It carries an access control list that grants something. One made only of deny
+    /// entries grants nothing and doesn't count.
+    pub acl: bool,
+    /// The kind of file system it is on.
+    pub file_system: FileSystem,
+}
+
+/// Where a file system's files are kept, as far as it decides who may read them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FileSystem {
+    /// A local file system: the mode bits and access control lists decide.
+    Local,
+    /// A network or user-space file system (NFS, SMB, FUSE), where the server or the
+    /// program behind it decides, whatever the mode bits say.
+    Remote,
+}
+
 /// One entry of a directory listing.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirEntryMeta {
@@ -130,6 +155,15 @@ pub trait FsProbe: fmt::Debug + Send + Sync {
     /// # Errors
     /// When it is not a regular file (a link is not followed) or can't be read.
     fn read_file(&self, path: &Path, limit: u64) -> Result<Vec<u8>, ProbeError>;
+
+    /// Who may enter the directory at `dir`, without following a link. A probe that can't
+    /// tell fails, which leaves every other user's process counted.
+    ///
+    /// # Errors
+    /// When any part of it can't be read, whether it has an access control list included.
+    fn access(&self, dir: &Path) -> Result<DirAccess, ProbeError> {
+        Err(ProbeError::io(dir, io::ErrorKind::Unsupported.into()))
+    }
 }
 
 /// Measures what removing an item would free.
