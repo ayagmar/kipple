@@ -1,7 +1,9 @@
 //! Windows: Known Folders for roots, and `K32EnumProcesses`,
 //! `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` and `QueryFullProcessImageNameW` for
-//! processes (D-035). File identity is the volume serial and file index of an open handle.
+//! processes (D-035), and `WTSEnumerateProcessesExW` for who each one runs as. File
+//! identity is the volume serial and file index of an open handle.
 
+use std::collections::HashMap;
 use std::ffi::{OsStr, OsString, c_void};
 use std::fs;
 use std::io;
@@ -12,21 +14,27 @@ use std::path::{Component, Path, PathBuf, Prefix};
 use std::sync::Arc;
 
 use kipple_core::{
-    FileIdentity, Inventory, Platform, ProbeError, ProcessOutcome, ResolvedRoot, RootSource, Roots,
-    SymbolicRoot, UnresolvedRoot,
+    FileIdentity, Inventory, Platform, ProbeError, ProcessOutcome, ProcessOwner, ResolvedRoot,
+    RootSource, Roots, SymbolicRoot, Unread, UnresolvedRoot, UserId,
 };
 use windows_sys::Win32::Foundation::{
-    CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE, STILL_ACTIVE,
+    CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE, LocalFree, STILL_ACTIVE,
 };
+use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
+use windows_sys::Win32::Security::{GetTokenInformation, PSID, TOKEN_QUERY, TOKEN_USER, TokenUser};
 use windows_sys::Win32::Storage::FileSystem::{
     BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
     GetFileInformationByHandle,
 };
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::System::ProcessStatus::K32EnumProcesses;
+use windows_sys::Win32::System::RemoteDesktop::{
+    WTS_CURRENT_SERVER_HANDLE, WTS_PROCESS_INFO_EXW, WTSEnumerateProcessesExW, WTSFreeMemoryExW,
+    WTSTypeProcessInfoLevel1,
+};
 use windows_sys::Win32::System::Threading::{
-    GetExitCodeProcess, OpenProcess, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
-    QueryFullProcessImageNameW,
+    GetCurrentProcess, GetExitCodeProcess, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32,
+    PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
 };
 use windows_sys::Win32::UI::Shell::{
     FOLDERID_LocalAppData, FOLDERID_Profile, FOLDERID_RoamingAppData, SHGetKnownFolderPath,
@@ -34,6 +42,7 @@ use windows_sys::Win32::UI::Shell::{
 use windows_sys::core::{GUID, PWSTR};
 
 use crate::environment::Environment;
+use crate::process::Context;
 
 pub(crate) const PLATFORM: Platform = Platform::Windows;
 
@@ -116,14 +125,8 @@ fn known_folder(id: &GUID) -> io::Result<PathBuf> {
     // writable. The returned buffer is freed below whatever the result.
     let result = unsafe { SHGetKnownFolderPath(id, 0, std::ptr::null_mut(), &raw mut raw) };
     let path = if result == 0 && !raw.is_null() {
-        let mut len = 0;
         // SAFETY: on success `raw` is a NUL-terminated UTF-16 string.
-        while unsafe { *raw.add(len) } != 0 {
-            len += 1;
-        }
-        // SAFETY: `raw` holds `len` initialised units before the NUL.
-        let wide = unsafe { std::slice::from_raw_parts(raw, len) };
-        Ok(PathBuf::from(OsString::from_wide(wide)))
+        Ok(PathBuf::from(unsafe { from_wide_nul(raw) }))
     } else {
         Err(io::Error::other(format!(
             "SHGetKnownFolderPath failed: HRESULT {result:#010x}"
@@ -133,6 +136,21 @@ fn known_folder(id: &GUID) -> io::Result<PathBuf> {
     // (or leaves it null, which CoTaskMemFree accepts).
     unsafe { CoTaskMemFree(raw.cast::<c_void>().cast_const()) };
     path
+}
+
+/// The string a non-null, NUL-terminated UTF-16 pointer holds.
+///
+/// # Safety
+/// `raw` must point to a NUL-terminated UTF-16 string.
+#[expect(unsafe_code, reason = "reads a string an OS call returned")]
+unsafe fn from_wide_nul(raw: PWSTR) -> OsString {
+    let mut len = 0;
+    // SAFETY: the caller promises a NUL before the end of the allocation.
+    while unsafe { *raw.add(len) } != 0 {
+        len += 1;
+    }
+    // SAFETY: `raw` holds `len` initialised units before the NUL.
+    OsString::from_wide(unsafe { std::slice::from_raw_parts(raw, len) })
 }
 
 /// The identity of the entry at `path` itself, through a handle that does not follow a
@@ -213,14 +231,156 @@ pub(crate) fn list_pids() -> Result<Vec<u32>, ProbeError> {
     }
 }
 
-/// Closes a process handle on drop.
+/// Closes a process or token handle on drop.
 struct Process(HANDLE);
 
 impl Drop for Process {
     #[expect(unsafe_code, reason = "closing a handle this module opened")]
     fn drop(&mut self) {
-        // SAFETY: the handle came from OpenProcess and is closed exactly once.
+        // SAFETY: the handle came from OpenProcess or OpenProcessToken and is closed
+        // exactly once.
         unsafe { CloseHandle(self.0) };
+    }
+}
+
+/// `WTS_ANY_SESSION` from `wtsapi32.h`, which windows-sys doesn't define.
+const WTS_ANY_SESSION: u32 = 0xFFFF_FFFE;
+
+/// The SID of `SYSTEM`. `LocalService` (S-1-5-19) and `NetworkService` (S-1-5-20) are other
+/// users.
+const SYSTEM_SID: &str = "S-1-5-18";
+
+/// Who every listed process runs as: its user (`TokenUser`, not `TokenOwner`), from one
+/// listing that needs no handle to the process. A process missing from it, or listed
+/// without a readable SID, is unknown.
+pub(crate) struct Owners(HashMap<u32, ProcessOwner>);
+
+impl Owners {
+    pub(crate) fn read() -> Self {
+        let owners = current_user()
+            .and_then(|current| listed_owners(&current))
+            .unwrap_or_default();
+        Self(owners)
+    }
+}
+
+/// The current user's SID.
+#[expect(
+    unsafe_code,
+    reason = "windows-sys exposes the token APIs as raw calls"
+)]
+fn current_user() -> io::Result<String> {
+    let mut token: HANDLE = std::ptr::null_mut();
+    // SAFETY: the pseudo-handle of this process needs no closing, and `token` is writable.
+    if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &raw mut token) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let token = Process(token);
+    let mut needed = 0;
+    // SAFETY: a null buffer asks for the size; the call fails by design.
+    unsafe { GetTokenInformation(token.0, TokenUser, std::ptr::null_mut(), 0, &raw mut needed) };
+    // `u64`s keep the buffer aligned for `TOKEN_USER`.
+    let mut buf = vec![0_u64; (needed as usize).div_ceil(8)];
+    // SAFETY: the buffer is writable for `needed` bytes.
+    let ok = unsafe {
+        GetTokenInformation(
+            token.0,
+            TokenUser,
+            buf.as_mut_ptr().cast::<c_void>(),
+            needed,
+            &raw mut needed,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: on success the buffer starts with a `TOKEN_USER` whose SID points into it.
+    let user = unsafe { &*buf.as_ptr().cast::<TOKEN_USER>() };
+    sid_string(user.User.Sid)
+}
+
+/// The owners of every process in every session.
+#[expect(
+    unsafe_code,
+    reason = "windows-sys exposes the WTS process listing as a raw call"
+)]
+fn listed_owners(current: &str) -> io::Result<HashMap<u32, ProcessOwner>> {
+    let mut level = 1_u32;
+    let mut info: PWSTR = std::ptr::null_mut();
+    let mut count = 0_u32;
+    // SAFETY: every out-pointer is writable. On success `info` holds `count` entries,
+    // freed below.
+    let ok = unsafe {
+        WTSEnumerateProcessesExW(
+            WTS_CURRENT_SERVER_HANDLE,
+            &raw mut level,
+            WTS_ANY_SESSION,
+            &raw mut info,
+            &raw mut count,
+        )
+    };
+    if ok == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let owners = if level == 1 && !info.is_null() {
+        // SAFETY: level 1 fills `count` `WTS_PROCESS_INFO_EXW` entries.
+        let entries = unsafe {
+            std::slice::from_raw_parts(info.cast::<WTS_PROCESS_INFO_EXW>(), count as usize)
+        };
+        Ok(entries
+            .iter()
+            .map(|entry| (entry.ProcessId, owner(entry.pUserSid, current)))
+            .collect())
+    } else {
+        Err(io::Error::other("the process listing was not at level 1"))
+    };
+    // SAFETY: `info` and `count` came from the call above, at level 1.
+    unsafe { WTSFreeMemoryExW(WTSTypeProcessInfoLevel1, info.cast::<c_void>(), count) };
+    owners
+}
+
+fn owner(sid: PSID, current: &str) -> ProcessOwner {
+    match sid_string(sid) {
+        Ok(sid) if sid == current => ProcessOwner::CurrentUser,
+        Ok(sid) if sid == SYSTEM_SID => ProcessOwner::System,
+        Ok(sid) => ProcessOwner::OtherUser(UserId::Sid(sid)),
+        Err(_) => ProcessOwner::Unknown,
+    }
+}
+
+/// The `S-1-…` form of a SID.
+#[expect(
+    unsafe_code,
+    reason = "windows-sys exposes ConvertSidToStringSidW as a raw call"
+)]
+fn sid_string(sid: PSID) -> io::Result<String> {
+    if sid.is_null() {
+        return Err(io::Error::other("no SID"));
+    }
+    let mut raw: PWSTR = std::ptr::null_mut();
+    // SAFETY: `sid` is a valid SID the OS returned, and `raw` is writable.
+    if unsafe { ConvertSidToStringSidW(sid, &raw mut raw) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: on success `raw` is a NUL-terminated string from LocalAlloc.
+    let text = unsafe { from_wide_nul(raw) };
+    // SAFETY: `raw` was allocated by ConvertSidToStringSidW and is freed once.
+    unsafe { LocalFree(raw.cast::<c_void>()) };
+    text.into_string()
+        .map_err(|_| io::Error::other("a SID that isn't Unicode"))
+}
+
+/// Only the owner in M2: the other facts aren't read on Windows, so they are unknown.
+pub(crate) fn context(pid: u32, owners: &Owners) -> Context {
+    Context {
+        owner: owners.0.get(&pid).cloned().unwrap_or(ProcessOwner::Unknown),
+        cwd: Err(Unread::Unsupported),
+        argv: Err(Unread::Unsupported),
+        env_paths: Err(Unread::Unsupported),
+        mapped_files: Err(Unread::Unsupported),
+        mount_namespace: Err(Unread::Unsupported),
+        root_dir: Err(Unread::Unsupported),
+        capabilities: Err(Unread::Unsupported),
     }
 }
 

@@ -1,24 +1,28 @@
 //! Linux: `/proc/<pid>/exe` (D-035). `readlink` gives the path, with the kernel's
 //! ` (deleted)` marker, and `stat` through the magic link gives the identity and link
-//! count of the file the process is actually running, even after it was replaced.
+//! count of the file the process is actually running, even after it was replaced. The
+//! rest of `/proc/<pid>` gives its owner and what else it can be seen using.
 
+use std::ffi::OsStr;
 use std::fs;
 use std::io;
+use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::MetadataExt as _;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use kipple_core::{
-    Inventory, Platform, ProbeError, ProcessOutcome, ResolvedRoot, RootSource, Roots,
-    SettingProblem, SymbolicRoot, UnresolvedRoot,
+    Capabilities, Inventory, MountNamespace, Platform, ProbeError, Probed, ProcessOutcome,
+    ProcessOwner, ResolvedRoot, RootSource, Roots, SettingProblem, SymbolicRoot, UnresolvedRoot,
 };
 
 pub(crate) use super::unix::{
     KIPPLE_DIRS, allocated, device, env_name_matches, hard_link, identity, is_executable, physical,
     process_env, raw_bytes,
 };
-use super::unix::{identity_of, xdg_roots};
+use super::unix::{env_paths, identity_of, nul_separated, owner, path_args, unread, xdg_roots};
 use crate::environment::Environment;
+use crate::process::Context;
 use crate::roots::{in_physical_parent, under};
 
 pub(crate) const PLATFORM: Platform = Platform::Linux;
@@ -219,6 +223,153 @@ fn stat_state(stat: &str) -> Option<StatState> {
     (flags & PF_KTHREAD != 0).then_some(StatState::KernelThread)
 }
 
+/// Who kipple runs as, to tell the current user's processes from others'.
+pub(crate) struct Owners {
+    current: Option<u32>,
+}
+
+impl Owners {
+    pub(crate) fn read() -> Self {
+        let status = fs::read_to_string("/proc/self/status").ok();
+        Self {
+            current: status.as_deref().and_then(single_uid),
+        }
+    }
+}
+
+/// Everything `/proc/<pid>` shows about a process besides its executable. `cmdline` and
+/// `status` are readable even for root's processes; the rest usually only for the
+/// current user's.
+///
+/// The owner comes from the `Uid:` line of `status`, not from the owner of `/proc/<pid>`,
+/// which the kernel makes root for a process that isn't dumpable, such as a setuid or
+/// setcap program.
+pub(crate) fn context(pid: u32, owners: &Owners) -> Context {
+    let path = |name: &str| PathBuf::from(format!("/proc/{pid}/{name}"));
+    let file = |name: &str| fs::read(path(name)).map_err(unread);
+    let status = fs::read_to_string(path("status")).map_err(unread);
+    Context {
+        owner: status.as_ref().map_or(ProcessOwner::Unknown, |status| {
+            status_owner(status, owners.current)
+        }),
+        cwd: fs::read_link(path("cwd")).map_err(unread),
+        argv: file("cmdline").map(|bytes| path_args(&nul_separated(&bytes))),
+        env_paths: file("environ").map(|bytes| env_paths(&nul_separated(&bytes))),
+        mapped_files: file("maps").map(|bytes| mapped_files(&bytes)),
+        mount_namespace: fs::read_link(path("ns/mnt"))
+            .map_err(unread)
+            .and_then(|link| mount_namespace(&link)),
+        root_dir: fs::metadata(path("root"))
+            .map(|meta| identity_of(&meta))
+            .map_err(unread),
+        capabilities: status.and_then(|status| effective_caps(&status)),
+    }
+}
+
+/// The real, effective, saved and filesystem user IDs of a `status`.
+fn status_uids(status: &str) -> Option<Vec<u32>> {
+    let uids = status_field::<4>(status, "Uid:", 10)?;
+    uids.into_iter()
+        .map(|uid| u32::try_from(uid).ok())
+        .collect()
+}
+
+/// The owner a `status` names, as seen by the user whose ID is `current`.
+fn status_owner(status: &str, current: Option<u32>) -> ProcessOwner {
+    owner(status_uids(status).as_deref(), current)
+}
+
+/// The one user ID of a `status` whose four IDs agree.
+fn single_uid(status: &str) -> Option<u32> {
+    let uids = status_uids(status)?;
+    let (first, rest) = uids.split_first()?;
+    rest.iter().all(|uid| uid == first).then_some(*first)
+}
+
+fn effective_caps(status: &str) -> Probed<Capabilities> {
+    status_field::<1>(status, "CapEff:", 16)
+        .map(|[caps]| Capabilities(caps))
+        .ok_or_else(|| unread(malformed("CapEff")))
+}
+
+fn malformed(what: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidData,
+        format!("unexpected {what} in /proc"),
+    )
+}
+
+/// The `N` numbers of a `status` line, in `radix`.
+fn status_field<const N: usize>(status: &str, name: &str, radix: u32) -> Option<[u64; N]> {
+    let line = status.lines().find_map(|line| line.strip_prefix(name))?;
+    let numbers: Vec<u64> = line
+        .split_whitespace()
+        .map(|n| u64::from_str_radix(n, radix))
+        .collect::<Result<_, _>>()
+        .ok()?;
+    numbers.try_into().ok()
+}
+
+/// The namespace an `ns/mnt` link such as `mnt:[4026531841]` names.
+fn mount_namespace(link: &Path) -> Probed<MountNamespace> {
+    link.to_str()
+        .and_then(|link| link.strip_prefix("mnt:[")?.strip_suffix(']')?.parse().ok())
+        .map(MountNamespace)
+        .ok_or_else(|| unread(malformed("ns/mnt")))
+}
+
+/// The files a `/proc/<pid>/maps` lists, sorted, once each. The kernel writes a newline
+/// in a path as `\012`; such a path is kept both as written and with the newline.
+fn mapped_files(maps: &[u8]) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for line in maps.split(|&b| b == b'\n') {
+        let Some(path) = map_path(line) else {
+            continue;
+        };
+        if let Some(unescaped) = with_newlines(path) {
+            files.push(PathBuf::from(OsStr::from_bytes(&unescaped)));
+        }
+        files.push(PathBuf::from(OsStr::from_bytes(path)));
+    }
+    files.sort();
+    files.dedup();
+    files
+}
+
+/// `path` with each `\012` turned back into a newline, if it has any.
+fn with_newlines(path: &[u8]) -> Option<Vec<u8>> {
+    const ESCAPE: &[u8] = b"\\012";
+    let mut out = Vec::with_capacity(path.len());
+    let mut rest = path;
+    while !rest.is_empty() {
+        if let Some(after) = rest.strip_prefix(ESCAPE) {
+            out.push(b'\n');
+            rest = after;
+        } else if let Some((&first, after)) = rest.split_first() {
+            out.push(first);
+            rest = after;
+        }
+    }
+    (out.len() != path.len()).then_some(out)
+}
+
+/// The path of one `maps` line: whatever follows its first five fields, when it is a
+/// file rather than a label such as `[heap]`.
+fn map_path(line: &[u8]) -> Option<&[u8]> {
+    let mut rest = line;
+    for _ in 0..5 {
+        let start = rest.iter().position(|b| !b.is_ascii_whitespace())?;
+        let field = rest.get(start..)?;
+        let end = field
+            .iter()
+            .position(u8::is_ascii_whitespace)
+            .unwrap_or(field.len());
+        rest = field.get(end..)?;
+    }
+    let path = rest.trim_ascii_start();
+    path.starts_with(b"/").then_some(path)
+}
+
 pub(crate) fn inventory() -> Inventory {
     match fs::read_to_string("/proc/self/mountinfo") {
         Ok(mountinfo) => proc_visibility(&mountinfo),
@@ -262,6 +413,8 @@ fn hides_processes(option: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use kipple_core::UserId;
+
     use super::*;
 
     fn cache(conf: &str) -> Vec<String> {
@@ -333,6 +486,105 @@ mod tests {
             assert!(partial(&proc_visibility(&remounted(options))), "{options}");
         }
         assert!(partial(&proc_visibility("")));
+    }
+
+    /// A `status` with these `Uid:` and `CapEff:` lines, as the kernel writes them.
+    fn status(uids: &str, caps: &str) -> String {
+        format!(
+            "Name:\tping\nUmask:\t0022\nState:\tS (sleeping)\nTgid:\t4242\nPid:\t4242\n\
+             PPid:\t1\nUid:\t{uids}\nGid:\t1000\t1000\t1000\t1000\nCapInh:\t0000000000000000\n\
+             CapPrm:\t{caps}\nCapEff:\t{caps}\nCapBnd:\t000001ffffffffff\n"
+        )
+    }
+
+    const NO_CAPS: &str = "0000000000000000";
+
+    #[test]
+    fn a_process_owner_is_named_only_when_all_four_user_ids_agree() {
+        let me = Some(1000);
+        let owner_of = |uids| status_owner(&status(uids, NO_CAPS), me);
+
+        assert_eq!(
+            owner_of("1000\t1000\t1000\t1000"),
+            ProcessOwner::CurrentUser
+        );
+        assert_eq!(owner_of("0\t0\t0\t0"), ProcessOwner::Root);
+        assert_eq!(
+            owner_of("1001\t1001\t1001\t1001"),
+            ProcessOwner::OtherUser(UserId::Uid(1001))
+        );
+        // A setuid program part way through a switch, or one that kept a saved ID.
+        for mixed in ["1000\t0\t0\t0", "0\t0\t1000\t0", "1000\t1000\t1000\t0"] {
+            assert_eq!(owner_of(mixed), ProcessOwner::Unknown, "{mixed}");
+        }
+        assert_eq!(
+            status_owner("Name:\tx\nUid:\t1000\t1000\n", me),
+            ProcessOwner::Unknown
+        );
+        assert_eq!(status_owner("Name:\tx\n", me), ProcessOwner::Unknown);
+    }
+
+    #[test]
+    fn a_setcap_program_of_the_current_user_is_theirs_though_its_proc_entry_is_roots() {
+        // The kernel makes `/proc/<pid>` root's for a process that isn't dumpable, as
+        // with this capability-wrapped `ping`. Its status still names the user.
+        let ping = status("1000\t1000\t1000\t1000", "0000000000002000");
+
+        assert_eq!(status_owner(&ping, Some(1000)), ProcessOwner::CurrentUser);
+        assert_eq!(effective_caps(&ping).unwrap(), Capabilities(0x2000));
+        assert!(effective_caps("Name:\tx\n").is_err());
+    }
+
+    #[test]
+    fn without_a_consistent_current_user_no_owner_is_named() {
+        let me = single_uid(&status("1000\t0\t1000\t1000", NO_CAPS));
+        assert_eq!(me, None);
+
+        for uids in ["1000\t1000\t1000\t1000", "0\t0\t0\t0"] {
+            assert_eq!(
+                status_owner(&status(uids, NO_CAPS), me),
+                ProcessOwner::Unknown
+            );
+        }
+        assert_eq!(
+            single_uid(&status("1000\t1000\t1000\t1000", NO_CAPS)),
+            Some(1000)
+        );
+    }
+
+    #[test]
+    fn maps_lists_each_mapped_file_once_with_spaces_kept_and_labels_left_out() {
+        let maps = b"\
+55d0c0a00000-55d0c0a28000 r--p 00000000 103:02 1311 /home/u/p/.venv/bin/python3.13
+7f1c2a000000-7f1c2a021000 rw-p 00000000 00:00 0 
+7f1c2a200000-7f1c2a300000 r-xp 00002000 103:02 2290 /home/u/my proj/lib/_x.so
+7f1c2a300000-7f1c2a310000 r--p 00102000 103:02 2290 /home/u/my proj/lib/_x.so
+7f1c2a400000-7f1c2a410000 r--p 00000000 103:02 2291 /home/u/p/old.so (deleted)
+7f1c2a500000-7f1c2a510000 r--p 00000000 103:02 2292 /home/u/odd\\012name.so
+7ffd1a1d4000-7ffd1a1f5000 rw-p 00000000 00:00 0                          [stack]
+";
+
+        let files = mapped_files(maps);
+
+        let expected = [
+            "/home/u/my proj/lib/_x.so",
+            "/home/u/odd\nname.so",
+            "/home/u/odd\\012name.so",
+            "/home/u/p/.venv/bin/python3.13",
+            "/home/u/p/old.so (deleted)",
+        ];
+        assert_eq!(files, expected.map(PathBuf::from));
+    }
+
+    #[test]
+    fn a_mount_namespace_is_read_from_its_link_and_anything_else_is_unknown() {
+        assert_eq!(
+            mount_namespace(Path::new("mnt:[4026531841]")).unwrap(),
+            MountNamespace(4_026_531_841)
+        );
+        for odd in ["net:[4026531840]", "mnt:[x]", "mnt:4026531841"] {
+            assert!(mount_namespace(Path::new(odd)).is_err(), "{odd}");
+        }
     }
 
     #[test]

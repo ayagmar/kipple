@@ -1021,21 +1021,21 @@ fn a_git_directory_in_or_above_a_finding_leaves_what_it_tracks_unknown() {
 
 #[test]
 fn a_program_running_from_a_finding_marks_it_in_use_and_any_unidentified_one_unknown() {
-    let identified = |pid, path: &str| ProcessRecord {
-        pid,
-        outcome: ProcessOutcome::Identified {
+    let identified = |pid, path: &str| {
+        let outcome = ProcessOutcome::Identified {
             path: PathBuf::from(path),
             identity: FileIdentity {
                 volume: 1,
                 file: u64::from(pid),
             },
             deleted: false,
-        },
+        };
+        ProcessRecord::new(pid, outcome)
     };
-    let denied = ProcessRecord {
-        pid: 1,
-        outcome: ProcessOutcome::Denied(Arc::new(io::ErrorKind::PermissionDenied.into())),
-    };
+    let denied = ProcessRecord::new(
+        1,
+        ProcessOutcome::Denied(Arc::new(io::ErrorKind::PermissionDenied.into())),
+    );
     let snapshot = |processes, inventory| {
         FakeProcesses(Ok(ProcessSnapshot {
             processes,

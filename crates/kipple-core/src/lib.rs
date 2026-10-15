@@ -75,7 +75,8 @@ pub use probe::{
     Clock, DirEntryMeta, EntryKind, EntryMeta, FileIdentity, FsProbe, ProbeError, Sizer,
 };
 pub use process::{
-    Inventory, ProcessClass, ProcessOutcome, ProcessProbe, ProcessRecord, ProcessSnapshot,
+    Capabilities, EnvPath, Inventory, MountNamespace, Probed, ProcessClass, ProcessOutcome,
+    ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Unread, UserId,
 };
 pub use root::{
     LinkProblem, ResolvedRoot, RootLink, RootSource, Roots, SettingProblem, SymbolicRoot,

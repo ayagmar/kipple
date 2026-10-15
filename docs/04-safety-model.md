@@ -136,7 +136,7 @@ When a tool cannot enumerate targets up front, the review screen shows the plan 
 
 ## 8a. Privacy of receipts and diagnostics
 
-Receipts, `doctor` output and logs store structured facts and outcomes: identities, sizes, rule IDs, reasons and error codes. They never store file contents, transcript text or credentials. Native command stderr and raw OS messages are shown live to the user in that session and kept in the in-memory error value. They are **never persisted**. Receipts store only structured fields: exit code, signal, OS error kind and kipple's error code. Paths are stored, because they are needed for restore and audit, and the docs say so.
+Receipts, `doctor` output and logs store structured facts and outcomes: identities, sizes, rule IDs, reasons and error codes. They never store file contents, transcript text or credentials. Native command stderr and raw OS messages are shown live to the user in that session and kept in the in-memory error value. They are **never persisted**. Receipts store only structured fields: exit code, signal, OS error kind and kipple's error code. Paths are stored, because they are needed for restore and audit, and the docs say so. A process snapshot keeps only the path-like arguments and environment values of each process (D-035), never its full command line or environment.
 
 ## 9. Plugin authority
 
