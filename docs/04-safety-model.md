@@ -89,7 +89,7 @@ What this means in practice:
 - Each integration declares what activity evidence it needs: process identity, a lockfile the tool documents, or an open-handle probe where it is cheap.
 - If the evidence is incomplete, the affected operation is blocked, not just the item.
 - Process names alone never count as proof that something is inactive.
-- Today (D-047) a project artifact's activity is the process snapshot alone: a process running a file inside it holds it as in use, and any process kipple couldn't identify, or a partial inventory, holds it as unknown. Scoping by D-042 and per-integration evidence are open (decisions.md §5, Q-activity).
+- Today (D-047) a project artifact's activity is the process snapshot alone: a process running a file inside it holds it as in use, and any process kipple couldn't identify, or a partial inventory, holds it as unknown. Only the executable's path is checked, so a process that uses it without running a file inside it isn't seen: `/usr/bin/python3` importing a virtualenv's packages, or `/usr/bin/node` loading a `node_modules`. Scoping by D-042 and per-integration evidence are open (decisions.md §5, Q-activity).
 - The process probe gives every process one outcome (D-035). Only an exited process or one that is gone counts as not running. A process the OS won't let us inspect, or one with a path but no file identity, is unknown. On Linux, a `/proc` mounted with `hidepid` or `subset` hides other users' processes without an error, so the whole inventory is partial. Both cases are incomplete evidence. Which processes count for a store is scoped by D-042: as a regular user, uninspectable root and `SYSTEM` processes don't block a per-user store, and are reported as a partial-inventory notice.
 
 ## 5. Methods and recovery

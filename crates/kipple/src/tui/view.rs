@@ -597,7 +597,7 @@ fn shelf_detail(app: &App, look: Look, node: Node, shelf: Shelf) -> Vec<Text<'st
     let (count, total) = sum(app, node);
     let about = match shelf {
         Shelf::Safe => {
-            "Passes every check at this level: kipple recognised it, knows how it comes back, nothing inside is tracked by git, no running program uses it, and it hasn't changed recently. c selects all of it."
+            "Passes every check at this level: kipple recognised it, knows how it comes back, nothing inside is tracked by git, no running program runs an executable inside it, and it hasn't changed recently. c selects all of it."
         }
         Shelf::Review => {
             "Eligible, but it loses more than this level allows, costs a lot to bring back, or changed recently. Each row says which."
