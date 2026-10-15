@@ -1064,10 +1064,10 @@ fn a_program_running_from_a_finding_marks_it_in_use_and_any_unidentified_one_unk
             deleted: false,
         };
         // Everything else it could show is read too, since the proposer declares no
-        // narrower evidence.
+        // narrower evidence: it was started by its own path.
         ProcessRecord {
             cwd: Ok(PathBuf::from("/")),
-            argv: Ok(Vec::new()),
+            argv: Ok(vec![path.into()]),
             env_paths: Ok(Vec::new()),
             mapped_files: Ok(Vec::new()),
             ..ProcessRecord::new(pid, outcome)

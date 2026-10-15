@@ -635,8 +635,10 @@ fn an_uninspectable_root_process_is_left_out_and_counted_only_for_an_artifact_in
     assert!(is_unknown(
         &host.activity(PYTHON, "/mnt/data/code/app/.venv")
     ));
-    // `SYSTEM` is left out the same way.
-    let system = Host::new(vec![uninspectable(4, ProcessOwner::System, &[])]);
+    // `SYSTEM` is left out the same way, on Windows, which shows no command line.
+    let mut system = Host::new(vec![uninspectable(4, ProcessOwner::System, &[])]);
+    system.observer = Observer::PLAIN;
+    system.processes[0].argv = Err(Unread::Unsupported);
     assert!(matches!(
         system.activity(CARGO, TARGET),
         Activity::IdleExceptSystem {
@@ -1131,4 +1133,32 @@ fn a_process_with_roots_reach_counts_when_its_command_line_cant_clear_it() {
         host.processes[0].argv = Err(failed());
         assert!(is_unknown(&host.activity(CARGO, TARGET)), "unread {name}");
     }
+}
+
+#[test]
+fn an_empty_or_blank_command_line_clears_nothing_where_the_os_shows_it() {
+    // A process mid-exit, or one that blanked its argv, shows no program name: it might
+    // be a runtime, and it names nothing that could be placed.
+    let blank = |owner: ProcessOwner, argv: &[&str]| {
+        let mut process = uninspectable(7, owner, &[]);
+        process.argv = Ok(argv.iter().map(OsString::from).collect());
+        Host::new(vec![process])
+    };
+    for argv in [&[][..], &[""], &["", ""], &[" \t"]] {
+        for owner in [ProcessOwner::CurrentUser, ProcessOwner::Root] {
+            for (evidence, path) in [(CARGO, TARGET), (PYTHON, VENV)] {
+                let activity = blank(owner.clone(), argv).activity(evidence, path);
+                assert!(
+                    matches!(activity, Activity::Unknown(ActivityGap::Uninspected(1))),
+                    "{owner:?} {argv:?} {path}: {activity:?}"
+                );
+            }
+        }
+    }
+    // Without a program name it can't be ruled out as a runtime either.
+    let nameless = blank(
+        ProcessOwner::CurrentUser,
+        &["", &abs("/usr/share/x").display().to_string()],
+    );
+    assert!(is_unknown(&nameless.activity(CARGO, TARGET)));
 }

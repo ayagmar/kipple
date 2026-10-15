@@ -167,11 +167,12 @@ impl View {
 
     /// Whether, on an OS that shows every command line, it can be judged by its command
     /// line alone when the rest of it can't be read (D-052): it was read and placed, the
-    /// process is in kipple's mount namespace or refused to say, and it doesn't run a
-    /// runtime, which runs a project's files without naming them.
+    /// process is in kipple's mount namespace or refused to say, and its program is known
+    /// and isn't a runtime, which runs a project's files without naming them.
     fn judged_by_command_line(&self) -> bool {
         self.command_line_placed
             && matches!(self.placing, Placing::Placed | Placing::Refused)
+            && !self.names.is_empty()
             && !self.runs(RUNTIMES)
     }
 }
@@ -473,7 +474,14 @@ fn view(process: &ProcessRecord, observer: &Observer, fs: &dyn FsProbe) -> (View
     {
         paths.add(Kind::MappedFile, file.clone());
     }
-    let argv = paths.read(Kind::Argument, &process.argv);
+    // A command line with no token that isn't blank names nothing, not even its program:
+    // it is as good as unread.
+    let argv = paths
+        .read(Kind::Argument, &process.argv)
+        .filter(|args| args.iter().any(|arg| !blank(arg)));
+    if argv.is_none() {
+        paths.unread.insert(Kind::Argument);
+    }
     let placed = argv.map_or(!observer.command_lines_public, |args| {
         paths.arguments(args, cwd, env)
     });
@@ -663,8 +671,14 @@ fn names(executable: Option<&Path>, first: Option<&Path>) -> Vec<String> {
         .into_iter()
         .flatten()
         .filter_map(Path::file_name)
+        .filter(|name| !blank(name))
         .map(|name| name.to_string_lossy().to_lowercase())
         .collect()
+}
+
+/// Whether `text` is empty or only whitespace.
+fn blank(text: &OsStr) -> bool {
+    text.to_string_lossy().trim().is_empty()
 }
 
 /// Whether a process sees the same thing as kipple: always, where the OS has no such
