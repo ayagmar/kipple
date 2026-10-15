@@ -14,5 +14,7 @@ mod windows;
 pub(crate) use linux::*;
 #[cfg(target_os = "macos")]
 pub(crate) use macos::*;
+#[cfg(unix)]
+pub(crate) use unix::{create_private_dir, create_private_file, sync_dir};
 #[cfg(windows)]
 pub(crate) use windows::*;

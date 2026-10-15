@@ -4,7 +4,9 @@ use std::ffi::{OsStr, OsString};
 use std::fs;
 use std::io;
 use std::os::unix::ffi::OsStrExt as _;
-use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+use std::os::unix::fs::{
+    DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
+};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -177,6 +179,29 @@ fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack
         .windows(needle.len())
         .any(|window| window == needle)
+}
+
+/// Creates `dir` and any missing parent, each readable by its owner only.
+pub(crate) fn create_private_dir(dir: &Path) -> io::Result<()> {
+    fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(dir)
+}
+
+/// Creates a new file at `path`, failing if anything is there, readable by its owner
+/// only.
+pub(crate) fn create_private_file(path: &Path) -> io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(path)
+}
+
+/// Makes a rename inside `dir` durable.
+pub(crate) fn sync_dir(dir: &Path) -> io::Result<()> {
+    fs::File::open(dir)?.sync_all()
 }
 
 #[cfg(test)]

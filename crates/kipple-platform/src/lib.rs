@@ -2,10 +2,11 @@
 //!
 //! This is the only crate that may contain OS-specific code, and the only one where
 //! reviewed `unsafe` is allowed (see `docs/05-architecture.md`). Everything that differs
-//! by OS lives in its `os` module. Everything here is read-only: the confined executor arrives
-//! with spike S1.
+//! by OS lives in its `os` module. Everything here is read-only except the atomic write of
+//! kipple's own config file: the confined executor arrives with spike S1.
 
 mod capabilities;
+mod config_file;
 mod environment;
 mod fs_probe;
 mod host;
@@ -18,6 +19,7 @@ mod test_host;
 mod walk;
 
 pub use capabilities::probe_tools;
+pub use config_file::{WriteError, read_config, write_config};
 pub use environment::Environment;
 pub use fs_probe::NoFollowFs;
 pub use host::{SystemClock, clock, processes};

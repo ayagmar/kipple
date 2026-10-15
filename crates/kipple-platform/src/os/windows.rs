@@ -97,6 +97,31 @@ pub(crate) fn physical(path: &Path) -> io::Result<PathBuf> {
     Ok(PathBuf::from(usual).join(components.as_path()))
 }
 
+/// Creates `dir` and any missing parent. They inherit the access rules of the profile
+/// directory they are in.
+pub(crate) fn create_private_dir(dir: &Path) -> io::Result<()> {
+    fs::create_dir_all(dir)
+}
+
+/// Creates a new file at `path`, failing if anything is there. It inherits the access
+/// rules of its directory.
+pub(crate) fn create_private_file(path: &Path) -> io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+}
+
+/// Nothing to do: Windows can't sync a directory through std, and a rename replaces the
+/// file in one step (`MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`).
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the Unix version can fail, and callers share one signature"
+)]
+pub(crate) const fn sync_dir(_: &Path) -> io::Result<()> {
+    Ok(())
+}
+
 pub(crate) fn env_name_matches(key: &OsStr, name: &str) -> bool {
     key.eq_ignore_ascii_case(name)
 }
