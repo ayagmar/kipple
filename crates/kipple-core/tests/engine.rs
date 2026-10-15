@@ -1263,3 +1263,30 @@ fn a_mount_the_walk_skipped_inside_a_finding_holds_it_for_git_and_last_change() 
     assert!(holds.contains(&Hold::UnknownGit));
     assert!(holds.contains(&Hold::UnknownModified));
 }
+
+#[test]
+fn a_complete_walk_with_an_entry_without_a_time_leaves_only_the_last_change_unknown() {
+    // Every entry was read, so git is settled; only the time is missing, and the
+    // reason says so instead of claiming something couldn't be read.
+    let sizer = FakeSizer {
+        measurement: Some(Measurement {
+            modified: None,
+            ..measured(SIZE)
+        }),
+        ..FakeSizer::default()
+    };
+    let fs = FakeFs {
+        no_git: true,
+        ..FakeFs::default()
+    };
+    let proposer = Proposer {
+        paths: &["/found/target"],
+    };
+
+    let facts = facts(ports(fs, sizer), proposer)
+        .remove(Path::new("/found/target"))
+        .unwrap();
+
+    assert!(matches!(facts.tracked, Tracked::NoRepository));
+    assert_eq!(facts.modified, Modified::Unknown(WalkGap::Untimed));
+}

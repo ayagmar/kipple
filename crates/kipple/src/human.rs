@@ -237,5 +237,6 @@ const fn walk_gap(gap: WalkGap) -> &'static str {
     match gap {
         WalkGap::Unread => "it couldn't be measured completely",
         WalkGap::OtherFileSystem => "a directory inside is on another file system and wasn't read",
+        WalkGap::Untimed => "an entry inside didn't say when it last changed",
     }
 }

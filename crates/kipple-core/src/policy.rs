@@ -161,6 +161,8 @@ pub enum WalkGap {
     /// Everything was read except directories on another file system, such as a mount
     /// or a btrfs subvolume, which the walk doesn't enter.
     OtherFileSystem,
+    /// Everything was read, but an entry didn't say when it last changed.
+    Untimed,
 }
 
 /// Whether a program is using the finding, from the running executables (D-035).

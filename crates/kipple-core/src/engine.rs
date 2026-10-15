@@ -532,6 +532,7 @@ impl Engine {
     /// What the host knows about a finding once measured. One that couldn't be measured
     /// completely, or held a mount the walk didn't enter, has no known modification time,
     /// and can't rule out a checkout inside. A checkout the walk did meet holds it anyway.
+    /// A complete walk with an entry that reported no time leaves only the time unknown.
     fn facts(
         &self,
         found: &Found,
@@ -546,7 +547,8 @@ impl Engine {
                 let age = self.ports.clock.now().duration_since(at);
                 Modified::Ago(age.unwrap_or_default())
             }
-            (gap, _) => Modified::Unknown(gap.unwrap_or(WalkGap::Unread)),
+            (None, None) => Modified::Unknown(WalkGap::Untimed),
+            (Some(gap), _) => Modified::Unknown(gap),
         };
         let above = shared.repositories.tracked(self.ports.fs.as_ref(), path);
         let tracked = if matches!(above, Tracked::NoRepository) {
