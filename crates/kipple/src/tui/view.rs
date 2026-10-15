@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use kipple_core::{Lens, ScanOutcome, Verdict};
+use kipple_core::{Lens, Level, ScanOutcome, Verdict};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout as Split, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -14,7 +14,6 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use super::app::{App, Layout, Line, Mode, Node, Progress, Row, Shelf};
 use crate::human::{self, bytes, escaped};
-use crate::json::LEVEL;
 
 /// A terminal at least this wide shows the detail pane beside the tree; a narrower one
 /// shows it below.
@@ -200,7 +199,7 @@ fn header(app: &App, look: Look) -> Paragraph<'static> {
         Span::raw(look.dot()),
         Span::raw("read-only"),
         Span::raw(look.dot()),
-        Span::raw(format!("level: {}", title_case(LEVEL.name()))),
+        Span::raw(format!("level: {}", title_case(app.policy.level.name()))),
         Span::raw(look.dot()),
         Span::raw(state),
     ];
@@ -503,10 +502,7 @@ fn labelled(label: &str, text: String) -> Text<'static> {
 fn finding_detail(app: &App, look: Look, row: &Row) -> Vec<Text<'static>> {
     let finding = &row.finding;
     let text = app.catalog.rules.get(&finding.rule);
-    let facts = finding
-        .facts
-        .as_ref()
-        .map_or_else(Vec::new, |facts| human::facts(facts, LEVEL));
+    let facts = human::facts(finding, &app.policy);
     let mut lines = vec![
         Text::from(vec![
             Span::styled(
@@ -514,7 +510,7 @@ fn finding_detail(app: &App, look: Look, row: &Row) -> Vec<Text<'static>> {
                 Style::new().add_modifier(Modifier::BOLD),
             ),
             Span::raw(look.dot()),
-            verdict_span(look, row),
+            verdict_span(look, row, app.policy.level_of(&row.finding.rule)),
         ]),
         Text::raw(escaped(&finding.path.display().to_string())),
     ];
@@ -527,7 +523,8 @@ fn finding_detail(app: &App, look: Look, row: &Row) -> Vec<Text<'static>> {
         lines.push(labelled("What it is", escaped(what)));
         lines.push(labelled("Why it's here", escaped(&text.why)));
     }
-    lines.push(labelled(why_label(row.shelf()), why(row)));
+    let level = app.policy.level_of(&row.finding.rule);
+    lines.push(labelled(why_label(row.shelf()), why(row, level)));
     if let Some(text) = text {
         lines.push(labelled("What you lose", escaped(&text.loss)));
     }
@@ -559,14 +556,14 @@ fn finding_detail(app: &App, look: Look, row: &Row) -> Vec<Text<'static>> {
     lines
 }
 
-fn verdict_span(look: Look, row: &Row) -> Span<'static> {
+fn verdict_span(look: Look, row: &Row, level: Level) -> Span<'static> {
     let text = row.verdict.as_ref().map_or_else(
         || "measuring".to_owned(),
         |verdict| {
             format!(
                 "{} at {}",
                 human::bucket(verdict.bucket()),
-                title_case(LEVEL.name())
+                title_case(level.name())
             )
         },
     );
@@ -582,12 +579,12 @@ const fn why_label(shelf: Shelf) -> &'static str {
     }
 }
 
-fn why(row: &Row) -> String {
+fn why(row: &Row, level: Level) -> String {
     match &row.verdict {
         None => "still being measured and checked".to_owned(),
         Some(Verdict::Safe) => format!(
             "passes every check at {}: recognised, comes back, untracked, no executable running inside, not recent",
-            title_case(LEVEL.name())
+            title_case(level.name())
         ),
         Some(verdict) => human::reasons(verdict),
     }

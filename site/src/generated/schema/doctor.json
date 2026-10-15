@@ -4,8 +4,12 @@
   "description": "`kipple doctor --json`.",
   "type": "object",
   "properties": {
+    "config": {
+      "description": "Where the config comes from and whether it can be used.",
+      "$ref": "#/$defs/ConfigOut"
+    },
     "config_file": {
-      "description": "The config file, when the config directory resolved.",
+      "description": "The config file, unless it is the default one and the config directory is unknown.",
       "anyOf": [
         {
           "$ref": "#/$defs/EntryOut"
@@ -72,12 +76,43 @@
     "kipple",
     "platform",
     "dirs",
+    "config",
     "roots",
     "integrations",
     "tools",
     "processes"
   ],
   "$defs": {
+    "ConfigOut": {
+      "description": "Where the config comes from and whether it can be used.",
+      "type": "object",
+      "properties": {
+        "problem": {
+          "description": "Why it can't be used, with its line and column, if it can't.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "`--config`, `KIPPLE_CONFIG` or `default`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "warnings": {
+          "description": "Each kept or excluded path that doesn't exist or can't be checked.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "warnings"
+      ]
+    },
     "DirOut": {
       "description": "One of kipple's directories.",
       "type": "object",

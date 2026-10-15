@@ -2,13 +2,15 @@
 //! unknown facts hold a finding in Protected and never make it Review, and the level moves
 //! only the line between Safe and Review.
 
+use std::collections::BTreeMap;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use kipple_core::{
-    Activity, ActivityGap, Bucket, Caution, Consequence, Cost, Facts, Hold, Level, Loss, Method,
-    Modified, ProbeError, Proposal, Recovery, Tracked, Verdict, WalkGap, classify,
+    Activity, ActivityGap, Bucket, Caution, Consequence, Cost, Facts, FileIdentity, HeldPath, Hold,
+    Level, Lineage, Loss, Method, Modified, Policy, ProbeError, Proposal, Recovery, RuleId,
+    RuleSettings, Tracked, Verdict, WalkGap,
 };
 
 const DAY: Duration = Duration::from_hours(24);
@@ -28,7 +30,14 @@ fn build_output() -> Facts {
         activity: Activity::Idle,
         modified: Modified::Ago(41 * DAY),
         recent_days: None,
+        lineage: Lineage::default(),
     }
+}
+
+/// The bucket of a Cargo target directory with `facts` at `level`, nothing else configured.
+fn classify(facts: &Facts, level: Level) -> Verdict {
+    let rule = RuleId("builtin.cargo.target".to_owned());
+    Policy::at(level).verdict(&rule, Path::new("/home/u/projects/app/target"), facts)
 }
 
 fn balanced(facts: &Facts) -> Verdict {
@@ -420,4 +429,238 @@ fn each_level_has_its_own_recent_window_and_a_rule_can_only_lengthen_it() {
             "{level}"
         );
     }
+}
+
+const TARGET: &str = "/home/u/projects/app/target";
+
+fn cargo() -> RuleId {
+    RuleId("builtin.cargo.target".to_owned())
+}
+
+/// The Cargo rule with `settings` of its own.
+fn own(settings: RuleSettings) -> BTreeMap<RuleId, RuleSettings> {
+    BTreeMap::from([(cargo(), settings)])
+}
+
+fn held(path: &str) -> HeldPath {
+    HeldPath {
+        forms: vec![PathBuf::from(path)],
+        ..HeldPath::default()
+    }
+}
+
+const fn id(file: u64) -> FileIdentity {
+    FileIdentity { volume: 1, file }
+}
+
+/// Build output at `TARGET` whose own identity is 30, under ancestors 20 and 10.
+fn identified() -> Facts {
+    Facts {
+        lineage: Lineage(vec![Some(id(30)), Some(id(20)), Some(id(10))]),
+        ..build_output()
+    }
+}
+
+#[test]
+fn a_kept_or_excluded_path_holds_a_finding_at_inside_or_above_it_whatever_the_case() {
+    // At, inside (the path is the project: the target is in it), above (removing the
+    // target would remove the kept file), a case variant and a trailing separator.
+    let holding = [
+        TARGET,
+        "/home/u/projects/app",
+        "/home/u/projects/app/target/release/bench",
+        "/HOME/U/Projects/App/Target",
+        "/home/u/projects/app/target/",
+    ];
+    for path in holding {
+        let kept = Policy {
+            keep: vec![held(path)],
+            ..Policy::default()
+        };
+        let excluded = Policy {
+            exclude: vec![held(path)],
+            ..Policy::default()
+        };
+        let facts = build_output();
+        assert_eq!(
+            kept.verdict(&cargo(), Path::new(TARGET), &facts),
+            Verdict::Protected(vec![Hold::Kept]),
+            "{path}"
+        );
+        assert_eq!(
+            excluded.verdict(&cargo(), Path::new(TARGET), &facts),
+            Verdict::Protected(vec![Hold::Excluded]),
+            "{path}"
+        );
+    }
+    // A sibling whose name only starts the same isn't held.
+    let sibling = Policy {
+        keep: vec![held("/home/u/projects/app/targets")],
+        ..Policy::default()
+    };
+    assert_eq!(
+        sibling.verdict(&cargo(), Path::new(TARGET), &build_output()),
+        Verdict::Safe
+    );
+}
+
+#[test]
+fn a_kept_path_matches_by_file_identity_whatever_path_reaches_it() {
+    // Reached through a linked parent, or named in another Unicode normalisation: the
+    // path differs, the identity doesn't.
+    let elsewhere = |own, above: Vec<Option<FileIdentity>>| Policy {
+        keep: vec![HeldPath {
+            forms: vec![PathBuf::from("/var/home/u/p")],
+            lineage: Lineage([vec![Some(id(own))], above].concat()),
+            note: None,
+        }],
+        ..Policy::default()
+    };
+    let at = |policy: &Policy, facts: &Facts| policy.verdict(&cargo(), Path::new(TARGET), facts);
+    let kept = Verdict::Protected(vec![Hold::Kept]);
+
+    // The finding itself, a directory above it, a directory below it.
+    assert_eq!(at(&elsewhere(30, vec![Some(id(5))]), &identified()), kept);
+    assert_eq!(at(&elsewhere(20, vec![Some(id(5))]), &identified()), kept);
+    assert_eq!(at(&elsewhere(40, vec![Some(id(30))]), &identified()), kept);
+    // Unrelated identity: not held.
+    assert_eq!(
+        at(&elsewhere(99, vec![Some(id(5))]), &identified()),
+        Verdict::Safe
+    );
+    // A finding whose own identity or ancestry couldn't be read might be below it.
+    let unread = Facts {
+        lineage: Lineage(vec![Some(id(30)), None, Some(id(10))]),
+        ..build_output()
+    };
+    assert_eq!(at(&elsewhere(99, vec![Some(id(5))]), &unread), kept);
+}
+
+#[test]
+fn a_tilde_entry_under_an_unknown_home_holds_every_finding_as_excluded() {
+    let unexpanded = HeldPath::default();
+    for policy in [
+        Policy {
+            keep: vec![unexpanded.clone()],
+            ..Policy::default()
+        },
+        Policy {
+            exclude: vec![unexpanded],
+            ..Policy::default()
+        },
+    ] {
+        assert_eq!(
+            policy.verdict(&cargo(), Path::new(TARGET), &build_output()),
+            Verdict::Protected(vec![Hold::Excluded])
+        );
+    }
+}
+
+#[test]
+fn kept_excluded_and_disabled_hold_at_every_level_and_every_rule_level() {
+    let disabled = RuleSettings {
+        disabled: true,
+        ..RuleSettings::default()
+    };
+    for &level in Level::ALL {
+        for &rule_level in Level::ALL {
+            let settings = RuleSettings {
+                level: Some(rule_level),
+                ..RuleSettings::default()
+            };
+            let policy = |rule| Policy {
+                level,
+                rules: own(rule),
+                ..Policy::default()
+            };
+            let off = policy(RuleSettings {
+                level: Some(rule_level),
+                ..disabled
+            });
+            let kept = Policy {
+                keep: vec![held(TARGET)],
+                ..policy(settings)
+            };
+            let excluded = Policy {
+                exclude: vec![held(TARGET)],
+                ..policy(settings)
+            };
+            let verdict =
+                |config: &Policy| config.verdict(&cargo(), Path::new(TARGET), &build_output());
+            assert_eq!(verdict(&off), Verdict::Protected(vec![Hold::Disabled]));
+            assert_eq!(verdict(&kept), Verdict::Protected(vec![Hold::Kept]));
+            assert_eq!(verdict(&excluded), Verdict::Protected(vec![Hold::Excluded]));
+        }
+    }
+    // A held finding still shows every other reason it is held.
+    let unknown = Facts {
+        layout_verified: false,
+        ..build_output()
+    };
+    let off = Policy {
+        rules: own(disabled),
+        ..Policy::default()
+    };
+    assert_eq!(
+        off.verdict(&cargo(), Path::new(TARGET), &unknown),
+        Verdict::Protected(vec![Hold::Disabled, Hold::UnknownLayout])
+    );
+}
+
+#[test]
+fn a_rules_own_level_wins_over_the_global_one_for_that_rule_only() {
+    // Reinstalled: Safe at Balanced, Review at Careful.
+    let reinstalled = Facts {
+        consequence: Some(Consequence {
+            recovery: Recovery::Reinstall,
+            loss: &[],
+            cost: Cost::Unknown,
+        }),
+        ..build_output()
+    };
+    let careful_cargo = Policy {
+        level: Level::Balanced,
+        rules: own(RuleSettings {
+            level: Some(Level::Careful),
+            ..RuleSettings::default()
+        }),
+        ..Policy::default()
+    };
+    let node = RuleId("builtin.node.node-modules".to_owned());
+    let at = |rule: &RuleId| careful_cargo.verdict(rule, Path::new(TARGET), &reinstalled);
+
+    assert_eq!(at(&cargo()), Verdict::Review(vec![Caution::Recovery]));
+    assert_eq!(at(&node), Verdict::Safe);
+    assert_eq!(careful_cargo.level_of(&cargo()), Level::Careful);
+    assert_eq!(careful_cargo.level_of(&node), Level::Balanced);
+}
+
+#[test]
+fn a_configured_recent_window_only_lengthens_the_effective_one() {
+    let aged = |days, recent_days| Facts {
+        modified: Modified::Ago(days * DAY),
+        recent_days,
+        ..build_output()
+    };
+    let with = |days| Policy {
+        rules: own(RuleSettings {
+            recent_days: Some(days),
+            ..RuleSettings::default()
+        }),
+        ..Policy::default()
+    };
+    let at = |policy: &Policy, facts: &Facts| policy.verdict(&cargo(), Path::new(TARGET), facts);
+    let recent = Verdict::Review(vec![Caution::Recent]);
+
+    // Longer than Balanced's 7 days: it wins.
+    assert_eq!(at(&with(30), &aged(29, None)), recent);
+    assert_eq!(at(&with(30), &aged(30, None)), Verdict::Safe);
+    // Shorter: no effect.
+    assert_eq!(at(&with(1), &aged(6, None)), recent);
+    // The longest of the level's, the rule's and the config's.
+    assert_eq!(at(&with(10), &aged(19, Some(20))), recent);
+    assert_eq!(
+        with(10).recent_window_days(&cargo(), &aged(0, Some(20))),
+        20
+    );
 }

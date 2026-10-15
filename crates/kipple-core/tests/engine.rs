@@ -16,10 +16,10 @@ use kipple_core::{
     Consequence, Cost, DirEntryMeta, Engine, EngineError, EntryKind, EntryMeta, EventRx, Evidence,
     Facts, FileIdentity, FindingSink, FsProbe, Hold, Integration, IntegrationDescriptor,
     IntegrationError, IntegrationId, Inventory, Lens, Level, Measurement, Method, Modified, Name,
-    Omission, Operation, Platform, Ports, ProbeError, ProcessOutcome, ProcessProbe, ProcessRecord,
-    ProcessSnapshot, Recovery, ResolvedRoot, RootLink, RootSource, Roots, Rule, RuleId, RuleText,
-    ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Selector, Sizer, SpaceEstimate,
-    SymbolicRoot, Tracked, UnresolvedRoot, Verdict, WalkGap, classify, event_channel,
+    Omission, Operation, Platform, Policy, Ports, ProbeError, ProcessOutcome, ProcessProbe,
+    ProcessRecord, ProcessSnapshot, Recovery, ResolvedRoot, RootLink, RootSource, Roots, Rule,
+    RuleId, RuleText, ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Selector,
+    Sizer, SpaceEstimate, SymbolicRoot, Tracked, UnresolvedRoot, Verdict, WalkGap, event_channel,
 };
 
 /// Ten times the 100 ms cancellation budget: long enough not to flake on a loaded CI
@@ -304,7 +304,11 @@ impl Integration for Emitter {
 fn found() -> ScanRequest {
     let mut roots = Roots::default();
     insert(&mut roots, SymbolicRoot::XdgCache, FOUND);
-    ScanRequest { roots, lens: None }
+    ScanRequest {
+        roots,
+        lens: None,
+        exclude: Vec::new(),
+    }
 }
 
 #[expect(
@@ -566,7 +570,14 @@ fn roots_that_cannot_be_read_are_omissions_and_are_never_handed_to_the_integrati
     )
     .unwrap();
 
-    let report = run(&engine, &ScanRequest { roots, lens: None });
+    let report = run(
+        &engine,
+        &ScanRequest {
+            roots,
+            lens: None,
+            exclude: Vec::new(),
+        },
+    );
 
     assert_eq!(*seen.lock().unwrap(), [PathBuf::from("/home")]);
     let omissions = &report.integrations[0].omissions;
@@ -623,7 +634,14 @@ fn an_integration_can_neither_probe_nor_report_anything_outside_its_roots() {
     )
     .unwrap();
 
-    let report = run(&engine, &ScanRequest { roots, lens: None });
+    let report = run(
+        &engine,
+        &ScanRequest {
+            roots,
+            lens: None,
+            exclude: Vec::new(),
+        },
+    );
 
     assert_eq!(
         *probes.lock().unwrap(),
@@ -756,7 +774,14 @@ fn a_root_resolved_through_a_link_is_read_only_while_it_leads_to_the_same_direct
     )
     .unwrap();
 
-    let report = run(&engine, &ScanRequest { roots, lens: None });
+    let report = run(
+        &engine,
+        &ScanRequest {
+            roots,
+            lens: None,
+            exclude: Vec::new(),
+        },
+    );
 
     assert_eq!(*seen.lock().unwrap(), [PathBuf::from("/same")]);
     assert!(matches!(
@@ -860,7 +885,14 @@ fn project_artifacts_are_found_in_one_walk_that_never_looks_inside_one_or_goes_t
     ];
     let engine = Engine::new(ports(fs, FakeSizer::default()), integrations, rules).unwrap();
 
-    let report = run(&engine, &ScanRequest { roots, lens: None });
+    let report = run(
+        &engine,
+        &ScanRequest {
+            roots,
+            lens: None,
+            exclude: Vec::new(),
+        },
+    );
 
     let found: Vec<_> = report
         .findings
@@ -1223,7 +1255,9 @@ fn a_mount_the_walk_skipped_inside_a_finding_holds_it_for_git_and_last_change() 
         Tracked::Unwalked(WalkGap::OtherFileSystem)
     ));
     assert_eq!(facts.modified, Modified::Unknown(WalkGap::OtherFileSystem));
-    let Verdict::Protected(holds) = classify(&facts, Level::Balanced) else {
+    let rule = RuleId("test.found".to_owned());
+    let at = Path::new("/found/target");
+    let Verdict::Protected(holds) = Policy::at(Level::Balanced).verdict(&rule, at, &facts) else {
         panic!("a finding with a skipped mount is never Safe or Review");
     };
     assert!(holds.contains(&Hold::UnknownGit));

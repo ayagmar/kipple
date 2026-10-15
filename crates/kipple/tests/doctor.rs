@@ -5,7 +5,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use kipple::doctor::{IntegrationRoots, Report, RootCheck};
+use kipple::doctor::{ConfigStatus, IntegrationRoots, Report, RootCheck};
 use kipple::{CANCELLED, exit_code};
 use kipple_core::{
     FileIdentity, IntegrationId, Inventory, Lens, ProbeError, ProcessSnapshot, ResolvedRoot,
@@ -47,6 +47,7 @@ fn report(cache_error: io::ErrorKind) -> Report {
             cache: unresolved(SymbolicRoot::XdgCache),
         },
         config_file: None,
+        config: ConfigStatus::default(),
         roots: vec![RootCheck {
             root: SymbolicRoot::XdgCache,
             status: Ok((cache, Err(failure))),

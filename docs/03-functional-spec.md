@@ -126,7 +126,7 @@ On every run:
 
 Secrets are redacted. Version probes run through the platform runner with deadlines.
 
-Today `doctor` reports kipple's own directories and config file, every symbolic root of the platform with its path (for a root that is itself a link, the link and the directory it leads to), source and what a no-follow probe found there (with the OS error when it can't be read), `git`, `paccache` and `journalctl` with their versions, and how many running processes could be identified, with whether the process listing is complete. The macOS Full Disk Access hint appears only after a permission failure. It also lists each built-in integration with the roots it reads on this platform, or that it has none here. `doctor --json` writes the same as a `kipple.doctor/v1` record. Detected tool versions per integration, omissions and pack compatibility arrive with third-party packs and the M2 support status.
+Today `doctor` reports kipple's own directories, the config file and where it came from (`--config`, `KIPPLE_CONFIG` or the default), why it can't be used if it can't (with its line and column), and a warning for each kept or excluded path that doesn't exist or can't be checked, every symbolic root of the platform with its path (for a root that is itself a link, the link and the directory it leads to), source and what a no-follow probe found there (with the OS error when it can't be read), `git`, `paccache` and `journalctl` with their versions, and how many running processes could be identified, with whether the process listing is complete. The macOS Full Disk Access hint appears only after a permission failure. It also lists each built-in integration with the roots it reads on this platform, or that it has none here. `doctor --json` writes the same as a `kipple.doctor/v1` record. Detected tool versions per integration, omissions and pack compatibility arrive with third-party packs and the M2 support status.
 
 ## 3. CLI surface
 
@@ -150,13 +150,15 @@ kipple completions SHELL
 Global flags: `--json`, `--events jsonl`, `--no-color` (and `NO_COLOR`), `--ascii`, `-q/--quiet`, `-v/--verbose`, `--config FILE`.
 
 Today only these exist, and nothing changes anything:
+- `--config FILE` works with every command. `kipple`, `kipple scan` and `kipple explain PATH` need a config they can use (§6) and otherwise exit 2 with the reason.
 - `kipple [--ascii]` opens the home screen in a terminal (§5), or prints each bucket's total when stdout isn't a terminal.
-- `kipple scan [--lens L] [--root PATH]... [--json | --events jsonl]` scans every root of the built-in integrations and reports each finding with its rule, evidence and size, then each integration's advice and omissions. `--root` replaces the default project roots. Each finding carries its bucket at the Balanced level with every reason (`verdict`), and the consequence its integration verified; the human report shows the bucket beside each finding. The Cargo, Node and Python rules propose removal, but nothing removes anything yet.
+- `kipple scan [--lens L] [--root PATH]... [--json | --events jsonl]` scans every root of the built-in integrations and reports each finding with its rule, evidence and size, then each integration's advice and omissions. `--root` replaces the default project roots. Each finding carries the level it is judged at (`level`: its rule's own, else `care.level`), its bucket at that level with every reason (`verdict`), and the consequence its integration verified; the human report shows the bucket beside each finding, with the reasons in parentheses when it isn't Safe. The configured project roots replace the defaults like `--root` does, and `--root` replaces them. An excluded path isn't walked and is listed as an omission. The Cargo, Node and Python rules propose removal, but nothing removes anything yet.
+- `kipple config path` prints the config file's path and where it came from; `kipple config show` prints the settings it gives. When the config can't be used, both still print what they can and exit 2 with the reason.
 - `kipple rules [--json]` lists the built-in integrations, packs and rules with their lens, roots, platforms and verified upstream versions, and the published capability set.
-- `kipple explain RULE` shows what a rule selects, why, and what is lost; `kipple explain PATH` runs a scan and shows what was found there and the evidence for it, or what it lies inside, or, when nothing was, what the scan couldn't cover. An unknown rule ID exits 2.
+- `kipple explain RULE` shows what a rule selects, why, and what is lost, without reading the config; `kipple explain PATH` runs a scan and shows what was found there and the evidence for it, or what it lies inside, or, when nothing was, what the scan couldn't cover. An unknown rule ID exits 2.
 - `kipple doctor [--json]` (J7).
 
-The global flags, `--require-complete`, and every other command come later.
+The other global flags, `--require-complete`, `config edit` and every other command come later.
 
 There is no `clean --all --force`. `--yes` suppresses the prompt only. It never changes the method, never unblocks anything and never widens scope.
 
@@ -183,7 +185,7 @@ There is no `clean --all --force`. `--yes` suppresses the prompt only. It never 
 
 Built with ratatui. Design goals: a calm, dense view where you always know what is selected and why.
 
-Status (M2 session 1, D-048): the home screen exists at the Balanced level, read-only. It has the bucket layout with Agents / Dev / System groups, the detail pane (right of the tree from 100 columns, below it otherwise), the footer totals, streaming sizes, the fuzzy filter, `tab` to show one lens, `s`, `a` and `c`, help, `g`/`G`, `NO_COLOR` and `--ascii`. A finding still being measured sits under **Measuring**, never in Safe, and can't be selected. `enter` and `c` say what is selected and that nothing was changed: review and removal come with M3. Not built yet: onboarding, levels other than Balanced, `p`/`P`, settings, size bars, the mouse and inline mode. The lens-first layout for the M2 comparison is behind the hidden `--layout lenses` flag.
+Status (M2 session 1, D-048): the home screen exists, read-only, and judges findings with the config (§6). It has the bucket layout with Agents / Dev / System groups, the detail pane (right of the tree from 100 columns, below it otherwise), the footer totals, streaming sizes, the fuzzy filter, `tab` to show one lens, `s`, `a` and `c`, help, `g`/`G`, `NO_COLOR` and `--ascii`. A finding still being measured sits under **Measuring**, never in Safe, and can't be selected. `enter` and `c` say what is selected and that nothing was changed: review and removal come with M3. Not built yet: onboarding, `p`/`P`, settings, size bars, the mouse and inline mode. The lens-first layout for the M2 comparison is behind the hidden `--layout lenses` flag.
 
 - **Layout:** Safe / Review / Protected buckets (J1) with Agents / Dev / System groups inside, a lens filter, a tree on the left with size bars, a detail pane on the right that moves below on narrow terminals, and a footer with the four totals and key hints. M2 compares this against a lens-first layout and keeps one.
 - **Keys:** `j/k` or arrows, `h/l` to collapse and expand, `/` fuzzy filter, `s` toggle, `a` add group, `c` add Safe bucket and review, `p`/`P` keep item/rule, `enter` review, `?` help, `q` quit. Mouse optional.
@@ -209,7 +211,9 @@ Every frontend uses the same directories (D-015, resolved by the platform since 
 
 On Windows, `%APPDATA%` and `%LOCALAPPDATA%` mean the `RoamingAppData` and `LocalAppData` Known Folders, read through the Known Folder API rather than the environment. A relative `XDG_*` value leaves the directory unknown, and `doctor` says so.
 
-Config file precedence: `--config FILE`, then `KIPPLE_CONFIG`, then `<config dir>/config.toml`. A missing config file is not an error, and the defaults below apply. An invalid one exits with code 2 and a line and column.
+Config file precedence: `--config FILE`, then `KIPPLE_CONFIG`, then `<config dir>/config.toml`. Only a missing file at the default location means the defaults below. Everything else exits with code 2 and the reason, with a line and column where there is one: a named file that is missing, unreadable, a directory or a link to nothing; an unknown config directory, unless a file is named; invalid TOML; an unknown key; a key below that isn't built yet ("not supported yet"); an invalid value; or a rule ID that isn't a built-in rule. Any built-in rule can be named, whatever the platform, so a config synced from Linux with a pacman rule loads on macOS. `kipple doctor` and `kipple config path|show` report the problem instead of failing; `kipple rules` and `kipple explain RULE` don't read the config.
+
+kipple will write the config itself from the TUI's `p` and `P` and from onboarding, which aren't built yet. The write that exists for them is one atomic replacement: it re-reads the file at write time and applies its edits to what is there, so changes made in an editor meanwhile survive, along with comments and every other key. A config file that is a link is written where it leads, the file's permissions are kept (a new file is private to the user), and the first write creates the config directory. A file that no longer reads as a valid config, an unknown config directory, or a path that isn't valid UTF-8 refuses the write and changes nothing.
 
 ### Defaults when no config exists
 
@@ -244,7 +248,7 @@ level = "careful"             # stricter than the global level for this rule onl
 recent_days = 30
 method = "trash"
 
-[keep]                        # written by `k` in the TUI
+[keep]                        # written by `p` in the TUI
 paths = [{ path = "~/projects/demo/target", note = "benchmark baseline" }]
 ```
 
@@ -256,9 +260,14 @@ paths = [{ path = "~/projects/demo/target", note = "benchmark baseline" }]
 | `clean.method` | string | `delete`, `trash` | global default method |
 | `rules.<id>.enabled` | bool | | `false` disables the rule entirely |
 | `rules.<id>.level` | string | the three levels | overrides `care.level` for this rule |
-| `rules.<id>.recent_days` | integer | 1–365 | can only lengthen the effective window (04 §2a); a shorter value is accepted but has no effect, and `doctor` warns |
-| `rules.<id>.method` | string | one of the rule's `operation.methods` | otherwise exit 2 with line and column |
-| `retention.<id>.*` | per rule | ≥ the rule's defaults | can only keep more |
+| `rules.<id>.recent_days` | integer | 1–365 | can only lengthen the effective window (04 §2a): the window is the longest of the level's, the rule's and this one. A shorter value is accepted but has no effect; `doctor` doesn't warn about it yet |
+| `rules.<id>.method` | string | one of the rule's `operation.methods` | not supported yet |
+| `retention.<id>.*` | per rule | ≥ the rule's defaults | not supported yet; can only keep more |
+| `review.confirm_by_typing_above` | size | | not supported yet |
+
+`clean.method` is checked and stored, but nothing removes anything yet. A key listed as not supported yet exits 2 with that message.
+
+Paths in `scan.project_roots`, `exclude.paths` and `keep.paths` are absolute or start with `~`, which means the home directory. A kept or excluded path holds a finding at it, inside it or above it (removing a parent would remove the path). Paths are compared by components, ignoring case and a trailing separator, both as written and below the directory a linked root leads to (D-041), and also by file identity, so a different spelling of the same directory still matches. When the home directory is unknown, an entry starting with `~` holds every finding as `excluded`. A path that doesn't exist or can't be checked is warned about on stderr and in `doctor`. An excluded path is not walked when looking for projects and is listed as an omission; an integration's own roots and the sizing of a finding above it still read it. A kept path is walked, and what is found there is Protected as `kept`. A rule turned off (`enabled = false` or `exclude.rules`) still runs, so its walk stops still apply, and its findings are Protected as `disabled`.
 
 Precedence:
 - **Method:** CLI `--method` > `rules.<id>.method` > `clean.method` > `delete`. A trash failure never falls back to delete.

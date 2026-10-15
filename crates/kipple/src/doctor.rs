@@ -2,7 +2,7 @@
 //! It only reads: roots, tool versions and the process table.
 
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use kipple_core::{
     EntryKind, EntryMeta, FsProbe as _, IntegrationId, Inventory, Lens, NativeTool, ProbeError,
@@ -10,12 +10,13 @@ use kipple_core::{
     ToolStatus, UnresolvedRoot,
 };
 use kipple_platform::{
-    CONFIG_FILE, Environment, KippleDir, KippleDirs, NoFollowFs, OsProcesses, PLATFORM,
-    kipple_dirs, permission_hint, probe_tools, resolve_roots,
+    Environment, KippleDir, KippleDirs, NoFollowFs, OsProcesses, PLATFORM, kipple_dirs,
+    permission_hint, probe_tools, resolve_roots,
 };
 use schemars::JsonSchema;
 use serde::Serialize;
 
+use crate::config::{self, ConfigError, Settings, Source};
 use crate::human::escaped;
 use crate::json::{DOCTOR, LensOut, PathOut, VERSION};
 use crate::setup::Builtin;
@@ -25,8 +26,11 @@ use crate::setup::Builtin;
 pub struct Report {
     /// kipple's own directories.
     pub dirs: KippleDirs,
-    /// The config file and what is there, when the config directory resolved.
+    /// The config file and what is there, unless it is the default one and the config
+    /// directory is unknown.
     pub config_file: Option<(PathBuf, Result<EntryMeta, ProbeError>)>,
+    /// Where the config comes from, and whether it can be used.
+    pub config: ConfigStatus,
     /// Every root on this platform.
     pub roots: Vec<RootCheck>,
     /// Every built-in integration and the roots it reads.
@@ -37,6 +41,17 @@ pub struct Report {
     pub processes: Result<ProcessSnapshot, ProbeError>,
     /// What to suggest when a permission failure was diagnosed.
     pub permission_hint: Option<&'static str>,
+}
+
+/// Where the config comes from, and whether it can be used.
+#[derive(Debug, Default)]
+pub struct ConfigStatus {
+    /// `--config`, `KIPPLE_CONFIG` or the default location, once looked for.
+    pub source: Option<Source>,
+    /// Why it can't be used, with its line and column.
+    pub error: Option<ConfigError>,
+    /// Kept or excluded paths that don't exist or can't be checked.
+    pub warnings: Vec<String>,
 }
 
 /// One root and what is at its path.
@@ -61,16 +76,35 @@ pub struct IntegrationRoots {
     pub roots: Vec<SymbolicRoot>,
 }
 
-/// Probes everything `doctor` reports.
+/// Probes everything `doctor` reports, with the config `flag` names, if any. A config that
+/// can't be used is reported, and the roots are then the defaults.
 #[must_use]
-pub fn gather(env: &Environment, builtin: &Builtin) -> Report {
-    let roots = resolve_roots(env, &[]);
-    let dirs = kipple_dirs(&roots);
-    let config_file = dirs.config.path.as_ref().ok().map(|dir| {
-        let file = dir.join(CONFIG_FILE);
-        let meta = NoFollowFs.metadata(&file);
-        (file, meta)
+pub fn gather(env: &Environment, flag: Option<&Path>, builtin: &Builtin) -> Report {
+    let upstream = resolve_roots(env, &[]);
+    let location = config::locate(env, flag, &upstream);
+    let config_file = location.path.as_ref().map(|file| {
+        let meta = NoFollowFs.metadata(file);
+        (file.clone(), meta)
     });
+    let (roots, config) = match Settings::load(env, flag, &[], &config::catalog(builtin)) {
+        Ok(settings) => {
+            let status = ConfigStatus {
+                source: Some(location.source),
+                error: None,
+                warnings: settings.warnings,
+            };
+            (settings.roots, status)
+        }
+        Err(error) => {
+            let status = ConfigStatus {
+                source: Some(location.source),
+                error: Some(error),
+                warnings: Vec::new(),
+            };
+            (upstream, status)
+        }
+    };
+    let dirs = kipple_dirs(&roots);
     let checks = roots
         .iter()
         .map(|(root, resolution)| RootCheck {
@@ -84,6 +118,7 @@ pub fn gather(env: &Environment, builtin: &Builtin) -> Report {
     Report {
         dirs,
         config_file,
+        config,
         roots: checks,
         integrations: integration_roots(builtin),
         tools: probe_tools(env),
@@ -147,13 +182,24 @@ impl Report {
         if let Some((file, meta)) = &self.config_file {
             let state = match meta {
                 Ok(_) => "present".to_owned(),
-                Err(e) if e.io_kind() == Some(io::ErrorKind::NotFound) => {
-                    "not present, the defaults apply".to_owned()
-                }
+                Err(e) if e.io_kind() == Some(io::ErrorKind::NotFound) => match self.config.error {
+                    None => "not present, the defaults apply".to_owned(),
+                    Some(_) => "not present".to_owned(),
+                },
                 Err(e) => format!("can't be read: {e}"),
             };
             let line = format!("{}: {state}", file.display());
             writeln!(out, "  {:<13}{}", "config file", escaped(&line))?;
+        }
+        if let Some(source) = self.config.source {
+            writeln!(out, "  {:<13}{source}", "config from")?;
+        }
+        if let Some(error) = &self.config.error {
+            let line = format!("can't be used: {error}");
+            writeln!(out, "  {:<13}{}", "config", escaped(&line))?;
+        }
+        for warning in &self.config.warnings {
+            writeln!(out, "  {:<13}{}", "warning", escaped(warning))?;
         }
         Ok(())
     }
@@ -322,8 +368,10 @@ pub struct DoctorOut {
     pub platform: &'static str,
     /// kipple's own directories: `config`, `data` and `cache`.
     pub dirs: Vec<DirOut>,
-    /// The config file, when the config directory resolved.
+    /// The config file, unless it is the default one and the config directory is unknown.
     pub config_file: Option<EntryOut>,
+    /// Where the config comes from and whether it can be used.
+    pub config: ConfigOut,
     /// Every root of this platform, in a fixed order.
     pub roots: Vec<RootOut>,
     /// Every built-in integration and the roots it reads.
@@ -334,6 +382,17 @@ pub struct DoctorOut {
     pub processes: ProcessesOut,
     /// A hint for a permission failure that was diagnosed.
     pub permission_hint: Option<&'static str>,
+}
+
+/// Where the config comes from and whether it can be used.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ConfigOut {
+    /// `--config`, `KIPPLE_CONFIG` or `default`.
+    pub source: Option<&'static str>,
+    /// Why it can't be used, with its line and column, if it can't.
+    pub problem: Option<String>,
+    /// Each kept or excluded path that doesn't exist or can't be checked.
+    pub warnings: Vec<String>,
 }
 
 /// One of kipple's directories.
@@ -462,6 +521,15 @@ impl Report {
                 .config_file
                 .as_ref()
                 .map(|(path, meta)| entry(path, meta)),
+            config: ConfigOut {
+                source: self.config.source.map(|source| match source {
+                    Source::Flag => "--config",
+                    Source::Env => config::VAR,
+                    Source::Default => "default",
+                }),
+                problem: self.config.error.as_ref().map(ToString::to_string),
+                warnings: self.config.warnings.clone(),
+            },
             roots: self.roots.iter().map(root_out).collect(),
             integrations: self.integrations.iter().map(integration_out).collect(),
             tools: self.tools.iter().map(tool_out).collect(),
@@ -471,7 +539,7 @@ impl Report {
     }
 }
 
-fn entry(path: &std::path::Path, meta: &Result<EntryMeta, ProbeError>) -> EntryOut {
+fn entry(path: &Path, meta: &Result<EntryMeta, ProbeError>) -> EntryOut {
     let (state, problem) = match meta {
         Ok(meta) => match meta.kind {
             EntryKind::Dir => (EntryState::Directory, None),

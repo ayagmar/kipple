@@ -26,6 +26,7 @@ pub use host::{SystemClock, clock, processes};
 pub use process::OsProcesses;
 pub use roots::{
     CONFIG_FILE, KippleDir, KippleDirs, follow_root_links, kipple_dirs, resolve_roots,
+    resolve_roots_from,
 };
 pub use walk::Walker;
 

@@ -7,20 +7,21 @@
 ```text
 Find what your tools leave behind and keep what matters
 
-Usage: kipple [OPTIONS]
-       kipple <COMMAND>
+Usage: kipple [OPTIONS] [COMMAND]
 
 Commands:
   scan     Find what your tools left behind. Read-only: nothing is changed
   rules    List the integrations and rules, and which of them run on this OS
   explain  Explain a rule, or what kipple found at a path and why. A path runs a scan
   doctor   Show where kipple looks, what it can read and which tools it found. Read-only
+  config   Show where the config file is, or what it says
   help     Print this message or the help of the given subcommand(s)
 
 Options:
-      --ascii    Draw the home screen with ASCII characters only
-  -h, --help     Print help
-  -V, --version  Print version
+      --config <FILE>  Read the config from this file instead of `KIPPLE_CONFIG` or the default location
+      --ascii          Draw the home screen with ASCII characters only
+  -h, --help           Print help
+  -V, --version        Print version
 
 Without a command, kipple opens the home screen in a terminal, or prints a summary when its output isn't a terminal. Read-only: nothing is changed.
 ```
@@ -39,6 +40,9 @@ Find what your tools left behind. Read-only: nothing is changed
 Usage: kipple scan [OPTIONS]
 
 Options:
+      --config <FILE>
+          Read the config from this file instead of `KIPPLE_CONFIG` or the default location
+
       --lens <LENS>
           Only this lens
 
@@ -71,8 +75,9 @@ List the integrations and rules, and which of them run on this OS
 Usage: kipple rules [OPTIONS]
 
 Options:
-      --json  Print one JSON envelope, with the capability catalog rules may use
-  -h, --help  Print help
+      --config <FILE>  Read the config from this file instead of `KIPPLE_CONFIG` or the default location
+      --json           Print one JSON envelope, with the capability catalog rules may use
+  -h, --help           Print help
 ```
 
 ## `kipple explain --help`
@@ -80,13 +85,14 @@ Options:
 ```text
 Explain a rule, or what kipple found at a path and why. A path runs a scan
 
-Usage: kipple explain <TARGET>
+Usage: kipple explain [OPTIONS] <TARGET>
 
 Arguments:
   <TARGET>  A rule ID such as `builtin.cargo.target`, or a path
 
 Options:
-  -h, --help  Print help
+      --config <FILE>  Read the config from this file instead of `KIPPLE_CONFIG` or the default location
+  -h, --help           Print help
 ```
 
 ## `kipple doctor --help`
@@ -97,6 +103,24 @@ Show where kipple looks, what it can read and which tools it found. Read-only
 Usage: kipple doctor [OPTIONS]
 
 Options:
-      --json  Print one JSON envelope
-  -h, --help  Print help
+      --config <FILE>  Read the config from this file instead of `KIPPLE_CONFIG` or the default location
+      --json           Print one JSON envelope
+  -h, --help           Print help
+```
+
+## `kipple config --help`
+
+```text
+Show where the config file is, or what it says
+
+Usage: kipple config [OPTIONS] <COMMAND>
+
+Commands:
+  path  Print the config file's path
+  show  Print the settings the config gives, or why it can't be used
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+      --config <FILE>  Read the config from this file instead of `KIPPLE_CONFIG` or the default location
+  -h, --help           Print help
 ```

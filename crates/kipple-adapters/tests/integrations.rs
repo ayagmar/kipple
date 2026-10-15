@@ -177,7 +177,15 @@ fn scan_built(temp: tempfile::TempDir) -> (tempfile::TempDir, ScanReport) {
     let engine = Engine::new(ports, builtin::integrations(), rules).unwrap();
     let cancel = CancelToken::new();
     let (events, rx) = event_channel(4096, &cancel);
-    let report = engine.scan(&ScanRequest { roots, lens: None }, &events, &cancel);
+    let report = engine.scan(
+        &ScanRequest {
+            roots,
+            lens: None,
+            exclude: Vec::new(),
+        },
+        &events,
+        &cancel,
+    );
     drop(rx);
     (temp, report)
 }

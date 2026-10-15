@@ -12,6 +12,7 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use crate::cancel::CancelToken;
 use crate::integration::IntegrationDescriptor;
+use crate::policy::HeldPath;
 use crate::probe::{DirEntryMeta, EntryKind, FsProbe, ProbeError};
 use crate::rule::{Rule, Selector};
 
@@ -40,6 +41,8 @@ pub(crate) struct Walk {
     pub(crate) stops: Vec<WalkStop>,
     /// Directories below the root that could not be listed, so were not covered.
     pub(crate) unreadable: Vec<ProbeError>,
+    /// Directories `exclude.paths` names, which the walk didn't enter.
+    pub(crate) excluded: Vec<PathBuf>,
     /// Set when the scan was cancelled before the walk finished.
     pub(crate) cancelled: bool,
 }
@@ -103,36 +106,50 @@ impl WalkPlan {
             .collect()
     }
 
-    fn walk(&self, fs: &dyn FsProbe, root: &Path, cancel: &CancelToken) -> Walk {
+    fn walk(
+        &self,
+        fs: &dyn FsProbe,
+        root: &Path,
+        exclude: &[HeldPath],
+        cancel: &CancelToken,
+    ) -> Walk {
+        let exclude = Exclusions { fs, paths: exclude };
         let mut walk = Walk::default();
+        if exclude.covers(root) {
+            walk.excluded.push(root.to_owned());
+            return walk;
+        }
         let mut pending = vec![(root.to_owned(), 0)];
-        while let Some((dir, depth)) = pending.pop() {
+        while let Some(at) = pending.pop() {
             if cancel.is_cancelled() {
                 walk.cancelled = true;
                 break;
             }
-            match fs.read_dir(&dir) {
+            match fs.read_dir(&at.0) {
                 Ok(entries) => {
-                    let below = self.visit(&dir, depth, &entries, &mut walk.stops);
-                    pending.extend(below.into_iter().map(|path| (path, depth + 1)));
+                    let below = self.visit(&exclude, &at, &entries, &mut walk);
+                    pending.extend(below.into_iter().map(|path| (path, at.1 + 1)));
                 }
                 Err(error) => walk.unreadable.push(error),
             }
         }
         walk.stops.sort_by(|a, b| a.path.cmp(&b.path));
         walk.unreadable.sort_by(|a, b| a.path().cmp(b.path()));
+        walk.excluded.sort();
         walk
     }
 
-    /// Records where the walk stops among the `entries` of `dir`, and returns the
-    /// subdirectories to descend into.
+    /// Records where the walk stops among the `entries` of `dir`, `depth` directories
+    /// below the root, and returns the subdirectories to descend into. An excluded
+    /// directory is neither.
     fn visit(
         &self,
-        dir: &Path,
-        depth: u32,
+        exclude: &Exclusions<'_>,
+        (dir, depth): &(PathBuf, u32),
         entries: &[DirEntryMeta],
-        stops: &mut Vec<WalkStop>,
+        walk: &mut Walk,
     ) -> Vec<PathBuf> {
+        let depth = *depth;
         let files: BTreeSet<String> = entries
             .iter()
             .filter(|entry| entry.kind == EntryKind::File)
@@ -150,14 +167,19 @@ impl WalkPlan {
                 .name
                 .to_str()
                 .is_some_and(|name| self.stops_at(name, &files));
-            if stop {
+            if !stop && depth + 1 >= self.max_depth {
+                continue;
+            }
+            if exclude.covers(&path) {
+                walk.excluded.push(path);
+            } else if stop {
                 let markers = self.markers(&files);
-                stops.push(WalkStop {
+                walk.stops.push(WalkStop {
                     path,
                     depth: depth + 1,
                     markers,
                 });
-            } else if depth + 1 < self.max_depth {
+            } else {
                 below.push(path);
             }
         }
@@ -165,11 +187,50 @@ impl WalkPlan {
     }
 }
 
-/// The walks of one scan, each run once by whichever integration asks first.
+/// The paths `exclude.paths` names, as the walk checks them.
+struct Exclusions<'a> {
+    fs: &'a dyn FsProbe,
+    paths: &'a [HeldPath],
+}
+
+impl Exclusions<'_> {
+    /// Whether the directory at `path` is excluded: an excluded path or inside one, by
+    /// its path or by its identity.
+    fn covers(&self, path: &Path) -> bool {
+        if self.paths.is_empty() {
+            return false;
+        }
+        if self.paths.iter().any(|excluded| excluded.covers(path)) {
+            return true;
+        }
+        let identities: Vec<_> = self.paths.iter().filter_map(|p| p.lineage.own()).collect();
+        if identities.is_empty() {
+            return false;
+        }
+        self.fs
+            .metadata(path)
+            .ok()
+            .and_then(|meta| meta.identity)
+            .is_some_and(|identity| identities.contains(&identity))
+    }
+}
+
+/// The walks of one scan, each run once by whichever integration asks first, none
+/// entering an excluded path.
 #[derive(Debug, Default)]
-pub(crate) struct Walks(Mutex<HashMap<PathBuf, Arc<OnceLock<Arc<Walk>>>>>);
+pub(crate) struct Walks {
+    cells: Mutex<HashMap<PathBuf, Arc<OnceLock<Arc<Walk>>>>>,
+    exclude: Vec<HeldPath>,
+}
 
 impl Walks {
+    pub(crate) fn new(exclude: &[HeldPath]) -> Self {
+        Self {
+            cells: Mutex::default(),
+            exclude: exclude.to_vec(),
+        }
+    }
+
     /// The walk of `root`, running it now unless another integration already did. Waits
     /// while another integration is running it.
     pub(crate) fn get(
@@ -180,9 +241,9 @@ impl Walks {
         cancel: &CancelToken,
     ) -> Arc<Walk> {
         let cell = {
-            let mut cells = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+            let mut cells = self.cells.lock().unwrap_or_else(PoisonError::into_inner);
             Arc::clone(cells.entry(root.to_owned()).or_default())
         };
-        Arc::clone(cell.get_or_init(|| Arc::new(plan.walk(fs, root, cancel))))
+        Arc::clone(cell.get_or_init(|| Arc::new(plan.walk(fs, root, &self.exclude, cancel))))
     }
 }

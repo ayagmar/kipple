@@ -7,9 +7,9 @@ use std::time::Duration;
 
 use kipple_core::{
     Activity, Advice, Allocated, Apparent, Category, Completeness, Consequence, Cost, Evidence,
-    Facts, Finding, FindingId, IntegrationId, IntegrationReport, Lens, Loss, Method, Modified,
-    Omission, ProbeError, Proposal, Recovery, RuleId, RuleText, ScanEvent, ScanOutcome, ScanReport,
-    SpaceEstimate, Tracked, WalkGap,
+    Facts, Finding, FindingId, HeldPath, IntegrationId, IntegrationReport, Lens, Lineage, Loss,
+    Method, Modified, Omission, ProbeError, Proposal, Recovery, RuleId, RuleText, ScanEvent,
+    ScanOutcome, ScanReport, SpaceEstimate, Tracked, WalkGap,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -101,6 +101,7 @@ fn safe() -> Facts {
         activity: Activity::Idle,
         modified: Modified::Ago(41 * DAY),
         recent_days: None,
+        lineage: Lineage::default(),
     }
 }
 
@@ -310,6 +311,33 @@ fn s_toggles_an_eligible_finding_and_refuses_a_protected_one_with_its_reason() {
     assert!(app.selected.is_empty(), "a Protected finding was selected");
     let notice = app.notice.as_deref().unwrap();
     assert!(notice.contains("unknown: layout"), "{notice}");
+}
+
+// Catches the home screen judging with the default policy instead of the configured one,
+// which would offer a kept project's artifacts as Safe.
+#[test]
+fn a_finding_under_a_kept_path_is_protected_and_s_refuses_it_as_kept() {
+    let mut app = App::new(catalog(), Layout::Buckets, 160, 48);
+    app.policy.keep.push(HeldPath {
+        forms: vec![PathBuf::from("/home/ada/projects/api")],
+        lineage: Lineage::default(),
+        note: Some("client work".to_owned()),
+    });
+    found(
+        &mut app,
+        1,
+        CARGO,
+        "builtin.cargo.target",
+        "/home/ada/projects/api/target",
+    );
+    measured(&mut app, 1, 512, safe());
+
+    assert_eq!(app.row(FindingId(1)).unwrap().shelf(), Shelf::Protected);
+    to(&mut app, 1);
+    press(&mut app, &[Key::Char('s')]);
+    assert!(app.selected.is_empty(), "a kept finding was selected");
+    let notice = app.notice.as_deref().unwrap();
+    assert!(notice.contains("kept"), "{notice}");
 }
 
 #[test]

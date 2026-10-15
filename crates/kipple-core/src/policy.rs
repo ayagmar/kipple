@@ -3,12 +3,13 @@
 //! is derived here from the facts the host established and the consequences the
 //! integration verified.
 
+use std::collections::BTreeMap;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::probe::ProbeError;
-use crate::rule::Method;
+use crate::probe::{FileIdentity, ProbeError};
+use crate::rule::{Method, RuleId};
 
 named! {
     /// How a removed finding comes back.
@@ -218,11 +219,44 @@ pub struct Facts {
     pub modified: Modified,
     /// Its rule's recent window, when it asks for more than the level's.
     pub recent_days: Option<u16>,
+    /// The file identities of the finding and of each directory above it, so a kept or
+    /// excluded path matches it whatever path reaches it.
+    pub lineage: Lineage,
+}
+
+/// The file identities of an entry, then of each directory above it up to the file
+/// system's root. `None` where one couldn't be read.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Lineage(pub Vec<Option<FileIdentity>>);
+
+impl Lineage {
+    /// The entry's own identity, when it was read.
+    #[must_use]
+    pub fn own(&self) -> Option<FileIdentity> {
+        self.0.first().copied().flatten()
+    }
+
+    /// Whether every identity was read.
+    #[must_use]
+    pub fn is_known(&self) -> bool {
+        !self.0.is_empty() && self.0.iter().all(Option::is_some)
+    }
+
+    fn contains(&self, identity: FileIdentity) -> bool {
+        self.0.contains(&Some(identity))
+    }
 }
 
 named! {
     /// Why a finding is Protected. Each is shown on its own, never lumped together.
     Hold {
+        /// Its rule is turned off in config (`exclude.rules` or `rules.<id>.enabled`).
+        Disabled = "disabled",
+        /// It is at, inside or above a path the user keeps (`keep.paths`).
+        Kept = "kept",
+        /// It is at, inside or above a path excluded in config (`exclude.paths`), or that
+        /// can't be ruled out because the home directory is unknown.
+        Excluded = "excluded",
         /// Its rule only reports.
         ReportOnly = "report-only",
         /// Its rule only reports; the tool's own cleanup is suggested instead.
@@ -299,27 +333,188 @@ impl fmt::Display for Verdict {
     }
 }
 
-/// The bucket of a finding with `facts` at `level`.
-///
-/// The first matching row of `docs/04-safety-model.md` §2a wins: not eligible is
-/// Protected, eligible and within the level is Safe, and every other eligible finding is
-/// Review.
-#[must_use]
-pub fn classify(facts: &Facts, level: Level) -> Verdict {
-    let holds = holds(facts);
-    if !holds.is_empty() {
-        return Verdict::Protected(holds);
+/// How a rule's findings are classified, from config.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RuleSettings {
+    /// Its own level, over the global one (`rules.<id>.level`).
+    pub level: Option<Level>,
+    /// Its own recent window, which can only lengthen the effective one
+    /// (`rules.<id>.recent_days`).
+    pub recent_days: Option<u16>,
+    /// Turned off: its findings are held as `disabled` (`exclude.rules`, or
+    /// `rules.<id>.enabled = false`).
+    pub disabled: bool,
+}
+
+/// A path from `keep.paths` or `exclude.paths`, in every form a finding's path may take.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HeldPath {
+    /// The absolute paths it means, compared by components and ignoring case: the path
+    /// as configured with `~` expanded, and the same path below the directory a linked
+    /// root leads to (D-041). Empty when it couldn't be expanded because the home
+    /// directory is unknown, which holds every finding.
+    pub forms: Vec<PathBuf>,
+    /// The identities of what is there and of each directory above it, as far as they
+    /// could be read: a finding with one of them, or below the first, is held whatever
+    /// path reaches it.
+    pub lineage: Lineage,
+    /// The user's note, for a kept path.
+    pub note: Option<String>,
+}
+
+impl HeldPath {
+    /// Whether a finding at `path`, with `lineage`, is at, inside or above this path.
+    /// Removing a directory above a kept path would remove it too.
+    #[must_use]
+    pub fn holds(&self, path: &Path, lineage: &Lineage) -> bool {
+        if self.forms.is_empty() || self.forms.iter().any(|form| related(path, form)) {
+            return true;
+        }
+        if let Some(identity) = self.lineage.own() {
+            // A finding whose ancestry can't be read might be below it.
+            if !lineage.is_known() || lineage.contains(identity) {
+                return true;
+            }
+        }
+        lineage.own().is_some_and(|own| self.lineage.contains(own))
     }
-    let cautions = cautions(facts, level);
-    if cautions.is_empty() {
-        Verdict::Safe
-    } else {
-        Verdict::Review(cautions)
+
+    /// Whether the directory at `path` is this path or inside it, by path alone: what the
+    /// project walk doesn't descend into.
+    #[must_use]
+    pub fn covers(&self, path: &Path) -> bool {
+        self.forms.iter().any(|form| starts_with(path, form))
     }
 }
 
-/// Every reason the finding isn't eligible. Unknown never makes it Review: it holds.
-fn holds(facts: &Facts) -> Vec<Hold> {
+/// Whether one of `a` and `b` is the other or inside it.
+fn related(a: &Path, b: &Path) -> bool {
+    starts_with(a, b) || starts_with(b, a)
+}
+
+/// Whether `path` is `base` or inside it, comparing components and ignoring case on every
+/// OS: a match only ever holds more.
+fn starts_with(path: &Path, base: &Path) -> bool {
+    let fold = |c: std::path::Component<'_>| c.as_os_str().to_string_lossy().to_lowercase();
+    let mut path = path.components().map(fold);
+    base.components()
+        .map(fold)
+        .all(|part| path.next() == Some(part))
+}
+
+/// Everything the user configured that decides buckets (`docs/03-functional-spec.md` §6).
+///
+/// The level, each rule's settings, and the paths kept and excluded. Every frontend gets
+/// its verdicts from [`Policy::verdict`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Policy {
+    /// The global level (`care.level`).
+    pub level: Level,
+    /// The rules with settings of their own.
+    pub rules: BTreeMap<RuleId, RuleSettings>,
+    /// The paths kept (`keep.paths`).
+    pub keep: Vec<HeldPath>,
+    /// The paths excluded (`exclude.paths`).
+    pub exclude: Vec<HeldPath>,
+}
+
+impl Default for Policy {
+    fn default() -> Self {
+        Self::at(Level::Balanced)
+    }
+}
+
+impl Policy {
+    /// `level` for every rule, and nothing kept, excluded or turned off.
+    #[must_use]
+    pub const fn at(level: Level) -> Self {
+        Self {
+            level,
+            rules: BTreeMap::new(),
+            keep: Vec::new(),
+            exclude: Vec::new(),
+        }
+    }
+
+    /// The level `rule`'s findings are classified at: its own, else the global one.
+    #[must_use]
+    pub fn level_of(&self, rule: &RuleId) -> Level {
+        self.settings(rule).level.unwrap_or(self.level)
+    }
+
+    /// The effective recent window of `rule`'s finding with `facts`, in days: the longest
+    /// of its level's, its rule's and the config's (`docs/04-safety-model.md` §2a).
+    #[must_use]
+    pub fn recent_window_days(&self, rule: &RuleId, facts: &Facts) -> u16 {
+        let settings = self.settings(rule);
+        let level = self.level_of(rule).recent_days();
+        [facts.recent_days, settings.recent_days]
+            .into_iter()
+            .flatten()
+            .fold(level, u16::max)
+    }
+
+    /// The kept path holding a finding at `path` with `lineage`, if any.
+    #[must_use]
+    pub fn kept(&self, path: &Path, lineage: &Lineage) -> Option<&HeldPath> {
+        self.keep.iter().find(|kept| kept.holds(path, lineage))
+    }
+
+    /// The bucket of `rule`'s finding at `path` with `facts`.
+    ///
+    /// The first matching row of `docs/04-safety-model.md` §2a wins: not eligible is
+    /// Protected, eligible and within the level is Safe, and every other eligible finding
+    /// is Review. A finding the config turns off, keeps or excludes is never eligible.
+    #[must_use]
+    pub fn verdict(&self, rule: &RuleId, path: &Path, facts: &Facts) -> Verdict {
+        let mut holds = self.config_holds(rule, path, facts);
+        holds.extend(fact_holds(facts));
+        if !holds.is_empty() {
+            return Verdict::Protected(holds);
+        }
+        let cautions = cautions(
+            facts,
+            self.level_of(rule),
+            self.recent_window_days(rule, facts),
+        );
+        if cautions.is_empty() {
+            Verdict::Safe
+        } else {
+            Verdict::Review(cautions)
+        }
+    }
+
+    fn settings(&self, rule: &RuleId) -> RuleSettings {
+        self.rules.get(rule).copied().unwrap_or_default()
+    }
+
+    /// What the config holds a finding for. A kept path that couldn't be expanded is
+    /// held as excluded: nothing is known to be kept there.
+    fn config_holds(&self, rule: &RuleId, path: &Path, facts: &Facts) -> Vec<Hold> {
+        let mut holds = Vec::new();
+        if self.settings(rule).disabled {
+            holds.push(Hold::Disabled);
+        }
+        let lineage = &facts.lineage;
+        let kept = self.keep.iter().filter(|kept| kept.holds(path, lineage));
+        let (unexpanded, kept): (Vec<_>, Vec<_>) = kept.partition(|kept| kept.forms.is_empty());
+        if !kept.is_empty() {
+            holds.push(Hold::Kept);
+        }
+        let excluded = self
+            .exclude
+            .iter()
+            .any(|excluded| excluded.holds(path, lineage));
+        if excluded || !unexpanded.is_empty() {
+            holds.push(Hold::Excluded);
+        }
+        holds
+    }
+}
+
+/// Every reason the facts make the finding ineligible. Unknown never makes it Review: it
+/// holds.
+fn fact_holds(facts: &Facts) -> Vec<Hold> {
     match facts.proposal {
         Proposal::Report => return vec![Hold::ReportOnly],
         Proposal::Advice => return vec![Hold::Advice],
@@ -350,10 +545,11 @@ fn holds(facts: &Facts) -> Vec<Hold> {
     holds
 }
 
-/// Every reason an eligible finding falls short of Safe at `level`.
-fn cautions(facts: &Facts, level: Level) -> Vec<Caution> {
+/// Every reason an eligible finding falls short of Safe at `level`, with a recent window
+/// of `window_days`.
+fn cautions(facts: &Facts, level: Level, window_days: u16) -> Vec<Caution> {
     let mut cautions = Vec::new();
-    let window = u64::from(facts.recent_window_days(level)) * 24 * 60 * 60;
+    let window = u64::from(window_days) * 24 * 60 * 60;
     if let Modified::Ago(age) = facts.modified
         && age < Duration::from_secs(window)
     {
@@ -376,15 +572,4 @@ fn cautions(facts: &Facts, level: Level) -> Vec<Caution> {
         cautions.push(Caution::HighCost);
     }
     cautions
-}
-
-impl Facts {
-    /// The effective recent window at `level`, in days: the longer of the level's and the
-    /// rule's (`docs/04-safety-model.md` §2a).
-    #[must_use]
-    pub fn recent_window_days(&self, level: Level) -> u16 {
-        let level_days = level.recent_days();
-        self.recent_days
-            .map_or(level_days, |days| days.max(level_days))
-    }
 }

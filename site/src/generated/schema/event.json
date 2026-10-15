@@ -115,7 +115,7 @@
           "const": "finding-updated"
         },
         "verdict": {
-          "description": "Its bucket at the report's level.",
+          "description": "Its bucket at its level.",
           "$ref": "#/$defs/VerdictOut"
         }
       },
@@ -399,6 +399,10 @@
           "description": "Its integration's lens.",
           "$ref": "#/$defs/LensOut"
         },
+        "level": {
+          "description": "The carefulness level its bucket is derived at: its rule's own\n(`rules.<id>.level`), else the global one.",
+          "type": "string"
+        },
         "path": {
           "description": "Where it is.",
           "$ref": "#/$defs/PathOut"
@@ -419,7 +423,7 @@
           ]
         },
         "verdict": {
-          "description": "Its bucket at the report's level, once measured.",
+          "description": "Its bucket at that level, once measured.",
           "anyOf": [
             {
               "$ref": "#/$defs/VerdictOut"
@@ -436,7 +440,8 @@
         "rule",
         "category",
         "path",
-        "evidence"
+        "evidence",
+        "level"
       ]
     },
     "IntegrationOut": {
@@ -587,7 +592,7 @@
           "type": "string"
         },
         "level": {
-          "description": "The carefulness level each finding's bucket was derived at.",
+          "description": "The global carefulness level (`care.level`). A finding whose rule has its own\ncarries that in its `level`.",
           "type": "string"
         },
         "outcome": {
@@ -678,7 +683,7 @@
           "$ref": "#/$defs/BucketOut"
         },
         "reasons": {
-          "description": "Why it isn't Safe: for Review, what falls short of the level (`recent`, `recovery`,\n`loss`, `high-cost`); for Protected, what holds it (`report-only`, `advice`,\n`unknown-layout`, `unknown-consequence`, `unknown-git`, `holds-repository`,\n`in-use`, `unknown-activity`, `unknown-modified`). Empty when Safe.",
+          "description": "Why it isn't Safe: for Review, what falls short of the level (`recent`, `recovery`,\n`loss`, `high-cost`); for Protected, what holds it (`disabled`, `kept`, `excluded`,\n`report-only`, `advice`, `unknown-layout`,\n`unknown-consequence`, `unknown-git`, `holds-repository`, `in-use`,\n`unknown-activity`, `unknown-modified`). Empty when Safe.",
           "type": "array",
           "items": {
             "type": "string"

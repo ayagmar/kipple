@@ -68,8 +68,8 @@ pub use integration::{
     IntegrationId, IntegrationSelector, ScanContext,
 };
 pub use policy::{
-    Activity, ActivityGap, Bucket, Caution, Consequence, Cost, Facts, Hold, Level, Loss, Modified,
-    Proposal, Recovery, Tracked, Verdict, WalkGap, classify,
+    Activity, ActivityGap, Bucket, Caution, Consequence, Cost, Facts, HeldPath, Hold, Level,
+    Lineage, Loss, Modified, Policy, Proposal, Recovery, RuleSettings, Tracked, Verdict, WalkGap,
 };
 pub use probe::{
     Clock, DirEntryMeta, EntryKind, EntryMeta, FileIdentity, FsProbe, ProbeError, Sizer,

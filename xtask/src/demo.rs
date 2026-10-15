@@ -58,7 +58,9 @@ pub(crate) fn verify(root: &Path) -> Result<()> {
             .args(["run", "--quiet", "-p", "kipple"])
             .args(features)
             .args(["--", "scan", "--json"])
-            .env("KIPPLE_TEST_ROOTS", demo.join("roots.txt")),
+            .env("KIPPLE_TEST_ROOTS", demo.join("roots.txt"))
+            // The config is the demo's own (none, so the defaults): never the runner's.
+            .env_remove("KIPPLE_CONFIG"),
     )?;
     let mut report: Value = serde_json::from_slice(&output).context("the scan printed no JSON")?;
     let prefix = demo.display().to_string();

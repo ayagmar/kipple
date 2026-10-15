@@ -21,6 +21,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
+use kipple::config::{self, Settings};
+use kipple::setup::Builtin;
 use kipple::tui::{self, Input, Key, Keys, Layout, Look, Options};
 use kipple_platform::Environment;
 use ratatui::Terminal;
@@ -165,14 +167,13 @@ fn scan(tree: &Path, env: &Environment, keys: usize) -> Result<Measured> {
             ascii: false,
         },
     };
+    // The config is the default one inside the empty home, which has none.
+    let builtin = Builtin::load().map_err(anyhow::Error::msg)?;
+    let catalog = config::catalog(&builtin);
+    let settings = Settings::load(env, None, &[tree.to_owned()], &catalog)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     let started = Instant::now();
-    let scanned = tui::run(
-        &mut terminal,
-        &mut pressed,
-        env,
-        &[tree.to_owned()],
-        options,
-    )?;
+    let scanned = tui::run(&mut terminal, &mut pressed, env, &settings, options)?;
     drop(stop);
     typist
         .join()

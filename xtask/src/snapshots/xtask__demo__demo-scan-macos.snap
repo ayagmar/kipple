@@ -25,6 +25,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "cargo",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/clients/acme/api/target"
       },
@@ -61,6 +62,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "cargo",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/rust-app/target"
       },
@@ -90,6 +92,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "node",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/bunapp/node_modules"
       },
@@ -129,6 +132,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "node",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/dash/node_modules"
       },
@@ -165,6 +169,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "node",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/web/node_modules"
       },
@@ -199,6 +204,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "python",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/tool/pkg/__pycache__"
       },
@@ -235,6 +241,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "python",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/tool/.venv"
       },
@@ -271,6 +278,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "python",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/uvproj/.venv"
       },
@@ -297,6 +305,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "trash",
       "lens": "system",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/.local/share/Trash/files"
       },

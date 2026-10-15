@@ -7,12 +7,12 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::time::Duration;
 
 use kipple_core::{
-    Advice, Finding, FindingId, IntegrationId, Lens, RuleId, RuleText, ScanEvent, ScanOutcome,
-    ScanReport, Verdict,
+    Advice, Finding, FindingId, IntegrationId, Lens, Policy, RuleId, RuleText, ScanEvent,
+    ScanOutcome, ScanReport, Verdict,
 };
 
 use super::filter;
-use crate::json::{LEVEL, OmissionOut, SizeOut};
+use crate::json::{OmissionOut, SizeOut};
 use crate::setup::Builtin;
 
 /// Which grouping the home screen puts first.
@@ -224,6 +224,8 @@ pub(crate) struct Totals {
 #[derive(Debug)]
 pub(crate) struct App {
     pub(crate) layout: Layout,
+    /// What every row's bucket comes from: the config's level, rules and paths.
+    pub(crate) policy: Policy,
     pub(crate) catalog: Catalog,
     pub(crate) rows: Vec<Row>,
     by_id: HashMap<FindingId, usize>,
@@ -249,6 +251,7 @@ impl App {
     pub(crate) fn new(catalog: Catalog, layout: Layout, width: u16, height: u16) -> Self {
         Self {
             layout,
+            policy: Policy::default(),
             catalog,
             rows: Vec::new(),
             by_id: HashMap::new(),
@@ -424,9 +427,9 @@ impl App {
             ScanEvent::FindingUpdated { id, size, facts } => {
                 if let Some(row) = self.by_id.get(&id).and_then(|&i| self.rows.get_mut(i)) {
                     row.size = size.as_ref().map(SizeOut::from);
-                    row.verdict = Some(kipple_core::classify(&facts, LEVEL));
                     row.finding.size = size;
                     row.finding.facts = Some(facts);
+                    row.verdict = row.finding.verdict(&self.policy);
                 }
             }
             ScanEvent::IntegrationCompleted {

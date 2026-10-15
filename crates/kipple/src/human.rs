@@ -1,8 +1,8 @@
 //! Text for people: escaping and sizes.
 
 use kipple_core::{
-    Activity, ActivityGap, Bucket, Caution, Facts, Hold, Level, Loss, Modified, Proposal, Recovery,
-    Tracked, Verdict, WalkGap,
+    Activity, ActivityGap, Bucket, Caution, Facts, Finding, Hold, Loss, Modified, Policy, Proposal,
+    Recovery, Tracked, Verdict, WalkGap,
 };
 
 use crate::json::{CompletenessOut, SizeOut};
@@ -73,6 +73,9 @@ pub(crate) const fn bucket(bucket: Bucket) -> &'static str {
 /// Why a finding is Protected, as a row shows it: never colour alone.
 pub(crate) const fn hold(hold: Hold) -> &'static str {
     match hold {
+        Hold::Disabled => "rule turned off",
+        Hold::Kept => "kept",
+        Hold::Excluded => "excluded by config",
         Hold::ReportOnly => "report only",
         Hold::Advice => "advice",
         Hold::UnknownLayout => "unknown: layout",
@@ -105,10 +108,18 @@ pub(crate) fn reasons(verdict: &Verdict) -> String {
     labels.join(", ")
 }
 
-/// What kipple established about a finding, as labelled lines for a detail view: what
-/// comes back and what is lost, then each check its bucket rests on.
-pub(crate) fn facts(facts: &Facts, level: Level) -> Vec<(&'static str, String)> {
+/// What kipple established about a finding, as labelled lines for a detail view: the
+/// note it is kept with, what comes back and what is lost, then each check its bucket
+/// rests on. Nothing until it is measured.
+pub(crate) fn facts(finding: &Finding, policy: &Policy) -> Vec<(&'static str, String)> {
     let mut lines = Vec::new();
+    let Some(facts) = &finding.facts else {
+        return lines;
+    };
+    if let Some(kept) = policy.kept(&finding.path, &facts.lineage) {
+        let note = kept.note.as_deref().unwrap_or("in the config's keep.paths");
+        lines.push(("Kept", escaped(note)));
+    }
     if let Some(consequence) = &facts.consequence {
         lines.push(("Comes back", recovery(consequence.recovery).to_owned()));
         lines.push(("You lose", losses(consequence.loss)));
@@ -128,7 +139,8 @@ pub(crate) fn facts(facts: &Facts, level: Level) -> Vec<(&'static str, String)> 
     }
     lines.push(("Git", tracked(&facts.tracked)));
     lines.push(("In use", activity(&facts.activity)));
-    lines.push(("Last change", modified(facts, level)));
+    let window = policy.recent_window_days(&finding.rule, facts);
+    lines.push(("Last change", modified(facts, window)));
     lines
 }
 
@@ -203,7 +215,7 @@ fn activity(activity: &Activity) -> String {
     }
 }
 
-fn modified(facts: &Facts, level: Level) -> String {
+fn modified(facts: &Facts, window: u16) -> String {
     let age = match facts.modified {
         Modified::Ago(age) => age,
         Modified::Unknown(gap) => return format!("unknown: {}", walk_gap(gap)),
@@ -214,7 +226,6 @@ fn modified(facts: &Facts, level: Level) -> String {
         1 => "1 day ago".to_owned(),
         days => format!("{days} days ago"),
     };
-    let window = facts.recent_window_days(level);
     if days < u64::from(window) {
         format!("{ago}, within the {window}-day recent window")
     } else {

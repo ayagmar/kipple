@@ -2,12 +2,13 @@
 //! read-only: integrations propose findings, the engine sizes them and reports.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
+use std::sync::{Mutex, PoisonError};
 use std::thread;
 
 use crate::cancel::CancelToken;
@@ -19,9 +20,9 @@ use crate::integration::{
     IntegrationId, ScanContext,
 };
 use crate::policy::{
-    Consequence, Facts, Level, Modified, Proposal, Tracked, Verdict, WalkGap, classify,
+    Consequence, Facts, HeldPath, Lineage, Modified, Policy, Proposal, Tracked, Verdict, WalkGap,
 };
-use crate::probe::{Clock, EntryKind, EntryMeta, FsProbe, ProbeError, Sizer};
+use crate::probe::{Clock, EntryKind, EntryMeta, FileIdentity, FsProbe, ProbeError, Sizer};
 use crate::process::ProcessProbe;
 use crate::root::{ResolvedRoot, Roots, SymbolicRoot, UnresolvedRoot};
 use crate::rule::{Category, Lens, Operation, Rule, RuleId};
@@ -55,15 +56,16 @@ pub struct Finding {
     /// What removing it would free, once sized.
     pub size: Option<SpaceEstimate>,
     /// What the host learned about it once it was measured, which its bucket is derived
-    /// from ([`classify`](crate::classify)).
+    /// from ([`Policy::verdict`]).
     pub facts: Option<Facts>,
 }
 
 impl Finding {
-    /// Its bucket at `level`, once measured.
+    /// Its bucket under `policy`, once measured.
     #[must_use]
-    pub fn verdict(&self, level: Level) -> Option<Verdict> {
-        self.facts.as_ref().map(|facts| classify(facts, level))
+    pub fn verdict(&self, policy: &Policy) -> Option<Verdict> {
+        let facts = self.facts.as_ref()?;
+        Some(policy.verdict(&self.rule, &self.path, facts))
     }
 }
 
@@ -130,6 +132,12 @@ pub enum Omission {
     /// whatever it found before is kept.
     #[error("the integration crashed")]
     Crashed,
+    /// The project walk didn't enter a directory `exclude.paths` names.
+    #[error("{} is excluded by config", path.display())]
+    Excluded {
+        /// The directory.
+        path: PathBuf,
+    },
 }
 
 /// Whether a scan ran to the end.
@@ -171,6 +179,8 @@ pub struct ScanRequest {
     pub roots: Roots,
     /// Only the integrations of this lens, or all of them.
     pub lens: Option<Lens>,
+    /// The paths `exclude.paths` names: the project walk doesn't enter them.
+    pub exclude: Vec<HeldPath>,
 }
 
 /// Why an engine can't be built.
@@ -226,6 +236,7 @@ struct Shared<'a> {
     walks: &'a Walks,
     repositories: &'a Repositories,
     processes: &'a Processes,
+    identities: &'a Identities,
 }
 
 /// One integration's findings and report.
@@ -298,9 +309,10 @@ impl Engine {
             };
         }
         let next_id = AtomicU64::new(0);
-        let walks = Walks::default();
+        let walks = Walks::new(&req.exclude);
         let repositories = Repositories::default();
         let processes = Processes::default();
+        let identities = Identities::default();
         let shared = Shared {
             roots: &req.roots,
             events,
@@ -309,6 +321,7 @@ impl Engine {
             walks: &walks,
             repositories: &repositories,
             processes: &processes,
+            identities: &identities,
         };
         let runs = self.run_all(&selected, shared);
         let outcome = if cancel.is_cancelled() {
@@ -379,16 +392,19 @@ impl Engine {
         }
         // A directory under two paths of a root is one gap, in path order.
         let mut unlisted = BTreeMap::new();
+        let mut excluded = BTreeSet::new();
         for walk in cx.walked.take().into_values() {
             for error in &walk.unreadable {
                 unlisted.insert(error.path().to_owned(), error.clone());
             }
+            excluded.extend(walk.excluded.iter().cloned());
         }
         omissions.extend(
             unlisted
                 .into_values()
                 .map(|error| Omission::Unlisted { error }),
         );
+        omissions.extend(excluded.into_iter().map(|path| Omission::Excluded { path }));
         let (mut found, advice) = (sink.found, sink.advice);
         found.sort_by(|a, b| a.finding.path.cmp(&b.finding.path));
         let owner = Owner {
@@ -559,6 +575,7 @@ impl Engine {
             activity: shared.processes.activity(processes, path),
             modified,
             recent_days: rule.and_then(|rule| rule.recent_days),
+            lineage: shared.identities.lineage(self.ports.fs.as_ref(), path),
         }
     }
 }
@@ -572,6 +589,34 @@ const fn walk_gap(measurement: &Measurement) -> Option<WalkGap> {
             skipped_mounts: 1..,
         } => Some(WalkGap::OtherFileSystem),
         Completeness::Incomplete { .. } | Completeness::Cancelled => Some(WalkGap::Unread),
+    }
+}
+
+/// The file identities read in one scan. Findings share most of their ancestors, so each
+/// directory is read once.
+#[derive(Debug, Default)]
+struct Identities(Mutex<HashMap<PathBuf, Option<FileIdentity>>>);
+
+impl Identities {
+    /// The identities of `item` and of every directory above it.
+    fn lineage(&self, fs: &dyn FsProbe, item: &Path) -> Lineage {
+        Lineage(item.ancestors().map(|dir| self.identity(fs, dir)).collect())
+    }
+
+    fn identity(&self, fs: &dyn FsProbe, path: &Path) -> Option<FileIdentity> {
+        let known = self
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(path)
+            .copied();
+        if let Some(identity) = known {
+            return identity;
+        }
+        let identity = fs.metadata(path).ok().and_then(|meta| meta.identity);
+        let mut cache = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        cache.insert(path.to_owned(), identity);
+        identity
     }
 }
 

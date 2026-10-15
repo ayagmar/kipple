@@ -5,11 +5,11 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use kipple_core::{Operation, Pack, Rule, ScanOutcome, ScanReport, Selector};
+use kipple_core::{Operation, Pack, Policy, Rule, ScanOutcome, ScanReport, Selector};
 use kipple_platform::PLATFORM;
 
 use crate::human::{self, bytes, escaped, size};
-use crate::json::{EvidenceOut, FindingOut, LEVEL, LensOut};
+use crate::json::{EvidenceOut, FindingOut, LensOut};
 use crate::rules::lens;
 use crate::setup::Builtin;
 
@@ -105,6 +105,7 @@ pub(crate) fn write_path(
     builtin: &Builtin,
     path: &Path,
     report: &ScanReport,
+    policy: &Policy,
 ) -> io::Result<()> {
     let findings = &report.findings;
     let wanted = comparable(path);
@@ -133,7 +134,7 @@ pub(crate) fn write_path(
         );
     };
     let lens = builtin.lenses().get(&finding.integration).copied();
-    let shown = FindingOut::new(finding, lens.unwrap_or(kipple_core::Lens::System));
+    let shown = FindingOut::new(finding, lens.unwrap_or(kipple_core::Lens::System), policy);
     writeln!(out, "{}", escaped(&shown.path.display))?;
     writeln!(out, "  {:<15} {}", "Storage", size(shown.size.as_ref()))?;
     if let Some(measured) = &shown.size {
@@ -152,17 +153,18 @@ pub(crate) fn write_path(
             escaped(&evidence_line(evidence))
         )?;
     }
-    if let Some(verdict) = finding.verdict(LEVEL) {
+    if let Some(verdict) = finding.verdict(policy) {
         let reasons = human::reasons(&verdict);
         let bucket = human::bucket(verdict.bucket());
+        let level = policy.level_of(&finding.rule);
         let line = if reasons.is_empty() {
-            format!("{bucket} at the {LEVEL} level")
+            format!("{bucket} at the {level} level")
         } else {
-            format!("{bucket} at the {LEVEL} level: {reasons}")
+            format!("{bucket} at the {level} level: {reasons}")
         };
         writeln!(out, "  {:<15} {line}", "Bucket")?;
     }
-    for (label, text) in finding.facts.iter().flat_map(|f| human::facts(f, LEVEL)) {
+    for (label, text) in human::facts(finding, policy) {
         writeln!(out, "  {label:<15} {text}")?;
     }
     writeln!(out)?;

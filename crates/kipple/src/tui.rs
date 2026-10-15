@@ -10,12 +10,11 @@ mod filter;
 mod view;
 
 use std::io;
-use std::path::PathBuf;
 use std::thread::{self, ScopedJoinHandle};
 use std::time::{Duration, Instant};
 
 use kipple_core::{CancelToken, EventRx, ScanOutcome, ScanReport, ScanRequest, event_channel};
-use kipple_platform::{Environment, resolve_roots};
+use kipple_platform::Environment;
 use ratatui::Terminal;
 use ratatui::backend::Backend;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -23,6 +22,7 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, Ke
 use self::app::{App, Catalog, Msg};
 pub use self::app::{Key, Layout};
 pub use self::view::Look;
+use crate::config::Settings;
 use crate::setup::Builtin;
 
 /// How long the loop waits for a key while the scan streams: one frame at 60 Hz.
@@ -69,7 +69,7 @@ pub struct Options {
 
 /// Runs the home screen on `terminal` until it is closed.
 ///
-/// It scans `roots` (or the default project roots) on the machine `env` describes, and
+/// It scans the roots of `settings` on the machine `env` describes, with their policy, and
 /// returns how long the scan took when it finished before the screen was closed. Closing
 /// it earlier cancels the scan.
 ///
@@ -79,7 +79,7 @@ pub fn run<B: Backend>(
     terminal: &mut Terminal<B>,
     keys: &mut dyn Keys,
     env: &Environment,
-    roots: &[PathBuf],
+    settings: &Settings,
     options: Options,
 ) -> io::Result<Option<Duration>>
 where
@@ -88,8 +88,9 @@ where
     let builtin = Builtin::load().map_err(io::Error::other)?;
     let engine = builtin.engine(env).map_err(io::Error::other)?;
     let request = ScanRequest {
-        roots: resolve_roots(env, roots),
+        roots: settings.roots.clone(),
         lens: None,
+        exclude: settings.policy.exclude.clone(),
     };
     let size = terminal.size().map_err(io::Error::other)?;
     let mut app = App::new(
@@ -98,6 +99,7 @@ where
         size.width,
         size.height,
     );
+    app.policy = settings.policy.clone();
     let cancel = CancelToken::new();
     let (events, received) = event_channel(STREAM_CAPACITY, &cancel);
     thread::scope(|scope| {
@@ -124,12 +126,12 @@ where
 
 /// Opens the home screen in this terminal and restores the terminal however it ends:
 /// on quit, on error, and on panic (ratatui's panic hook).
-pub(crate) fn open(env: &Environment, options: Options) -> io::Result<()> {
+pub(crate) fn open(env: &Environment, settings: &Settings, options: Options) -> io::Result<()> {
     // Before `try_init`: it enables raw mode first, and that stays on if entering the
     // alternate screen then fails.
     let _restore = Restore;
     let mut terminal = ratatui::try_init()?;
-    run(&mut terminal, &mut TerminalKeys, env, &[], options).map(|_| ())
+    run(&mut terminal, &mut TerminalKeys, env, settings, options).map(|_| ())
 }
 
 /// Leaves raw mode and the alternate screen when dropped.

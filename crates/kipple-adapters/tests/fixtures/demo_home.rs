@@ -16,6 +16,8 @@ pub(crate) const ROOTS: &[(&str, &str)] = &[
     ("xdg.cache", "home/.cache"),
     ("xdg.data", "home/.local/share"),
     ("xdg.state", "home/.local/state"),
+    // kipple's own config directory on Windows; `xdg.config` holds it elsewhere.
+    ("known.roaming-app-data", "home/AppData/Roaming"),
     ("config.project-roots", "home/projects"),
     ("trash", "home/.local/share/Trash/files"),
     ("claude.config", "home/.claude"),

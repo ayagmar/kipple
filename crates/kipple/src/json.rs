@@ -7,7 +7,8 @@ use std::path::Path;
 
 use kipple_core::{
     Advice, Completeness, Consequence, Evidence, Finding, IntegrationId, IntegrationReport, Lens,
-    Level, Omission, ScanOutcome, ScanReport, SpaceEstimate, SymbolicRoot, UnresolvedRoot, Verdict,
+    Omission, Policy, ScanOutcome, ScanReport, SpaceEstimate, SymbolicRoot, UnresolvedRoot,
+    Verdict,
 };
 use kipple_platform::{PLATFORM, raw_path};
 use schemars::JsonSchema;
@@ -102,7 +103,8 @@ pub struct ScanOut {
     pub platform: &'static str,
     /// Whether the scan ran to the end.
     pub outcome: OutcomeOut,
-    /// The carefulness level each finding's bucket was derived at.
+    /// The global carefulness level (`care.level`). A finding whose rule has its own
+    /// carries that in its `level`.
     pub level: &'static str,
     /// Every finding, sorted by lens, rule, then path.
     pub findings: Vec<FindingOut>,
@@ -111,14 +113,19 @@ pub struct ScanOut {
 }
 
 impl ScanOut {
-    /// The envelope of `report`, each integration with its lens from `lenses`.
+    /// The envelope of `report`, each integration with its lens from `lenses`, each
+    /// finding's bucket from `policy`.
     #[must_use]
-    pub fn new(report: &ScanReport, lenses: &BTreeMap<IntegrationId, Lens>) -> Self {
+    pub fn new(
+        report: &ScanReport,
+        lenses: &BTreeMap<IntegrationId, Lens>,
+        policy: &Policy,
+    ) -> Self {
         let lens = |id| lenses.get(&id).copied().unwrap_or(Lens::System);
         let mut findings: Vec<FindingOut> = report
             .findings
             .iter()
-            .map(|finding| FindingOut::new(finding, lens(finding.integration)))
+            .map(|finding| FindingOut::new(finding, lens(finding.integration), policy))
             .collect();
         findings.sort_by(|a, b| a.order().cmp(&b.order()));
         let mut integrations: Vec<IntegrationOut> = report
@@ -132,7 +139,7 @@ impl ScanOut {
             kipple: VERSION,
             platform: PLATFORM.name(),
             outcome: report.outcome.into(),
-            level: LEVEL.name(),
+            level: policy.level.name(),
             findings,
             integrations,
         }
@@ -161,9 +168,6 @@ impl From<Lens> for LensOut {
     }
 }
 
-/// The carefulness level buckets are derived at, until it can be configured.
-pub(crate) const LEVEL: Level = Level::Balanced;
-
 /// A bucket of the home screen (`docs/04-safety-model.md` §2a).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
@@ -182,9 +186,10 @@ pub struct VerdictOut {
     /// The bucket.
     pub bucket: BucketOut,
     /// Why it isn't Safe: for Review, what falls short of the level (`recent`, `recovery`,
-    /// `loss`, `high-cost`); for Protected, what holds it (`report-only`, `advice`,
-    /// `unknown-layout`, `unknown-consequence`, `unknown-git`, `holds-repository`,
-    /// `in-use`, `unknown-activity`, `unknown-modified`). Empty when Safe.
+    /// `loss`, `high-cost`); for Protected, what holds it (`disabled`, `kept`, `excluded`,
+    /// `report-only`, `advice`, `unknown-layout`,
+    /// `unknown-consequence`, `unknown-git`, `holds-repository`, `in-use`,
+    /// `unknown-activity`, `unknown-modified`). Empty when Safe.
     pub reasons: Vec<&'static str>,
 }
 
@@ -247,16 +252,19 @@ pub struct FindingOut {
     pub evidence: Vec<EvidenceOut>,
     /// What removing it would free, once sized.
     pub size: Option<SizeOut>,
-    /// Its bucket at the report's level, once measured.
+    /// The carefulness level its bucket is derived at: its rule's own
+    /// (`rules.<id>.level`), else the global one.
+    pub level: &'static str,
+    /// Its bucket at that level, once measured.
     pub verdict: Option<VerdictOut>,
     /// What removing it costs, once measured, when its integration verified that.
     pub consequence: Option<ConsequenceOut>,
 }
 
 impl FindingOut {
-    /// `finding`, whose integration has `lens`.
+    /// `finding`, whose integration has `lens`, its bucket from `policy`.
     #[must_use]
-    pub fn new(finding: &Finding, lens: Lens) -> Self {
+    pub fn new(finding: &Finding, lens: Lens, policy: &Policy) -> Self {
         Self {
             integration: finding.integration.0.to_owned(),
             lens: lens.into(),
@@ -265,7 +273,8 @@ impl FindingOut {
             path: PathOut::new(&finding.path),
             evidence: finding.evidence.iter().map(EvidenceOut::from).collect(),
             size: finding.size.as_ref().map(SizeOut::from),
-            verdict: finding.verdict(LEVEL).as_ref().map(VerdictOut::from),
+            level: policy.level_of(&finding.rule).name(),
+            verdict: finding.verdict(policy).as_ref().map(VerdictOut::from),
             consequence: finding
                 .facts
                 .as_ref()
@@ -436,6 +445,7 @@ impl From<&Omission> for OmissionOut {
             Omission::DiscoveryFailed { error } => ("discovery-failed", None, Some(error.path())),
             Omission::SizingFailed { error, .. } => ("sizing-failed", None, Some(error.path())),
             Omission::Crashed => ("crashed", None, None),
+            Omission::Excluded { path } => ("excluded", None, Some(path)),
         };
         Self {
             kind,
@@ -505,7 +515,7 @@ pub enum EventBody {
         /// Its ID within this scan, for `finding-updated`.
         id: u64,
         /// What was found.
-        finding: FindingOut,
+        finding: Box<FindingOut>,
     },
     /// A finding was measured, and its bucket derived.
     FindingUpdated {
@@ -513,7 +523,7 @@ pub enum EventBody {
         id: u64,
         /// What removing it would free, unless it couldn't be sized.
         size: Option<SizeOut>,
-        /// Its bucket at the report's level.
+        /// Its bucket at its level.
         verdict: VerdictOut,
     },
     /// An integration finished.
