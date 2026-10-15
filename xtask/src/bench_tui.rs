@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use kipple::config::{self, Settings};
 use kipple::setup::Builtin;
-use kipple::tui::{self, Input, Key, Keys, Layout, Look, Options};
+use kipple::tui::{self, Input, Key, Keys, Look};
 use kipple_platform::Environment;
 use ratatui::Terminal;
 use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
@@ -160,12 +160,9 @@ fn scan(tree: &Path, env: &Environment, keys: usize) -> Result<Measured> {
         inbox,
         delivered: Vec::new(),
     };
-    let options = Options {
-        layout: Layout::Buckets,
-        look: Look {
-            color: true,
-            ascii: false,
-        },
+    let look = Look {
+        color: true,
+        ascii: false,
     };
     // The config is the default one inside the empty home, which has none.
     let builtin = Builtin::load().map_err(anyhow::Error::msg)?;
@@ -173,7 +170,7 @@ fn scan(tree: &Path, env: &Environment, keys: usize) -> Result<Measured> {
     let settings = Settings::load(env, None, &[tree.to_owned()], &catalog)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     let started = Instant::now();
-    let scanned = tui::run(&mut terminal, &mut pressed, env, &settings, options)?;
+    let scanned = tui::run(&mut terminal, &mut pressed, env, &settings, look)?;
     drop(stop);
     typist
         .join()

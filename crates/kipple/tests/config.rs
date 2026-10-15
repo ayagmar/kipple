@@ -384,10 +384,7 @@ fn commands_that_scan_need_a_usable_config_and_the_others_ignore_it() {
 fn the_home_screens_options_are_refused_with_a_command() {
     let demo = Demo::new(&[], "");
     let env = demo.env(&[]);
-    for args in [
-        vec!["--ascii", "scan"],
-        vec!["--layout", "buckets", "rules"],
-    ] {
+    for args in [vec!["--ascii", "scan"], vec!["--ascii", "rules"]] {
         let (code, out, err) = kipple(&env, &args);
         assert_eq!(code, ExitCode::from(USAGE), "{args:?}");
         assert_eq!(out, "");

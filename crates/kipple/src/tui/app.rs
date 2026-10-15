@@ -15,16 +15,6 @@ use super::filter;
 use crate::json::{OmissionOut, SizeOut};
 use crate::setup::Builtin;
 
-/// Which grouping the home screen puts first.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Layout {
-    /// Safe, Review and Protected, each grouped into Agents, Dev and System.
-    Buckets,
-    /// Agents, Dev and System, each split into Safe, Review and Protected. Kept only for
-    /// the M2 comparison (`docs/11-delivery-plan.md`).
-    Lenses,
-}
-
 /// A key, as the home screen reads it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Key {
@@ -100,11 +90,9 @@ impl Shelf {
 /// One line of the tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Node {
-    /// A bucket heading (bucket layout).
+    /// A bucket heading.
     Shelf(Shelf),
-    /// A lens heading (lens layout).
-    Lens(Lens),
-    /// A bucket within a lens, or a lens within a bucket.
+    /// A lens within a bucket.
     Group(Shelf, Lens),
     /// A finding.
     Finding(FindingId),
@@ -223,7 +211,6 @@ pub(crate) struct Totals {
 /// The home screen.
 #[derive(Debug)]
 pub(crate) struct App {
-    pub(crate) layout: Layout,
     /// What every row's bucket comes from: the config's level, rules and paths.
     pub(crate) policy: Policy,
     pub(crate) catalog: Catalog,
@@ -248,9 +235,8 @@ pub(crate) struct App {
 }
 
 impl App {
-    pub(crate) fn new(catalog: Catalog, layout: Layout, width: u16, height: u16) -> Self {
+    pub(crate) fn new(catalog: Catalog, width: u16, height: u16) -> Self {
         Self {
-            layout,
             policy: Policy::default(),
             catalog,
             rows: Vec::new(),
@@ -300,11 +286,11 @@ impl App {
     /// collapsed.
     pub(crate) fn lines(&self) -> Vec<Line> {
         let mut groups: BTreeMap<(Node, Node), Vec<&Row>> = BTreeMap::new();
-        for top in self.tops() {
+        for top in Self::tops() {
             groups.entry((top, top)).or_default();
         }
         for row in self.rows.iter().filter(|row| self.shown(row)) {
-            groups.entry(self.place(row)).or_default().push(row);
+            groups.entry(Self::place(row)).or_default().push(row);
         }
         let mut lines = Vec::new();
         let mut last_top = None;
@@ -340,7 +326,7 @@ impl App {
     pub(crate) fn under(&self, node: Node) -> impl Iterator<Item = &Row> {
         self.rows
             .iter()
-            .filter(move |row| self.shown(row) && self.holds(node, row))
+            .filter(move |row| self.shown(row) && Self::holds(node, row))
     }
 
     /// The line the cursor is on, as an index into `lines`.
@@ -369,30 +355,19 @@ impl App {
 
     /// The headings shown even when nothing is under them, so an empty bucket reads as
     /// empty rather than missing.
-    fn tops(&self) -> Vec<Node> {
-        match self.layout {
-            Layout::Buckets => Shelf::SORTED.iter().map(|&s| Node::Shelf(s)).collect(),
-            Layout::Lenses => Lens::ALL
-                .iter()
-                .filter(|&&lens| self.lens.is_none_or(|only| only == lens))
-                .map(|&lens| Node::Lens(lens))
-                .collect(),
-        }
+    fn tops() -> impl Iterator<Item = Node> {
+        Shelf::SORTED.into_iter().map(Node::Shelf)
     }
 
     /// The heading and group `row` sits under.
-    const fn place(&self, row: &Row) -> (Node, Node) {
-        let top = match self.layout {
-            Layout::Buckets => Node::Shelf(row.shelf()),
-            Layout::Lenses => Node::Lens(row.lens),
-        };
-        (top, Node::Group(row.shelf(), row.lens))
+    const fn place(row: &Row) -> (Node, Node) {
+        (Node::Shelf(row.shelf()), Node::Group(row.shelf(), row.lens))
     }
 
-    fn holds(&self, node: Node, row: &Row) -> bool {
-        let (top, group) = self.place(row);
+    fn holds(node: Node, row: &Row) -> bool {
+        let (top, group) = Self::place(row);
         match node {
-            Node::Shelf(_) | Node::Lens(_) => node == top,
+            Node::Shelf(_) => node == top,
             Node::Group(..) => node == group,
             Node::Finding(id) => id == row.finding.id,
             Node::Gaps | Node::Gap(_) => false,
@@ -618,14 +593,10 @@ impl App {
         };
         let node = match focus {
             Node::Finding(id) => match self.row(id) {
-                Some(row) => self.place(row).1,
+                Some(row) => Self::place(row).1,
                 None => return,
             },
-            other @ (Node::Shelf(_)
-            | Node::Lens(_)
-            | Node::Group(..)
-            | Node::Gaps
-            | Node::Gap(_)) => other,
+            other @ (Node::Shelf(_) | Node::Group(..) | Node::Gaps | Node::Gap(_)) => other,
         };
         let ids: Vec<FindingId> = self
             .under(node)

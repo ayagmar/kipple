@@ -19,8 +19,8 @@ use ratatui::Terminal;
 use ratatui::backend::Backend;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
+pub use self::app::Key;
 use self::app::{App, Catalog, Msg};
-pub use self::app::{Key, Layout};
 pub use self::view::Look;
 use crate::config::Settings;
 use crate::setup::Builtin;
@@ -58,15 +58,6 @@ pub trait Keys {
     fn next(&mut self, timeout: Duration) -> io::Result<Option<Input>>;
 }
 
-/// How the home screen looks and is laid out.
-#[derive(Debug, Clone, Copy)]
-pub struct Options {
-    /// Which grouping comes first.
-    pub layout: Layout,
-    /// Colour and symbols.
-    pub look: Look,
-}
-
 /// Runs the home screen on `terminal` until it is closed.
 ///
 /// It scans the roots of `settings` on the machine `env` describes, with their policy, and
@@ -80,7 +71,7 @@ pub fn run<B: Backend>(
     keys: &mut dyn Keys,
     env: &Environment,
     settings: &Settings,
-    options: Options,
+    look: Look,
 ) -> io::Result<Option<Duration>>
 where
     B::Error: Send + Sync + 'static,
@@ -93,12 +84,7 @@ where
         exclude: settings.policy.exclude.clone(),
     };
     let size = terminal.size().map_err(io::Error::other)?;
-    let mut app = App::new(
-        Catalog::new(&builtin),
-        options.layout,
-        size.width,
-        size.height,
-    );
+    let mut app = App::new(Catalog::new(&builtin), size.width, size.height);
     app.policy = settings.policy.clone();
     let cancel = CancelToken::new();
     let (events, received) = event_channel(STREAM_CAPACITY, &cancel);
@@ -110,7 +96,7 @@ where
         });
         let mut screen = Screen {
             terminal,
-            look: options.look,
+            look,
             app: &mut app,
             received,
             scan: Some(scan),
@@ -126,12 +112,12 @@ where
 
 /// Opens the home screen in this terminal and restores the terminal however it ends:
 /// on quit, on error, and on panic (ratatui's panic hook).
-pub(crate) fn open(env: &Environment, settings: &Settings, options: Options) -> io::Result<()> {
+pub(crate) fn open(env: &Environment, settings: &Settings, look: Look) -> io::Result<()> {
     // Before `try_init`: it enables raw mode first, and that stays on if entering the
     // alternate screen then fails.
     let _restore = Restore;
     let mut terminal = ratatui::try_init()?;
-    run(&mut terminal, &mut TerminalKeys, env, settings, options).map(|_| ())
+    run(&mut terminal, &mut TerminalKeys, env, settings, look).map(|_| ())
 }
 
 /// Leaves raw mode and the alternate screen when dropped.

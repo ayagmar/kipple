@@ -12,7 +12,7 @@ use ratatui::symbols::border;
 use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
-use super::app::{App, Layout, Line, Mode, Node, Progress, Row, Shelf};
+use super::app::{App, Line, Mode, Node, Progress, Row, Shelf};
 use crate::human::{self, bytes, escaped};
 
 /// A terminal at least this wide shows the detail pane beside the tree; a narrower one
@@ -280,30 +280,12 @@ fn cells(app: &App, look: Look, line: Line) -> Cells {
                 state: Text::styled(format!(" {}", shelf_hint(shelf)), look.dim()),
             }
         }
-        Node::Lens(lens) => {
+        Node::Group(_, lens) => {
             let (count, total) = sum(app, line.node);
             Cells {
                 label: Text::from(vec![
                     Span::raw(format!("  {indent}{}", fold(line.node))),
-                    Span::styled(
-                        format!("{} ({count})", lens_title(lens)),
-                        Style::new().add_modifier(Modifier::BOLD),
-                    ),
-                ]),
-                size: bytes(total),
-                state: Text::from(""),
-            }
-        }
-        Node::Group(shelf, lens) => {
-            let (count, total) = sum(app, line.node);
-            let (name, style) = match app.layout {
-                Layout::Buckets => (lens_title(lens), Style::new()),
-                Layout::Lenses => (shelf_title(shelf), look.tint(shelf)),
-            };
-            Cells {
-                label: Text::from(vec![
-                    Span::raw(format!("  {indent}{}", fold(line.node))),
-                    Span::styled(format!("{name} ({count})"), style),
+                    Span::raw(format!("{} ({count})", lens_title(lens))),
                 ]),
                 size: bytes(total),
                 state: Text::from(""),
@@ -468,7 +450,6 @@ fn detail(app: &App, look: Look, node: Node) -> Vec<Text<'static>> {
             .row(id)
             .map_or_else(Vec::new, |row| finding_detail(app, look, row)),
         Node::Shelf(shelf) | Node::Group(shelf, _) => shelf_detail(app, look, node, shelf),
-        Node::Lens(lens) => lens_detail(app, look, lens),
         Node::Gaps => vec![
             heading("Not covered"),
             Text::from(
@@ -615,23 +596,6 @@ fn shelf_detail(app: &App, look: Look, node: Node, shelf: Shelf) -> Vec<Text<'st
         Text::from(""),
         Text::raw(about),
     ]
-}
-
-fn lens_detail(app: &App, look: Look, lens: Lens) -> Vec<Text<'static>> {
-    let about = match lens {
-        Lens::Agents => "What AI coding agents leave behind.",
-        Lens::Dev => "Developer tools and projects.",
-        Lens::System => "The operating system and its package managers.",
-    };
-    let mut lines = vec![heading(lens_title(lens)), Text::raw(about), Text::from("")];
-    for shelf in Shelf::SORTED {
-        let (count, total) = sum(app, Node::Group(shelf, lens));
-        lines.push(Text::from(vec![
-            Span::styled(format!("{:<17} ", shelf_title(shelf)), look.tint(shelf)),
-            Span::raw(format!("{}, {}", human::findings(count), bytes(total))),
-        ]));
-    }
-    lines
 }
 
 fn render_help(look: Look, frame: &mut Frame<'_>) {

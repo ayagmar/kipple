@@ -57,18 +57,6 @@ pub struct HomeArgs {
     /// Draw the home screen with ASCII characters only.
     #[arg(long)]
     pub ascii: bool,
-    /// The home screen's layout. A development flag for comparing layouts.
-    #[arg(long, value_enum, hide = true)]
-    pub layout: Option<LayoutArg>,
-}
-
-/// A home screen layout.
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum LayoutArg {
-    /// Safe, Review and Protected first.
-    Buckets,
-    /// Agents, Dev and System first.
-    Lenses,
 }
 
 /// kipple's commands.
@@ -171,9 +159,9 @@ pub fn run(
     stderr: &mut dyn Write,
 ) -> ExitCode {
     // Clap can't exempt the global `--config` from a conflict with the commands, so the
-    // home screen's own options are refused here.
-    if cli.command.is_some() && (cli.home.ascii || cli.home.layout.is_some()) {
-        let message = "kipple: --ascii and --layout are for the home screen, not a command";
+    // home screen's own option is refused here.
+    if cli.command.is_some() && cli.home.ascii {
+        let message = "kipple: --ascii is for the home screen, not a command";
         writeln!(stderr, "{message}").ok();
         return ExitCode::from(USAGE);
     }
@@ -228,18 +216,11 @@ pub fn home(cli: &Cli, env: &Environment, stderr: &mut dyn Write) -> ExitCode {
         Ok(settings) => settings,
         Err(code) => return code,
     };
-    let args = &cli.home;
-    let options = tui::Options {
-        layout: match args.layout {
-            None | Some(LayoutArg::Buckets) => tui::Layout::Buckets,
-            Some(LayoutArg::Lenses) => tui::Layout::Lenses,
-        },
-        look: tui::Look {
-            color: env.get("NO_COLOR").is_none(),
-            ascii: args.ascii,
-        },
+    let look = tui::Look {
+        color: env.get("NO_COLOR").is_none(),
+        ascii: cli.home.ascii,
     };
-    match tui::open(env, &settings, options) {
+    match tui::open(env, &settings, look) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => fail(stderr, &format!("the home screen failed: {error}")),
     }

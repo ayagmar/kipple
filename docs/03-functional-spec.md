@@ -58,7 +58,7 @@ Inside each bucket, findings are grouped by **Agents**, **Dev** and **System**. 
 
 "Protected / report-only" shows *why* for each row: `blocked: in use`, `unknown: layout`, `needs grant`, `report only` or `advice`. These are distinct reasons, never lumped into one label.
 
-The bucket layout is the planned design. M2 validates it against a lens-first layout with fixture data, and the founder picks.
+The founder chose this bucket layout over a lens-first one in M2 (D-049).
 
 Without a TTY, `kipple` prints a short read-only summary to stdout and never takes over the terminal.
 
@@ -185,9 +185,9 @@ There is no `clean --all --force`. `--yes` suppresses the prompt only. It never 
 
 Built with ratatui. Design goals: a calm, dense view where you always know what is selected and why.
 
-Status (M2 session 1, D-048): the home screen exists, read-only, and judges findings with the config (§6). It has the bucket layout with Agents / Dev / System groups, the detail pane (right of the tree from 100 columns, below it otherwise), the footer totals, streaming sizes, the fuzzy filter, `tab` to show one lens, `s`, `a` and `c`, help, `g`/`G`, `NO_COLOR` and `--ascii`. A finding still being measured sits under **Measuring**, never in Safe, and can't be selected. `enter` and `c` say what is selected and that nothing was changed: review and removal come with M3. Not built yet: onboarding, `p`/`P`, settings, size bars, the mouse and inline mode. The lens-first layout for the M2 comparison is behind the hidden `--layout lenses` flag.
+Status (M2 session 1, D-048): the home screen exists, read-only, and judges findings with the config (§6). It has the bucket layout with Agents / Dev / System groups, the detail pane (right of the tree from 100 columns, below it otherwise), the footer totals, streaming sizes, the fuzzy filter, `tab` to show one lens, `s`, `a` and `c`, help, `g`/`G`, `NO_COLOR` and `--ascii`. A finding still being measured sits under **Measuring**, never in Safe, and can't be selected. `enter` and `c` say what is selected and that nothing was changed: review and removal come with M3. Not built yet: onboarding, `p`/`P`, settings, size bars, the mouse and inline mode.
 
-- **Layout:** Safe / Review / Protected buckets (J1) with Agents / Dev / System groups inside, a lens filter, a tree on the left with size bars, a detail pane on the right that moves below on narrow terminals, and a footer with the four totals and key hints. M2 compares this against a lens-first layout and keeps one.
+- **Layout:** Safe / Review / Protected buckets (J1) with Agents / Dev / System groups inside, a lens filter, a tree on the left with size bars, a detail pane on the right that moves below on narrow terminals, and a footer with the four totals and key hints.
 - **Keys:** `j/k` or arrows, `h/l` to collapse and expand, `/` fuzzy filter, `s` toggle, `a` add group, `c` add Safe bucket and review, `p`/`P` keep item/rule, `enter` review, `?` help, `q` quit. Mouse optional.
 - **Streaming:** rows appear as they are found. Sizes animate in with no reflow jumps (stable sort and reserved columns).
 - **States:** `scanning`, `blocked` (with reason), `in use`, `recent`, `report-only`, `needs grant`, each a text label plus restrained colour. Never colour alone.
