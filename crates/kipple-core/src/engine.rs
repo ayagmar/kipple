@@ -174,6 +174,10 @@ pub struct ScanReport {
     /// How many root or `SYSTEM` processes couldn't be inspected and weren't counted for
     /// findings in the home directory, which are otherwise idle (D-050).
     pub unchecked_system: usize,
+    /// How many of the current user's processes couldn't be inspected and were judged by
+    /// their command line alone for findings in the home directory that are otherwise
+    /// idle (D-052).
+    pub by_command_line: usize,
 }
 
 /// What to scan with.
@@ -314,6 +318,7 @@ impl Engine {
                 integrations: Vec::new(),
                 findings: Vec::new(),
                 unchecked_system: 0,
+                by_command_line: 0,
             };
         }
         let next_id = AtomicU64::new(0);
@@ -342,6 +347,7 @@ impl Engine {
         events.deliver(ScanEvent::ScanCompleted { outcome }, cancel);
         let mut report = report(outcome, runs);
         report.unchecked_system = processes.left_out();
+        report.by_command_line = processes.by_command_line();
         report
     }
 
@@ -767,5 +773,6 @@ fn report(outcome: ScanOutcome, runs: Vec<IntegrationRun>) -> ScanReport {
         integrations,
         findings,
         unchecked_system: 0,
+        by_command_line: 0,
     }
 }

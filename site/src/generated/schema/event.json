@@ -200,6 +200,15 @@
           "description": "Every process that counts was inspected, and none shows it in use.",
           "type": "object",
           "properties": {
+            "by_command_line": {
+              "description": "How many of the current user's processes couldn't be fully inspected and were\nchecked by their command line only, because it is in the home directory\n(D-052). Absent when none was.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 0
+            },
             "state": {
               "type": "string",
               "const": "idle"
@@ -662,6 +671,15 @@
       "description": "`kipple scan --json`: one envelope once the scan finished.",
       "type": "object",
       "properties": {
+        "by_command_line_processes": {
+          "description": "How many of the current user's processes couldn't be fully inspected and were\nchecked by their command line only for findings in the home directory that are\notherwise idle (D-052). Absent when none was.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
         "findings": {
           "description": "Every finding, sorted by lens, rule, then path.",
           "type": "array",

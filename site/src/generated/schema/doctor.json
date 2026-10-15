@@ -279,8 +279,14 @@
       "description": "What the process listing found.",
       "type": "object",
       "properties": {
+        "by_command_line": {
+          "description": "The current user's processes that can't be fully inspected and are checked by\ntheir command line only for project items in the home directory (D-052).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
         "counted_uninspected": {
-          "description": "Processes that can't be inspected and count for every project item, so none can be\nSafe: the current user's, those of an unknown owner, and root or `SYSTEM` ones whose\ncommand line names a relative path kipple couldn't place.",
+          "description": "Processes that can't be inspected and count for every project item, so none can be\nSafe: the current user's that can't be checked by their command line, those of an\nunknown owner, and root or `SYSTEM` ones whose command line names a relative path\nkipple couldn't place.",
           "type": "integer",
           "format": "uint",
           "minimum": 0
@@ -343,6 +349,7 @@
         "exited",
         "no_executable",
         "unchecked_system",
+        "by_command_line",
         "counted_uninspected"
       ]
     },

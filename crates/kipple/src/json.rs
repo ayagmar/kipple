@@ -113,6 +113,11 @@ pub struct ScanOut {
     /// How many processes owned by root or `SYSTEM` couldn't be inspected and weren't
     /// counted for findings in the home directory that are otherwise idle (D-050).
     pub unchecked_system_processes: usize,
+    /// How many of the current user's processes couldn't be fully inspected and were
+    /// checked by their command line only for findings in the home directory that are
+    /// otherwise idle (D-052). Absent when none was.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub by_command_line_processes: Option<usize>,
 }
 
 impl ScanOut {
@@ -146,6 +151,7 @@ impl ScanOut {
             findings,
             integrations,
             unchecked_system_processes: report.unchecked_system,
+            by_command_line_processes: positive(report.by_command_line),
         }
     }
 }
@@ -307,6 +313,11 @@ pub enum ActivityOut {
         /// How many processes owned by root or `SYSTEM` couldn't be inspected and weren't
         /// counted, because it is in the home directory. 0 when none was left out.
         unchecked_system: usize,
+        /// How many of the current user's processes couldn't be fully inspected and were
+        /// checked by their command line only, because it is in the home directory
+        /// (D-052). Absent when none was.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        by_command_line: Option<usize>,
     },
     /// A process shows it in use.
     InUse {
@@ -337,9 +348,14 @@ impl From<&Activity> for ActivityOut {
         match activity {
             Activity::Idle => Self::Idle {
                 unchecked_system: 0,
+                by_command_line: None,
             },
-            Activity::IdleExceptSystem { unchecked } => Self::Idle {
+            Activity::IdleExceptSystem {
+                unchecked,
+                by_command_line,
+            } => Self::Idle {
                 unchecked_system: *unchecked,
+                by_command_line: positive(*by_command_line),
             },
             Activity::InUse { pid, seen } => {
                 let (name, path) = match seen {
@@ -633,4 +649,9 @@ pub fn schemas() -> Vec<(&'static str, schemars::Schema)> {
             schemars::schema_for!(crate::support::SupportMatrixOut),
         ),
     ]
+}
+
+/// `count`, unless it is 0.
+const fn positive(count: usize) -> Option<usize> {
+    if count > 0 { Some(count) } else { None }
 }

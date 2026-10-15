@@ -56,6 +56,7 @@ pub(crate) fn run(
             integrations: Vec::new(),
             findings: Vec::new(),
             unchecked_system: 0,
+            by_command_line: 0,
         });
         (report, delivered)
     })
@@ -172,8 +173,12 @@ pub(crate) fn write_human(out: &mut dyn Write, report: &ScanOut) -> io::Result<(
     }
     write_advice(out, report)?;
     write_omissions(out, report)?;
-    if let Some(notice) = crate::human::unchecked_system(report.unchecked_system_processes) {
-        writeln!(out, "\n{notice}")?;
+    let notices = process_notices(report);
+    if !notices.is_empty() {
+        writeln!(out)?;
+    }
+    for notice in notices {
+        writeln!(out, "{notice}")?;
     }
     let total: u64 = report
         .findings
@@ -232,7 +237,7 @@ pub(crate) fn write_summary(out: &mut dyn Write, report: &ScanOut) -> io::Result
             "Partial: {gaps} places couldn't be covered; `kipple scan` lists them."
         )?;
     }
-    if let Some(notice) = crate::human::unchecked_system(report.unchecked_system_processes) {
+    for notice in process_notices(report) {
         writeln!(out, "{notice}")?;
     }
     writeln!(
@@ -294,4 +299,16 @@ fn write_omissions(out: &mut dyn Write, report: &ScanOut) -> io::Result<()> {
         writeln!(out, "  {integration}: {}", escaped(&omission.message))?;
     }
     Ok(())
+}
+
+/// The D-050 and D-052 notices about processes that couldn't be fully inspected.
+fn process_notices(report: &ScanOut) -> Vec<String> {
+    let by_command_line = report.by_command_line_processes.unwrap_or_default();
+    [
+        crate::human::unchecked_system(report.unchecked_system_processes),
+        crate::human::by_command_line(by_command_line),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }

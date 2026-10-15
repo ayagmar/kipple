@@ -204,14 +204,24 @@ pub(crate) fn unchecked_system(count: usize) -> Option<String> {
     })
 }
 
+/// The D-052 notice, when any of the user's own processes was judged by its command line.
+pub(crate) fn by_command_line(count: usize) -> Option<String> {
+    (count > 0).then(|| {
+        format!(
+            "{count} of your own processes couldn't be fully inspected and were checked by \
+             their command line only for items in your home."
+        )
+    })
+}
+
 /// Whether a running program uses a finding, in words.
 pub(crate) fn activity(activity: &Activity) -> String {
     match activity {
         Activity::Idle => "no running program shows it in use".to_owned(),
-        Activity::IdleExceptSystem { unchecked } => format!(
-            "no running program kipple could inspect shows it in use; {unchecked} owned by \
-             root or SYSTEM couldn't be inspected and weren't counted, since it is in your home"
-        ),
+        Activity::IdleExceptSystem {
+            unchecked,
+            by_command_line,
+        } => idle_except(*unchecked, *by_command_line),
         Activity::InUse { pid, seen } => in_use(*pid, seen),
         Activity::Unknown(ActivityGap::Uninspected(count)) => format!(
             "{count} running programs that count couldn't be inspected, so one of them might \
@@ -268,4 +278,22 @@ const fn walk_gap(gap: WalkGap) -> &'static str {
         WalkGap::OtherFileSystem => "a directory inside is on another file system and wasn't read",
         WalkGap::Untimed => "an entry inside didn't say when it last changed",
     }
+}
+
+/// An idle finding in the home directory that some processes couldn't be fully checked
+/// for, in words.
+fn idle_except(unchecked: usize, by_command_line: usize) -> String {
+    let system = (unchecked > 0).then(|| {
+        format!(
+            "{unchecked} owned by root or SYSTEM couldn't be inspected and weren't counted, \
+             since it is in your home"
+        )
+    });
+    let own = (by_command_line > 0)
+        .then(|| format!("{by_command_line} of your own were checked by their command line only"));
+    std::iter::once("no running program kipple could inspect shows it in use".to_owned())
+        .chain(system)
+        .chain(own)
+        .collect::<Vec<_>>()
+        .join("; ")
 }

@@ -283,8 +283,11 @@ impl Report {
             Inventory::Complete => writeln!(out, "  The listing is complete.")?,
             Inventory::Partial { reason } => writeln!(out, "  The listing is partial: {reason}.")?,
         }
-        let census = census(snapshot);
+        let census = census(snapshot, &NoFollowFs);
         if let Some(notice) = crate::human::unchecked_system(census.unchecked_system) {
+            writeln!(out, "  {notice}")?;
+        }
+        if let Some(notice) = crate::human::by_command_line(census.by_command_line) {
             writeln!(out, "  {notice}")?;
         }
         if census.counted > 0 {
@@ -508,9 +511,13 @@ pub struct ProcessesOut {
     /// Processes owned by root or `SYSTEM` that can't be inspected and aren't counted for
     /// project items in the home directory (D-050).
     pub unchecked_system: usize,
+    /// The current user's processes that can't be fully inspected and are checked by
+    /// their command line only for project items in the home directory (D-052).
+    pub by_command_line: usize,
     /// Processes that can't be inspected and count for every project item, so none can be
-    /// Safe: the current user's, those of an unknown owner, and root or `SYSTEM` ones whose
-    /// command line names a relative path kipple couldn't place.
+    /// Safe: the current user's that can't be checked by their command line, those of an
+    /// unknown owner, and root or `SYSTEM` ones whose command line names a relative path
+    /// kipple couldn't place.
     pub counted_uninspected: usize,
 }
 
@@ -636,6 +643,7 @@ fn processes_out(processes: &Result<ProcessSnapshot, ProbeError>) -> ProcessesOu
                 no_executable: 0,
                 partial: None,
                 unchecked_system: 0,
+                by_command_line: 0,
                 counted_uninspected: 0,
             };
         }
@@ -644,7 +652,7 @@ fn processes_out(processes: &Result<ProcessSnapshot, ProbeError>) -> ProcessesOu
         let listed = snapshot.processes.iter();
         listed.filter(|p| p.outcome.class() == class).count()
     };
-    let census = census(snapshot);
+    let census = census(snapshot, &NoFollowFs);
     ProcessesOut {
         problem: None,
         total: snapshot.processes.len(),
@@ -657,6 +665,7 @@ fn processes_out(processes: &Result<ProcessSnapshot, ProbeError>) -> ProcessesOu
             Inventory::Partial { reason } => Some(reason.clone()),
         },
         unchecked_system: census.unchecked_system,
+        by_command_line: census.by_command_line,
         counted_uninspected: census.counted,
     }
 }

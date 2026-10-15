@@ -581,6 +581,7 @@ fn finished(app: &mut App) {
         }],
         findings: Vec::new(),
         unchecked_system: 0,
+        by_command_line: 0,
     };
     app.update(Msg::Finished {
         report: Box::new(report),
