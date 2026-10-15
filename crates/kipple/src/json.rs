@@ -110,8 +110,9 @@ pub struct ScanOut {
     pub findings: Vec<FindingOut>,
     /// Every integration that ran, sorted by lens, then ID.
     pub integrations: Vec<IntegrationOut>,
-    /// How many processes owned by root or `SYSTEM` couldn't be inspected and weren't
-    /// counted for findings in the home directory that are otherwise idle (D-050).
+    /// How many processes owned by root or `SYSTEM`, or running with root's rights,
+    /// couldn't be inspected and weren't counted for findings in the home directory that
+    /// are otherwise idle (D-050, D-052).
     pub unchecked_system_processes: usize,
     /// How many of the current user's processes couldn't be fully inspected and were
     /// checked by their command line only for findings in the home directory that are
@@ -310,8 +311,9 @@ impl FindingOut {
 pub enum ActivityOut {
     /// Every process that counts was inspected, and none shows it in use.
     Idle {
-        /// How many processes owned by root or `SYSTEM` couldn't be inspected and weren't
-        /// counted, because it is in the home directory. 0 when none was left out.
+        /// How many processes owned by root or `SYSTEM`, or running with root's rights,
+        /// couldn't be inspected and weren't counted, because it is in the home directory.
+        /// 0 when none was left out.
         unchecked_system: usize,
         /// How many of the current user's processes couldn't be fully inspected and were
         /// checked by their command line only, because it is in the home directory

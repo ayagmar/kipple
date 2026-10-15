@@ -88,8 +88,20 @@ struct View {
     /// every relative path in it resolved, or the OS doesn't show other users' command
     /// lines at all.
     command_line_placed: bool,
-    /// It may read past the mode bits, or that couldn't be ruled out.
-    reads_past_modes: bool,
+    /// Whether it reads past the mode bits.
+    modes: Modes,
+}
+
+/// Whether a process reads past the mode bits (`CAP_DAC_OVERRIDE` or
+/// `CAP_DAC_READ_SEARCH`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Modes {
+    /// It doesn't, or the OS has no such capabilities.
+    Bound,
+    /// It does.
+    ReadsPast,
+    /// Its capabilities couldn't be read.
+    Unread,
 }
 
 /// How the paths a process shows were placed among kipple's.
@@ -138,6 +150,19 @@ impl View {
                 )
             })
         })
+    }
+
+    /// Whether it has root's reach, and so is judged like root's processes (D-050): root
+    /// and `SYSTEM` themselves, and, on an OS that shows every command line, root's rights
+    /// taken by the current user, or another user's process that reads past the mode
+    /// bits.
+    fn roots_reach(&self, command_lines_public: bool) -> bool {
+        match self.owner {
+            ProcessOwner::Root | ProcessOwner::System => true,
+            ProcessOwner::Elevated => command_lines_public,
+            ProcessOwner::OtherUser(_) => command_lines_public && self.modes == Modes::ReadsPast,
+            ProcessOwner::CurrentUser | ProcessOwner::Unknown => false,
+        }
     }
 
     /// Whether, on an OS that shows every command line, it can be judged by its command
@@ -468,10 +493,10 @@ fn view(process: &ProcessRecord, observer: &Observer, fs: &dyn FsProbe) -> (View
             .map(|(.., ids)| ids.clone()),
         names: names(executable.map(PathBuf::as_path), first),
         command_line_placed: placed,
-        reads_past_modes: match &process.capabilities {
-            Ok(caps) => caps.0 & READS_PAST_MODES != 0,
-            Err(Unread::Unsupported) => false,
-            Err(Unread::Failed(_)) => true,
+        modes: match &process.capabilities {
+            Ok(caps) if caps.0 & READS_PAST_MODES != 0 => Modes::ReadsPast,
+            Ok(_) | Err(Unread::Unsupported) => Modes::Bound,
+            Err(Unread::Failed(_)) => Modes::Unread,
         },
     };
     (view, paths)
@@ -663,14 +688,16 @@ fn folded(path: &Path) -> Vec<String> {
 /// directory (D-050, D-052), for `doctor`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProcessCensus {
-    /// Root or `SYSTEM` processes that are left out.
+    /// Processes with root's reach that are left out: root's, `SYSTEM`'s, and on Linux
+    /// root's rights taken by the current user or another user's process that reads past
+    /// the mode bits.
     pub unchecked_system: usize,
     /// The current user's processes that are judged by their command line alone.
     pub by_command_line: usize,
     /// Processes that count for every such artifact, so every one stays unknown: the
     /// current user's that can't be judged by their command line, those of an unknown
-    /// owner, and root or `SYSTEM` ones whose command line names a path kipple couldn't
-    /// place.
+    /// owner, and those with root's reach whose command line names a path kipple
+    /// couldn't place.
     pub counted: usize,
 }
 
@@ -689,16 +716,19 @@ pub fn census(snapshot: &ProcessSnapshot, fs: &dyn FsProbe) -> ProcessCensus {
         if view.inspected(&EVERY_KIND) {
             continue;
         }
+        if view.roots_reach(public) && view.command_line_placed {
+            census.unchecked_system += 1;
+            continue;
+        }
         match view.owner {
-            ProcessOwner::Root | ProcessOwner::System if view.command_line_placed => {
-                census.unchecked_system += 1;
-            }
             ProcessOwner::CurrentUser if public && view.judged_by_command_line() => {
                 census.by_command_line += 1;
             }
-            ProcessOwner::OtherUser(_) => {}
+            ProcessOwner::OtherUser(_) if !view.roots_reach(public) => {}
             ProcessOwner::Root
             | ProcessOwner::System
+            | ProcessOwner::Elevated
+            | ProcessOwner::OtherUser(_)
             | ProcessOwner::CurrentUser
             | ProcessOwner::Unknown => census.counted += 1,
         }
@@ -782,8 +812,9 @@ impl Processes {
         self.uninspected(index, scope, subject)
     }
 
-    /// How many root or `SYSTEM` processes were left out of some finding that was idle
-    /// apart from them.
+    /// How many processes with root's reach (root's, `SYSTEM`'s, and on Linux root's
+    /// rights taken or a capability to read past the mode bits) were left out of some
+    /// finding that was idle apart from them.
     pub(crate) fn left_out(&self) -> usize {
         self.left_out
             .lock()
@@ -816,23 +847,27 @@ impl Processes {
                 counted += 1;
                 continue;
             }
+            let public = index.command_lines_public;
             let counts = match &view.owner {
-                ProcessOwner::CurrentUser => {
-                    let judged = index.command_lines_public && view.judged_by_command_line();
-                    excused.by_command_line.extend(judged.then_some(view.pid));
-                    !judged
-                }
-                ProcessOwner::Unknown => true,
-                ProcessOwner::Root | ProcessOwner::System => {
+                _ if view.roots_reach(public) => {
                     excused
                         .system
                         .extend(view.command_line_placed.then_some(view.pid));
                     !view.command_line_placed
                 }
+                ProcessOwner::CurrentUser => {
+                    let judged = public && view.judged_by_command_line();
+                    excused.by_command_line.extend(judged.then_some(view.pid));
+                    !judged
+                }
                 ProcessOwner::OtherUser(_) => {
-                    view.reads_past_modes
+                    view.modes != Modes::Bound
                         || !*shut_out.get_or_insert_with(|| self.others_shut_out(scope, subject))
                 }
+                ProcessOwner::Root
+                | ProcessOwner::System
+                | ProcessOwner::Elevated
+                | ProcessOwner::Unknown => true,
             };
             counted += usize::from(counts);
         }

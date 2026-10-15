@@ -286,7 +286,7 @@
           "minimum": 0
         },
         "counted_uninspected": {
-          "description": "Processes that can't be inspected and count for every project item, so none can be\nSafe: the current user's that can't be checked by their command line, those of an\nunknown owner, and root or `SYSTEM` ones whose command line names a relative path\nkipple couldn't place.",
+          "description": "Processes that can't be inspected and count for every project item, so none can be\nSafe: the current user's that can't be checked by their command line, those of an\nunknown owner, and those with root's rights whose command line names a relative\npath kipple couldn't place.",
           "type": "integer",
           "format": "uint",
           "minimum": 0
@@ -330,7 +330,7 @@
           "minimum": 0
         },
         "unchecked_system": {
-          "description": "Processes owned by root or `SYSTEM` that can't be inspected and aren't counted for\nproject items in the home directory (D-050).",
+          "description": "Processes owned by root or `SYSTEM`, or running with root's rights, that can't be\ninspected and aren't counted for project items in the home directory (D-050,\nD-052).",
           "type": "integer",
           "format": "uint",
           "minimum": 0

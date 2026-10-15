@@ -171,8 +171,9 @@ pub struct ScanReport {
     pub integrations: Vec<IntegrationReport>,
     /// Every finding, sorted by integration, then path.
     pub findings: Vec<Finding>,
-    /// How many root or `SYSTEM` processes couldn't be inspected and weren't counted for
-    /// findings in the home directory, which are otherwise idle (D-050).
+    /// How many processes of root, `SYSTEM` or root's rights couldn't be inspected and
+    /// weren't counted for findings in the home directory, which are otherwise idle
+    /// (D-050, D-052).
     pub unchecked_system: usize,
     /// How many of the current user's processes couldn't be inspected and were judged by
     /// their command line alone for findings in the home directory that are otherwise

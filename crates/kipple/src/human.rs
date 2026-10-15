@@ -198,8 +198,8 @@ fn tracked(tracked: &Tracked) -> String {
 pub(crate) fn unchecked_system(count: usize) -> Option<String> {
     (count > 0).then(|| {
         format!(
-            "{count} processes owned by root or SYSTEM couldn't be inspected and were not \
-             counted for items in your home."
+            "{count} processes owned by root or SYSTEM, or running with root's rights, couldn't \
+             be inspected and were not counted for items in your home."
         )
     })
 }
@@ -285,8 +285,8 @@ const fn walk_gap(gap: WalkGap) -> &'static str {
 fn idle_except(unchecked: usize, by_command_line: usize) -> String {
     let system = (unchecked > 0).then(|| {
         format!(
-            "{unchecked} owned by root or SYSTEM couldn't be inspected and weren't counted, \
-             since it is in your home"
+            "{unchecked} owned by root or SYSTEM, or running with root's rights, couldn't be \
+             inspected and weren't counted, since it is in your home"
         )
     });
     let own = (by_command_line > 0)

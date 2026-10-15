@@ -171,11 +171,11 @@ pub enum Activity {
     /// Every process that counts was inspected, and none shows it in use.
     Idle,
     /// Every process that counts was inspected, and none shows it in use, but it is in the
-    /// home directory and some processes couldn't be fully inspected: root or `SYSTEM` ones
-    /// that weren't counted (D-050), or the current user's that were judged by their
+    /// home directory and some processes couldn't be fully inspected: root's, `SYSTEM`'s
+    /// or ones running with root's rights that weren't counted (D-050, D-052), or the current user's that were judged by their
     /// command line alone (D-052). Not the same as every process inspected.
     IdleExceptSystem {
-        /// How many root or `SYSTEM` processes were left out.
+        /// How many processes of root, `SYSTEM` or root's rights were left out.
         unchecked: usize,
         /// How many of the current user's processes were judged by their command line.
         by_command_line: usize,

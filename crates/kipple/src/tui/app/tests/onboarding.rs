@@ -165,6 +165,7 @@ fn report_with_advice() -> ScanReport {
         }],
         findings: Vec::new(),
         unchecked_system: 0,
+        by_command_line: 0,
     }
 }
 

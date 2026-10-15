@@ -595,8 +595,13 @@ mod tests {
             owner_of("1001\t1001\t1001\t1001"),
             ProcessOwner::OtherUser(UserId::Uid(1001))
         );
-        // A setuid program part way through a switch, or one that kept a saved ID.
-        for mixed in ["1000\t0\t0\t0", "0\t0\t1000\t0", "1000\t1000\t1000\t0"] {
+        // A setuid-root helper started by the user, such as fusermount3, has root's rights.
+        for elevated in ["1000\t0\t0\t0", "0\t0\t1000\t0"] {
+            assert_eq!(owner_of(elevated), ProcessOwner::Elevated, "{elevated}");
+        }
+        // Any other mix: the user's effective ID with root's file system ID, or a third
+        // account among them.
+        for mixed in ["1000\t1000\t1000\t0", "1001\t0\t0\t0", "1000\t0\t1001\t0"] {
             assert_eq!(owner_of(mixed), ProcessOwner::Unknown, "{mixed}");
         }
         assert_eq!(

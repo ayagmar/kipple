@@ -48,7 +48,7 @@
       "type": "string"
     },
     "unchecked_system_processes": {
-      "description": "How many processes owned by root or `SYSTEM` couldn't be inspected and weren't\ncounted for findings in the home directory that are otherwise idle (D-050).",
+      "description": "How many processes owned by root or `SYSTEM`, or running with root's rights,\ncouldn't be inspected and weren't counted for findings in the home directory that\nare otherwise idle (D-050, D-052).",
       "type": "integer",
       "format": "uint",
       "minimum": 0
@@ -86,7 +86,7 @@
               "const": "idle"
             },
             "unchecked_system": {
-              "description": "How many processes owned by root or `SYSTEM` couldn't be inspected and weren't\ncounted, because it is in the home directory. 0 when none was left out.",
+              "description": "How many processes owned by root or `SYSTEM`, or running with root's rights,\ncouldn't be inspected and weren't counted, because it is in the home directory.\n0 when none was left out.",
               "type": "integer",
               "format": "uint",
               "minimum": 0

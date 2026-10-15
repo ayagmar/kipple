@@ -462,7 +462,7 @@ fn an_incomplete_scan_lists_what_it_could_not_cover_instead_of_looking_empty() {
 // partial.
 #[test]
 fn processes_left_out_of_the_activity_check_are_a_notice_not_a_gap() {
-    let ended = |unchecked_system| {
+    let ended = |unchecked_system, by_command_line| {
         let mut app = App::new(catalog(), 160, 48);
         app.update(Msg::Finished {
             report: Box::new(ScanReport {
@@ -470,18 +470,19 @@ fn processes_left_out_of_the_activity_check_are_a_notice_not_a_gap() {
                 integrations: Vec::new(),
                 findings: Vec::new(),
                 unchecked_system,
+                by_command_line,
             }),
             elapsed: Duration::from_secs(1),
         });
         app
     };
 
-    let app = ended(3);
+    let app = ended(3, 0);
 
     assert_eq!(
         app.notices,
         [
-            "3 processes owned by root or SYSTEM couldn't be inspected and were not counted for items in your home."
+            "3 processes owned by root or SYSTEM, or running with root's rights, couldn't be inspected and were not counted for items in your home."
         ]
     );
     assert_eq!(app.gaps, []);
@@ -492,7 +493,7 @@ fn processes_left_out_of_the_activity_check_are_a_notice_not_a_gap() {
     );
     assert!(!screen.contains("partial"), "{screen}");
     assert!(!screen.contains("Not covered"), "{screen}");
-    assert_eq!(ended(0).notices, Vec::<String>::new());
+    assert_eq!(ended(0, 0).notices, Vec::<String>::new());
 }
 
 #[test]

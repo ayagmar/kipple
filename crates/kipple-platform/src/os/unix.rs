@@ -117,13 +117,20 @@ pub(crate) fn unread(error: io::Error) -> Unread {
 
 /// The owner of a process with these user IDs (real, effective, saved and, on Linux,
 /// filesystem), seen by a user whose ID is `current`. Only IDs that all agree name an
-/// owner, and without a known `current` no ID can be told apart from it.
+/// owner, apart from an effective root with the rest root's or `current`'s, which is
+/// elevated; without a known `current` no ID can be told apart from it.
 pub(crate) fn owner(uids: Option<&[u32]>, current: Option<u32>) -> ProcessOwner {
-    let (Some([first, rest @ ..]), Some(current)) = (uids, current) else {
+    let (Some(uids @ [first, rest @ ..]), Some(current)) = (uids, current) else {
         return ProcessOwner::Unknown;
     };
     if rest.iter().any(|uid| uid != first) {
-        return ProcessOwner::Unknown;
+        let elevated =
+            uids.get(1) == Some(&0) && uids.iter().all(|&uid| uid == 0 || uid == current);
+        return if elevated {
+            ProcessOwner::Elevated
+        } else {
+            ProcessOwner::Unknown
+        };
     }
     match *first {
         uid if uid == current => ProcessOwner::CurrentUser,

@@ -508,16 +508,17 @@ pub struct ProcessesOut {
     pub no_executable: usize,
     /// Why the listing is partial, if it is.
     pub partial: Option<String>,
-    /// Processes owned by root or `SYSTEM` that can't be inspected and aren't counted for
-    /// project items in the home directory (D-050).
+    /// Processes owned by root or `SYSTEM`, or running with root's rights, that can't be
+    /// inspected and aren't counted for project items in the home directory (D-050,
+    /// D-052).
     pub unchecked_system: usize,
     /// The current user's processes that can't be fully inspected and are checked by
     /// their command line only for project items in the home directory (D-052).
     pub by_command_line: usize,
     /// Processes that can't be inspected and count for every project item, so none can be
     /// Safe: the current user's that can't be checked by their command line, those of an
-    /// unknown owner, and root or `SYSTEM` ones whose command line names a relative path
-    /// kipple couldn't place.
+    /// unknown owner, and those with root's rights whose command line names a relative
+    /// path kipple couldn't place.
     pub counted_uninspected: usize,
 }
 

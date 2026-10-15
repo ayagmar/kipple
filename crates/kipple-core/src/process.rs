@@ -75,8 +75,8 @@ pub enum UserId {
     Sid(String),
 }
 
-/// Who a process runs as. Only a consistent, fully read identity is named; anything
-/// else is [`ProcessOwner::Unknown`].
+/// Who a process runs as. Only a consistent, fully read identity is named, or root's
+/// rights taken by the current user; anything else is [`ProcessOwner::Unknown`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProcessOwner {
     /// The user kipple runs as.
@@ -87,7 +87,11 @@ pub enum ProcessOwner {
     System,
     /// Some other single account.
     OtherUser(UserId),
-    /// Unreadable, or a mix of IDs (such as a setuid program part way through a switch).
+    /// Root's rights taken by the current user: its effective user ID is 0, and every
+    /// other one is 0 or the current user's, as with a setuid helper such as
+    /// `fusermount3`.
+    Elevated,
+    /// Unreadable, or any other mix of IDs.
     Unknown,
 }
 

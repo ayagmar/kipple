@@ -717,8 +717,6 @@ fn another_users_process_counts_unless_a_private_directory_above_shuts_it_out() 
     venv.file_system = FileSystem::Remote;
     let mut unreadable = private.clone();
     unreadable.disk.access.remove(&abs(HOME));
-    let mut capable = private.clone();
-    capable.processes[0].capabilities = Ok(Capabilities(1 << 2));
     let mut caps_unread = private.clone();
     caps_unread.processes[0].capabilities = Err(failed());
 
@@ -728,7 +726,6 @@ fn another_users_process_counts_unless_a_private_directory_above_shuts_it_out() 
         ("acl", acl),
         ("network", remote),
         ("access unread", unreadable),
-        ("CAP_DAC_READ_SEARCH", capable),
         ("caps unread", caps_unread),
     ] {
         assert!(is_unknown(&host.activity(PYTHON, VENV)), "{name}");
@@ -738,10 +735,11 @@ fn another_users_process_counts_unless_a_private_directory_above_shuts_it_out() 
 
 #[test]
 fn a_process_of_unknown_owner_or_a_partial_inventory_blocks() {
+    // Its user IDs couldn't be read, or mix another account in.
     let mixed = Host::new(vec![uninspectable(
         5,
         ProcessOwner::Unknown,
-        &["fusermount3"],
+        &["/usr/bin/fusermount3"],
     )]);
     let mut partial = Host::new(Vec::new());
     partial.inventory = Inventory::Partial {
@@ -1036,6 +1034,8 @@ fn doctor_counts_the_own_processes_judged_by_their_command_line() {
             uninspectable(7, ProcessOwner::CurrentUser, &["/usr/bin/ssh-agent"]),
             uninspectable(8, ProcessOwner::CurrentUser, &["python3", "x.py"]),
             uninspectable(9, ProcessOwner::Root, &["/usr/bin/sshd"]),
+            uninspectable(10, ProcessOwner::Elevated, &["/usr/bin/fusermount3"]),
+            uninspectable(11, ProcessOwner::Elevated, &["./helper"]),
         ],
         inventory: Inventory::Complete,
         observer: Host::new(Vec::new()).observer,
@@ -1044,8 +1044,8 @@ fn doctor_counts_the_own_processes_judged_by_their_command_line() {
     let census = census(&snapshot, &Disk::default());
 
     assert_eq!(census.by_command_line, 1);
-    assert_eq!(census.unchecked_system, 1);
-    assert_eq!(census.counted, 1);
+    assert_eq!(census.unchecked_system, 2);
+    assert_eq!(census.counted, 2);
 }
 
 #[test]
@@ -1073,4 +1073,62 @@ fn an_own_process_whose_title_starts_with_a_runtime_counts() {
     );
 
     assert!(is_unknown(&Host::new(vec![title]).activity(CARGO, TARGET)));
+}
+
+/// The two kinds of process with root's reach that aren't root's: a setuid-root helper
+/// the user started, and another user's daemon that reads past the mode bits, with an
+/// open home so that only its reach matters.
+fn with_roots_reach(argv: &[&str]) -> [(&'static str, Host); 2] {
+    let elevated = uninspectable(5, ProcessOwner::Elevated, argv);
+    let mut capable = uninspectable(6, other_user(), argv);
+    capable.capabilities = Ok(Capabilities(1 << 2));
+    [elevated, capable].map(|process| {
+        let name = if process.pid == 5 {
+            "elevated"
+        } else {
+            "capable"
+        };
+        let mut host = Host::new(vec![process]);
+        host.disk = Disk::default().with_home(false);
+        (name, host)
+    })
+}
+
+#[test]
+fn a_process_with_roots_reach_is_left_out_like_roots_when_its_command_line_is_placed() {
+    for (name, host) in with_roots_reach(&["/usr/bin/fusermount3"]) {
+        let (activity, report) = host.scan(CARGO, TARGET);
+        assert!(
+            matches!(
+                activity,
+                Activity::IdleExceptSystem {
+                    unchecked: 1,
+                    by_command_line: 0
+                }
+            ),
+            "{name}: {activity:?}"
+        );
+        assert_eq!(report.unchecked_system, 1, "{name}");
+    }
+    let built = "/home/u/code/app/target/release/x";
+    for (name, host) in with_roots_reach(&[built]) {
+        let activity = host.activity(CARGO, TARGET);
+        assert_eq!(seen(&activity), Some(&Seen::Argument(abs(built))), "{name}");
+    }
+}
+
+#[test]
+fn a_process_with_roots_reach_counts_when_its_command_line_cant_clear_it() {
+    // A relative path while its working directory can't be read, a command line that
+    // can't be read, or macOS, which shows neither its command line nor its reach.
+    for (name, host) in with_roots_reach(&["./target/release/x"]) {
+        assert!(is_unknown(&host.activity(CARGO, TARGET)), "relative {name}");
+    }
+    for (name, mut host) in with_roots_reach(&["/usr/bin/fusermount3"]) {
+        let mut macos = host.clone();
+        macos.observer = Observer::PLAIN;
+        assert!(is_unknown(&macos.activity(CARGO, TARGET)), "macOS {name}");
+        host.processes[0].argv = Err(failed());
+        assert!(is_unknown(&host.activity(CARGO, TARGET)), "unread {name}");
+    }
 }
