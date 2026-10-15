@@ -1179,3 +1179,27 @@ fn a_title_is_placed_only_when_each_of_its_words_is() {
         );
     }
 }
+
+#[test]
+fn a_title_holding_secrets_reports_only_the_path_that_matched() {
+    // A setproctitle'd worker rewrites its whole command line into argv[0].
+    let title = |text: String| Host::new(vec![uninspectable(9, ProcessOwner::Root, &[&text])]);
+    let python = abs("/home/u/code/app/.venv/bin/python");
+    let secrets = "manage.py runserver --token=hunter2 --broker=redis://u:s3cret@h";
+    let worker = title(format!("{} {secrets}", python.display()));
+    assert_eq!(
+        seen(&worker.activity(PYTHON, VENV)),
+        Some(&Seen::Argument(python))
+    );
+    // A project directory with a space in its name matches only whole: what is shown
+    // then is the finding itself, never the rest of the title.
+    let spaced = "/home/u/code/my app/.venv";
+    let whole = title(format!("{}/bin/python {secrets}", abs(spaced).display()));
+    let activity = whole.activity(PYTHON, spaced);
+    assert_eq!(seen(&activity), Some(&Seen::Argument(abs(spaced))));
+    let shown = format!("{activity:?}");
+    assert!(
+        !shown.contains("hunter2") && !shown.contains("s3cret"),
+        "{shown}"
+    );
+}

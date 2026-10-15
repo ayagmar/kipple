@@ -3,7 +3,7 @@
 use std::ffi::{CString, OsStr, OsString};
 use std::fs;
 use std::io;
-use std::os::unix::ffi::OsStrExt as _;
+use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
 use std::os::unix::fs::{
     DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
 };
@@ -152,11 +152,46 @@ pub(crate) fn nul_separated(bytes: &[u8]) -> Vec<&[u8]> {
 /// The rest, and URLs, which can carry credentials, are dropped: a command line often
 /// holds secrets (docs/04 §8a).
 pub(crate) fn path_args(args: &[&[u8]]) -> Vec<OsString> {
-    args.iter()
-        .enumerate()
-        .filter(|&(i, arg)| i == 0 || (arg.contains(&b'/') && !contains(arg, b"://")))
-        .map(|(_, arg)| OsStr::from_bytes(arg).to_owned())
-        .collect()
+    let mut args = args.iter();
+    let program = args.next().map(|arg| program(arg));
+    let rest = args
+        .filter(|arg| names_path(arg))
+        .map(|arg| OsStr::from_bytes(arg).to_owned());
+    program.into_iter().chain(rest).collect()
+}
+
+/// The program name in `argv0`. A title rewritten into it can hold the whole command line,
+/// so only its first word, cut before any `://`, and its later words with a `/` that
+/// aren't URLs are kept, joined by single spaces.
+fn program(argv0: &[u8]) -> OsString {
+    // Split where the core reads words: at any whitespace in text, at ASCII whitespace
+    // in anything else.
+    let words: Vec<&[u8]> = std::str::from_utf8(argv0).map_or_else(
+        |_| {
+            argv0
+                .split(u8::is_ascii_whitespace)
+                .filter(|word| !word.is_empty())
+                .collect()
+        },
+        |text| text.split_whitespace().map(str::as_bytes).collect(),
+    );
+    let mut words = words.into_iter();
+    let first = words.next().unwrap_or_default();
+    let first = first
+        .windows(3)
+        .position(|window| window == b"://")
+        .map_or(first, |at| first.get(..at).unwrap_or_default());
+    let mut kept = first.to_vec();
+    for word in words.filter(|word| names_path(word)) {
+        kept.push(b' ');
+        kept.extend_from_slice(word);
+    }
+    OsString::from_vec(kept)
+}
+
+/// Whether an argument can name a file: it has a `/` and isn't a URL.
+fn names_path(arg: &[u8]) -> bool {
+    arg.contains(&b'/') && !contains(arg, b"://")
 }
 
 /// Every absolute path that the `NAME=value` entries of an environment hold, a value
@@ -253,6 +288,20 @@ mod tests {
             strings(&args),
             ["python3", "./manage.py", "--settings=conf/dev.py", "../up"]
         );
+    }
+
+    #[test]
+    fn a_title_rewritten_into_the_program_name_keeps_only_its_program_and_paths() {
+        let cmdline = b"/home/u/p/.venv/bin/python manage.py runserver --token=hunter2 \
+                        --broker=redis://u:s3cret@h --key=k3y\xc2\xa0--settings=conf/dev.py\0--x\0";
+        let url = b"redis://u:s3cret@h\0";
+
+        assert_eq!(
+            strings(&path_args(&nul_separated(cmdline))),
+            ["/home/u/p/.venv/bin/python --settings=conf/dev.py"]
+        );
+        assert_eq!(strings(&path_args(&nul_separated(url))), ["redis"]);
+        assert_eq!(strings(&path_args(&nul_separated(b"\0\0"))), [""]);
     }
 
     #[test]

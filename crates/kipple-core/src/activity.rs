@@ -185,6 +185,32 @@ struct Shown {
     path: PathBuf,
 }
 
+impl Shown {
+    /// Which match is reported first: the first process's, by kind, and a path the
+    /// process named that holds no whitespace before one that does.
+    fn rank(&self) -> (usize, Kind, bool) {
+        (self.view, self.kind, self.holds_more())
+    }
+
+    /// Whether it is a path the process named itself that holds whitespace: a title
+    /// rewritten into one string, read whole, which may carry secrets after the path
+    /// (04 §8a).
+    fn holds_more(&self) -> bool {
+        matches!(self.kind, Kind::Argument | Kind::Environment)
+            && self.path.to_string_lossy().contains(char::is_whitespace)
+    }
+
+    /// The path to show for a match at or inside `matched`: its own, or `matched` when
+    /// its own may carry more than a path.
+    fn reported(&self, matched: &Path) -> PathBuf {
+        if self.holds_more() {
+            matched.to_owned()
+        } else {
+            self.path.clone()
+        }
+    }
+}
+
 /// The processes of one scan, with every path each one shows indexed under itself and
 /// every directory above it, by path and by identity.
 #[derive(Debug)]
@@ -263,14 +289,15 @@ impl Index {
         by_path
             .chain(by_identity)
             .filter_map(|&at| self.shown.get(at))
-            .min_by_key(|shown| (shown.view, shown.kind))
+            .min_by_key(|shown| shown.rank())
     }
 
     /// The first process that shows `subject` in use, and how.
     fn in_use(&self, scope: Scope<'_>, subject: Subject<'_>) -> Option<(u32, Seen)> {
         let pid = |view: usize| self.views.get(view).map(|v| v.pid);
         if let Some(shown) = self.shown_inside(subject.path, subject.lineage.own()) {
-            return Some((pid(shown.view)?, shown.kind.seen(shown.path.clone())));
+            let path = shown.reported(subject.path);
+            return Some((pid(shown.view)?, shown.kind.seen(path)));
         }
         let ActivityEvidence::Interpreted { runtimes } = subject.evidence else {
             return None;

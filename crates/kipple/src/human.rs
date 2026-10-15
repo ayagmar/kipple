@@ -297,3 +297,6 @@ fn idle_except(unchecked: usize, by_command_line: usize) -> String {
         .collect::<Vec<_>>()
         .join("; ")
 }
+
+#[cfg(test)]
+mod tests;
