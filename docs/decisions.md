@@ -95,6 +95,11 @@ Every other crate in `Cargo.lock` is the newest stable release its dependents al
 | `actions/checkout` | v7.0.1 (`3d3c42e5aac5ba805825da76410c181273ba90b1`) | 2026-07-20 | `ci.yml` |
 | `taiki-e/install-action` | v2.87.23 (`861a07ce7084f55488e375df125cdc99bba60eb7`) | 2026-10-03 | `ci.yml` (Dependabot #1, merged 2026-10-10; v2.87.24 is from 2026-10-04 and was under 7 days old) |
 | strace, GNU time, Python 3 | 6.8 (`6.8-0ubuntu2`), 1.9 (`1.9-0.2build1`, prints `UNKNOWN`), 3.12.3 | Ubuntu 24.04 release pocket; Python from runner image `ubuntu24/20261004.327` | `bench.yml` and `.github/scripts/bench.py`. **Exception to the newest-stable rule:** these come from the runner's Ubuntu archive and are not pinned, because they only measure, are never shipped and never gate. Each run logs the versions in its machine description |
+| vhs | v0.12.1 (tag commit `24fa2254a9806091e6ee6a980e9f3bcfe0a9ba53`) | 2026-09-24 | `tapes` job in `ci.yml`, installed with `go install` at that commit: renders `site/tapes/` (09 §7). The newest release on 2026-10-15; only vhs drives a real terminal (ttyd and a browser) from a checked-in script and fails on a screen that never appears. Added 2026-10-15 (M2b) |
+| Go | 1.27.2 | 2026-10-08 | `tapes` job, to build vhs, whose v0.12.1 `go.mod` needs 1.26.7 or newer |
+| `actions/setup-go` | v7.0.0 (`b7ad1dad31e06c5925ef5d2fc7ad053ef454303e`) | 2026-07-16 | `tapes` job. The newest release on 2026-10-15 |
+| `actions/upload-artifact` | v7.0.2 (`cf430e030ddbb5b0abf93d22962f4752f3646cd9`) | 2026-10-07 | `tapes` job, for the rendered recordings. The newest release on 2026-10-15 |
+| ttyd, ffmpeg | 1.7.4 (`1.7.4-1build2`), 6.1.1 (`7:6.1.1-3ubuntu5`) | Ubuntu 24.04 release pocket | `tapes` job, which vhs needs on `PATH`. **Exception to the newest-stable rule,** like strace above: they come from the runner's Ubuntu archive and are not pinned, because they only render recordings, are never shipped and never gate. The job logs their versions |
 
 Spike-only crates, used on the `spike/m1-s2-s3` branch for S2 and S3 and not a dependency of any crate on `main`. The spikes also used `libc`, `windows-sys` and `rayon` at the versions above. Verified 2026-10-10:
 

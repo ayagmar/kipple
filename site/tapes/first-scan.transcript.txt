@@ -1,0 +1,31 @@
+First scan (recording of first-scan.tape)
+
+The user types "kipple" in a terminal with no config file yet. kipple starts the scan
+and, at the same moment, opens a four-step welcome.
+
+Step 1 of 4, "How careful should kipple be?". Three levels are listed: Careful, Balanced
+(the default) and Thorough. Each one says what it treats as Safe and for how many days a
+change counts as recent, and shows how much it would offer on this machine as safe to
+clean and to review. The numbers grow while the scan runs; the header says "scan
+finished" once it is done. The user moves down to Thorough, back up to Balanced, and
+presses enter to choose it.
+
+Step 2 of 4, "Where are your projects?". The project folders kipple found are listed with
+checkboxes, followed by "+ add another". The user keeps them as they are and presses
+enter.
+
+Step 3 of 4, "Delete or move to Trash by default?". Delete frees the space at once.
+Trash can be put back, but frees nothing until the Trash is emptied. This version only
+stores the answer: nothing is removed yet. The user moves to Trash and presses enter.
+
+Step 4 of 4, "Prevention tips". Settings of the user's tools that keep less around, which
+kipple shows and never changes. The user presses enter to finish.
+
+Finishing saves the answers in one go, so the welcome never shows again, and opens the
+home screen. Its header shows the level and how long the scan took. The findings are
+sorted into Safe to clean, Review and Protected, each grouped into Agents, Dev and
+System, with the detail pane for the finding under the cursor. The user presses q to
+quit. Nothing on disk was changed apart from the new config file.
+
+Every step can be skipped with tab, esc goes back a step, and q quits without saving
+anything.

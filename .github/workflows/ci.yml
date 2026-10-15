@@ -3,6 +3,8 @@ name: CI
 on:
   push:
   pull_request:
+  # Only the tapes job is the reason to dispatch by hand; every job runs.
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -87,3 +89,101 @@ jobs:
 
       - name: Check advisories, licenses, bans and sources
         run: cargo deny check
+
+  # The vhs tapes (docs/09-site-and-docs.md §7), on `main` and on manual dispatch, until
+  # the M6 site job takes them over. Not a required check. kipple runs against demo-home
+  # through KIPPLE_TEST_ROOTS, and HOME and every XDG_* point at a disposable directory,
+  # so neither kipple nor vhs and its browser read or write the runner's own home.
+  tapes:
+    if: github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+
+      - name: Install Go for vhs
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: "1.27.2"
+          cache: false
+
+      - name: Install vhs, ttyd and ffmpeg
+        run: |
+          go install github.com/charmbracelet/vhs@24fa2254a9806091e6ee6a980e9f3bcfe0a9ba53 # v0.12.1
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends ttyd ffmpeg
+          "$(go env GOPATH)/bin/vhs" --version
+          ttyd --version
+          ffmpeg -version | head -n1
+
+      - name: Build kipple with the test roots
+        run: |
+          cargo build --locked -p kipple --features test-roots
+          echo "$GITHUB_WORKSPACE/target/debug" >> "$GITHUB_PATH"
+
+      - name: Build demo-home and a disposable home
+        env:
+          TAPES: ${{ runner.temp }}/tapes
+        run: |
+          cargo xtask demo-home "$TAPES/demo"
+          mkdir -p "$TAPES"/host/{config,cache,data,state,runtime} target/tapes
+          chmod 700 "$TAPES/host/runtime"
+          printf '[care]\nlevel = "balanced"\n' > "$TAPES/navigation.toml"
+
+      # The first-scan tape shows the onboarding, which runs only when the default config
+      # file is missing. Fail here, not in the middle of a recording.
+      - name: Check that the first scan finds no config
+        env:
+          TAPES: ${{ runner.temp }}/tapes
+          KIPPLE_TEST_ROOTS: ${{ runner.temp }}/tapes/demo/roots.txt
+        run: |
+          unset KIPPLE_CONFIG
+          file="$(kipple config path)"
+          echo "default config file: $file"
+          case "$file" in
+            "$TAPES/demo/"*) ;;
+            *) echo "the config file is outside demo-home"; exit 1 ;;
+          esac
+          dir="$(dirname "$file")"
+          if [ -e "$dir" ] && [ -n "$(ls -A "$dir")" ]; then
+            echo "$dir is not empty"
+            exit 1
+          fi
+          kipple config show | grep -F 'not present, the defaults apply'
+
+      - name: Render the tapes
+        env:
+          TAPES: ${{ runner.temp }}/tapes
+          KIPPLE_TEST_ROOTS: ${{ runner.temp }}/tapes/demo/roots.txt
+          HOME: ${{ runner.temp }}/tapes/host
+          XDG_CONFIG_HOME: ${{ runner.temp }}/tapes/host/config
+          XDG_CACHE_HOME: ${{ runner.temp }}/tapes/host/cache
+          XDG_DATA_HOME: ${{ runner.temp }}/tapes/host/data
+          XDG_STATE_HOME: ${{ runner.temp }}/tapes/host/state
+          XDG_RUNTIME_DIR: ${{ runner.temp }}/tapes/host/runtime
+          # The browser only shows the local ttyd page on a disposable VM.
+          VHS_NO_SANDBOX: "true"
+        run: |
+          unset KIPPLE_CONFIG
+          vhs validate site/tapes/*.tape
+          for tape in site/tapes/*.tape; do
+            vhs "$tape"
+          done
+
+      - name: Upload the recordings
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: tapes
+          path: target/tapes/
+          retention-days: 14
