@@ -324,6 +324,19 @@ fn cells(app: &App, look: Look, line: Line) -> Cells {
             size: String::new(),
             state: Text::styled(" so this report is partial", look.dim()),
         },
+        Node::Notice(index) => Cells {
+            label: Text::from(vec![
+                Span::raw(format!("  {indent}")),
+                Span::styled("Note: ", Style::new().add_modifier(Modifier::BOLD)),
+                Span::raw(
+                    app.notices
+                        .get(index)
+                        .map_or_else(String::new, |notice| escaped(notice)),
+                ),
+            ]),
+            size: String::new(),
+            state: Text::from(""),
+        },
         Node::Gap(index) => Cells {
             label: Text::raw(format!(
                 "  {indent}{}",
@@ -505,17 +518,21 @@ fn detail(app: &App, look: Look, node: Node) -> Vec<Text<'static>> {
             ),
         ],
         Node::Gap(index) => app.gaps.get(index).map_or_else(Vec::new, |gap| {
-            let mut lines = vec![heading("Not covered")];
-            if let Some(integration) = &gap.integration {
-                lines.push(labelled("Integration", integration.clone()));
-            }
-            lines.push(labelled("What happened", escaped(&gap.message)));
-            if gap.integration.is_none() {
-                lines.push(Text::from(
-                    "kipple couldn't see what they use, so an item in your home may be in use by one of them. Items outside your home count them and stay Protected.",
-                ));
-            }
-            lines
+            vec![
+                heading("Not covered"),
+                labelled("Integration", gap.integration.clone()),
+                labelled("What happened", escaped(&gap.message)),
+            ]
+        }),
+        Node::Notice(index) => app.notices.get(index).map_or_else(Vec::new, |notice| {
+            vec![
+                heading("Note"),
+                Text::from(escaped(notice)),
+                Text::styled(
+                    "It doesn't make the scan partial: it says how far the check for running programs went.",
+                    look.dim(),
+                ),
+            ]
         }),
     }
 }

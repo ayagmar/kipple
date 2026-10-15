@@ -199,7 +199,7 @@ fn findings(app: &App) -> Vec<u64> {
         .iter()
         .filter_map(|line| match line.node {
             Node::Finding(id) => Some(id.0),
-            Node::Shelf(_) | Node::Group(..) | Node::Gaps | Node::Gap(_) => None,
+            Node::Shelf(_) | Node::Group(..) | Node::Gaps | Node::Gap(_) | Node::Notice(_) => None,
         })
         .collect()
 }
@@ -457,9 +457,11 @@ fn an_incomplete_scan_lists_what_it_could_not_cover_instead_of_looking_empty() {
     assert!(screen.contains("partial: 1 not covered"), "{screen}");
 }
 
-// Catches the D-050 notice reaching `scan` and `doctor` but not the home screen.
+// Catches the D-050 notice reaching `scan` and `doctor` but not the home screen, or
+// being counted as something the scan didn't cover, which would call a complete scan
+// partial.
 #[test]
-fn processes_left_out_of_the_activity_check_are_listed_with_the_gaps() {
+fn processes_left_out_of_the_activity_check_are_a_notice_not_a_gap() {
     let ended = |unchecked_system| {
         let mut app = App::new(catalog(), 160, 48);
         app.update(Msg::Finished {
@@ -476,16 +478,21 @@ fn processes_left_out_of_the_activity_check_are_listed_with_the_gaps() {
 
     let app = ended(3);
 
-    let messages: Vec<&str> = app.gaps.iter().map(|gap| gap.message.as_str()).collect();
     assert_eq!(
-        messages,
+        app.notices,
         [
             "3 processes owned by root or SYSTEM couldn't be inspected and were not counted for items in your home."
         ]
     );
+    assert_eq!(app.gaps, []);
     let screen = screen(&app, colour(), 160, 48);
-    assert!(screen.contains("3 processes owned by root"), "{screen}");
-    assert_eq!(ended(0).gaps, []);
+    assert!(
+        screen.contains("Note: 3 processes owned by root"),
+        "{screen}"
+    );
+    assert!(!screen.contains("partial"), "{screen}");
+    assert!(!screen.contains("Not covered"), "{screen}");
+    assert_eq!(ended(0).notices, Vec::<String>::new());
 }
 
 #[test]

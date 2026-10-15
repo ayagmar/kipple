@@ -111,6 +111,9 @@ pub(crate) enum Node {
     Gaps,
     /// One thing the scan couldn't cover, by its index.
     Gap(usize),
+    /// A notice of the report, by its index: something to know that doesn't make the
+    /// report partial.
+    Notice(usize),
 }
 
 /// A visible line and how deep it sits in the tree.
@@ -190,9 +193,7 @@ impl Row {
 /// Something the scan couldn't cover.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Gap {
-    /// The integration it concerns, or `None` for the whole scan, as with processes left
-    /// out of the activity check (D-050).
-    pub(crate) integration: Option<String>,
+    pub(crate) integration: String,
     pub(crate) message: String,
 }
 
@@ -246,6 +247,9 @@ pub(crate) struct App {
     pub(crate) rows: Vec<Row>,
     by_id: HashMap<FindingId, usize>,
     pub(crate) gaps: Vec<Gap>,
+    /// What the report says beside the gaps, such as processes left out of the activity
+    /// check (D-050). Not counted as not covered.
+    pub(crate) notices: Vec<String>,
     pub(crate) advice: BTreeMap<IntegrationId, Vec<Advice>>,
     pub(crate) progress: Progress,
     collapsed: BTreeSet<Node>,
@@ -283,6 +287,7 @@ impl App {
             rows: Vec::new(),
             by_id: HashMap::new(),
             gaps: Vec::new(),
+            notices: Vec::new(),
             advice: BTreeMap::new(),
             progress: Progress::Scanning,
             collapsed: BTreeSet::new(),
@@ -367,6 +372,10 @@ impl App {
             }));
         }
         self.gap_lines(&mut lines);
+        lines.extend((0..self.notices.len()).map(|index| Line {
+            node: Node::Notice(index),
+            depth: 0,
+        }));
         lines
     }
 
@@ -418,7 +427,7 @@ impl App {
             Node::Shelf(_) => node == top,
             Node::Group(..) => node == group,
             Node::Finding(id) => id == row.finding.id,
-            Node::Gaps | Node::Gap(_) => false,
+            Node::Gaps | Node::Gap(_) | Node::Notice(_) => false,
         }
     }
 
@@ -459,7 +468,7 @@ impl App {
                 integration,
                 omissions,
             } => self.gaps.extend(omissions.iter().map(|omission| Gap {
-                integration: Some(integration.0.to_owned()),
+                integration: integration.0.to_owned(),
                 message: OmissionOut::from(omission).message,
             })),
             ScanEvent::ScanStarted { .. }
@@ -492,18 +501,13 @@ impl App {
     }
 
     fn finished(&mut self, report: ScanReport, elapsed: Duration) {
+        self.notices = notices(&report);
         self.advice = report
             .integrations
             .into_iter()
             .filter(|integration| !integration.advice.is_empty())
             .map(|integration| (integration.id, integration.advice))
             .collect();
-        if let Some(message) = crate::human::unchecked_system(report.unchecked_system) {
-            self.gaps.push(Gap {
-                integration: None,
-                message,
-            });
-        }
         self.progress = Progress::Done {
             outcome: report.outcome,
             elapsed,
@@ -672,7 +676,11 @@ impl App {
                 Some(row) => Self::place(row).1,
                 None => return,
             },
-            other @ (Node::Shelf(_) | Node::Group(..) | Node::Gaps | Node::Gap(_)) => other,
+            other @ (Node::Shelf(_)
+            | Node::Group(..)
+            | Node::Gaps
+            | Node::Gap(_)
+            | Node::Notice(_)) => other,
         };
         let ids: Vec<(FindingId, Shelf)> = self
             .under(node)
@@ -752,7 +760,14 @@ impl App {
 
 /// Whether `node` is a heading, which folds.
 const fn heading(node: Node) -> bool {
-    !matches!(node, Node::Finding(_) | Node::Gap(_))
+    !matches!(node, Node::Finding(_) | Node::Gap(_) | Node::Notice(_))
+}
+
+/// The notices `report` carries, each in words.
+fn notices(report: &ScanReport) -> Vec<String> {
+    crate::human::unchecked_system(report.unchecked_system)
+        .into_iter()
+        .collect()
 }
 
 /// Why `row` can't be selected.

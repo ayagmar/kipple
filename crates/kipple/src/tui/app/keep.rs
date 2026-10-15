@@ -210,6 +210,7 @@ impl App {
         self.rows.clear();
         self.by_id.clear();
         self.gaps.clear();
+        self.notices.clear();
         self.advice.clear();
         self.selected.clear();
         self.shortcut.clear();
