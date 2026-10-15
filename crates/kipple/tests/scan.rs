@@ -337,9 +337,15 @@ fn kipple_without_a_terminal_prints_each_buckets_total_instead_of_the_home_scree
     };
     assert!(line("Safe to clean").ends_with(&count("safe")), "{out}");
     assert!(line("Review").ends_with(&count("review")), "{out}");
-    // Every OS has at least the two Cargo targets Safe and the recent install in Review.
+    // Every OS has at least the two Cargo targets Safe. The recent install is Review,
+    // except on Windows, where an interpreted layout is always Protected (04 §4).
     assert!(!line("Safe to clean").ends_with(" 0 findings"), "{out}");
-    assert!(line("Review").ends_with("1 finding"), "{out}");
+    let review = if kipple_platform::PLATFORM == kipple_core::Platform::Windows {
+        "0 findings"
+    } else {
+        "1 finding"
+    };
+    assert!(line("Review").ends_with(review), "{out}");
     assert!(line("Protected").contains("finding"), "{out}");
     assert!(out.contains("Nothing was changed."), "{out}");
 }
