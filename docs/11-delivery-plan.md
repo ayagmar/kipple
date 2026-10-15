@@ -80,7 +80,7 @@ Build:
 
 Verify:
 - State-transition tests pass.
-- On `demo-home`, Balanced puts at least 80% of rebuildable, reinstallable and re-downloadable bytes in Safe (04 §2a). Careful and Thorough match their snapshots.
+- On `demo-home`, Balanced puts at least 80% of rebuildable, reinstallable and re-downloadable bytes in Safe (04 §2a), among the findings whose activity the OS lets kipple judge. Careful and Thorough match their snapshots.
 - Buffer snapshots at 80×24 and 160×48 match.
 - Keypress-to-frame p95 is under 50 ms while scanning the 1M reference tree, measured by `xtask bench-tui`.
 - The founder compares the bucket and lens layouts on the same fixture data, picks one, and signs off on the feel. The loser is removed.

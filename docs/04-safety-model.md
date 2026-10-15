@@ -62,7 +62,7 @@ What this means in practice:
 - **Balanced:** adds `node_modules` and venvs, download caches, and inactive agent releases beyond the kept rollback.
 - **Thorough:** adds things that cost you a rollback, for example package-cache entries beyond the kept versions once privileged operations exist.
 
-**Useful by default.** Balanced must put the bulk of regenerable bytes in Safe. The M2 acceptance includes a fixture assertion: on `demo-home`, at least 80% of the bytes the integrations mark rebuildable, reinstallable or re-downloadable are Safe under Balanced. If careful defaults leave nothing to clean, that's a product failure, not a safety win.
+**Useful by default.** Balanced must put the bulk of regenerable bytes in Safe. The M2 acceptance includes a fixture assertion: on `demo-home`, at least 80% of the bytes the integrations mark rebuildable, reinstallable or re-downloadable are Safe under Balanced, counting the findings whose activity the OS lets kipple judge: on Windows in M2, `node_modules`, `.venv` and `__pycache__` are always Protected (§4), so only the rest counts there. If careful defaults leave nothing to clean, that's a product failure, not a safety win.
 
 - **Consequence is composable.** `loss` is a set, and `recovery` and `cost` are separate facts. A package cache prune loses rollback and offline installs at once.
 - **Consequence facts come from the host.** For typed integrations they come from verified semantics. For third-party `remove-files` rules, recovery is `none`, so by row 3 they always land in Review (or Protected) and can never be Safe. A pack's `loss` prose is display text, never input to classification.
