@@ -513,7 +513,7 @@ impl Engine {
 
     /// What the host knows about a finding once measured. One that couldn't be measured
     /// completely, or held a mount the walk didn't enter, has no known modification time,
-    /// and can't rule out a checkout inside.
+    /// and can't rule out a checkout inside. A checkout the walk did meet holds it anyway.
     fn facts(
         &self,
         found: &Found,
@@ -523,9 +523,11 @@ impl Engine {
     ) -> Facts {
         let path = &found.finding.path;
         let complete = measurement
-            .filter(|m| m.size.completeness == Completeness::Complete && !m.skipped_mount);
-        let modified = complete
             .as_ref()
+            .is_some_and(|m| m.size.completeness == Completeness::Complete && !m.skipped_mount);
+        let modified = measurement
+            .as_ref()
+            .filter(|_| complete)
             .and_then(|m| m.modified)
             .map_or(Modified::Unknown, |at| {
                 let age = self.ports.clock.now().duration_since(at);
@@ -533,13 +535,13 @@ impl Engine {
             });
         let above = shared.repositories.tracked(self.ports.fs.as_ref(), path);
         let tracked = if matches!(above, Tracked::NoRepository) {
-            match complete {
-                None => Tracked::Unwalked,
+            match measurement {
                 Some(Measurement {
                     repository: Some(work_tree),
                     ..
                 }) => Tracked::HoldsRepository { work_tree },
-                Some(_) => Tracked::NoRepository,
+                Some(_) if complete => Tracked::NoRepository,
+                _ => Tracked::Unwalked,
             }
         } else {
             above

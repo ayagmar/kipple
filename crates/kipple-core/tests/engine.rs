@@ -1165,6 +1165,15 @@ fn a_checkout_inside_a_finding_holds_it_and_an_incomplete_walk_cant_rule_one_out
         tracked(editable),
         Some(Tracked::HoldsRepository { work_tree }) if work_tree == Path::new("/found/.venv/src/pkg")
     ));
+    // A walk that met a checkout before an unreadable entry shows the specific reason.
+    let unreadable_after_checkout = Measurement {
+        repository: Some(PathBuf::from("/found/.venv/src/pkg")),
+        ..unreadable
+    };
+    assert!(matches!(
+        tracked(unreadable_after_checkout),
+        Some(Tracked::HoldsRepository { .. })
+    ));
     assert!(matches!(tracked(unreadable), Some(Tracked::Unwalked)));
     assert!(matches!(
         tracked(measured(SIZE)),
