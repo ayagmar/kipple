@@ -268,7 +268,7 @@ Roadmap integrations, each added only with layout fixtures: Gemini CLI, OpenCode
 
 ## 6. Advice catalog (v0.1)
 
-Advice is text plus an exact command or config snippet, checked against supported tool versions, and never run by kipple:
+Advice is text plus an exact command or config snippet, checked against supported tool versions, and never run by kipple. It belongs to the integration, not to one rule: once an integration gives any advice, every report-only finding of that integration proposes `advice` instead of `report`. Each built-in integration that advises has at most one rule.
 - Claude Code (built): `cleanupPeriodDays` (default 30, minimum 1; `0` fails validation). Show the resolved value and its source, or "unknown" if it can't be determined. Explain the exceptions: memory directories, `history.jsonl`, Desktop and Cowork transcripts (`desktopSessionCleanupPeriodDays`), `--bare` sessions, and versions before v2.1.228 deleting memory files. Source: code.claude.com settings reference and claude-directory docs, checked 2026-10-11.
 - Codex: `history.max_bytes` caps `history.jsonl` by dropping the oldest entries. It does *not* bound session rollouts (`sessions/`, `archived_sessions/`), which have no documented retention.
 - pacman (built): `paccache -rk N` and `paccache.timer`, with the ArchWiki rollback caveat
