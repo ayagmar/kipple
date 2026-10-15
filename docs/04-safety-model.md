@@ -39,6 +39,8 @@ Classification is **ordered and exhaustive**. The first matching row wins:
 
 An unknown `cost` is optional. It doesn't block Safe, and the detail pane shows "restore cost unknown".
 
+Status: until M3 adds methods, grants and operations, row 2's method-available, granted and no-conflict conditions aren't evaluated.
+
 ### Carefulness levels
 
 The level moves the line between **Safe** and **Review**. It never moves anything out of **Protected**, and never touches an invariant in §3. A level is set during onboarding, changed any time in config or the TUI settings screen, and can be overridden per rule.
