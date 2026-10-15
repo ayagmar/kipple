@@ -125,8 +125,10 @@ where
 /// Opens the home screen in this terminal and restores the terminal however it ends:
 /// on quit, on error, and on panic (ratatui's panic hook).
 pub(crate) fn open(env: &Environment, options: Options) -> io::Result<()> {
-    let mut terminal = ratatui::try_init()?;
+    // Before `try_init`: it enables raw mode first, and that stays on if entering the
+    // alternate screen then fails.
     let _restore = Restore;
+    let mut terminal = ratatui::try_init()?;
     run(&mut terminal, &mut TerminalKeys, env, &[], options).map(|_| ())
 }
 
