@@ -219,8 +219,11 @@ fn mapped_files(raw_pid: c_int) -> io::Result<Vec<PathBuf>> {
     Err(io::Error::other("too many memory regions"))
 }
 
-/// The region at or after `address`, or `None` past the last one. A failure on the first
-/// region is an error; on a later one it marks the end, unless the process went away.
+/// The region at or after `address`, or `None` past the last one. XNU says there is none
+/// with `EINVAL`: `fill_procregioninfo` (`osfmk/vm/bsd_vm.c`) finds no map entry at or
+/// after the address, and `proc_pidregionpathinfo` (`bsd/kern/proc_info.c`) returns
+/// `EINVAL` for that. On the first region, or with any other failure or a short record,
+/// the list is unknown, so it is an error.
 #[expect(unsafe_code, reason = "libc has no safe wrapper for proc_pidinfo")]
 fn region_at(raw_pid: c_int, address: u64) -> io::Result<Option<ProcRegionWithPathInfo>> {
     let size = c_int::try_from(size_of::<ProcRegionWithPathInfo>()).map_err(io::Error::other)?;
@@ -239,8 +242,11 @@ fn region_at(raw_pid: c_int, address: u64) -> io::Result<Option<ProcRegionWithPa
     if filled == size {
         return Ok(Some(info));
     }
+    if filled > 0 {
+        return Err(io::Error::other("a memory region record was cut short"));
+    }
     let error = io::Error::last_os_error();
-    if address == 0 || error.raw_os_error() == Some(libc::ESRCH) {
+    if address == 0 || error.raw_os_error() != Some(libc::EINVAL) {
         return Err(error);
     }
     Ok(None)
