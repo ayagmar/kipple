@@ -278,9 +278,9 @@ impl Index {
         self.shown.push(Shown { view, kind, path });
     }
 
-    /// The first path a process shows at or inside `path`, which has `own` identity. Any
-    /// kind of path counts here, whatever the layout needs: a match only ever holds more.
-    fn shown_inside(&self, path: &Path, own: Option<FileIdentity>) -> Option<&Shown> {
+    /// Every path a process shows at or inside `path`, which has `own` identity. Any kind
+    /// of path counts here, whatever the layout needs: a match only ever holds more.
+    fn shown_at(&self, path: &Path, own: Option<FileIdentity>) -> impl Iterator<Item = &Shown> {
         let by_path = self.by_path.get(&folded(path)).into_iter().flatten();
         let by_identity = own
             .and_then(|own| self.by_identity.get(&own))
@@ -289,28 +289,52 @@ impl Index {
         by_path
             .chain(by_identity)
             .filter_map(|&at| self.shown.get(at))
-            .min_by_key(|shown| shown.rank())
     }
 
     /// The first process that shows `subject` in use, and how.
     fn in_use(&self, scope: Scope<'_>, subject: Subject<'_>) -> Option<(u32, Seen)> {
         let pid = |view: usize| self.views.get(view).map(|v| v.pid);
-        if let Some(shown) = self.shown_inside(subject.path, subject.lineage.own()) {
+        let inside = self.shown_at(subject.path, subject.lineage.own());
+        if let Some(shown) = inside.min_by_key(|shown| shown.rank()) {
             let path = shown.reported(subject.path);
             return Some((pid(shown.view)?, shown.kind.seen(path)));
         }
         let ActivityEvidence::Interpreted { runtimes } = subject.evidence else {
             return None;
         };
-        let project = folded(subject.project);
-        let identity = scope.identities.identity(scope.fs, subject.project);
-        self.views.iter().find_map(|view| {
-            let cwd = view.cwd.as_ref().filter(|_| view.runs(runtimes))?;
-            let under = folded(cwd).starts_with(&project)
+        let (view, path) = self.runtime_in(scope, subject.project, runtimes)?;
+        Some((pid(view)?, Seen::Runtime(path)))
+    }
+
+    /// The first process of one of `runtimes` that works in `project` or names a path
+    /// there in its arguments or environment, and that path. A runtime runs a project's
+    /// files, which load the project's dependencies without naming them.
+    fn runtime_in(
+        &self,
+        scope: Scope<'_>,
+        project: &Path,
+        runtimes: &[&str],
+    ) -> Option<(usize, PathBuf)> {
+        let runs = |view: usize| self.views.get(view).is_some_and(|v| v.runs(runtimes));
+        let folded_project = folded(project);
+        let identity = scope.identities.identity(scope.fs, project);
+        let working = self.views.iter().enumerate().find_map(|(at, view)| {
+            let cwd = view.cwd.as_ref().filter(|_| runs(at))?;
+            let under = folded(cwd).starts_with(&folded_project)
                 || identity
                     .is_some_and(|identity| view.cwd_lineage(scope, cwd).contains(&identity));
-            under.then(|| (view.pid, Seen::Runtime(cwd.clone())))
-        })
+            under.then(|| (at, cwd.clone()))
+        });
+        let naming = self
+            .shown_at(project, identity)
+            .filter(|shown| matches!(shown.kind, Kind::Argument | Kind::Environment))
+            .filter(|shown| runs(shown.view))
+            .min_by_key(|shown| shown.rank())
+            .map(|shown| (shown.view, shown.reported(project)));
+        [working, naming]
+            .into_iter()
+            .flatten()
+            .min_by_key(|(view, _)| *view)
     }
 }
 

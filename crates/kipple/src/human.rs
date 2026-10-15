@@ -246,7 +246,7 @@ fn in_use(pid: u32, seen: &Seen) -> String {
         Seen::Argument(path) => ("was started with", path),
         Seen::Environment(path) => ("has in its environment", path),
         Seen::MappedFile(path) => ("has loaded", path),
-        Seen::Runtime(path) => ("is its runtime, working in its project at", path),
+        Seen::Runtime(path) => ("is its runtime and uses its project at", path),
     };
     format!(
         "process {pid} {how} {}",

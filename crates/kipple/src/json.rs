@@ -326,7 +326,8 @@ pub enum ActivityOut {
         /// The process.
         pid: u32,
         /// How: `executable`, `working-directory`, `argument`, `environment`,
-        /// `mapped-file`, or `runtime` (its runtime working in its project).
+        /// `mapped-file`, or `runtime` (its runtime working in its project or naming a path
+        /// there).
         seen: &'static str,
         /// The path that matched. Nothing else of the process's command line or
         /// environment is ever shown.

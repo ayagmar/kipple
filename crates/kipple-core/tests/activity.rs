@@ -1203,3 +1203,35 @@ fn a_title_holding_secrets_reports_only_the_path_that_matched() {
         "{shown}"
     );
 }
+
+#[test]
+fn a_runtime_naming_a_path_in_the_project_holds_its_interpreted_layout_from_anywhere() {
+    // `cd ~ && node ~/code/app/server.js`, or a user service: Node loads the project's
+    // `node_modules` without mapping it, and the process works outside the project.
+    let modules = "/home/u/code/app/node_modules";
+    let runtime = |executable, argv: &[&str]| {
+        let mut process = inspected(7, ProcessOwner::CurrentUser, executable);
+        process.cwd = Ok(abs("/tmp"));
+        process.argv = Ok(os(argv));
+        process
+    };
+    let server = "/home/u/code/app/server.js";
+    let node = Host::new(vec![runtime("/usr/bin/node", &["node", server])]);
+    assert_eq!(
+        seen(&node.activity(NODE, modules)),
+        Some(&Seen::Runtime(abs(server)))
+    );
+    let mut python = runtime("/usr/bin/python3", &["python3", "-m", "app"]);
+    python.env_paths = Ok(vec![EnvPath {
+        var: "PYTHONPATH".into(),
+        path: abs("/home/u/code/app/src"),
+    }]);
+    assert_eq!(
+        seen(&Host::new(vec![python]).activity(PYTHON, VENV)),
+        Some(&Seen::Runtime(abs("/home/u/code/app/src")))
+    );
+    // Only a runtime of the layout holds it this way.
+    let shell = Host::new(vec![runtime("/usr/bin/bash", &["bash", server])]);
+    assert!(matches!(shell.activity(NODE, modules), Activity::Idle));
+    assert!(matches!(node.activity(CARGO, TARGET), Activity::Idle));
+}

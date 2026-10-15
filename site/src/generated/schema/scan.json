@@ -112,7 +112,7 @@
               "minimum": 0
             },
             "seen": {
-              "description": "How: `executable`, `working-directory`, `argument`, `environment`,\n`mapped-file`, or `runtime` (its runtime working in its project).",
+              "description": "How: `executable`, `working-directory`, `argument`, `environment`,\n`mapped-file`, or `runtime` (its runtime working in its project or naming a path\nthere).",
               "type": "string"
             },
             "state": {

@@ -205,7 +205,8 @@ pub enum Seen {
     Environment(PathBuf),
     /// It has this file inside the finding mapped into its memory.
     MappedFile(PathBuf),
-    /// It is the finding's runtime, working in the finding's project at this directory.
+    /// It is the finding's runtime, and works in the finding's project at this directory
+    /// or names this path there in its arguments or environment.
     Runtime(PathBuf),
 }
 
