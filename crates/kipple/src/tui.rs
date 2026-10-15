@@ -241,11 +241,20 @@ impl Keys for TerminalKeys {
     }
 }
 
-/// The home screen's key for a key press. Ctrl-C interrupts; any other key held with
-/// Ctrl or Alt means nothing, so Ctrl-S doesn't select and Alt-Q doesn't quit.
+/// The home screen's key for a key press. Ctrl-C interrupts. A character held with both
+/// Ctrl and Alt is typed as it is: Windows reports Alt Gr that way, and Alt Gr types `@`
+/// and `{` on many layouts. Any other key held with Ctrl or Alt means nothing, so
+/// Ctrl-S doesn't select and Alt-Q doesn't quit.
 const fn key_of(key: KeyEvent) -> Option<Key> {
     if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
         return Some(Key::Interrupt);
+    }
+    if let KeyCode::Char(c) = key.code
+        && key
+            .modifiers
+            .contains(KeyModifiers::CONTROL.union(KeyModifiers::ALT))
+    {
+        return Some(Key::Char(c));
     }
     if key
         .modifiers
@@ -307,6 +316,18 @@ mod tests {
             }
         }
         assert_eq!(press(KeyCode::Char('c'), KeyModifiers::ALT), None);
+    }
+
+    // Catches '@' or '{' typed with AltGr never reaching the filter on German and
+    // French Windows layouts, where crossterm reports AltGr as Ctrl and Alt together.
+    #[test]
+    fn a_character_typed_with_altgr_is_typed() {
+        let altgr = KeyModifiers::CONTROL.union(KeyModifiers::ALT);
+        for c in ['@', '{', '\\'] {
+            assert_eq!(press(KeyCode::Char(c), altgr), Some(Key::Char(c)), "{c:?}");
+        }
+        assert_eq!(press(KeyCode::Char('c'), altgr), Some(Key::Interrupt));
+        assert_eq!(press(KeyCode::Enter, altgr), None);
     }
 
     // Catches the modifier check swallowing the one modified key the screen answers.
