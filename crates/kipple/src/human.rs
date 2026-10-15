@@ -184,7 +184,7 @@ fn tracked(tracked: &Tracked) -> String {
 
 fn activity(activity: &Activity) -> String {
     match activity {
-        Activity::Idle => "no running program runs anything inside it".to_owned(),
+        Activity::Idle => "no running program runs an executable inside it".to_owned(),
         Activity::InUse { pid, executable } => format!(
             "process {pid} runs {}",
             escaped(&executable.display().to_string())
