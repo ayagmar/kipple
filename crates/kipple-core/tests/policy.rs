@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use kipple_core::{
     Activity, ActivityGap, Bucket, Caution, Consequence, Cost, Facts, Hold, Level, Loss, Method,
-    Modified, ProbeError, Proposal, Recovery, Tracked, Verdict, classify,
+    Modified, ProbeError, Proposal, Recovery, Tracked, Verdict, WalkGap, classify,
 };
 
 const DAY: Duration = Duration::from_hours(24);
@@ -162,7 +162,14 @@ fn each_unknown_or_blocking_fact_holds_the_finding_in_protected_and_never_in_rev
         ),
         (
             Facts {
-                modified: Modified::Unknown,
+                modified: Modified::Unknown(WalkGap::Unread),
+                ..build_output()
+            },
+            Hold::UnknownModified,
+        ),
+        (
+            Facts {
+                modified: Modified::Unknown(WalkGap::OtherFileSystem),
                 ..build_output()
             },
             Hold::UnknownModified,
@@ -204,7 +211,11 @@ fn a_repository_around_or_inside_a_finding_or_one_not_ruled_out_holds_it_in_prot
             Hold::UnknownGit,
         ),
         (Tracked::Unchecked(denied("/home")), Hold::UnknownGit),
-        (Tracked::Unwalked, Hold::UnknownGit),
+        (Tracked::Unwalked(WalkGap::Unread), Hold::UnknownGit),
+        (
+            Tracked::Unwalked(WalkGap::OtherFileSystem),
+            Hold::UnknownGit,
+        ),
         (
             Tracked::HoldsRepository {
                 work_tree: PathBuf::from("/p/.venv/src/pkg"),
@@ -358,7 +369,7 @@ fn no_level_moves_a_held_finding_out_of_protected() {
             ..build_output()
         },
         Facts {
-            tracked: Tracked::Unwalked,
+            tracked: Tracked::Unwalked(WalkGap::Unread),
             ..build_output()
         },
         Facts {
@@ -366,7 +377,7 @@ fn no_level_moves_a_held_finding_out_of_protected() {
             ..build_output()
         },
         Facts {
-            modified: Modified::Unknown,
+            modified: Modified::Unknown(WalkGap::Unread),
             ..build_output()
         },
     ];

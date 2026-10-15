@@ -69,7 +69,7 @@ pub use integration::{
 };
 pub use policy::{
     Activity, ActivityGap, Bucket, Caution, Consequence, Cost, Facts, Hold, Level, Loss, Modified,
-    Proposal, Recovery, Tracked, Verdict, classify,
+    Proposal, Recovery, Tracked, Verdict, WalkGap, classify,
 };
 pub use probe::{
     Clock, DirEntryMeta, EntryKind, EntryMeta, FileIdentity, FsProbe, ProbeError, Sizer,

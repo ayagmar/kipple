@@ -140,7 +140,7 @@ pub trait Sizer: fmt::Debug + Send + Sync {
     ///
     /// # Errors
     /// When the metadata of `path` itself can't be read. A directory that can't be listed,
-    /// at `path` or below it, makes the estimate
+    /// at `path` or below it, or one below it on another file system, makes the estimate
     /// [`Incomplete`](crate::Completeness::Incomplete) instead.
     fn size(&self, path: &Path, cancel: &CancelToken) -> Result<Measurement, ProbeError>;
 }

@@ -73,7 +73,6 @@ fn an_item_is_sized_completely_and_links_out_of_it_are_never_followed() {
 
     assert_eq!(measured.size.apparent, Apparent(expected));
     assert_eq!(measured.size.completeness, Completeness::Complete);
-    assert!(!measured.skipped_mount);
 }
 
 #[test]
@@ -268,6 +267,12 @@ mod unix {
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
 
         let completeness = size.unwrap().size.completeness;
-        assert_eq!(completeness, Completeness::Incomplete { unreadable: 1 });
+        assert_eq!(
+            completeness,
+            Completeness::Incomplete {
+                unreadable: 1,
+                skipped_mounts: 0
+            }
+        );
     }
 }

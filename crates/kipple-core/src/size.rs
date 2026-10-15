@@ -16,10 +16,14 @@ pub struct Allocated(pub u64);
 pub enum Completeness {
     /// Every entry below the item was read.
     Complete,
-    /// Some entries could not be read, so the estimate is a lower bound.
+    /// Some entries were not measured, so the estimate is a lower bound.
     Incomplete {
         /// Directories or entries that could not be read.
         unreadable: u64,
+        /// Directories inside that live on another file system, such as a mount or a
+        /// btrfs subvolume, and were not entered: their bytes are left out, and neither
+        /// their files' times nor a `.git` inside them were seen.
+        skipped_mounts: u64,
     },
     /// The measurement stopped early because the scan was cancelled.
     Cancelled,
@@ -51,8 +55,4 @@ pub struct Measurement {
     /// A directory inside the item that holds a `.git` entry (a directory, file or link),
     /// so a git checkout lives inside it. The first in path order when there are several.
     pub repository: Option<PathBuf>,
-    /// A directory inside the item lives on another file system, such as a mount or a
-    /// btrfs subvolume. Its bytes are left out of the size, and neither its files' times
-    /// nor a `.git` inside it were seen.
-    pub skipped_mount: bool,
 }

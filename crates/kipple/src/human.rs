@@ -2,7 +2,7 @@
 
 use kipple_core::{
     Activity, ActivityGap, Bucket, Caution, Facts, Hold, Level, Loss, Modified, Proposal, Recovery,
-    Tracked, Verdict,
+    Tracked, Verdict, WalkGap,
 };
 
 use crate::json::{CompletenessOut, SizeOut};
@@ -167,10 +167,10 @@ fn tracked(tracked: &Tracked) -> String {
             "a git checkout lives inside it at {}",
             escaped(&work_tree.display().to_string())
         ),
-        Tracked::Unwalked => {
-            "it couldn't be measured completely, so a git checkout inside can't be ruled out"
-                .to_owned()
-        }
+        Tracked::Unwalked(gap) => format!(
+            "{}, so a git checkout inside can't be ruled out",
+            walk_gap(*gap)
+        ),
         Tracked::InsideRepository { work_tree } => format!(
             "inside the repository at {}; whether git tracks files in it isn't checked yet",
             escaped(&work_tree.display().to_string())
@@ -204,8 +204,9 @@ fn activity(activity: &Activity) -> String {
 }
 
 fn modified(facts: &Facts, level: Level) -> String {
-    let Modified::Ago(age) = facts.modified else {
-        return "unknown: it couldn't be measured completely".to_owned();
+    let age = match facts.modified {
+        Modified::Ago(age) => age,
+        Modified::Unknown(gap) => return format!("unknown: {}", walk_gap(gap)),
     };
     let days = age.as_secs() / (24 * 60 * 60);
     let ago = match days {
@@ -218,5 +219,12 @@ fn modified(facts: &Facts, level: Level) -> String {
         format!("{ago}, within the {window}-day recent window")
     } else {
         ago
+    }
+}
+
+const fn walk_gap(gap: WalkGap) -> &'static str {
+    match gap {
+        WalkGap::Unread => "it couldn't be measured completely",
+        WalkGap::OtherFileSystem => "a directory inside is on another file system and wasn't read",
     }
 }

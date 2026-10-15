@@ -148,8 +148,18 @@ pub enum Tracked {
         /// The directory inside it holding `.git`.
         work_tree: PathBuf,
     },
-    /// Not everything inside could be read, so a checkout inside it can't be ruled out.
-    Unwalked,
+    /// Not everything inside was measured, so a checkout inside it can't be ruled out.
+    Unwalked(WalkGap),
+}
+
+/// Why the walk that measured a finding didn't see everything inside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WalkGap {
+    /// Some entries couldn't be read, or the finding couldn't be measured at all.
+    Unread,
+    /// Everything was read except directories on another file system, such as a mount
+    /// or a btrfs subvolume, which the walk doesn't enter.
+    OtherFileSystem,
 }
 
 /// Whether a program is using the finding, from the running executables (D-035).
@@ -185,8 +195,8 @@ pub enum Modified {
     /// The newest modification time of everything inside, this long ago. Zero when it is
     /// in the future.
     Ago(Duration),
-    /// Not every entry could be read, or the finding couldn't be measured.
-    Unknown,
+    /// The walk didn't see everything inside, or a time wasn't reported.
+    Unknown(WalkGap),
 }
 
 /// What the host learned about a finding once it was measured: everything its bucket is
@@ -325,7 +335,7 @@ fn holds(facts: &Facts) -> Vec<Hold> {
     match facts.tracked {
         Tracked::NoRepository => {}
         Tracked::HoldsRepository { .. } => holds.push(Hold::HoldsRepository),
-        Tracked::InsideRepository { .. } | Tracked::Unchecked(_) | Tracked::Unwalked => {
+        Tracked::InsideRepository { .. } | Tracked::Unchecked(_) | Tracked::Unwalked(_) => {
             holds.push(Hold::UnknownGit);
         }
     }
@@ -334,7 +344,7 @@ fn holds(facts: &Facts) -> Vec<Hold> {
         Activity::InUse { .. } => holds.push(Hold::InUse),
         Activity::Unknown(_) => holds.push(Hold::UnknownActivity),
     }
-    if facts.modified == Modified::Unknown {
+    if matches!(facts.modified, Modified::Unknown(_)) {
         holds.push(Hold::UnknownModified);
     }
     holds

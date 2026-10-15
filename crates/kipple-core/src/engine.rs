@@ -18,7 +18,9 @@ use crate::integration::{
     Advice, Evidence, FindingSink, Integration, IntegrationDescriptor, IntegrationError,
     IntegrationId, ScanContext,
 };
-use crate::policy::{Consequence, Facts, Level, Modified, Proposal, Tracked, Verdict, classify};
+use crate::policy::{
+    Consequence, Facts, Level, Modified, Proposal, Tracked, Verdict, WalkGap, classify,
+};
 use crate::probe::{Clock, EntryKind, EntryMeta, FsProbe, ProbeError, Sizer};
 use crate::process::ProcessProbe;
 use crate::root::{ResolvedRoot, Roots, SymbolicRoot, UnresolvedRoot};
@@ -522,17 +524,14 @@ impl Engine {
         shared: Shared<'_>,
     ) -> Facts {
         let path = &found.finding.path;
-        let complete = measurement
-            .as_ref()
-            .is_some_and(|m| m.size.completeness == Completeness::Complete && !m.skipped_mount);
-        let modified = measurement
-            .as_ref()
-            .filter(|_| complete)
-            .and_then(|m| m.modified)
-            .map_or(Modified::Unknown, |at| {
+        let gap = measurement.as_ref().map_or(Some(WalkGap::Unread), walk_gap);
+        let modified = match (gap, measurement.as_ref().and_then(|m| m.modified)) {
+            (None, Some(at)) => {
                 let age = self.ports.clock.now().duration_since(at);
                 Modified::Ago(age.unwrap_or_default())
-            });
+            }
+            (gap, _) => Modified::Unknown(gap.unwrap_or(WalkGap::Unread)),
+        };
         let above = shared.repositories.tracked(self.ports.fs.as_ref(), path);
         let tracked = if matches!(above, Tracked::NoRepository) {
             match measurement {
@@ -540,8 +539,7 @@ impl Engine {
                     repository: Some(work_tree),
                     ..
                 }) => Tracked::HoldsRepository { work_tree },
-                Some(_) if complete => Tracked::NoRepository,
-                _ => Tracked::Unwalked,
+                _ => gap.map_or(Tracked::NoRepository, Tracked::Unwalked),
             }
         } else {
             above
@@ -562,6 +560,18 @@ impl Engine {
             modified,
             recent_days: rule.and_then(|rule| rule.recent_days),
         }
+    }
+}
+
+/// What a measurement left unseen inside its finding, if anything.
+const fn walk_gap(measurement: &Measurement) -> Option<WalkGap> {
+    match measurement.size.completeness {
+        Completeness::Complete => None,
+        Completeness::Incomplete {
+            unreadable: 0,
+            skipped_mounts: 1..,
+        } => Some(WalkGap::OtherFileSystem),
+        Completeness::Incomplete { .. } | Completeness::Cancelled => Some(WalkGap::Unread),
     }
 }
 

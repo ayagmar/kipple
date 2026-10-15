@@ -321,7 +321,8 @@ impl From<&Evidence> for EvidenceOut {
 pub enum CompletenessOut {
     /// Every entry was read.
     Complete,
-    /// Some entries couldn't be read, so the sizes are lower bounds.
+    /// Some entries couldn't be read or are on another file system, so the sizes are
+    /// lower bounds.
     Incomplete,
     /// Sizing stopped because the scan was cancelled.
     Cancelled,
@@ -341,16 +342,25 @@ pub struct SizeOut {
     /// How many entries couldn't be read, when incomplete.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub unreadable: Option<u64>,
+    /// How many directories inside are on another file system and weren't read, when
+    /// incomplete.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub skipped_mounts: Option<u64>,
 }
 
 impl From<&SpaceEstimate> for SizeOut {
     fn from(size: &SpaceEstimate) -> Self {
-        let (completeness, unreadable) = match size.completeness {
-            Completeness::Complete => (CompletenessOut::Complete, None),
-            Completeness::Incomplete { unreadable } => {
-                (CompletenessOut::Incomplete, Some(unreadable))
-            }
-            Completeness::Cancelled => (CompletenessOut::Cancelled, None),
+        let (completeness, unreadable, skipped_mounts) = match size.completeness {
+            Completeness::Complete => (CompletenessOut::Complete, None, None),
+            Completeness::Incomplete {
+                unreadable,
+                skipped_mounts,
+            } => (
+                CompletenessOut::Incomplete,
+                Some(unreadable),
+                Some(skipped_mounts),
+            ),
+            Completeness::Cancelled => (CompletenessOut::Cancelled, None, None),
         };
         Self {
             apparent: size.apparent.0,
@@ -358,6 +368,7 @@ impl From<&SpaceEstimate> for SizeOut {
             unique_reclaim: size.unique_reclaim.map(|a| a.0),
             completeness,
             unreadable,
+            skipped_mounts,
         }
     }
 }

@@ -19,7 +19,7 @@ use kipple_core::{
     Omission, Operation, Platform, Ports, ProbeError, ProcessOutcome, ProcessProbe, ProcessRecord,
     ProcessSnapshot, Recovery, ResolvedRoot, RootLink, RootSource, Roots, Rule, RuleId, RuleText,
     ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Selector, Sizer, SpaceEstimate,
-    SymbolicRoot, Tracked, UnresolvedRoot, Verdict, classify, event_channel,
+    SymbolicRoot, Tracked, UnresolvedRoot, Verdict, WalkGap, classify, event_channel,
 };
 
 /// Ten times the 100 ms cancellation budget: long enough not to flake on a loaded CI
@@ -159,7 +159,6 @@ const fn measured(size: SpaceEstimate) -> Measurement {
         size,
         modified: Some(NOW),
         repository: None,
-        skipped_mount: false,
     }
 }
 
@@ -1103,7 +1102,6 @@ fn only_a_complete_measurement_dates_a_finding_and_a_future_time_counts_as_now()
                 },
                 modified: Some(at),
                 repository: None,
-                skipped_mount: false,
             }),
             ..FakeSizer::default()
         };
@@ -1120,7 +1118,10 @@ fn only_a_complete_measurement_dates_a_finding_and_a_future_time_counts_as_now()
             .map(|facts| facts.modified)
     };
     let day = Duration::from_hours(24);
-    let incomplete = Completeness::Incomplete { unreadable: 1 };
+    let incomplete = Completeness::Incomplete {
+        unreadable: 1,
+        skipped_mounts: 0,
+    };
 
     assert_eq!(
         modified(Completeness::Complete, NOW - 3 * day),
@@ -1130,7 +1131,10 @@ fn only_a_complete_measurement_dates_a_finding_and_a_future_time_counts_as_now()
         modified(Completeness::Complete, NOW + day),
         Some(Modified::Ago(Duration::ZERO))
     );
-    assert_eq!(modified(incomplete, NOW - 3 * day), Some(Modified::Unknown));
+    assert_eq!(
+        modified(incomplete, NOW - 3 * day),
+        Some(Modified::Unknown(WalkGap::Unread))
+    );
 }
 
 #[test]
@@ -1157,7 +1161,10 @@ fn a_checkout_inside_a_finding_holds_it_and_an_incomplete_walk_cant_rule_one_out
         ..measured(SIZE)
     };
     let unreadable = measured(SpaceEstimate {
-        completeness: Completeness::Incomplete { unreadable: 1 },
+        completeness: Completeness::Incomplete {
+            unreadable: 1,
+            skipped_mounts: 0,
+        },
         ..SIZE
     });
 
@@ -1174,7 +1181,10 @@ fn a_checkout_inside_a_finding_holds_it_and_an_incomplete_walk_cant_rule_one_out
         tracked(unreadable_after_checkout),
         Some(Tracked::HoldsRepository { .. })
     ));
-    assert!(matches!(tracked(unreadable), Some(Tracked::Unwalked)));
+    assert!(matches!(
+        tracked(unreadable),
+        Some(Tracked::Unwalked(WalkGap::Unread))
+    ));
     assert!(matches!(
         tracked(measured(SIZE)),
         Some(Tracked::NoRepository)
@@ -1186,10 +1196,13 @@ fn a_mount_the_walk_skipped_inside_a_finding_holds_it_for_git_and_last_change() 
     // A bind mount or btrfs subvolume below the finding could hold a checkout or recent
     // files the walk never saw.
     let sizer = FakeSizer {
-        measurement: Some(Measurement {
-            skipped_mount: true,
-            ..measured(SIZE)
-        }),
+        measurement: Some(measured(SpaceEstimate {
+            completeness: Completeness::Incomplete {
+                unreadable: 0,
+                skipped_mounts: 1,
+            },
+            ..SIZE
+        })),
         ..FakeSizer::default()
     };
     let fs = FakeFs {
@@ -1204,8 +1217,12 @@ fn a_mount_the_walk_skipped_inside_a_finding_holds_it_for_git_and_last_change() 
         .remove(Path::new("/found/target"))
         .unwrap();
 
-    assert!(matches!(facts.tracked, Tracked::Unwalked));
-    assert_eq!(facts.modified, Modified::Unknown);
+    // The reason names the mount, not an unreadable entry.
+    assert!(matches!(
+        facts.tracked,
+        Tracked::Unwalked(WalkGap::OtherFileSystem)
+    ));
+    assert_eq!(facts.modified, Modified::Unknown(WalkGap::OtherFileSystem));
     let Verdict::Protected(holds) = classify(&facts, Level::Balanced) else {
         panic!("a finding with a skipped mount is never Safe or Review");
     };

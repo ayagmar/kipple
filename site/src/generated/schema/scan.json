@@ -112,7 +112,7 @@
           "const": "complete"
         },
         {
-          "description": "Some entries couldn't be read, so the sizes are lower bounds.",
+          "description": "Some entries couldn't be read or are on another file system, so the sizes are\nlower bounds.",
           "type": "string",
           "const": "incomplete"
         },
@@ -442,6 +442,15 @@
         "completeness": {
           "description": "Whether every entry was measured.",
           "$ref": "#/$defs/CompletenessOut"
+        },
+        "skipped_mounts": {
+          "description": "How many directories inside are on another file system and weren't read, when\nincomplete.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
         },
         "unique_reclaim": {
           "description": "Allocated storage that only this item holds, where the platform reports it.",

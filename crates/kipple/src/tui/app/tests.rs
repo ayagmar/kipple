@@ -9,7 +9,7 @@ use kipple_core::{
     Activity, Advice, Allocated, Apparent, Category, Completeness, Consequence, Cost, Evidence,
     Facts, Finding, FindingId, IntegrationId, IntegrationReport, Lens, Loss, Method, Modified,
     Omission, ProbeError, Proposal, Recovery, RuleId, RuleText, ScanEvent, ScanOutcome, ScanReport,
-    SpaceEstimate, Tracked,
+    SpaceEstimate, Tracked, WalkGap,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -523,6 +523,42 @@ fn sized(layout: Layout, width: u16, height: u16) -> App {
     to(&mut app, 1);
     press(&mut app, &[Key::Char('s')]);
     app
+}
+
+#[test]
+fn a_finding_holding_a_mount_shows_its_size_as_a_lower_bound_and_names_the_mount() {
+    // A bind mount or btrfs subvolume inside a finding is never walked: its bytes are
+    // missing from the size and it could hold a checkout or recent files.
+    let mut app = App::new(catalog(), Layout::Buckets, 160, 48);
+    found(&mut app, 1, CARGO, "builtin.cargo.target", "/p/api/target");
+    app.update(Msg::Scan(Box::new(ScanEvent::FindingUpdated {
+        id: FindingId(1),
+        size: Some(SpaceEstimate {
+            completeness: Completeness::Incomplete {
+                unreadable: 0,
+                skipped_mounts: 1,
+            },
+            ..size(512 * MIB, 512 * MIB)
+        }),
+        facts: Facts {
+            tracked: Tracked::Unwalked(WalkGap::OtherFileSystem),
+            modified: Modified::Unknown(WalkGap::OtherFileSystem),
+            ..safe()
+        },
+    })));
+    to(&mut app, 1);
+
+    let shown = screen(&app, colour(), 160, 48);
+
+    assert_eq!(app.row(FindingId(1)).unwrap().shelf(), Shelf::Protected);
+    assert!(shown.contains("Size              >= 512.0 MiB"), "{shown}");
+    for label in ["Git ", "Last change "] {
+        let line = shown.lines().find(|line| line.contains(label)).unwrap();
+        assert!(
+            line.contains("a directory inside is on another file system"),
+            "{shown}"
+        );
+    }
 }
 
 #[test]

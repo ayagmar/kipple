@@ -119,7 +119,7 @@ fn visit<'s>(scope: &rayon::Scope<'s>, dir: &Path, walk: Walk<'s>) {
         if (walk.device_of)(&sub, &meta) == walk.device {
             scope.spawn(move |scope| visit(scope, &sub, walk));
         } else {
-            counts.skipped_mount = true;
+            counts.skipped_mounts += 1;
         }
     }
     tally.merge(counts);
@@ -144,7 +144,7 @@ struct Counts {
     linked: Vec<(FileIdentity, Linked)>,
     newest: Newest,
     repository: Option<PathBuf>,
-    skipped_mount: bool,
+    skipped_mounts: u64,
 }
 
 impl Counts {
@@ -209,7 +209,7 @@ struct Tally {
     allocation_unknown: AtomicBool,
     unreadable: AtomicU64,
     cancelled: AtomicBool,
-    skipped_mount: AtomicBool,
+    skipped_mounts: AtomicU64,
     linked: Mutex<HashMap<FileIdentity, Linked>>,
     newest: Mutex<Newest>,
     repository: Mutex<Option<PathBuf>>,
@@ -224,11 +224,10 @@ impl Tally {
             .fetch_add(counts.allocated + allocated, Ordering::Relaxed);
         self.unreadable
             .fetch_add(counts.unreadable, Ordering::Relaxed);
+        self.skipped_mounts
+            .fetch_add(counts.skipped_mounts, Ordering::Relaxed);
         if counts.allocation_unknown {
             self.allocation_unknown.store(true, Ordering::Relaxed);
-        }
-        if counts.skipped_mount {
-            self.skipped_mount.store(true, Ordering::Relaxed);
         }
         let mut newest = self.newest.lock().unwrap_or_else(PoisonError::into_inner);
         newest.merge(counts.newest);
@@ -277,12 +276,10 @@ impl Tally {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
-        let skipped_mount = self.skipped_mount.load(Ordering::Relaxed);
         Measurement {
             size: self.estimate(),
             modified,
             repository,
-            skipped_mount,
         }
     }
 
@@ -298,10 +295,14 @@ impl Tally {
             .sum();
         let known = !self.allocation_unknown.into_inner();
         let unreadable = self.unreadable.into_inner();
+        let skipped_mounts = self.skipped_mounts.into_inner();
         let completeness = if self.cancelled.into_inner() {
             Completeness::Cancelled
-        } else if unreadable > 0 {
-            Completeness::Incomplete { unreadable }
+        } else if unreadable > 0 || skipped_mounts > 0 {
+            Completeness::Incomplete {
+                unreadable,
+                skipped_mounts,
+            }
         } else {
             Completeness::Complete
         };
@@ -330,7 +331,7 @@ mod tests {
     }
 
     #[test]
-    fn a_directory_on_another_file_system_is_left_out_and_reported_as_skipped() {
+    fn a_directory_on_another_file_system_is_left_out_and_makes_the_size_a_lower_bound() {
         let temp = tempfile::TempDir::new().unwrap();
         let item = temp.path().join("item");
         write(&item.join("own"), 100);
@@ -343,7 +344,13 @@ mod tests {
 
         let measured = walker.size(&item, &CancelToken::new()).unwrap();
 
-        assert!(measured.skipped_mount);
+        assert_eq!(
+            measured.size.completeness,
+            Completeness::Incomplete {
+                unreadable: 0,
+                skipped_mounts: 1
+            }
+        );
         assert!(measured.size.apparent < Apparent(1 << 20));
         assert_eq!(measured.repository, None);
     }
