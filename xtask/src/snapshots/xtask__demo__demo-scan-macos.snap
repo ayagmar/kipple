@@ -5,6 +5,10 @@ expression: "serde_json::to_string_pretty(&report)?"
 {
   "findings": [
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "build-artifact",
       "consequence": {
         "cost": "unknown",
@@ -42,6 +46,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "build-artifact",
       "consequence": {
         "cost": "unknown",
@@ -79,6 +87,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "dependency-install",
       "consequence": null,
       "evidence": [
@@ -112,6 +124,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "dependency-install",
       "consequence": {
         "cost": "unknown",
@@ -149,6 +165,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "dependency-install",
       "consequence": {
         "cost": "unknown",
@@ -188,6 +208,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "cache",
       "consequence": {
         "cost": "low",
@@ -221,6 +245,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "dependency-install",
       "consequence": {
         "cost": "unknown",
@@ -258,6 +286,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "dependency-install",
       "consequence": {
         "cost": "unknown",
@@ -295,6 +327,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "trash",
       "consequence": null,
       "evidence": [
@@ -372,5 +408,6 @@ expression: "serde_json::to_string_pretty(&report)?"
   "level": "balanced",
   "outcome": "completed",
   "platform": "macos",
-  "schema": "kipple.scan/v1"
+  "schema": "kipple.scan/v1",
+  "unchecked_system_processes": 0
 }

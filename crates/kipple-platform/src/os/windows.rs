@@ -14,8 +14,8 @@ use std::path::{Component, Path, PathBuf, Prefix};
 use std::sync::Arc;
 
 use kipple_core::{
-    DirAccess, FileIdentity, Inventory, Platform, ProbeError, ProcessOutcome, ProcessOwner,
-    ResolvedRoot, RootSource, Roots, SymbolicRoot, Unread, UnresolvedRoot, UserId,
+    DirAccess, FileIdentity, Inventory, Observer, Platform, ProbeError, ProcessOutcome,
+    ProcessOwner, ResolvedRoot, RootSource, Roots, SymbolicRoot, Unread, UnresolvedRoot, UserId,
 };
 use windows_sys::Win32::Foundation::{
     CloseHandle, ERROR_ACCESS_DENIED, ERROR_INVALID_PARAMETER, HANDLE, LocalFree, STILL_ACTIVE,
@@ -279,6 +279,11 @@ const WTS_ANY_SESSION: u32 = 0xFFFF_FFFE;
 /// The SID of `SYSTEM`. `LocalService` (S-1-5-19) and `NetworkService` (S-1-5-20) are other
 /// users.
 const SYSTEM_SID: &str = "S-1-5-18";
+
+/// No mount namespaces or chroots to compare, and other users' command lines are hidden.
+pub(crate) const fn observer() -> Observer {
+    Observer::PLAIN
+}
 
 /// Who every listed process runs as: its user (`TokenUser`, not `TokenOwner`), from one
 /// listing that needs no handle to the process. A process missing from it, or listed

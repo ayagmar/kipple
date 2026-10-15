@@ -36,9 +36,9 @@ use std::time::SystemTime;
 use kipple_adapters::builtin;
 use kipple_core::{
     Advice, Apparent, CancelToken, Clock, Completeness, DirEntryMeta, Engine, EntryKind, EntryMeta,
-    Evidence, FsProbe, Inventory, Measurement, Ports, ProbeError, ProcessProbe, ProcessSnapshot,
-    ResolvedRoot, RootSource, Roots, ScanReport, ScanRequest, Sizer, SpaceEstimate, SymbolicRoot,
-    event_channel,
+    Evidence, FsProbe, Inventory, Measurement, Observer, Ports, ProbeError, ProcessProbe,
+    ProcessSnapshot, ResolvedRoot, RootSource, Roots, ScanReport, ScanRequest, Sizer,
+    SpaceEstimate, SymbolicRoot, event_channel,
 };
 use tree::FixtureTree;
 
@@ -128,6 +128,7 @@ impl ProcessProbe for NoProcesses {
         Ok(ProcessSnapshot {
             processes: Vec::new(),
             inventory: Inventory::Complete,
+            observer: Observer::PLAIN,
         })
     }
 }

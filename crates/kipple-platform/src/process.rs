@@ -42,6 +42,7 @@ impl ProcessProbe for OsProcesses {
         Ok(ProcessSnapshot {
             processes,
             inventory,
+            observer: os::observer(),
         })
     }
 }

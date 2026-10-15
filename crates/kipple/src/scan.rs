@@ -55,6 +55,7 @@ pub(crate) fn run(
             outcome: kipple_core::ScanOutcome::Cancelled,
             integrations: Vec::new(),
             findings: Vec::new(),
+            unchecked_system: 0,
         });
         (report, delivered)
     })
@@ -171,6 +172,9 @@ pub(crate) fn write_human(out: &mut dyn Write, report: &ScanOut) -> io::Result<(
     }
     write_advice(out, report)?;
     write_omissions(out, report)?;
+    if let Some(notice) = crate::human::unchecked_system(report.unchecked_system_processes) {
+        writeln!(out, "\n{notice}")?;
+    }
     let total: u64 = report
         .findings
         .iter()
@@ -227,6 +231,9 @@ pub(crate) fn write_summary(out: &mut dyn Write, report: &ScanOut) -> io::Result
             out,
             "Partial: {gaps} places couldn't be covered; `kipple scan` lists them."
         )?;
+    }
+    if let Some(notice) = crate::human::unchecked_system(report.unchecked_system_processes) {
+        writeln!(out, "{notice}")?;
     }
     writeln!(
         out,

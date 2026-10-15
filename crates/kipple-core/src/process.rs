@@ -181,6 +181,30 @@ pub enum Inventory {
     },
 }
 
+/// How kipple itself sees files, which the paths a process shows are compared with.
+#[derive(Debug, Clone)]
+pub struct Observer {
+    /// kipple's own mount namespace (Linux). A process in another one, such as a
+    /// container, names files by other paths.
+    pub mount_namespace: Probed<MountNamespace>,
+    /// The identity of kipple's own root directory (Linux). A process with another one,
+    /// in a chroot, names files by other paths too.
+    pub root_dir: Probed<FileIdentity>,
+    /// Whether the OS shows every user's command line to every user, as Linux does. Then
+    /// a root process whose command line couldn't be read is not one kipple may leave out.
+    pub command_lines_public: bool,
+}
+
+impl Observer {
+    /// An OS without mount namespaces or chroots to compare, that keeps other users'
+    /// command lines to themselves: macOS and Windows, and a host faked in a test.
+    pub const PLAIN: Self = Self {
+        mount_namespace: Err(Unread::Unsupported),
+        root_dir: Err(Unread::Unsupported),
+        command_lines_public: false,
+    };
+}
+
 /// Every process the OS listed, each with its outcome.
 #[derive(Debug, Clone)]
 pub struct ProcessSnapshot {
@@ -188,6 +212,8 @@ pub struct ProcessSnapshot {
     pub processes: Vec<ProcessRecord>,
     /// Whether that listing is complete.
     pub inventory: Inventory,
+    /// How kipple sees files, to compare each process's view with.
+    pub observer: Observer,
 }
 
 /// Takes a snapshot of running executables.

@@ -10,7 +10,7 @@ use std::time::Duration;
 use kipple_core::{
     Activity, ActivityGap, Bucket, Caution, Consequence, Cost, Facts, FileIdentity, HeldPath, Hold,
     Level, Lineage, Loss, Method, Modified, Policy, ProbeError, Proposal, Recovery, RuleId,
-    RuleSettings, Tracked, Verdict, WalkGap,
+    RuleSettings, Seen, Tracked, Verdict, WalkGap,
 };
 
 const DAY: Duration = Duration::from_hours(24);
@@ -149,7 +149,7 @@ fn each_unknown_or_blocking_fact_holds_the_finding_in_protected_and_never_in_rev
             Facts {
                 activity: Activity::InUse {
                     pid: 4121,
-                    executable: PathBuf::from("/p/target/debug/app"),
+                    seen: Seen::Executable(PathBuf::from("/p/target/debug/app")),
                 },
                 ..build_output()
             },

@@ -279,6 +279,12 @@
       "description": "What the process listing found.",
       "type": "object",
       "properties": {
+        "counted_uninspected": {
+          "description": "Processes that can't be inspected and count for every project item, so none can be\nSafe: the current user's, those of an unknown owner, and root or `SYSTEM` ones whose\ncommand line names a relative path kipple couldn't place.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
         "exited": {
           "description": "Processes that exited while being listed.",
           "type": "integer",
@@ -317,6 +323,12 @@
           "format": "uint",
           "minimum": 0
         },
+        "unchecked_system": {
+          "description": "Processes owned by root or `SYSTEM` that can't be inspected and aren't counted for\nproject items in the home directory (D-050).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
         "unknown": {
           "description": "Processes kipple treats as possibly running a tool.",
           "type": "integer",
@@ -329,7 +341,9 @@
         "identified",
         "unknown",
         "exited",
-        "no_executable"
+        "no_executable",
+        "unchecked_system",
+        "counted_uninspected"
       ]
     },
     "RootOut": {

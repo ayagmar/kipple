@@ -13,8 +13,9 @@ use std::sync::Arc;
 use std::{mem, ptr};
 
 use kipple_core::{
-    Capabilities, Inventory, MountNamespace, Platform, ProbeError, Probed, ProcessOutcome,
-    ProcessOwner, ResolvedRoot, RootSource, Roots, SettingProblem, SymbolicRoot, UnresolvedRoot,
+    Capabilities, Inventory, MountNamespace, Observer, Platform, ProbeError, Probed,
+    ProcessOutcome, ProcessOwner, ResolvedRoot, RootSource, Roots, SettingProblem, SymbolicRoot,
+    UnresolvedRoot,
 };
 
 pub(crate) use super::unix::{
@@ -235,6 +236,20 @@ impl Owners {
         Self {
             current: status.as_deref().and_then(single_uid),
         }
+    }
+}
+
+/// How kipple itself sees files: its own mount namespace and root directory. Linux shows
+/// every user's command line in `/proc/<pid>/cmdline`.
+pub(crate) fn observer() -> Observer {
+    Observer {
+        mount_namespace: fs::read_link("/proc/self/ns/mnt")
+            .map_err(unread)
+            .and_then(|link| mount_namespace(&link)),
+        root_dir: fs::metadata("/proc/self/root")
+            .map(|meta| identity_of(&meta))
+            .map_err(unread),
+        command_lines_public: true,
     }
 }
 

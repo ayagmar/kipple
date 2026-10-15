@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use kipple_core::{
     EntryKind, EntryMeta, FsProbe as _, IntegrationId, Inventory, Lens, NativeTool, ProbeError,
     ProcessClass, ProcessProbe as _, ProcessSnapshot, ResolvedRoot, RootSource, SymbolicRoot,
-    ToolStatus, UnresolvedRoot,
+    ToolStatus, UnresolvedRoot, census,
 };
 use kipple_platform::{
     Environment, KippleDir, KippleDirs, NoFollowFs, OsProcesses, PLATFORM, kipple_dirs,
@@ -283,6 +283,18 @@ impl Report {
             Inventory::Complete => writeln!(out, "  The listing is complete.")?,
             Inventory::Partial { reason } => writeln!(out, "  The listing is partial: {reason}.")?,
         }
+        let census = census(snapshot);
+        if let Some(notice) = crate::human::unchecked_system(census.unchecked_system) {
+            writeln!(out, "  {notice}")?;
+        }
+        if census.counted > 0 {
+            writeln!(
+                out,
+                "  {} processes that can't be inspected count for every project item, so none \
+                 of them can be Safe.",
+                census.counted
+            )?;
+        }
         writeln!(
             out,
             "  kipple treats an unknown process as possibly running a tool, never as idle."
@@ -493,6 +505,13 @@ pub struct ProcessesOut {
     pub no_executable: usize,
     /// Why the listing is partial, if it is.
     pub partial: Option<String>,
+    /// Processes owned by root or `SYSTEM` that can't be inspected and aren't counted for
+    /// project items in the home directory (D-050).
+    pub unchecked_system: usize,
+    /// Processes that can't be inspected and count for every project item, so none can be
+    /// Safe: the current user's, those of an unknown owner, and root or `SYSTEM` ones whose
+    /// command line names a relative path kipple couldn't place.
+    pub counted_uninspected: usize,
 }
 
 impl Report {
@@ -616,6 +635,8 @@ fn processes_out(processes: &Result<ProcessSnapshot, ProbeError>) -> ProcessesOu
                 exited: 0,
                 no_executable: 0,
                 partial: None,
+                unchecked_system: 0,
+                counted_uninspected: 0,
             };
         }
     };
@@ -623,6 +644,7 @@ fn processes_out(processes: &Result<ProcessSnapshot, ProbeError>) -> ProcessesOu
         let listed = snapshot.processes.iter();
         listed.filter(|p| p.outcome.class() == class).count()
     };
+    let census = census(snapshot);
     ProcessesOut {
         problem: None,
         total: snapshot.processes.len(),
@@ -634,5 +656,7 @@ fn processes_out(processes: &Result<ProcessSnapshot, ProbeError>) -> ProcessesOu
             Inventory::Complete => None,
             Inventory::Partial { reason } => Some(reason.clone()),
         },
+        unchecked_system: census.unchecked_system,
+        counted_uninspected: census.counted,
     }
 }

@@ -37,6 +37,12 @@
     "schema": {
       "description": "`kipple.scan/v1`.",
       "type": "string"
+    },
+    "unchecked_system_processes": {
+      "description": "How many processes owned by root or `SYSTEM` couldn't be inspected and weren't\ncounted for findings in the home directory that are otherwise idle (D-050).",
+      "type": "integer",
+      "format": "uint",
+      "minimum": 0
     }
   },
   "required": [
@@ -46,9 +52,88 @@
     "outcome",
     "level",
     "findings",
-    "integrations"
+    "integrations",
+    "unchecked_system_processes"
   ],
   "$defs": {
+    "ActivityOut": {
+      "description": "Whether a running program uses a finding (`docs/04-safety-model.md` §4, D-050).",
+      "oneOf": [
+        {
+          "description": "Every process that counts was inspected, and none shows it in use.",
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "idle"
+            },
+            "unchecked_system": {
+              "description": "How many processes owned by root or `SYSTEM` couldn't be inspected and weren't\ncounted, because it is in the home directory. 0 when none was left out.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "state",
+            "unchecked_system"
+          ]
+        },
+        {
+          "description": "A process shows it in use.",
+          "type": "object",
+          "properties": {
+            "path": {
+              "description": "The path that matched. Nothing else of the process's command line or\nenvironment is ever shown.",
+              "$ref": "#/$defs/PathOut"
+            },
+            "pid": {
+              "description": "The process.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "seen": {
+              "description": "How: `executable`, `working-directory`, `argument`, `environment`,\n`mapped-file`, or `runtime` (its runtime working in its project).",
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "const": "in-use"
+            }
+          },
+          "required": [
+            "state",
+            "pid",
+            "seen",
+            "path"
+          ]
+        },
+        {
+          "description": "Some processes that count couldn't be inspected, so it might be in use.",
+          "type": "object",
+          "properties": {
+            "message": {
+              "description": "What happened. For people; not a stable value.",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why: `no-listing`, `partial` or `uninspected`.",
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "const": "unknown"
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "message"
+          ]
+        }
+      ]
+    },
     "AdviceOut": {
       "description": "A native setting or command, shown and never run.",
       "type": "object",
@@ -225,6 +310,17 @@
       "description": "Something an integration found.",
       "type": "object",
       "properties": {
+        "activity": {
+          "description": "Whether a running program uses it, once measured.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActivityOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "category": {
           "description": "What it is. Display only.",
           "type": "string"

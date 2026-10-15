@@ -11,8 +11,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use kipple_core::{
-    FileIdentity, Inventory, Platform, ProbeError, Probed, ProcessOutcome, Roots, SymbolicRoot,
-    Unread,
+    FileIdentity, Inventory, Observer, Platform, ProbeError, Probed, ProcessOutcome, Roots,
+    SymbolicRoot, Unread,
 };
 
 pub(crate) use super::unix::{
@@ -359,6 +359,11 @@ pub(crate) fn on_network(path: &CStr) -> io::Result<bool> {
     // SAFETY: `statfs` succeeded, so it filled `stat`.
     let flags = unsafe { stat.assume_init() }.f_flags;
     Ok(flags & libc::MNT_LOCAL.cast_unsigned() == 0)
+}
+
+/// No mount namespaces or chroots to compare, and other users' command lines are hidden.
+pub(crate) const fn observer() -> Observer {
+    Observer::PLAIN
 }
 
 /// Who kipple runs as, to tell the current user's processes from others'.

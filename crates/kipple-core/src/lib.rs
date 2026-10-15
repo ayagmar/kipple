@@ -41,6 +41,7 @@ macro_rules! named {
     };
 }
 
+mod activity;
 mod cancel;
 mod capability;
 mod discovery;
@@ -55,6 +56,7 @@ mod root;
 mod rule;
 mod size;
 
+pub use activity::{ProcessCensus, census};
 pub use cancel::CancelToken;
 pub use capability::{NativeTool, ToolError, ToolStatus, ToolVersion};
 pub use discovery::WalkStop;
@@ -64,20 +66,21 @@ pub use engine::{
 };
 pub use event::{EventRx, EventTx, ScanEvent, Sequenced, event_channel};
 pub use integration::{
-    Advice, Evidence, FindingSink, Integration, IntegrationDescriptor, IntegrationError,
-    IntegrationId, IntegrationSelector, ScanContext,
+    ActivityEvidence, Advice, Evidence, FindingSink, Integration, IntegrationDescriptor,
+    IntegrationError, IntegrationId, IntegrationSelector, ScanContext,
 };
 pub use policy::{
     Activity, ActivityGap, Bucket, Caution, Consequence, Cost, Facts, HeldPath, Hold, Level,
-    Lineage, Loss, Modified, Policy, Proposal, Recovery, RuleSettings, Tracked, Verdict, WalkGap,
+    Lineage, Loss, Modified, Policy, Proposal, Recovery, RuleSettings, Seen, Tracked, Verdict,
+    WalkGap,
 };
 pub use probe::{
     Clock, DirAccess, DirEntryMeta, EntryKind, EntryMeta, FileIdentity, FileSystem, FsProbe,
     ProbeError, Sizer,
 };
 pub use process::{
-    Capabilities, EnvPath, Inventory, MountNamespace, Probed, ProcessClass, ProcessOutcome,
-    ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Unread, UserId,
+    Capabilities, EnvPath, Inventory, MountNamespace, Observer, Probed, ProcessClass,
+    ProcessOutcome, ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Unread, UserId,
 };
 pub use root::{
     LinkProblem, ResolvedRoot, RootLink, RootSource, Roots, SettingProblem, SymbolicRoot,

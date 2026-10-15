@@ -283,6 +283,7 @@ where
                 outcome: ScanOutcome::Cancelled,
                 integrations: Vec::new(),
                 findings: Vec::new(),
+                unchecked_system: 0,
             });
             let elapsed = scan.started.elapsed();
             self.elapsed = Some(elapsed);

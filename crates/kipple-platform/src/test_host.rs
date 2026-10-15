@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use kipple_core::{
-    Clock, Inventory, ProbeError, ProcessProbe, ProcessSnapshot, ResolvedRoot, RootSource, Roots,
-    SymbolicRoot, UnresolvedRoot,
+    Clock, Inventory, Observer, ProbeError, ProcessProbe, ProcessSnapshot, ResolvedRoot,
+    RootSource, Roots, SymbolicRoot, UnresolvedRoot,
 };
 
 use crate::environment::Environment;
@@ -77,6 +77,7 @@ impl ProcessProbe for NoProcesses {
         Ok(ProcessSnapshot {
             processes: Vec::new(),
             inventory: Inventory::Complete,
+            observer: Observer::PLAIN,
         })
     }
 }

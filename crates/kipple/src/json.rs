@@ -6,9 +6,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use kipple_core::{
-    Advice, Completeness, Consequence, Evidence, Finding, IntegrationId, IntegrationReport, Lens,
-    Omission, Policy, ScanOutcome, ScanReport, SpaceEstimate, SymbolicRoot, UnresolvedRoot,
-    Verdict,
+    Activity, ActivityGap, Advice, Completeness, Consequence, Evidence, Finding, IntegrationId,
+    IntegrationReport, Lens, Omission, Policy, ScanOutcome, ScanReport, Seen, SpaceEstimate,
+    SymbolicRoot, UnresolvedRoot, Verdict,
 };
 use kipple_platform::{PLATFORM, raw_path};
 use schemars::JsonSchema;
@@ -110,6 +110,9 @@ pub struct ScanOut {
     pub findings: Vec<FindingOut>,
     /// Every integration that ran, sorted by lens, then ID.
     pub integrations: Vec<IntegrationOut>,
+    /// How many processes owned by root or `SYSTEM` couldn't be inspected and weren't
+    /// counted for findings in the home directory that are otherwise idle (D-050).
+    pub unchecked_system_processes: usize,
 }
 
 impl ScanOut {
@@ -142,6 +145,7 @@ impl ScanOut {
             level: policy.level.name(),
             findings,
             integrations,
+            unchecked_system_processes: report.unchecked_system,
         }
     }
 }
@@ -259,6 +263,8 @@ pub struct FindingOut {
     pub verdict: Option<VerdictOut>,
     /// What removing it costs, once measured, when its integration verified that.
     pub consequence: Option<ConsequenceOut>,
+    /// Whether a running program uses it, once measured.
+    pub activity: Option<ActivityOut>,
 }
 
 impl FindingOut {
@@ -280,11 +286,80 @@ impl FindingOut {
                 .as_ref()
                 .and_then(|facts| facts.consequence.as_ref())
                 .map(ConsequenceOut::from),
+            activity: finding
+                .facts
+                .as_ref()
+                .map(|facts| ActivityOut::from(&facts.activity)),
         }
     }
 
     fn order(&self) -> (LensOut, &str, &str) {
         (self.lens, &self.rule, &self.path.display)
+    }
+}
+
+/// Whether a running program uses a finding (`docs/04-safety-model.md` §4, D-050).
+#[derive(Debug, Clone, Serialize, JsonSchema)]
+#[serde(tag = "state", rename_all = "kebab-case")]
+pub enum ActivityOut {
+    /// Every process that counts was inspected, and none shows it in use.
+    Idle {
+        /// How many processes owned by root or `SYSTEM` couldn't be inspected and weren't
+        /// counted, because it is in the home directory. 0 when none was left out.
+        unchecked_system: usize,
+    },
+    /// A process shows it in use.
+    InUse {
+        /// The process.
+        pid: u32,
+        /// How: `executable`, `working-directory`, `argument`, `environment`,
+        /// `mapped-file`, or `runtime` (its runtime working in its project).
+        seen: &'static str,
+        /// The path that matched. Nothing else of the process's command line or
+        /// environment is ever shown.
+        path: PathOut,
+    },
+    /// Some processes that count couldn't be inspected, so it might be in use.
+    Unknown {
+        /// Why: `no-listing`, `partial` or `uninspected`.
+        reason: &'static str,
+        /// What happened. For people; not a stable value.
+        message: String,
+    },
+}
+
+impl From<&Activity> for ActivityOut {
+    fn from(activity: &Activity) -> Self {
+        let unknown = |reason| Self::Unknown {
+            reason,
+            message: crate::human::activity(activity),
+        };
+        match activity {
+            Activity::Idle => Self::Idle {
+                unchecked_system: 0,
+            },
+            Activity::IdleExceptSystem { unchecked } => Self::Idle {
+                unchecked_system: *unchecked,
+            },
+            Activity::InUse { pid, seen } => {
+                let (name, path) = match seen {
+                    Seen::Executable(path) => ("executable", path),
+                    Seen::WorkingDirectory(path) => ("working-directory", path),
+                    Seen::Argument(path) => ("argument", path),
+                    Seen::Environment(path) => ("environment", path),
+                    Seen::MappedFile(path) => ("mapped-file", path),
+                    Seen::Runtime(path) => ("runtime", path),
+                };
+                Self::InUse {
+                    pid: *pid,
+                    seen: name,
+                    path: PathOut::new(path),
+                }
+            }
+            Activity::Unknown(ActivityGap::NoListing(_)) => unknown("no-listing"),
+            Activity::Unknown(ActivityGap::Partial(_)) => unknown("partial"),
+            Activity::Unknown(ActivityGap::Uninspected(_)) => unknown("uninspected"),
+        }
     }
 }
 

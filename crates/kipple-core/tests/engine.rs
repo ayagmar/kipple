@@ -16,10 +16,11 @@ use kipple_core::{
     Consequence, Cost, DirEntryMeta, Engine, EngineError, EntryKind, EntryMeta, EventRx, Evidence,
     Facts, FileIdentity, FindingSink, FsProbe, Hold, Integration, IntegrationDescriptor,
     IntegrationError, IntegrationId, Inventory, Lens, Level, Measurement, Method, Modified, Name,
-    Omission, Operation, Platform, Policy, Ports, ProbeError, ProcessOutcome, ProcessProbe,
-    ProcessRecord, ProcessSnapshot, Recovery, ResolvedRoot, RootLink, RootSource, Roots, Rule,
-    RuleId, RuleText, ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Selector,
-    Sizer, SpaceEstimate, SymbolicRoot, Tracked, UnresolvedRoot, Verdict, WalkGap, event_channel,
+    Observer, Omission, Operation, Platform, Policy, Ports, ProbeError, ProcessOutcome,
+    ProcessProbe, ProcessRecord, ProcessSnapshot, Recovery, ResolvedRoot, RootLink, RootSource,
+    Roots, Rule, RuleId, RuleText, ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest,
+    Selector, Sizer, SpaceEstimate, SymbolicRoot, Tracked, UnresolvedRoot, Verdict, WalkGap,
+    event_channel,
 };
 
 /// Ten times the 100 ms cancellation budget: long enough not to flake on a loaded CI
@@ -190,6 +191,7 @@ const fn no_processes() -> FakeProcesses {
     FakeProcesses(Ok(ProcessSnapshot {
         processes: Vec::new(),
         inventory: Inventory::Complete,
+        observer: Observer::PLAIN,
     }))
 }
 
@@ -1061,7 +1063,15 @@ fn a_program_running_from_a_finding_marks_it_in_use_and_any_unidentified_one_unk
             },
             deleted: false,
         };
-        ProcessRecord::new(pid, outcome)
+        // Everything else it could show is read too, since the proposer declares no
+        // narrower evidence.
+        ProcessRecord {
+            cwd: Ok(PathBuf::from("/")),
+            argv: Ok(Vec::new()),
+            env_paths: Ok(Vec::new()),
+            mapped_files: Ok(Vec::new()),
+            ..ProcessRecord::new(pid, outcome)
+        }
     };
     let denied = ProcessRecord::new(
         1,
@@ -1071,6 +1081,7 @@ fn a_program_running_from_a_finding_marks_it_in_use_and_any_unidentified_one_unk
         FakeProcesses(Ok(ProcessSnapshot {
             processes,
             inventory,
+            observer: Observer::PLAIN,
         }))
     };
     let activity = |processes: FakeProcesses| {

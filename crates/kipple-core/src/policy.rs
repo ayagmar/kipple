@@ -165,30 +165,56 @@ pub enum WalkGap {
     Untimed,
 }
 
-/// Whether a program is using the finding, from the running executables (D-035).
+/// Whether a program is using the finding, from the process snapshot (D-035, D-050).
 #[derive(Debug, Clone)]
 pub enum Activity {
-    /// Every process was listed and identified, and none runs a file inside it.
+    /// Every process that counts was inspected, and none shows it in use.
     Idle,
-    /// A process runs a file inside it.
+    /// Every process that counts was inspected, and none shows it in use, but it is in the
+    /// home directory and this many processes of root or `SYSTEM` couldn't be inspected
+    /// and weren't counted (D-050). Not the same as every process inspected.
+    IdleExceptSystem {
+        /// How many root or `SYSTEM` processes were left out.
+        unchecked: usize,
+    },
+    /// A process shows it in use.
     InUse {
         /// The process.
         pid: u32,
-        /// The file it runs.
-        executable: PathBuf,
+        /// How.
+        seen: Seen,
     },
-    /// Some processes couldn't be identified, so one of them might be using it.
+    /// Some processes that count couldn't be inspected, so one of them might use it.
     Unknown(ActivityGap),
 }
 
-/// Why the running executables don't prove a finding idle.
+/// How a process showed a finding in use. Only the path that matched is kept, never the
+/// rest of its command line or environment (docs/04 §8a).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Seen {
+    /// It runs this executable, inside the finding.
+    Executable(PathBuf),
+    /// Its working directory is inside the finding.
+    WorkingDirectory(PathBuf),
+    /// One of its arguments names this path inside the finding.
+    Argument(PathBuf),
+    /// One of its environment variables names this path inside the finding.
+    Environment(PathBuf),
+    /// It has this file inside the finding mapped into its memory.
+    MappedFile(PathBuf),
+    /// It is the finding's runtime, working in the finding's project at this directory.
+    Runtime(PathBuf),
+}
+
+/// Why the processes don't prove a finding idle.
 #[derive(Debug, Clone)]
 pub enum ActivityGap {
     /// The processes couldn't be listed at all.
     NoListing(ProbeError),
     /// The listing may leave processes out, without an error for each.
     Partial(String),
-    /// This many processes run something kipple couldn't identify.
+    /// This many processes that count couldn't be inspected: some path they could show
+    /// couldn't be read, or they see files through another mount namespace or root.
     Uninspected(usize),
 }
 
@@ -271,9 +297,9 @@ named! {
         UnknownGit = "unknown-git",
         /// A git checkout lives inside it.
         HoldsRepository = "holds-repository",
-        /// A program runs a file inside it.
+        /// A running program shows it in use.
         InUse = "in-use",
-        /// Not every running program could be identified.
+        /// Not every running program that counts could be inspected.
         UnknownActivity = "unknown-activity",
         /// Not everything inside could be read, so when it last changed isn't known.
         UnknownModified = "unknown-modified",
@@ -537,7 +563,7 @@ fn fact_holds(facts: &Facts) -> Vec<Hold> {
         }
     }
     match facts.activity {
-        Activity::Idle => {}
+        Activity::Idle | Activity::IdleExceptSystem { .. } => {}
         Activity::InUse { .. } => holds.push(Hold::InUse),
         Activity::Unknown(_) => holds.push(Hold::UnknownActivity),
     }

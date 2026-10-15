@@ -2,7 +2,7 @@
 
 use kipple_core::{
     Activity, ActivityGap, Bucket, Caution, Facts, Finding, Hold, Loss, Modified, Policy, Proposal,
-    Recovery, Tracked, Verdict, WalkGap,
+    Recovery, Seen, Tracked, Verdict, WalkGap,
 };
 
 use crate::json::{CompletenessOut, SizeOut};
@@ -194,16 +194,29 @@ fn tracked(tracked: &Tracked) -> String {
     }
 }
 
-fn activity(activity: &Activity) -> String {
+/// The D-050 notice, when any process was left out.
+pub(crate) fn unchecked_system(count: usize) -> Option<String> {
+    (count > 0).then(|| {
+        format!(
+            "{count} processes owned by root or SYSTEM couldn't be inspected and were not \
+             counted for items in your home."
+        )
+    })
+}
+
+/// Whether a running program uses a finding, in words.
+pub(crate) fn activity(activity: &Activity) -> String {
     match activity {
-        Activity::Idle => "no running program runs an executable inside it".to_owned(),
-        Activity::InUse { pid, executable } => format!(
-            "process {pid} runs {}",
-            escaped(&executable.display().to_string())
+        Activity::Idle => "no running program shows it in use".to_owned(),
+        Activity::IdleExceptSystem { unchecked } => format!(
+            "no running program kipple could inspect shows it in use; {unchecked} owned by \
+             root or SYSTEM couldn't be inspected and weren't counted, since it is in your home"
         ),
-        Activity::Unknown(ActivityGap::Uninspected(count)) => {
-            format!("{count} running programs couldn't be identified, so one of them might use it")
-        }
+        Activity::InUse { pid, seen } => in_use(*pid, seen),
+        Activity::Unknown(ActivityGap::Uninspected(count)) => format!(
+            "{count} running programs that count couldn't be inspected, so one of them might \
+             use it"
+        ),
         Activity::Unknown(ActivityGap::Partial(reason)) => format!(
             "the list of running programs may be incomplete ({})",
             escaped(reason)
@@ -213,6 +226,22 @@ fn activity(activity: &Activity) -> String {
             escaped(&error.to_string())
         ),
     }
+}
+
+/// How process `pid` was seen using a finding: only the path that matched.
+fn in_use(pid: u32, seen: &Seen) -> String {
+    let (how, path) = match seen {
+        Seen::Executable(path) => ("runs", path),
+        Seen::WorkingDirectory(path) => ("works in", path),
+        Seen::Argument(path) => ("was started with", path),
+        Seen::Environment(path) => ("has in its environment", path),
+        Seen::MappedFile(path) => ("has loaded", path),
+        Seen::Runtime(path) => ("is its runtime, working in its project at", path),
+    };
+    format!(
+        "process {pid} {how} {}",
+        escaped(&path.display().to_string())
+    )
 }
 
 fn modified(facts: &Facts, window: u16) -> String {

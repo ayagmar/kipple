@@ -1,0 +1,726 @@
+//! Which processes show a project artifact in use, and which count when they can't be
+//! inspected (`docs/04-safety-model.md` §4, D-050), through `Engine::scan` with injected
+//! process snapshots and file systems.
+
+use std::collections::BTreeMap;
+use std::ffi::OsString;
+use std::hash::{DefaultHasher, Hash as _, Hasher as _};
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::SystemTime;
+
+use kipple_core::{
+    Activity, ActivityEvidence, ActivityGap, Apparent, CancelToken, Capabilities, Category, Clock,
+    Completeness, Consequence, Cost, DirAccess, DirEntryMeta, Engine, EntryKind, EntryMeta,
+    EnvPath, Evidence, FileIdentity, FileSystem, FindingSink, FsProbe, Integration,
+    IntegrationDescriptor, IntegrationError, IntegrationId, Inventory, Lens, Measurement, Method,
+    MountNamespace, Observer, Operation, Platform, Ports, ProbeError, ProcessOutcome, ProcessOwner,
+    ProcessProbe, ProcessRecord, ProcessSnapshot, Recovery, ResolvedRoot, RootLink, RootSource,
+    Roots, Rule, RuleId, RuleText, ScanContext, ScanReport, ScanRequest, Seen, Selector, Sizer,
+    SpaceEstimate, SymbolicRoot, Unread, UserId, event_channel,
+};
+
+const HOME: &str = "/home/u";
+/// A project root in the home directory.
+const CODE: &str = "/home/u/code";
+/// A project root outside it.
+const SRV: &str = "/srv/code";
+/// A project root configured in the home directory as a link to a directory outside it.
+const LINKED: &str = "/home/u/linked";
+const LINKED_TARGET: &str = "/mnt/data/code";
+
+const VENV: &str = "/home/u/code/app/.venv";
+const TARGET: &str = "/home/u/code/app/target";
+
+const ME: u32 = 1000;
+const OUR_NAMESPACE: MountNamespace = MountNamespace(4_026_531_841);
+
+const PYTHON: ActivityEvidence = ActivityEvidence::Interpreted {
+    runtimes: &["python*"],
+};
+const NODE: ActivityEvidence = ActivityEvidence::Interpreted {
+    runtimes: &["node", "bun", "deno"],
+};
+const CARGO: ActivityEvidence = ActivityEvidence::BuiltExecutables;
+
+/// A disk where every path is a directory with an identity derived from where it really
+/// is: a path below a link is read through the link, as the OS does for every component
+/// but the last, and a link itself has its own identity.
+#[derive(Debug, Default, Clone)]
+struct Disk {
+    /// Each link and the absolute path it leads to.
+    links: Vec<(PathBuf, PathBuf)>,
+    /// Who may enter each directory; any other can't be read.
+    access: BTreeMap<PathBuf, DirAccess>,
+}
+
+impl Disk {
+    fn identity(&self, path: &Path) -> FileIdentity {
+        let mut hasher = DefaultHasher::new();
+        let mut real = path.to_owned();
+        for (link, target) in &self.links {
+            match path.strip_prefix(link) {
+                Ok(rest) if rest.as_os_str().is_empty() => "link".hash(&mut hasher),
+                Ok(rest) => real = target.join(rest),
+                Err(_) => {}
+            }
+        }
+        real.hash(&mut hasher);
+        FileIdentity {
+            volume: 1,
+            file: hasher.finish(),
+        }
+    }
+
+    /// Every directory from `dir` up to the home directory, private to the current user
+    /// or open to everyone.
+    fn with_home(mut self, private: bool) -> Self {
+        for dir in [HOME, CODE, "/home/u/code/app", VENV, TARGET] {
+            let access = DirAccess {
+                owned_by_current_user: true,
+                open_to_others: !(private && dir == HOME),
+                acl: false,
+                file_system: FileSystem::Local,
+            };
+            self.access.insert(PathBuf::from(dir), access);
+        }
+        self
+    }
+}
+
+impl FsProbe for Disk {
+    fn metadata(&self, path: &Path) -> Result<EntryMeta, ProbeError> {
+        if path.ends_with(".git") {
+            return Err(ProbeError::io(path, io::ErrorKind::NotFound.into()));
+        }
+        Ok(EntryMeta {
+            kind: EntryKind::Dir,
+            identity: Some(self.identity(path)),
+        })
+    }
+
+    fn read_dir(&self, _: &Path) -> Result<Vec<DirEntryMeta>, ProbeError> {
+        Ok(Vec::new())
+    }
+
+    fn open_dir(&self, _: &Path) -> Result<(), ProbeError> {
+        Ok(())
+    }
+
+    fn read_file(&self, path: &Path, _: u64) -> Result<Vec<u8>, ProbeError> {
+        Err(ProbeError::io(path, io::ErrorKind::NotFound.into()))
+    }
+
+    fn access(&self, dir: &Path) -> Result<DirAccess, ProbeError> {
+        self.access
+            .get(dir)
+            .copied()
+            .ok_or_else(|| ProbeError::io(dir, io::ErrorKind::PermissionDenied.into()))
+    }
+}
+
+#[derive(Debug)]
+struct CompleteSizer;
+
+impl Sizer for CompleteSizer {
+    fn size(&self, _: &Path, _: &CancelToken) -> Result<Measurement, ProbeError> {
+        Ok(Measurement {
+            size: SpaceEstimate {
+                apparent: Apparent(10),
+                allocated: None,
+                unique_reclaim: None,
+                completeness: Completeness::Complete,
+            },
+            modified: Some(SystemTime::UNIX_EPOCH),
+            repository: None,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct Epoch;
+
+impl Clock for Epoch {
+    fn now(&self) -> SystemTime {
+        SystemTime::UNIX_EPOCH
+    }
+}
+
+#[derive(Debug)]
+struct Snapshot(ProcessSnapshot);
+
+impl ProcessProbe for Snapshot {
+    fn snapshot(&self) -> Result<ProcessSnapshot, ProbeError> {
+        Ok(self.0.clone())
+    }
+}
+
+/// Proposes one project artifact, with a marker beside it, under whichever project root
+/// holds it.
+#[derive(Debug)]
+struct Artifact {
+    evidence: ActivityEvidence,
+    path: PathBuf,
+}
+
+fn rule() -> Rule {
+    let text = |s: &str| s.to_owned();
+    Rule {
+        id: RuleId("builtin.test.artifact".to_owned()),
+        integration: IntegrationId("test"),
+        text: RuleText {
+            title: text("Test"),
+            description: String::new(),
+            why: text("why"),
+            loss: text("loss"),
+            references: Vec::new(),
+        },
+        category: Category::Cache,
+        platforms: Platform::ALL.to_vec(),
+        root: SymbolicRoot::ProjectRoots,
+        selector: Selector::Integration("test"),
+        requirements: Vec::new(),
+        eligibility: Vec::new(),
+        operation: Operation::RemoveFiles(vec![Method::Delete]),
+        recent_days: None,
+    }
+}
+
+impl Integration for Artifact {
+    fn descriptor(&self) -> IntegrationDescriptor {
+        IntegrationDescriptor {
+            id: IntegrationId("test"),
+            lens: Lens::Dev,
+            platforms: Platform::ALL,
+            roots: &[],
+            selectors: &[],
+            artifacts: &[],
+            owner_files: &[],
+            verified: &[],
+        }
+    }
+
+    fn activity_evidence(&self) -> ActivityEvidence {
+        self.evidence
+    }
+
+    fn discover(
+        &self,
+        _: &ScanContext<'_>,
+        sink: &mut FindingSink<'_>,
+    ) -> Result<(), IntegrationError> {
+        let evidence = vec![
+            Evidence::Marker("pyproject.toml".to_owned()),
+            Evidence::Signature("TAG".to_owned()),
+        ];
+        let consequence = Consequence {
+            recovery: Recovery::Reinstall,
+            loss: &[],
+            cost: Cost::Low,
+        };
+        sink.add(&rule(), &self.path, evidence, Some(consequence))
+    }
+}
+
+/// One scan's setup: where home is, the disk, and the processes.
+#[derive(Debug, Clone)]
+struct Host {
+    home: Option<&'static str>,
+    disk: Disk,
+    observer: Observer,
+    inventory: Inventory,
+    processes: Vec<ProcessRecord>,
+}
+
+impl Host {
+    /// A Linux-like host with a private home directory, running these processes.
+    fn new(processes: Vec<ProcessRecord>) -> Self {
+        Self {
+            home: Some(HOME),
+            disk: Disk::default().with_home(true),
+            observer: Observer {
+                mount_namespace: Ok(OUR_NAMESPACE),
+                root_dir: Ok(Disk::default().identity(Path::new("/"))),
+                command_lines_public: true,
+            },
+            inventory: Inventory::Complete,
+            processes,
+        }
+    }
+
+    fn roots(&self) -> Roots {
+        let mut roots = Roots::default();
+        if let Some(home) = self.home {
+            let home = ResolvedRoot::new(SymbolicRoot::Home, home.into(), RootSource::Env("HOME"));
+            roots.insert(SymbolicRoot::Home, Ok(home));
+        }
+        for root in [CODE, SRV] {
+            let resolved = ResolvedRoot::new(
+                SymbolicRoot::ProjectRoots,
+                root.into(),
+                RootSource::CommandLine,
+            );
+            roots.add(SymbolicRoot::ProjectRoots, Ok(resolved));
+        }
+        let linked = ResolvedRoot {
+            link: Some(RootLink {
+                configured: LINKED.into(),
+                identity: self.disk.identity(Path::new(LINKED_TARGET)),
+            }),
+            ..ResolvedRoot::new(
+                SymbolicRoot::ProjectRoots,
+                LINKED_TARGET.into(),
+                RootSource::CommandLine,
+            )
+        };
+        roots.add(SymbolicRoot::ProjectRoots, Ok(linked));
+        roots
+    }
+
+    #[expect(
+        clippy::unwrap_used,
+        clippy::panic,
+        reason = "a scan that can't be set up fails the test"
+    )]
+    fn scan(&self, evidence: ActivityEvidence, path: &str) -> (Activity, ScanReport) {
+        let ports = Ports {
+            fs: Box::new(self.disk.clone()),
+            sizer: Box::new(CompleteSizer),
+            processes: Box::new(Snapshot(ProcessSnapshot {
+                processes: self.processes.clone(),
+                inventory: self.inventory.clone(),
+                observer: self.observer.clone(),
+            })),
+            clock: Box::new(Epoch),
+        };
+        let artifact = Artifact {
+            evidence,
+            path: path.into(),
+        };
+        let engine = Engine::new(ports, vec![Box::new(artifact)], vec![rule()]).unwrap();
+        let request = ScanRequest {
+            roots: self.roots(),
+            lens: None,
+            exclude: Vec::new(),
+        };
+        let cancel = CancelToken::new();
+        let (tx, rx) = event_channel(1024, &cancel);
+        let drain = std::thread::spawn(move || rx.into_iter().count());
+        let report = engine.scan(&request, &tx, &cancel);
+        drop(tx);
+        drain.join().unwrap();
+        let [finding] = report.findings.as_slice() else {
+            panic!("one finding, got {:?}", report.findings);
+        };
+        let activity = finding.facts.clone().unwrap().activity;
+        (activity, report)
+    }
+
+    fn activity(&self, evidence: ActivityEvidence, path: &str) -> Activity {
+        self.scan(evidence, path).0
+    }
+}
+
+fn failed() -> Unread {
+    Unread::Failed(Arc::new(io::ErrorKind::PermissionDenied.into()))
+}
+
+fn os(values: &[&str]) -> Vec<OsString> {
+    values.iter().map(OsString::from).collect()
+}
+
+/// A process of `owner` running `executable`, with every fact read: working in `/`, with
+/// no path arguments, environment paths or mapped files, in kipple's mount namespace.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a fixture that fails to build fails the test"
+)]
+fn inspected(pid: u32, owner: ProcessOwner, executable: &str) -> ProcessRecord {
+    let outcome = ProcessOutcome::Identified {
+        path: executable.into(),
+        identity: FileIdentity {
+            volume: 1,
+            file: u64::from(pid),
+        },
+        deleted: false,
+    };
+    let name = Path::new(executable).file_name().unwrap();
+    ProcessRecord {
+        owner,
+        cwd: Ok("/".into()),
+        argv: Ok(vec![name.to_owned()]),
+        env_paths: Ok(Vec::new()),
+        mapped_files: Ok(Vec::new()),
+        mount_namespace: Ok(OUR_NAMESPACE),
+        root_dir: Ok(Disk::default().identity(Path::new("/"))),
+        capabilities: Ok(Capabilities(0)),
+        ..ProcessRecord::new(pid, outcome)
+    }
+}
+
+/// A process of `owner` that couldn't be inspected, as Linux shows another user's: its
+/// executable, working directory, environment, mapped files and mount namespace are
+/// denied, and its command line is `argv`.
+fn uninspectable(pid: u32, owner: ProcessOwner, argv: &[&str]) -> ProcessRecord {
+    let denied = ProcessOutcome::Denied(Arc::new(io::ErrorKind::PermissionDenied.into()));
+    ProcessRecord {
+        owner,
+        argv: Ok(os(argv)),
+        cwd: Err(failed()),
+        env_paths: Err(failed()),
+        mapped_files: Err(failed()),
+        mount_namespace: Err(failed()),
+        root_dir: Err(failed()),
+        capabilities: Ok(Capabilities(0)),
+        ..ProcessRecord::new(pid, denied)
+    }
+}
+
+const fn other_user() -> ProcessOwner {
+    ProcessOwner::OtherUser(UserId::Uid(ME + 1))
+}
+
+const fn seen(activity: &Activity) -> Option<&Seen> {
+    if let Activity::InUse { seen, .. } = activity {
+        Some(seen)
+    } else {
+        None
+    }
+}
+
+const fn is_unknown(activity: &Activity) -> bool {
+    matches!(activity, Activity::Unknown(_))
+}
+
+#[test]
+fn an_uninspectable_process_of_the_current_user_blocks_every_layout() {
+    // Their own non-dumpable programs, such as ssh-agent, might run anything of theirs.
+    let host = Host::new(vec![uninspectable(
+        7,
+        ProcessOwner::CurrentUser,
+        &["ssh-agent"],
+    )]);
+
+    for (evidence, path) in [(CARGO, TARGET), (PYTHON, VENV)] {
+        assert!(
+            matches!(
+                host.activity(evidence, path),
+                Activity::Unknown(ActivityGap::Uninspected(1))
+            ),
+            "{path}"
+        );
+    }
+}
+
+#[test]
+fn an_unread_environment_of_the_current_user_blocks_an_interpreted_layout_only() {
+    // `/usr/bin/python3` shows a virtual environment only through what it was given, so
+    // each of those must be read; a built executable shows only by being run.
+    let mut python = inspected(7, ProcessOwner::CurrentUser, "/usr/bin/python3");
+    python.env_paths = Err(failed());
+    let host = Host::new(vec![python]);
+
+    assert!(is_unknown(&host.activity(PYTHON, VENV)));
+    assert!(matches!(host.activity(CARGO, TARGET), Activity::Idle));
+}
+
+#[test]
+fn a_venv_is_in_use_through_virtual_env_path_an_argv0_link_or_a_mapped_library() {
+    let python = || inspected(7, ProcessOwner::CurrentUser, "/usr/bin/python3.14");
+    let env = |var: &str, path: &str| EnvPath {
+        var: var.into(),
+        path: path.into(),
+    };
+    let mut virtual_env = python();
+    virtual_env.env_paths = Ok(vec![env("VIRTUAL_ENV", VENV)]);
+    let mut path = python();
+    path.env_paths = Ok(vec![
+        env("PATH", "/home/u/code/app/.venv/bin"),
+        env("PATH", "/usr/bin"),
+    ]);
+    // `.venv/bin/python` is a link to the system interpreter, which is what runs.
+    let mut argv0 = python();
+    argv0.argv = Ok(os(&["/home/u/code/app/.venv/bin/python", "manage.py"]));
+    let mut mapped = python();
+    let library = "/home/u/code/app/.venv/lib/python3.14/site-packages/_x.so";
+    mapped.mapped_files = Ok(vec!["/usr/lib/libc.so.6".into(), library.into()]);
+
+    let cases = [
+        (virtual_env, Seen::Environment(VENV.into())),
+        // The bare program name it was started by is found on its own `PATH` first.
+        (
+            path,
+            Seen::Argument("/home/u/code/app/.venv/bin/python3.14".into()),
+        ),
+        (
+            argv0,
+            Seen::Argument("/home/u/code/app/.venv/bin/python".into()),
+        ),
+        (mapped, Seen::MappedFile(library.into())),
+    ];
+    for (process, expected) in cases {
+        let activity = Host::new(vec![process]).activity(PYTHON, VENV);
+        assert_eq!(seen(&activity), Some(&expected));
+    }
+    assert!(matches!(
+        Host::new(vec![python()]).activity(PYTHON, VENV),
+        Activity::Idle
+    ));
+}
+
+#[test]
+fn a_node_script_under_node_modules_on_the_command_line_is_in_use_relative_or_not() {
+    let modules = "/home/u/code/app/node_modules";
+    let node = |argv: &[&str]| {
+        let mut node = inspected(7, ProcessOwner::CurrentUser, "/usr/bin/node");
+        node.cwd = Ok("/home/u/code/app".into());
+        node.argv = Ok(os(argv));
+        node
+    };
+
+    let absolute = node(&["node", "/home/u/code/app/node_modules/.bin/vite"]);
+    let relative = node(&["node", "node_modules/.bin/vite"]);
+
+    assert_eq!(
+        seen(&Host::new(vec![absolute]).activity(NODE, modules)),
+        Some(&Seen::Argument(
+            "/home/u/code/app/node_modules/.bin/vite".into()
+        ))
+    );
+    assert_eq!(
+        seen(&Host::new(vec![relative]).activity(NODE, modules)),
+        Some(&Seen::Argument(
+            "/home/u/code/app/node_modules/.bin/vite".into()
+        ))
+    );
+}
+
+#[test]
+fn a_runtime_working_in_the_project_uses_its_interpreted_layout() {
+    // `node server.js` run from the project shows nothing inside `node_modules`.
+    let modules = "/home/u/code/app/node_modules";
+    let in_project = |executable| {
+        let mut process = inspected(7, ProcessOwner::CurrentUser, executable);
+        process.cwd = Ok("/home/u/code/app/src".into());
+        process.argv = Ok(os(&["node", "server.js"]));
+        process
+    };
+
+    let node = Host::new(vec![in_project("/usr/bin/node")]);
+    assert_eq!(
+        seen(&node.activity(NODE, modules)),
+        Some(&Seen::Runtime("/home/u/code/app/src".into()))
+    );
+    // The name only adds holds where a runtime is declared: a shell there uses nothing,
+    // and neither does a runtime for a built layout.
+    let mut shell = in_project("/usr/bin/bash");
+    shell.argv = Ok(os(&["bash"]));
+    assert!(matches!(
+        Host::new(vec![shell]).activity(NODE, modules),
+        Activity::Idle
+    ));
+    assert!(matches!(node.activity(CARGO, TARGET), Activity::Idle));
+}
+
+#[test]
+fn an_uninspectable_root_process_is_left_out_and_counted_only_for_an_artifact_in_home() {
+    let root = || uninspectable(1, ProcessOwner::Root, &["/usr/lib/systemd/systemd"]);
+    let host = Host::new(vec![root()]);
+
+    let (activity, report) = host.scan(PYTHON, VENV);
+    assert!(matches!(
+        activity,
+        Activity::IdleExceptSystem { unchecked: 1 }
+    ));
+    assert_eq!(report.unchecked_system, 1);
+
+    let outside = host.scan(PYTHON, "/srv/code/app/.venv");
+    assert!(is_unknown(&outside.0));
+    assert_eq!(outside.1.unchecked_system, 0);
+    // Configured in the home directory, but the root leads out of it.
+    assert!(is_unknown(
+        &host.activity(PYTHON, "/mnt/data/code/app/.venv")
+    ));
+    // `SYSTEM` is left out the same way.
+    let system = Host::new(vec![uninspectable(4, ProcessOwner::System, &[])]);
+    assert!(matches!(
+        system.activity(CARGO, TARGET),
+        Activity::IdleExceptSystem { unchecked: 1 }
+    ));
+}
+
+#[test]
+fn without_a_known_home_below_the_file_system_root_no_root_process_is_left_out() {
+    let mut unknown = Host::new(vec![uninspectable(1, ProcessOwner::Root, &["/sbin/init"])]);
+    unknown.home = None;
+    let mut slash = unknown.clone();
+    slash.home = Some("/");
+
+    assert!(is_unknown(&unknown.activity(PYTHON, VENV)));
+    assert!(is_unknown(&slash.activity(PYTHON, VENV)));
+}
+
+#[test]
+fn a_root_command_line_path_inside_the_artifact_marks_it_in_use_even_for_a_built_layout() {
+    // `sudo /home/u/code/app/target/release/x`: root runs a program built there.
+    let built = "/home/u/code/app/target/release/x";
+    let host = Host::new(vec![uninspectable(9, ProcessOwner::Root, &[built])]);
+
+    assert_eq!(
+        seen(&host.activity(CARGO, TARGET)),
+        Some(&Seen::Argument(built.into()))
+    );
+}
+
+#[test]
+fn a_relative_root_command_line_path_with_an_unreadable_working_directory_blocks() {
+    // `sudo ./target/release/x` keeps the path as typed, and root's working directory
+    // can't be read, so it might be inside the artifact.
+    let host = Host::new(vec![uninspectable(
+        9,
+        ProcessOwner::Root,
+        &["./target/release/x"],
+    )]);
+
+    assert!(matches!(
+        host.activity(CARGO, TARGET),
+        Activity::Unknown(ActivityGap::Uninspected(1))
+    ));
+}
+
+#[test]
+fn an_unread_root_command_line_blocks_where_the_os_shows_it_and_not_where_it_hides_it() {
+    let mut root = uninspectable(1, ProcessOwner::Root, &[]);
+    root.argv = Err(failed());
+    let linux = Host::new(vec![root]);
+    let mut macos = linux.clone();
+    macos.observer = Observer::PLAIN;
+
+    assert!(is_unknown(&linux.activity(CARGO, TARGET)));
+    assert!(matches!(
+        macos.activity(CARGO, TARGET),
+        Activity::IdleExceptSystem { unchecked: 1 }
+    ));
+}
+
+#[test]
+fn another_users_process_counts_unless_a_private_directory_above_shuts_it_out() {
+    let process = || uninspectable(3, other_user(), &["/usr/bin/colord"]);
+    let private = Host::new(vec![process()]);
+    let mut open = private.clone();
+    open.disk = Disk::default().with_home(false);
+    let mut acl = private.clone();
+    let home = acl.disk.access.get_mut(Path::new(HOME)).unwrap();
+    home.acl = true;
+    let mut remote = private.clone();
+    let venv = remote.disk.access.get_mut(Path::new(VENV)).unwrap();
+    venv.file_system = FileSystem::Remote;
+    let mut unreadable = private.clone();
+    unreadable.disk.access.remove(Path::new(HOME));
+    let mut capable = private.clone();
+    capable.processes[0].capabilities = Ok(Capabilities(1 << 2));
+    let mut caps_unread = private.clone();
+    caps_unread.processes[0].capabilities = Err(failed());
+
+    assert!(matches!(private.activity(PYTHON, VENV), Activity::Idle));
+    for (name, host) in [
+        ("0750 home", open),
+        ("acl", acl),
+        ("network", remote),
+        ("access unread", unreadable),
+        ("CAP_DAC_READ_SEARCH", capable),
+        ("caps unread", caps_unread),
+    ] {
+        assert!(is_unknown(&host.activity(PYTHON, VENV)), "{name}");
+    }
+    assert!(is_unknown(&private.activity(PYTHON, "/srv/code/app/.venv")));
+}
+
+#[test]
+fn a_process_of_unknown_owner_or_a_partial_inventory_blocks() {
+    let mixed = Host::new(vec![uninspectable(
+        5,
+        ProcessOwner::Unknown,
+        &["fusermount3"],
+    )]);
+    let mut partial = Host::new(Vec::new());
+    partial.inventory = Inventory::Partial {
+        reason: "hidepid=2".to_owned(),
+    };
+
+    assert!(is_unknown(&mixed.activity(CARGO, TARGET)));
+    assert!(matches!(
+        partial.activity(CARGO, TARGET),
+        Activity::Unknown(ActivityGap::Partial(_))
+    ));
+}
+
+#[test]
+fn a_process_in_another_mount_namespace_is_never_read_as_idle() {
+    // A devcontainer names the project `/app`: its paths can't be compared with ours.
+    let mut container = inspected(7, ProcessOwner::CurrentUser, "/usr/local/bin/python3");
+    container.cwd = Ok("/app".into());
+    container.argv = Ok(os(&["python3", "/app/.venv/bin/flask"]));
+    container.mount_namespace = Ok(MountNamespace(4_026_532_999));
+    let host = Host::new(vec![container.clone()]);
+    let mut unread = container;
+    unread.mount_namespace = Err(failed());
+    let mut ours_unread = Host::new(vec![inspected(7, ProcessOwner::CurrentUser, "/usr/bin/x")]);
+    ours_unread.observer.mount_namespace = Err(failed());
+
+    assert!(is_unknown(&host.activity(PYTHON, VENV)));
+    assert!(is_unknown(&host.activity(CARGO, TARGET)));
+    assert!(is_unknown(&Host::new(vec![unread]).activity(PYTHON, VENV)));
+    assert!(is_unknown(&ours_unread.activity(PYTHON, VENV)));
+}
+
+#[test]
+fn a_process_path_matches_ignoring_case_and_through_a_linked_parent() {
+    // The root was typed `/home/u/Code`, while the process names the real case.
+    let mut typed = inspected(7, ProcessOwner::CurrentUser, "/usr/bin/python3");
+    typed.env_paths = Ok(vec![EnvPath {
+        var: "VIRTUAL_ENV".into(),
+        path: "/home/u/code/app/.venv".into(),
+    }]);
+    let case = Host::new(vec![typed]);
+    assert!(seen(&case.activity(PYTHON, "/home/u/code/APP/.venv")).is_some());
+
+    // `/var/home -> home`: the process names the project through the link.
+    let mut through_link = inspected(7, ProcessOwner::CurrentUser, "/usr/bin/python3");
+    through_link.cwd = Ok("/var/home/u/code/app/.venv/lib".into());
+    let mut linked = Host::new(vec![through_link]);
+    linked.disk.links = vec![("/var/home".into(), "/home".into())];
+    assert_eq!(
+        seen(&linked.activity(PYTHON, VENV)),
+        Some(&Seen::WorkingDirectory(
+            "/var/home/u/code/app/.venv/lib".into()
+        ))
+    );
+}
+
+#[test]
+fn processes_that_exited_or_run_no_program_file_are_not_counted() {
+    let mut host = Host::new(Vec::new());
+    for (pid, outcome) in [
+        (2, ProcessOutcome::NoExecutable),
+        (3, ProcessOutcome::Exited),
+        (4, ProcessOutcome::Gone),
+    ] {
+        host.processes.push(ProcessRecord {
+            owner: ProcessOwner::CurrentUser,
+            ..ProcessRecord::new(pid, outcome)
+        });
+    }
+
+    assert!(matches!(host.activity(PYTHON, VENV), Activity::Idle));
+}
+
+#[test]
+fn an_integration_that_declares_nothing_counts_every_process() {
+    let host = Host::new(vec![uninspectable(1, ProcessOwner::Root, &["/sbin/init"])]);
+
+    assert!(is_unknown(
+        &host.activity(ActivityEvidence::Everything, VENV)
+    ));
+}

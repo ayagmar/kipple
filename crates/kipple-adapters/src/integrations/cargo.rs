@@ -5,8 +5,9 @@
 use std::path::Path;
 
 use kipple_core::{
-    Consequence, Cost, DirEntryMeta, FindingSink, Integration, IntegrationDescriptor,
-    IntegrationError, IntegrationId, Lens, Loss, Platform, Recovery, ScanContext,
+    ActivityEvidence, Consequence, Cost, DirEntryMeta, FindingSink, Integration,
+    IntegrationDescriptor, IntegrationError, IntegrationId, Lens, Loss, Platform, Recovery,
+    ScanContext,
 };
 
 use super::project;
@@ -39,6 +40,11 @@ impl Integration for Cargo {
             owner_files: &[],
             verified: &["Cargo 1.99.0"],
         }
+    }
+
+    fn activity_evidence(&self) -> ActivityEvidence {
+        // What runs from a target directory is a program built into it.
+        ActivityEvidence::BuiltExecutables
     }
 
     fn discover(
