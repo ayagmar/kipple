@@ -320,3 +320,36 @@ fn kipple_without_a_terminal_prints_each_buckets_total_instead_of_the_home_scree
     assert!(line("Protected").contains("finding"), "{out}");
     assert!(out.contains("Nothing was changed."), "{out}");
 }
+
+#[test]
+fn a_venv_holding_an_editable_checkout_is_protected_as_holds_repository() {
+    // `pip install -e git+…` clones the package into the venv: removing the venv would
+    // take the checkout and any work in it (04 §10).
+    let (temp, env) = demo();
+    let mut tree = tree::FixtureTree::new();
+    venv_v3_14_8::project(&mut tree, "home/projects/editable");
+    tree.file(
+        "home/projects/editable/.venv/src/pkg/.git/HEAD",
+        b"ref: refs/heads/main\n",
+    );
+    tree.build_in(temp.path()).unwrap();
+    let project = temp.path().join("home/projects/editable");
+    let venv_path = project.join(".venv").display().to_string();
+
+    let (code, json, _) = kipple(
+        &env,
+        &["scan", "--json", "--root", project.to_str().unwrap()],
+    );
+
+    assert_eq!(code, ExitCode::SUCCESS);
+    let report: Value = serde_json::from_str(&json).unwrap();
+    let venv = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|f| f["path"]["display"] == venv_path.as_str())
+        .unwrap_or_else(|| panic!("no .venv finding in {json}"));
+    assert_eq!(venv["verdict"]["bucket"], "protected", "{venv}");
+    let reasons = venv["verdict"]["reasons"].as_array().unwrap();
+    assert!(reasons.contains(&Value::from("holds-repository")), "{venv}");
+}
