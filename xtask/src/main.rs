@@ -73,8 +73,10 @@ enum Task {
     /// Measure the home screen's keypress-to-frame latency while it scans the 1M reference
     /// tree, over repeated scans. Fails when the 95th percentile reaches 50 ms.
     BenchTui {
-        /// Scan this reference tree instead of building one. Its projects get the markers
-        /// the integrations need.
+        /// Scan this reference tree instead of building one. It must be one bench-tree
+        /// built (it carries the `.kipple-bench-tree` sentinel). Its projects get the
+        /// markers the integrations need, added as new files: existing files and links
+        /// are left as they are.
         #[arg(long)]
         tree: Option<PathBuf>,
     },

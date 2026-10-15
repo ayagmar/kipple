@@ -2,7 +2,8 @@
 //! of the home screen while it scans the 1M reference tree.
 //!
 //! The tree is `bench-tree`'s, with the marker each hot spot's project needs added, so
-//! the Cargo and Node integrations find and size every `target` and `node_modules`. The
+//! the Cargo and Node integrations find and size every `target` and `node_modules`. A
+//! given tree must carry `bench-tree`'s sentinel, and markers are only ever new files. The
 //! real home screen loop runs in process on a 160×48 test terminal while another thread
 //! presses a key every 16 ms. A key's latency runs from when it was pressed to when the
 //! next frame after the loop read it was flushed, so time spent waiting for the loop
@@ -11,7 +12,7 @@
 //! during scans.
 
 use std::ffi::OsString;
-use std::fs;
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write as _};
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
@@ -190,27 +191,55 @@ fn scan(tree: &Path, env: &Environment, keys: usize) -> Result<Measured> {
 /// Adds the marker each hot spot's project needs, so the integrations recognise it:
 /// `Cargo.toml` and Cargo's `CACHEDIR.TAG` for a `target`, `package.json` and npm's
 /// `.package-lock.json` for a `node_modules`. Returns how many projects there are.
+///
+/// Only a tree `bench-tree` built is touched. Links are never followed, and an existing
+/// marker is left as it is.
 fn mark_projects(tree: &Path) -> Result<usize> {
+    if !is_real(&tree.join(bench_tree::SENTINEL), fs::FileType::is_file) {
+        bail!(
+            "{} has no {} file, so bench-tree didn't build it; bench-tui only adds markers to a bench-tree tree",
+            tree.display(),
+            bench_tree::SENTINEL
+        );
+    }
     let mut projects = 0;
     for entry in fs::read_dir(tree).with_context(|| format!("could not read {}", tree.display()))? {
         let project = entry?.path();
+        if !is_real(&project, fs::FileType::is_dir) {
+            continue;
+        }
         projects += 1;
-        if project.join("target").is_dir() {
-            fs::write(project.join("Cargo.toml"), "[package]\nname = \"bench\"\n")?;
-            fs::write(
-                project.join("target").join("CACHEDIR.TAG"),
+        let target = project.join("target");
+        if is_real(&target, fs::FileType::is_dir) {
+            add_marker(&project.join("Cargo.toml"), "[package]\nname = \"bench\"\n")?;
+            add_marker(
+                &target.join("CACHEDIR.TAG"),
                 "Signature: 8a477f597d28d172789f06886806bc55\n",
             )?;
         }
-        if project.join("node_modules").is_dir() {
-            fs::write(project.join("package.json"), "{}\n")?;
-            fs::write(
-                project.join("node_modules").join(".package-lock.json"),
-                "{}\n",
-            )?;
+        let node_modules = project.join("node_modules");
+        if is_real(&node_modules, fs::FileType::is_dir) {
+            add_marker(&project.join("package.json"), "{}\n")?;
+            add_marker(&node_modules.join(".package-lock.json"), "{}\n")?;
         }
     }
     Ok(projects)
+}
+
+/// Whether `path` itself, not what a link at it points to, is of the `kind`.
+fn is_real(path: &Path, kind: fn(&fs::FileType) -> bool) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|meta| kind(&meta.file_type()))
+}
+
+/// Writes a new file. Anything already at `path`, a link included, is left as it is.
+fn add_marker(path: &Path, content: &str) -> Result<()> {
+    match OpenOptions::new().write(true).create_new(true).open(path) {
+        Ok(mut file) => file
+            .write_all(content.as_bytes())
+            .with_context(|| format!("could not write {}", path.display())),
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("could not create {}", path.display())),
+    }
 }
 
 /// Each key's latency: from when it was pressed to the first flush after the loop read
@@ -357,5 +386,103 @@ impl Backend for Timed {
             shown.send(()).ok();
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A one-project tree with both hot spots, carrying the sentinel when `generated`.
+    fn tree(generated: bool) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        if generated {
+            fs::write(dir.path().join(bench_tree::SENTINEL), "sentinel\n").unwrap();
+        }
+        let project = dir.path().join("project-0000");
+        fs::create_dir_all(project.join("target")).unwrap();
+        fs::create_dir_all(project.join("node_modules")).unwrap();
+        dir
+    }
+
+    /// Every file under `dir` with its bytes, sorted.
+    fn files(dir: &Path) -> Vec<(std::path::PathBuf, Vec<u8>)> {
+        let mut found = Vec::new();
+        for entry in fs::read_dir(dir).unwrap() {
+            let path = entry.unwrap().path();
+            if fs::symlink_metadata(&path).unwrap().is_dir() {
+                found.extend(files(&path));
+            } else {
+                found.push((path.clone(), fs::read(&path).unwrap_or_default()));
+            }
+        }
+        found.sort();
+        found
+    }
+
+    #[test]
+    fn refuses_a_tree_without_the_sentinel_and_writes_nothing() {
+        let dir = tree(false);
+        fs::write(
+            dir.path().join("project-0000").join("keep.txt"),
+            "user data",
+        )
+        .unwrap();
+        let before = files(dir.path());
+
+        let error = mark_projects(dir.path()).unwrap_err();
+
+        assert!(error.to_string().contains(bench_tree::SENTINEL), "{error}");
+        assert_eq!(files(dir.path()), before);
+    }
+
+    #[test]
+    fn existing_manifests_survive_marking_byte_for_byte() {
+        let dir = tree(true);
+        let project = dir.path().join("project-0000");
+        let cargo = b"[package]\nname = \"mine\"\nversion = \"1.2.3\"\n";
+        let package = b"{\"name\": \"mine\", \"private\": true}\n";
+        fs::write(project.join("Cargo.toml"), cargo).unwrap();
+        fs::write(project.join("package.json"), package).unwrap();
+
+        assert_eq!(mark_projects(dir.path()).unwrap(), 1);
+
+        assert_eq!(fs::read(project.join("Cargo.toml")).unwrap(), cargo);
+        assert_eq!(fs::read(project.join("package.json")).unwrap(), package);
+        assert!(project.join("target").join("CACHEDIR.TAG").is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_manifest_linked_outside_the_tree_is_not_followed() {
+        let dir = tree(true);
+        let outside = tempfile::tempdir().unwrap();
+        let victim = outside.path().join("Cargo.toml");
+        fs::write(&victim, "precious\n").unwrap();
+        let missing = outside.path().join("package.json");
+        let project = dir.path().join("project-0000");
+        std::os::unix::fs::symlink(&victim, project.join("Cargo.toml")).unwrap();
+        std::os::unix::fs::symlink(&missing, project.join("package.json")).unwrap();
+
+        mark_projects(dir.path()).unwrap();
+
+        assert_eq!(fs::read(&victim).unwrap(), b"precious\n");
+        assert!(!missing.exists(), "a dangling link was followed");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_hot_spot_linked_outside_the_tree_gets_no_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join(bench_tree::SENTINEL), "sentinel\n").unwrap();
+        let project = dir.path().join("project-0000");
+        fs::create_dir(&project).unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::os::unix::fs::symlink(outside.path(), project.join("target")).unwrap();
+        std::os::unix::fs::symlink(outside.path(), project.join("node_modules")).unwrap();
+
+        mark_projects(dir.path()).unwrap();
+
+        assert_eq!(fs::read_dir(outside.path()).unwrap().count(), 0);
     }
 }

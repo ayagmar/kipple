@@ -6,6 +6,9 @@
 //! machine builds the same tree. Most entries sit in `node_modules`-like and `target`-like
 //! hot spots. Every project also has a hidden directory and a `.gitignore` that lists the
 //! hot spots, so a walker that honours ignore files or skips hidden entries undercounts.
+//!
+//! The root also holds a sentinel file, outside the entry count, so `bench-tui --tree`
+//! can tell a tree this command built from a directory it must not write into.
 
 use std::fs;
 use std::io::{self, Write as _};
@@ -41,6 +44,10 @@ const LARGE_FILE: u64 = 64 * 1024;
 
 const GITIGNORE: &[u8] = b"node_modules/\ntarget/\n.cache/\n";
 
+/// The sentinel at the root of every tree this command builds.
+pub(crate) const SENTINEL: &str = ".kipple-bench-tree";
+const SENTINEL_TEXT: &[u8] = b"Built by `cargo xtask bench-tree`. `cargo xtask bench-tui --tree` only adds project markers to a tree with this file.\n";
+
 /// What was written.
 #[derive(Debug, Default)]
 struct Summary {
@@ -50,7 +57,7 @@ struct Summary {
 }
 
 /// Builds the reference tree with exactly `entries` files and directories inside `dir`,
-/// which must be missing or empty.
+/// which must be missing or empty, plus the sentinel.
 pub(crate) fn run(dir: &Path, entries: u64) -> Result<()> {
     let summary = generate(dir, entries)?;
     writeln!(
@@ -67,6 +74,7 @@ pub(crate) fn run(dir: &Path, entries: u64) -> Result<()> {
 
 fn generate(dir: &Path, entries: u64) -> Result<Summary> {
     ensure_empty(dir)?;
+    write_file(&dir.join(SENTINEL), SENTINEL_TEXT)?;
     let mut tree = Tree::new(entries);
     let mut index = 0;
     while tree.remaining > 0 {
@@ -313,7 +321,11 @@ mod tests {
 
         let listed = listing(first.path());
         assert_eq!(listed, listing(second.path()));
-        assert_eq!(listed.len() as u64, ENTRIES);
+        assert_eq!(
+            listed.len() as u64,
+            ENTRIES + 1,
+            "the entries and the sentinel"
+        );
         assert_eq!(summary.dirs + summary.files, ENTRIES);
     }
 
