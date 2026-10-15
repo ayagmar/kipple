@@ -9,7 +9,8 @@ use kipple_core::{Level, Method, RuleId};
 
 use super::app::{App, Key};
 use super::view::title_case;
-use crate::config::Edit;
+use crate::config::{Edit, same_config_path};
+use crate::human::escaped;
 
 /// One line of the panel the cursor can stand on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -188,6 +189,17 @@ impl Panel {
                 self.typing = None;
                 if path.as_os_str().is_empty() {
                     return Action::Nothing;
+                }
+                let home = app.home.as_deref();
+                if app
+                    .roots
+                    .iter()
+                    .any(|root| same_config_path(root, &path, home))
+                {
+                    return Action::Say(format!(
+                        "{} is already a project root.",
+                        escaped(&path.display().to_string())
+                    ));
                 }
                 let mut roots = app.roots.clone();
                 roots.push(path.clone());

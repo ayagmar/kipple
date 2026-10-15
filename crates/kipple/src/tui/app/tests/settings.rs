@@ -447,6 +447,7 @@ fn configured(width: u16, height: u16) -> App {
         config,
         policy,
         roots: vec![PathBuf::from("~/projects"), PathBuf::from("~/work")],
+        home: Some(PathBuf::from("/home/ada")),
     });
     app.update(Msg::Resize { width, height });
     press(&mut app, &[Key::Char(','), Key::Down, Key::Down]);
@@ -501,6 +502,35 @@ fn settings_under_no_color_and_ascii_use_only_ascii_and_the_terminals_colours() 
             assert!(cell.symbol().is_ascii(), "{cell:?}");
         }
     }
+}
+
+// Catches a root that is already listed being written again under another spelling,
+// which would scan the same tree twice.
+#[test]
+fn a_project_root_already_listed_is_refused_however_it_is_spelled() {
+    let disk = Disk::new();
+    let config = Config {
+        project_roots: Some(vec!["~/projects".to_owned()]),
+        ..Config::default()
+    };
+    let mut app = screen_on(&disk, config);
+    let spelled = format!(
+        "{}{}",
+        disk.home().join("PROJECTS").display(),
+        std::path::MAIN_SEPARATOR
+    );
+
+    // Level, ~/projects, then "add another".
+    settings_at(&mut app, 2);
+    press(&mut app, &[Key::Enter]);
+    typed(&mut app, &spelled);
+    press(&mut app, &[Key::Enter]);
+
+    assert_eq!(disk.run(&mut app), []);
+    assert_eq!(app.roots, [PathBuf::from("~/projects")]);
+    let notice = app.notice.as_deref().unwrap();
+    assert!(notice.contains("is already a project root"), "{notice}");
+    assert_eq!(disk.files(), Vec::<PathBuf>::new());
 }
 
 // Catches a relative project root being written, which would be scanned from whatever

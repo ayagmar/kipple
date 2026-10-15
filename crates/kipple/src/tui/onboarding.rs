@@ -5,7 +5,7 @@
 //! writes nothing.
 
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use kipple_core::{Finding, Level, Method, Policy, ScanOutcome, Verdict};
 use ratatui::Frame;
@@ -16,7 +16,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use super::app::{App, Key, Progress};
 use super::view::{Look, level_about, title_case};
-use crate::config::{Edit, Loaded, Source, is_config_path};
+use crate::config::{Edit, Loaded, Source, is_config_path, same_config_path};
 use crate::human::{bytes, escaped};
 
 /// Whether the first run is due: no config file at the default location, in a known
@@ -137,6 +137,8 @@ pub(crate) struct Onboarding {
     pub(crate) notice: Option<String>,
     /// The roots kipple found, to tell whether they changed.
     found: Vec<PathBuf>,
+    /// The home directory `~` stands for, when it is known.
+    home: Option<PathBuf>,
     chosen_level: Option<Level>,
     chosen_roots: Option<Vec<PathBuf>>,
     chosen_method: Option<Method>,
@@ -163,6 +165,7 @@ impl Onboarding {
             scroll: 0,
             notice: None,
             found: app.roots.clone(),
+            home: app.home.clone(),
             chosen_level: None,
             chosen_roots: None,
             chosen_method: None,
@@ -296,8 +299,16 @@ impl Onboarding {
             Key::Esc => self.typing = None,
             Key::Enter => {
                 let typed = typed.trim().to_owned();
+                let home = self.home.as_deref();
+                let listed = self
+                    .roots
+                    .iter()
+                    .any(|root| same_config_path(&root.path, Path::new(&typed), home));
                 if typed.is_empty() {
                     self.typing = None;
+                } else if listed {
+                    self.typing = None;
+                    self.notice = Some(format!("{} is already in the list.", escaped(&typed)));
                 } else if is_config_path(&typed) {
                     self.typing = None;
                     self.roots.push(Root {

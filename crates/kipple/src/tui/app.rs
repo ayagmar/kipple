@@ -243,6 +243,8 @@ pub(crate) struct App {
     pub(crate) config: Config,
     /// The project roots scanned, as configured or by default.
     pub(crate) roots: Vec<PathBuf>,
+    /// The home directory `~` stands for, when it is known.
+    pub(crate) home: Option<PathBuf>,
     pub(crate) catalog: Catalog,
     pub(crate) rows: Vec<Row>,
     by_id: HashMap<FindingId, usize>,
@@ -283,6 +285,7 @@ impl App {
             file: None,
             config: Config::default(),
             roots: Vec::new(),
+            home: None,
             catalog,
             rows: Vec::new(),
             by_id: HashMap::new(),

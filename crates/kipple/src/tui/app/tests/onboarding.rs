@@ -333,6 +333,23 @@ fn a_relative_root_is_refused_while_typing_and_can_be_corrected() {
     assert_eq!(first.roots.len(), 0, "{:?}", first.roots);
 }
 
+// Catches a root already in the list being added again under another spelling, which
+// would scan the same tree twice.
+#[test]
+fn a_root_already_in_the_list_is_refused_however_it_is_spelled() {
+    let (_, mut first) = Disk::new().first_run();
+    answer(&mut first, &[Key::Enter, Key::Down, Key::Down, Key::Enter]);
+    let sep = std::path::MAIN_SEPARATOR;
+    for c in format!("~{sep}Code{sep}").chars() {
+        first.key(Key::Char(c));
+    }
+    answer(&mut first, &[Key::Enter]);
+
+    assert_eq!(first.roots.len(), 2, "{:?}", first.roots);
+    let notice = first.notice.as_deref().unwrap();
+    assert!(notice.contains("is already in the list"), "{notice}");
+}
+
 // Catches the first run appearing over a config file the user has, or one named on the
 // command line or in the environment, or with no known place to save its answers.
 #[test]

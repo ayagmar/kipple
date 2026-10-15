@@ -5,12 +5,12 @@
 //! written.
 
 use std::fmt::Write as _;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use kipple_core::{FindingId, Lineage, Policy, SymbolicRoot};
 
 use super::{App, Key, Mode, Node, Progress, Row, Shelf};
-use crate::config::{Config, Edit, Settings};
+use crate::config::{self, Config, Edit, Settings};
 use crate::human::{escaped, findings};
 
 /// What the home screen asks of the loop.
@@ -31,6 +31,8 @@ pub(crate) struct Saved {
     pub(crate) config: Config,
     pub(crate) policy: Policy,
     pub(crate) roots: Vec<PathBuf>,
+    /// The home directory `~` stands for, when it is known.
+    pub(crate) home: Option<PathBuf>,
 }
 
 impl Saved {
@@ -55,6 +57,7 @@ impl Saved {
             config,
             policy: settings.policy.clone(),
             roots,
+            home: config::home(&settings.roots).map(Path::to_owned),
         }
     }
 }
@@ -66,6 +69,7 @@ impl App {
         self.config = saved.config;
         self.policy = saved.policy;
         self.roots = saved.roots;
+        self.home = saved.home;
     }
 
     /// What the loop should do next, if anything.

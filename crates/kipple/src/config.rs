@@ -324,7 +324,7 @@ impl Config {
 }
 
 /// The resolved home directory, when it is known.
-fn home(roots: &Roots) -> Option<&Path> {
+pub(crate) fn home(roots: &Roots) -> Option<&Path> {
     match roots.get(SymbolicRoot::Home) {
         Some(Ok(resolved)) => Some(&resolved.path),
         Some(Err(_)) | None => None,
@@ -397,6 +397,15 @@ pub(crate) fn is_config_path(path: &str) -> bool {
 fn same_path(a: &Path, b: &Path) -> bool {
     let fold = |c: Component<'_>| c.as_os_str().to_string_lossy().to_lowercase();
     a.components().map(fold).eq(b.components().map(fold))
+}
+
+/// Whether two paths as config writes them name the same place, the way kept and
+/// excluded paths are matched: `~` expanded from `home`, then by components, ignoring
+/// case and a trailing separator.
+pub(crate) fn same_config_path(a: &Path, b: &Path, home: Option<&Path>) -> bool {
+    let full =
+        |path: &Path| expand(&path.to_string_lossy(), home).unwrap_or_else(|| path.to_owned());
+    same_path(&full(a), &full(b))
 }
 
 /// `kipple config path`: the file, when its directory is known.
