@@ -21,6 +21,17 @@ use kipple_core::{
     SpaceEstimate, SymbolicRoot, Unread, UserId, event_channel,
 };
 
+/// `path` as the host takes it: one starting with `/` is made absolute, since Windows takes
+/// a path without a drive as relative, so each test means the same thing on every OS.
+/// Anything else is kept as it is.
+fn abs(path: &str) -> PathBuf {
+    if path.starts_with('/') && !Path::new("/").is_absolute() {
+        PathBuf::from(format!("C:{path}"))
+    } else {
+        PathBuf::from(path)
+    }
+}
+
 const HOME: &str = "/home/u";
 /// A project root in the home directory.
 const CODE: &str = "/home/u/code";
@@ -83,7 +94,7 @@ impl Disk {
                 acl: false,
                 file_system: FileSystem::Local,
             };
-            self.access.insert(PathBuf::from(dir), access);
+            self.access.insert(abs(dir), access);
         }
         self
     }
@@ -241,7 +252,7 @@ impl Host {
             disk: Disk::default().with_home(true),
             observer: Observer {
                 mount_namespace: Ok(OUR_NAMESPACE),
-                root_dir: Ok(Disk::default().identity(Path::new("/"))),
+                root_dir: Ok(Disk::default().identity(&abs("/"))),
                 command_lines_public: true,
             },
             inventory: Inventory::Complete,
@@ -252,25 +263,25 @@ impl Host {
     fn roots(&self) -> Roots {
         let mut roots = Roots::default();
         if let Some(home) = self.home {
-            let home = ResolvedRoot::new(SymbolicRoot::Home, home.into(), RootSource::Env("HOME"));
+            let home = ResolvedRoot::new(SymbolicRoot::Home, abs(home), RootSource::Env("HOME"));
             roots.insert(SymbolicRoot::Home, Ok(home));
         }
         for root in [CODE, SRV] {
             let resolved = ResolvedRoot::new(
                 SymbolicRoot::ProjectRoots,
-                root.into(),
+                abs(root),
                 RootSource::CommandLine,
             );
             roots.add(SymbolicRoot::ProjectRoots, Ok(resolved));
         }
         let linked = ResolvedRoot {
             link: Some(RootLink {
-                configured: LINKED.into(),
-                identity: self.disk.identity(Path::new(LINKED_TARGET)),
+                configured: abs(LINKED),
+                identity: self.disk.identity(&abs(LINKED_TARGET)),
             }),
             ..ResolvedRoot::new(
                 SymbolicRoot::ProjectRoots,
-                LINKED_TARGET.into(),
+                abs(LINKED_TARGET),
                 RootSource::CommandLine,
             )
         };
@@ -296,7 +307,7 @@ impl Host {
         };
         let artifact = Artifact {
             evidence,
-            path: path.into(),
+            path: abs(path),
         };
         let engine = Engine::new(ports, vec![Box::new(artifact)], vec![rule()]).unwrap();
         let request = ScanRequest {
@@ -327,7 +338,10 @@ fn failed() -> Unread {
 }
 
 fn os(values: &[&str]) -> Vec<OsString> {
-    values.iter().map(OsString::from).collect()
+    values
+        .iter()
+        .map(|value| abs(value).into_os_string())
+        .collect()
 }
 
 /// A process of `owner` running `executable`, with every fact read: working in `/`, with
@@ -338,7 +352,7 @@ fn os(values: &[&str]) -> Vec<OsString> {
 )]
 fn inspected(pid: u32, owner: ProcessOwner, executable: &str) -> ProcessRecord {
     let outcome = ProcessOutcome::Identified {
-        path: executable.into(),
+        path: abs(executable),
         identity: FileIdentity {
             volume: 1,
             file: u64::from(pid),
@@ -348,12 +362,12 @@ fn inspected(pid: u32, owner: ProcessOwner, executable: &str) -> ProcessRecord {
     let name = Path::new(executable).file_name().unwrap();
     ProcessRecord {
         owner,
-        cwd: Ok("/".into()),
+        cwd: Ok(abs("/")),
         argv: Ok(vec![name.to_owned()]),
         env_paths: Ok(Vec::new()),
         mapped_files: Ok(Vec::new()),
         mount_namespace: Ok(OUR_NAMESPACE),
-        root_dir: Ok(Disk::default().identity(Path::new("/"))),
+        root_dir: Ok(Disk::default().identity(&abs("/"))),
         capabilities: Ok(Capabilities(0)),
         ..ProcessRecord::new(pid, outcome)
     }
@@ -430,7 +444,7 @@ fn a_venv_is_in_use_through_virtual_env_path_an_argv0_link_or_a_mapped_library()
     let python = || inspected(7, ProcessOwner::CurrentUser, "/usr/bin/python3.14");
     let env = |var: &str, path: &str| EnvPath {
         var: var.into(),
-        path: path.into(),
+        path: abs(path),
     };
     let mut virtual_env = python();
     virtual_env.env_paths = Ok(vec![env("VIRTUAL_ENV", VENV)]);
@@ -444,20 +458,20 @@ fn a_venv_is_in_use_through_virtual_env_path_an_argv0_link_or_a_mapped_library()
     argv0.argv = Ok(os(&["/home/u/code/app/.venv/bin/python", "manage.py"]));
     let mut mapped = python();
     let library = "/home/u/code/app/.venv/lib/python3.14/site-packages/_x.so";
-    mapped.mapped_files = Ok(vec!["/usr/lib/libc.so.6".into(), library.into()]);
+    mapped.mapped_files = Ok(vec![abs("/usr/lib/libc.so.6"), abs(library)]);
 
     let cases = [
-        (virtual_env, Seen::Environment(VENV.into())),
+        (virtual_env, Seen::Environment(abs(VENV))),
         // The bare program name it was started by is found on its own `PATH` first.
         (
             path,
-            Seen::Argument("/home/u/code/app/.venv/bin/python3.14".into()),
+            Seen::Argument(abs("/home/u/code/app/.venv/bin/python3.14")),
         ),
         (
             argv0,
-            Seen::Argument("/home/u/code/app/.venv/bin/python".into()),
+            Seen::Argument(abs("/home/u/code/app/.venv/bin/python")),
         ),
-        (mapped, Seen::MappedFile(library.into())),
+        (mapped, Seen::MappedFile(abs(library))),
     ];
     for (process, expected) in cases {
         let activity = Host::new(vec![process]).activity(PYTHON, VENV);
@@ -474,7 +488,7 @@ fn a_node_script_under_node_modules_on_the_command_line_is_in_use_relative_or_no
     let modules = "/home/u/code/app/node_modules";
     let node = |argv: &[&str]| {
         let mut node = inspected(7, ProcessOwner::CurrentUser, "/usr/bin/node");
-        node.cwd = Ok("/home/u/code/app".into());
+        node.cwd = Ok(abs("/home/u/code/app"));
         node.argv = Ok(os(argv));
         node
     };
@@ -484,15 +498,15 @@ fn a_node_script_under_node_modules_on_the_command_line_is_in_use_relative_or_no
 
     assert_eq!(
         seen(&Host::new(vec![absolute]).activity(NODE, modules)),
-        Some(&Seen::Argument(
-            "/home/u/code/app/node_modules/.bin/vite".into()
-        ))
+        Some(&Seen::Argument(abs(
+            "/home/u/code/app/node_modules/.bin/vite"
+        )))
     );
     assert_eq!(
         seen(&Host::new(vec![relative]).activity(NODE, modules)),
-        Some(&Seen::Argument(
-            "/home/u/code/app/node_modules/.bin/vite".into()
-        ))
+        Some(&Seen::Argument(abs(
+            "/home/u/code/app/node_modules/.bin/vite"
+        )))
     );
 }
 
@@ -502,7 +516,7 @@ fn a_runtime_working_in_the_project_uses_its_interpreted_layout() {
     let modules = "/home/u/code/app/node_modules";
     let in_project = |executable| {
         let mut process = inspected(7, ProcessOwner::CurrentUser, executable);
-        process.cwd = Ok("/home/u/code/app/src".into());
+        process.cwd = Ok(abs("/home/u/code/app/src"));
         process.argv = Ok(os(&["node", "server.js"]));
         process
     };
@@ -510,7 +524,7 @@ fn a_runtime_working_in_the_project_uses_its_interpreted_layout() {
     let node = Host::new(vec![in_project("/usr/bin/node")]);
     assert_eq!(
         seen(&node.activity(NODE, modules)),
-        Some(&Seen::Runtime("/home/u/code/app/src".into()))
+        Some(&Seen::Runtime(abs("/home/u/code/app/src")))
     );
     // The name only adds holds where a runtime is declared: a shell there uses nothing,
     // and neither does a runtime for a built layout.
@@ -566,14 +580,11 @@ fn a_root_command_line_path_inside_the_artifact_marks_it_in_use_even_for_a_built
     // `sudo /home/u/code/app/target/release/x`: root runs a program built there.
     let built = "/home/u/code/app/target/release/x";
     let host = Host::new(vec![uninspectable(9, ProcessOwner::Root, &[built])]);
-    let activity = host.activity(CARGO, TARGET);
 
-    // Windows takes a path without a drive as relative, so it can't be placed and blocks.
-    if Path::new(built).is_absolute() {
-        assert_eq!(seen(&activity), Some(&Seen::Argument(built.into())));
-    } else {
-        assert!(is_unknown(&activity), "{activity:?}");
-    }
+    assert_eq!(
+        seen(&host.activity(CARGO, TARGET)),
+        Some(&Seen::Argument(abs(built)))
+    );
 }
 
 #[test]
@@ -614,13 +625,13 @@ fn another_users_process_counts_unless_a_private_directory_above_shuts_it_out() 
     let mut open = private.clone();
     open.disk = Disk::default().with_home(false);
     let mut acl = private.clone();
-    let home = acl.disk.access.get_mut(Path::new(HOME)).unwrap();
+    let home = acl.disk.access.get_mut(&abs(HOME)).unwrap();
     home.acl = true;
     let mut remote = private.clone();
-    let venv = remote.disk.access.get_mut(Path::new(VENV)).unwrap();
+    let venv = remote.disk.access.get_mut(&abs(VENV)).unwrap();
     venv.file_system = FileSystem::Remote;
     let mut unreadable = private.clone();
-    unreadable.disk.access.remove(Path::new(HOME));
+    unreadable.disk.access.remove(&abs(HOME));
     let mut capable = private.clone();
     capable.processes[0].capabilities = Ok(Capabilities(1 << 2));
     let mut caps_unread = private.clone();
@@ -663,7 +674,7 @@ fn a_process_of_unknown_owner_or_a_partial_inventory_blocks() {
 fn a_process_in_another_mount_namespace_is_never_read_as_idle() {
     // A devcontainer names the project `/app`: its paths can't be compared with ours.
     let mut container = inspected(7, ProcessOwner::CurrentUser, "/usr/local/bin/python3");
-    container.cwd = Ok("/app".into());
+    container.cwd = Ok(abs("/app"));
     container.argv = Ok(os(&["python3", "/app/.venv/bin/flask"]));
     container.mount_namespace = Ok(MountNamespace(4_026_532_999));
     let host = Host::new(vec![container.clone()]);
@@ -684,21 +695,21 @@ fn a_process_path_matches_ignoring_case_and_through_a_linked_parent() {
     let mut typed = inspected(7, ProcessOwner::CurrentUser, "/usr/bin/python3");
     typed.env_paths = Ok(vec![EnvPath {
         var: "VIRTUAL_ENV".into(),
-        path: "/home/u/code/app/.venv".into(),
+        path: abs("/home/u/code/app/.venv"),
     }]);
     let case = Host::new(vec![typed]);
     assert!(seen(&case.activity(PYTHON, "/home/u/code/APP/.venv")).is_some());
 
     // `/var/home -> home`: the process names the project through the link.
     let mut through_link = inspected(7, ProcessOwner::CurrentUser, "/usr/bin/python3");
-    through_link.cwd = Ok("/var/home/u/code/app/.venv/lib".into());
+    through_link.cwd = Ok(abs("/var/home/u/code/app/.venv/lib"));
     let mut linked = Host::new(vec![through_link]);
-    linked.disk.links = vec![("/var/home".into(), "/home".into())];
+    linked.disk.links = vec![(abs("/var/home"), abs("/home"))];
     assert_eq!(
         seen(&linked.activity(PYTHON, VENV)),
-        Some(&Seen::WorkingDirectory(
-            "/var/home/u/code/app/.venv/lib".into()
-        ))
+        Some(&Seen::WorkingDirectory(abs(
+            "/var/home/u/code/app/.venv/lib"
+        )))
     );
 }
 
