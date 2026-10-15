@@ -28,7 +28,7 @@ concurrency:
 
 | Job | Runner | What |
 | --- | --- | --- |
-| `check` | `ubuntu-latest`, `macos-latest`, `windows-latest` | `cargo xtask check --skip deny` natively, then `cargo xtask verify-demo` (from M1: the CLI's tests with the `test-roots` feature, and the built binary's `scan --json` on `demo-home` against that platform's snapshot). Platform tests that need only disposable temp roots run here: the walker, no-follow probes, root resolution from an injected environment and the runner, and from M3 the trash backend and confinement |
+| `check` | `ubuntu-latest`, `macos-latest`, `windows-latest` | `cargo xtask check --skip deny` natively, then `cargo xtask verify-demo` (from M1: the CLI's tests with the `test-roots` feature, and the built binary's `scan --json` on `demo-home` at each carefulness level against that platform's snapshots). Platform tests that need only disposable temp roots run here: the walker, no-follow probes, root resolution from an injected environment and the runner, and from M3 the trash backend and confinement |
 | `distro` | `ubuntu-latest` + containers | Builds the static musl binary once, then runs the discovery and platform smoke suite inside each distro container (see below) |
 | `native` | `ubuntu-latest`, `macos-latest`, `windows-latest` | `cargo xtask test-native` (the `native` nextest profile) on the disposable runner VM, with `KIPPLE_TEST_DISPOSABLE_HOST=1`. Exists from M1 (probes) and grows in M3 (executor, trash) |
 | `deny` | `ubuntu-latest` | `cargo deny check` (advisories, licenses, bans, sources) |

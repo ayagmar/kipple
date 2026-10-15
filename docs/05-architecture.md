@@ -185,7 +185,7 @@ Every on-disk format carries a schema version. A newer unknown version is read-o
 - Core policy and planning are unit-tested with fake ports and built `FactSet`s. No disk is involved.
 - Integrations are tested against `FixtureTree` layouts in `crates/kipple-adapters/tests/fixtures/` (see 06 §7), through the engine over a small std-based probe.
 - The platform executor and trash get disposable integration tests on each native OS in CI.
-- The CLI gets end-to-end tests on `demo-home` with every root redirected by the `test-roots` override: `kipple::run` in-process for the event stream, broken pipe and `explain`, and the built binary's `scan --json` against a per-platform `insta` snapshot in `cargo xtask verify-demo`.
+- The CLI gets end-to-end tests on `demo-home` with every root redirected by the `test-roots` override: `kipple::run` in-process for the event stream, broken pipe and `explain`, and the built binary's `scan --json` at each carefulness level against a per-platform `insta` snapshot in `cargo xtask verify-demo`.
 - The TUI gets state-transition tests and `insta` snapshots of rendered buffers at 80×24 and 160×48, fed with scan events built in the test (`crates/kipple/src/tui/app/tests.rs`).
 
 See [08-engineering-standards.md](08-engineering-standards.md) for what not to test.
