@@ -333,17 +333,19 @@ impl Paths {
         placed
     }
 
-    /// Adds the paths every reading of one token gives, and whether one reading could be
-    /// placed whole. Every name is added, whether or not one before it could be placed.
+    /// Adds the paths every reading of one token gives, and whether it could be placed:
+    /// by each of its words when it holds whitespace, since any one of them may be a path,
+    /// or else whole. Every name is added, whether or not one before it could be placed.
     fn token(&mut self, first: bool, arg: &OsStr, cwd: Option<&PathBuf>, env: &[EnvPath]) -> bool {
-        let mut any = false;
-        for reading in readings(arg) {
-            let placed = reading
-                .into_iter()
-                .map(|name| self.argument(first, name, cwd, env));
-            any |= placed.fold(true, |all, placed| all & placed);
-        }
-        any
+        let (whole, words) = readings(arg);
+        let whole = self.argument(first, whole, cwd, env);
+        let Some(words) = words else {
+            return whole;
+        };
+        words
+            .into_iter()
+            .map(|word| self.argument(first, word, cwd, env))
+            .fold(true, |all, placed| all & placed)
     }
 
     /// Adds the path one name on a command line gives, and whether it could be placed.
@@ -371,20 +373,22 @@ impl Paths {
     }
 }
 
-/// The readings of one command-line token, each a list of the names it gives: the whole
-/// token, and when it holds whitespace, as a process title rewritten into one string
-/// does, each word on its own. An option such as `--state=/var/lib/x` gives its value.
-/// A token that isn't valid Unicode is only read whole.
-fn readings(token: &OsStr) -> Vec<Vec<&OsStr>> {
+/// The readings of one command-line token: the name it gives whole, and when it holds
+/// whitespace, as a process title rewritten into one string does, the name each word
+/// gives on its own. An option such as `--state=/var/lib/x` gives its value. A token
+/// that isn't valid Unicode is only read whole.
+fn readings(token: &OsStr) -> (&OsStr, Option<Vec<&OsStr>>) {
     let Some(text) = token.to_str() else {
-        return vec![vec![token]];
+        return (token, None);
     };
-    let mut readings = vec![vec![OsStr::new(option_value(text))]];
-    if text.contains(char::is_whitespace) {
-        let words = text.split_whitespace().map(option_value).map(OsStr::new);
-        readings.push(words.collect());
-    }
-    readings
+    let whole = OsStr::new(option_value(text));
+    let words = text.contains(char::is_whitespace).then(|| {
+        text.split_whitespace()
+            .map(option_value)
+            .map(OsStr::new)
+            .collect()
+    });
+    (whole, words)
 }
 
 /// What follows the first `=` of an option (a piece starting with `-`), or the piece.

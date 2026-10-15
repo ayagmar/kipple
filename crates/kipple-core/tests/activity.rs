@@ -1162,3 +1162,20 @@ fn an_empty_or_blank_command_line_clears_nothing_where_the_os_shows_it() {
     );
     assert!(is_unknown(&nameless.activity(CARGO, TARGET)));
 }
+
+#[test]
+fn a_title_is_placed_only_when_each_of_its_words_is() {
+    // `/usr/bin/env ./target/release/x` rewritten into one string reads as an absolute
+    // path whole, but its second word is relative and the working directory is unread.
+    let argv = ["/usr/bin/env ./target/release/x"];
+    for owner in [ProcessOwner::Root, ProcessOwner::CurrentUser] {
+        let host = Host::new(vec![uninspectable(9, owner.clone(), &argv)]);
+        assert!(
+            matches!(
+                host.activity(CARGO, TARGET),
+                Activity::Unknown(ActivityGap::Uninspected(1))
+            ),
+            "{owner:?}"
+        );
+    }
+}
