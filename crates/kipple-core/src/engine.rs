@@ -512,7 +512,8 @@ impl Engine {
     }
 
     /// What the host knows about a finding once measured. One that couldn't be measured
-    /// completely has no known modification time, and can't rule out a checkout inside.
+    /// completely, or held a mount the walk didn't enter, has no known modification time,
+    /// and can't rule out a checkout inside.
     fn facts(
         &self,
         found: &Found,
@@ -521,7 +522,8 @@ impl Engine {
         shared: Shared<'_>,
     ) -> Facts {
         let path = &found.finding.path;
-        let complete = measurement.filter(|m| m.size.completeness == Completeness::Complete);
+        let complete = measurement
+            .filter(|m| m.size.completeness == Completeness::Complete && !m.skipped_mount);
         let modified = complete
             .as_ref()
             .and_then(|m| m.modified)

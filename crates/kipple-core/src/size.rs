@@ -51,4 +51,8 @@ pub struct Measurement {
     /// A directory inside the item that holds a `.git` entry (a directory, file or link),
     /// so a git checkout lives inside it. The first in path order when there are several.
     pub repository: Option<PathBuf>,
+    /// A directory inside the item lives on another file system, such as a mount or a
+    /// btrfs subvolume. Its bytes are left out of the size, and neither its files' times
+    /// nor a `.git` inside it were seen.
+    pub skipped_mount: bool,
 }

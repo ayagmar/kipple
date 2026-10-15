@@ -115,6 +115,7 @@ impl Sizer for NoSizer {
             size,
             modified: None,
             repository: None,
+            skipped_mount: false,
         })
     }
 }

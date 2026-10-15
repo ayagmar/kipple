@@ -21,10 +21,18 @@ use crate::os;
 /// Sizes trees on its own bounded thread pool. It reads no ignore file or git config,
 /// skips nothing hidden, never follows a link or junction, and stays on the file system
 /// of the item it sizes.
+///
+/// A directory it leaves out for being on another file system is reported in the
+/// measurement.
 #[derive(Debug)]
 pub struct Walker {
     pool: rayon::ThreadPool,
+    device: DeviceOf,
 }
+
+/// The file system an entry lives on, where the platform reports one. A seam so a test
+/// can put a directory on another device without a real mount.
+type DeviceOf = fn(&Path, &fs::Metadata) -> Option<u64>;
 
 impl Walker {
     /// A walker with one thread per available CPU.
@@ -38,7 +46,10 @@ impl Walker {
             .thread_name(|n| format!("kipple-walk-{n}"))
             .build()
             .map_err(std::io::Error::other)?;
-        Ok(Self { pool })
+        Ok(Self {
+            pool,
+            device: |_, meta| os::device(meta),
+        })
     }
 }
 
@@ -51,23 +62,33 @@ impl Sizer for Walker {
         top.add(&meta);
         tally.merge(top);
         if meta.is_dir() {
-            let device = os::device(&meta);
-            self.pool
-                .scope(|scope| visit(scope, &item, device, &tally, cancel));
+            let walk = Walk {
+                device: (self.device)(&item, &meta),
+                device_of: self.device,
+                tally: &tally,
+                cancel,
+            };
+            self.pool.scope(|scope| visit(scope, &item, walk));
         }
         Ok(tally.measurement())
     }
 }
 
-/// Sizes the entries of `dir` and schedules each subdirectory on the same device as its
-/// own task. Once cancelled, no entry is read and no directory is scheduled anymore.
-fn visit<'s>(
-    scope: &rayon::Scope<'s>,
-    dir: &Path,
+/// What every task of one walk shares.
+#[derive(Clone, Copy)]
+struct Walk<'s> {
+    /// The item's file system.
     device: Option<u64>,
+    device_of: DeviceOf,
     tally: &'s Tally,
     cancel: &'s CancelToken,
-) {
+}
+
+/// Sizes the entries of `dir` and schedules each subdirectory on the same device as its
+/// own task. A subdirectory on another device is noted, not entered. Once cancelled, no
+/// entry is read and no directory is scheduled anymore.
+fn visit<'s>(scope: &rayon::Scope<'s>, dir: &Path, walk: Walk<'s>) {
+    let Walk { tally, cancel, .. } = walk;
     if cancel.is_cancelled() {
         tally.cancelled.store(true, Ordering::Relaxed);
         return;
@@ -91,9 +112,14 @@ fn visit<'s>(
         if entry.file_name() == ".git" {
             counts.repository(dir);
         }
-        if meta.is_dir() && os::device(&meta) == device {
-            let sub = entry.path();
-            scope.spawn(move |scope| visit(scope, &sub, device, tally, cancel));
+        if !meta.is_dir() {
+            continue;
+        }
+        let sub = entry.path();
+        if (walk.device_of)(&sub, &meta) == walk.device {
+            scope.spawn(move |scope| visit(scope, &sub, walk));
+        } else {
+            counts.skipped_mount = true;
         }
     }
     tally.merge(counts);
@@ -118,6 +144,7 @@ struct Counts {
     linked: Vec<(FileIdentity, Linked)>,
     newest: Newest,
     repository: Option<PathBuf>,
+    skipped_mount: bool,
 }
 
 impl Counts {
@@ -182,6 +209,7 @@ struct Tally {
     allocation_unknown: AtomicBool,
     unreadable: AtomicU64,
     cancelled: AtomicBool,
+    skipped_mount: AtomicBool,
     linked: Mutex<HashMap<FileIdentity, Linked>>,
     newest: Mutex<Newest>,
     repository: Mutex<Option<PathBuf>>,
@@ -198,6 +226,9 @@ impl Tally {
             .fetch_add(counts.unreadable, Ordering::Relaxed);
         if counts.allocation_unknown {
             self.allocation_unknown.store(true, Ordering::Relaxed);
+        }
+        if counts.skipped_mount {
+            self.skipped_mount.store(true, Ordering::Relaxed);
         }
         let mut newest = self.newest.lock().unwrap_or_else(PoisonError::into_inner);
         newest.merge(counts.newest);
@@ -246,10 +277,12 @@ impl Tally {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .take();
+        let skipped_mount = self.skipped_mount.load(Ordering::Relaxed);
         Measurement {
             size: self.estimate(),
             modified,
             repository,
+            skipped_mount,
         }
     }
 
@@ -278,5 +311,40 @@ impl Tally {
             unique_reclaim: known.then_some(Allocated(allocated.saturating_sub(shared))),
             completeness,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Puts any directory named `mounted` on a device of its own.
+    #[expect(clippy::unnecessary_wraps, reason = "it stands in for the device seam")]
+    fn mounted_apart(path: &Path, _: &fs::Metadata) -> Option<u64> {
+        Some(if path.ends_with("mounted") { 2 } else { 1 })
+    }
+
+    fn write(path: &Path, bytes: usize) {
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, vec![7_u8; bytes]).unwrap();
+    }
+
+    #[test]
+    fn a_directory_on_another_file_system_is_left_out_and_reported_as_skipped() {
+        let temp = tempfile::TempDir::new().unwrap();
+        let item = temp.path().join("item");
+        write(&item.join("own"), 100);
+        write(&item.join("sub/mounted/big"), 1 << 20);
+        write(&item.join("sub/mounted/checkout/.git/HEAD"), 10);
+        let walker = Walker {
+            device: mounted_apart,
+            ..Walker::new().unwrap()
+        };
+
+        let measured = walker.size(&item, &CancelToken::new()).unwrap();
+
+        assert!(measured.skipped_mount);
+        assert!(measured.size.apparent < Apparent(1 << 20));
+        assert_eq!(measured.repository, None);
     }
 }

@@ -14,12 +14,12 @@ use std::time::{Duration, SystemTime};
 use kipple_core::{
     Activity, ActivityGap, Allocated, Apparent, CancelToken, Category, Clock, Completeness,
     Consequence, Cost, DirEntryMeta, Engine, EngineError, EntryKind, EntryMeta, EventRx, Evidence,
-    Facts, FileIdentity, FindingSink, FsProbe, Integration, IntegrationDescriptor,
-    IntegrationError, IntegrationId, Inventory, Lens, Measurement, Method, Modified, Name,
+    Facts, FileIdentity, FindingSink, FsProbe, Hold, Integration, IntegrationDescriptor,
+    IntegrationError, IntegrationId, Inventory, Lens, Level, Measurement, Method, Modified, Name,
     Omission, Operation, Platform, Ports, ProbeError, ProcessOutcome, ProcessProbe, ProcessRecord,
     ProcessSnapshot, Recovery, ResolvedRoot, RootLink, RootSource, Roots, Rule, RuleId, RuleText,
     ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Selector, Sizer, SpaceEstimate,
-    SymbolicRoot, Tracked, UnresolvedRoot, event_channel,
+    SymbolicRoot, Tracked, UnresolvedRoot, Verdict, classify, event_channel,
 };
 
 /// Ten times the 100 ms cancellation budget: long enough not to flake on a loaded CI
@@ -159,6 +159,7 @@ const fn measured(size: SpaceEstimate) -> Measurement {
         size,
         modified: Some(NOW),
         repository: None,
+        skipped_mount: false,
     }
 }
 
@@ -1102,6 +1103,7 @@ fn only_a_complete_measurement_dates_a_finding_and_a_future_time_counts_as_now()
                 },
                 modified: Some(at),
                 repository: None,
+                skipped_mount: false,
             }),
             ..FakeSizer::default()
         };
@@ -1168,4 +1170,36 @@ fn a_checkout_inside_a_finding_holds_it_and_an_incomplete_walk_cant_rule_one_out
         tracked(measured(SIZE)),
         Some(Tracked::NoRepository)
     ));
+}
+
+#[test]
+fn a_mount_the_walk_skipped_inside_a_finding_holds_it_for_git_and_last_change() {
+    // A bind mount or btrfs subvolume below the finding could hold a checkout or recent
+    // files the walk never saw.
+    let sizer = FakeSizer {
+        measurement: Some(Measurement {
+            skipped_mount: true,
+            ..measured(SIZE)
+        }),
+        ..FakeSizer::default()
+    };
+    let fs = FakeFs {
+        no_git: true,
+        ..FakeFs::default()
+    };
+    let proposer = Proposer {
+        paths: &["/found/target"],
+    };
+
+    let facts = facts(ports(fs, sizer), proposer)
+        .remove(Path::new("/found/target"))
+        .unwrap();
+
+    assert!(matches!(facts.tracked, Tracked::Unwalked));
+    assert_eq!(facts.modified, Modified::Unknown);
+    let Verdict::Protected(holds) = classify(&facts, Level::Balanced) else {
+        panic!("a finding with a skipped mount is never Safe or Review");
+    };
+    assert!(holds.contains(&Hold::UnknownGit));
+    assert!(holds.contains(&Hold::UnknownModified));
 }

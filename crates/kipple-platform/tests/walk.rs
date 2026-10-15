@@ -66,14 +66,14 @@ fn tree_with_links_out() -> (TempDir, u64) {
 fn an_item_is_sized_completely_and_links_out_of_it_are_never_followed() {
     let (temp, expected) = tree_with_links_out();
 
-    let size = Walker::new()
+    let measured = Walker::new()
         .unwrap()
         .size(&temp.path().join("item"), &CancelToken::new())
-        .unwrap()
-        .size;
+        .unwrap();
 
-    assert_eq!(size.apparent, Apparent(expected));
-    assert_eq!(size.completeness, Completeness::Complete);
+    assert_eq!(measured.size.apparent, Apparent(expected));
+    assert_eq!(measured.size.completeness, Completeness::Complete);
+    assert!(!measured.skipped_mount);
 }
 
 #[test]
