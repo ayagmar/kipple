@@ -577,7 +577,8 @@ fn a_kept_path_inside_a_finding_or_with_other_case_holds_it_and_a_missing_one_is
     let demo = Demo::new(&[], "");
     let env = demo.env(&[]);
     let target = rust_app_target(&scan_with(&env, &demo.config("empty.toml", "")));
-    // A file inside, and the project above it written with other case.
+    // A file inside, and the project above it written with other case. The
+    // other case is missing only where the file system tells case apart.
     let inside = target.join("release").join("bench-baseline");
     let project = target.parent().unwrap();
     let shouted = project.with_file_name("RUST-APP");
@@ -591,10 +592,8 @@ fn a_kept_path_inside_a_finding_or_with_other_case_holds_it_and_a_missing_one_is
         );
 
         assert_eq!(code, ExitCode::SUCCESS);
-        assert!(
-            err.contains("warning: keep.paths:") && err.contains("doesn't exist"),
-            "{err}"
-        );
+        let warned = err.contains("warning: keep.paths:") && err.contains("doesn't exist");
+        assert_eq!(warned, !kept.exists(), "{kept:?}: {err}");
         let report: Value = serde_json::from_str(&out).unwrap();
         let held = findings(&report)
             .iter()
