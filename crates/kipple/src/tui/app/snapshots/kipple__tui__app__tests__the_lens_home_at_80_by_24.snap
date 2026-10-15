@@ -3,17 +3,17 @@ source: crates/kipple/src/tui/app/tests.rs
 expression: "screen(&app, colour(), 80, 24)"
 ---
 kipple · read-only · level: Balanced · scanned in 1.2 s
-  ▾ Agents (0)                                         0 B
-  ▾ Dev (4)                                      934.0 MiB
-    ▾ Safe to clean (2)                          514.0 MiB
-●     api/target  Cargo build output             512.0 MiB
-      tool/__pycache__  Python bytecode cache      2.0 MiB
-    ▾ Review (1)                                 300.0 MiB
-      web/node_modules  Node dependencies        300.0 MiB recent
-    ▾ Protected (1)                              120.0 MiB
-      bunapp/node_modules  Node dependencies     120.0 MiB unknown: layout +1
-  ▾ System (1)                                   900.0 MiB
-    ▾ Protected (1)                              900.0 MiB
+  ▾ Agents (0)                                     0 B
+  ▾ Dev (4)                                  934.0 MiB
+    ▾ Safe to clean (2)                      514.0 MiB
+●     api/target  Cargo build output         512.0 MiB
+      tool/__pycache__  Python bytecode c      2.0 MiB
+    ▾ Review (1)                             300.0 MiB
+      web/node_modules  Node dependencies    300.0 MiB recent
+    ▾ Protected (1)                          120.0 MiB
+      bunapp/node_modules  Node dependenc    120.0 MiB unknown: layout +1
+  ▾ System (1)                               900.0 MiB
+    ▾ Protected (1)                          900.0 MiB
 ────────────────────────────────────────────────────────────────────────────────
 Cargo build output · Safe to clean at Balanced
 /home/ada/projects/api/target

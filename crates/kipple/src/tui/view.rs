@@ -21,8 +21,9 @@ use crate::json::LEVEL;
 const WIDE: u16 = 100;
 /// The size column, wide enough for `>= 1023.9 GiB`.
 const SIZE: u16 = 13;
-/// The state column.
-const STATE: u16 = 22;
+/// The state column, wide enough for its longest text: the gaps hint
+/// ` so this report is partial`. The longest row state is ` unknown: what is lost +3`.
+const STATE: u16 = 26;
 
 /// How the screen is drawn: with colour unless `NO_COLOR` is set, and with Unicode
 /// symbols unless `--ascii` is given.
