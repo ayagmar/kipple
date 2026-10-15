@@ -3,7 +3,7 @@
 use std::ffi::{CString, OsStr, OsString};
 use std::fs;
 use std::io;
-use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
+use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::{
     DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
 };
@@ -160,33 +160,25 @@ pub(crate) fn path_args(args: &[&[u8]]) -> Vec<OsString> {
     program.into_iter().chain(rest).collect()
 }
 
-/// The program name in `argv0`. A title rewritten into it can hold the whole command line,
-/// so only its first word, cut before any `://`, and its later words with a `/` that
-/// aren't URLs are kept, joined by single spaces.
+/// The program name in `argv0`, whole, so a path with spaces stays one path. A title
+/// rewritten into it can hold the whole command line, so it is cut before its first word
+/// holding `://`, as URLs, which can carry credentials, are dropped from every argument.
+/// Other words of a title stay in memory; a match on a token holding whitespace is
+/// never shown (docs/04 §8a).
 fn program(argv0: &[u8]) -> OsString {
-    // Split where the core reads words: at any whitespace in text, at ASCII whitespace
-    // in anything else.
-    let words: Vec<&[u8]> = std::str::from_utf8(argv0).map_or_else(
-        |_| {
-            argv0
-                .split(u8::is_ascii_whitespace)
-                .filter(|word| !word.is_empty())
-                .collect()
-        },
-        |text| text.split_whitespace().map(str::as_bytes).collect(),
+    let Some(at) = argv0.windows(3).position(|window| window == b"://") else {
+        return OsStr::from_bytes(argv0).to_owned();
+    };
+    let before = argv0.get(..at).unwrap_or_default();
+    // The URL's word starts after the last whitespace before it: any whitespace in text,
+    // ASCII whitespace in anything else.
+    let word = std::str::from_utf8(before).map_or_else(
+        |_| before.iter().rposition(u8::is_ascii_whitespace),
+        |text| text.rfind(char::is_whitespace),
     );
-    let mut words = words.into_iter();
-    let first = words.next().unwrap_or_default();
-    let first = first
-        .windows(3)
-        .position(|window| window == b"://")
-        .map_or(first, |at| first.get(..at).unwrap_or_default());
-    let mut kept = first.to_vec();
-    for word in words.filter(|word| names_path(word)) {
-        kept.push(b' ');
-        kept.extend_from_slice(word);
-    }
-    OsString::from_vec(kept)
+    let kept = word.map_or(before, |start| before.get(..start).unwrap_or_default());
+    let kept = std::str::from_utf8(kept).map_or(kept, |text| text.trim_end().as_bytes());
+    OsStr::from_bytes(kept).to_owned()
 }
 
 /// Whether an argument can name a file: it has a `/` and isn't a URL.
@@ -291,17 +283,28 @@ mod tests {
     }
 
     #[test]
-    fn a_title_rewritten_into_the_program_name_keeps_only_its_program_and_paths() {
-        let cmdline = b"/home/u/p/.venv/bin/python manage.py runserver --token=hunter2 \
-                        --broker=redis://u:s3cret@h --key=k3y\xc2\xa0--settings=conf/dev.py\0--x\0";
+    fn a_program_path_with_spaces_stays_whole_and_a_title_loses_its_urls() {
+        // A venv's interpreter in a directory with spaces must match as one path.
+        let spaced = b"/home/u/My Cool App/.venv/bin/python\0-m\0http.server\0";
+        let alone = b"/home/u/My Cool App/.venv/bin/python\0";
+        let title = b"/home/u/p/.venv/bin/python manage.py --settings=conf/dev.py \
+                      --broker=redis://u:s3cret@h --token=hunter2\0--x\0";
+        let nbsp = b"celery worker\xc2\xa0--broker=amqp://u:s3cret@h\0";
         let url = b"redis://u:s3cret@h\0";
 
+        let read = |cmdline: &[u8]| -> Vec<String> {
+            let args = path_args(&nul_separated(cmdline));
+            strings(&args).into_iter().map(str::to_owned).collect()
+        };
+        assert_eq!(read(spaced), ["/home/u/My Cool App/.venv/bin/python"]);
+        assert_eq!(read(alone), ["/home/u/My Cool App/.venv/bin/python"]);
         assert_eq!(
-            strings(&path_args(&nul_separated(cmdline))),
-            ["/home/u/p/.venv/bin/python --settings=conf/dev.py"]
+            read(title),
+            ["/home/u/p/.venv/bin/python manage.py --settings=conf/dev.py"]
         );
-        assert_eq!(strings(&path_args(&nul_separated(url))), ["redis"]);
-        assert_eq!(strings(&path_args(&nul_separated(b"\0\0"))), [""]);
+        assert_eq!(read(nbsp), ["celery worker"]);
+        assert_eq!(read(url), ["redis"]);
+        assert_eq!(read(b"\0\0"), [""]);
     }
 
     #[test]
