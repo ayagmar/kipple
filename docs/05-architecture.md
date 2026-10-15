@@ -32,7 +32,7 @@ kipple (bin) ──► kipple-adapters ──► kipple-core
 - `kipple-core` depends on no other kipple crate and has no I/O of its own. It owns the traits that platform and adapters implement.
 - `kipple-adapters` and `kipple-platform` depend only on core. They don't depend on each other.
 - The binary is the only composition root. It wires platform implementations into the engine and registers integrations.
-- A future GUI (Tauri or native) is a second composition root that depends on the same three library crates.
+- A future GUI (Tauri or native) is a second composition root that depends on the same three library crates. Today the binary also holds frontend logic a GUI would need (config loading and editing, the home screen's actions, level totals); that moves into a shared library crate before the GUI starts (11, After 0.1).
 
 These boundaries are enforced by Cargo itself (no dependency means no access) plus a CI check on `cargo metadata` that rejects new kipple-to-kipple edges.
 
