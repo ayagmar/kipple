@@ -8,7 +8,7 @@ use kipple_platform::{WriteError, write_config};
 use toml_edit::{Array, DocumentMut, InlineTable, Item, Table, TableLike, Value, value};
 
 use super::parse::{self, ParseError};
-use super::{Catalog, Config, ConfigError, Location, expand, home, same_path};
+use super::{Catalog, Config, ConfigError, Location, expand, home};
 
 /// One change to the config file.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,7 +26,8 @@ pub enum Edit {
         /// Why.
         note: Option<String>,
     },
-    /// Removes every `keep.paths` entry for this path.
+    /// Removes every `keep.paths` entry that names exactly this path, case included, so
+    /// undoing one keep never drops another that only matches ignoring case.
     Unkeep(PathBuf),
     /// Turns a rule off (`rules.<id>.enabled = false`), or on again, which also takes it
     /// out of `exclude.rules`.
@@ -216,7 +217,7 @@ fn written(path: &Path, home: Option<&Path>) -> Result<Value, ParseError> {
     Ok(shown.into())
 }
 
-/// Whether a `keep.paths` entry names `path`.
+/// Whether a `keep.paths` entry names exactly `path`: by components, case included.
 fn names(entry: &Value, path: &Path, home: Option<&Path>) -> bool {
     let written = match entry {
         Value::String(text) => Some(text.value().as_str()),
@@ -229,5 +230,5 @@ fn names(entry: &Value, path: &Path, home: Option<&Path>) -> bool {
     };
     written
         .and_then(|written| expand(written, home))
-        .is_some_and(|expanded| same_path(&expanded, path))
+        .is_some_and(|expanded| expanded == path)
 }

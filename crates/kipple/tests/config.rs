@@ -852,6 +852,37 @@ fn an_edit_keeps_comments_and_every_other_key_and_survives_an_editors_change() {
     assert_eq!(undone.rules.len(), 0);
 }
 
+/// Undoing a keep removed every entry equal ignoring case, so on a case-sensitive file
+/// system it also unprotected a different directory the user never chose.
+#[test]
+fn undoing_a_keep_removes_only_the_entry_chosen_not_one_differing_by_case() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("config.toml");
+    let chosen = dir.path().join("p").join("target");
+    let other = dir.path().join("p").join("Target");
+    fs::write(
+        &file,
+        format!(
+            "[keep]\npaths = ['{}', '{}']\n",
+            chosen.display(),
+            other.display()
+        ),
+    )
+    .unwrap();
+
+    let undone = config::write(
+        &location(&file),
+        &[Edit::Unkeep(chosen)],
+        &Roots::default(),
+        &catalog(),
+    )
+    .unwrap();
+
+    let left: Vec<&Path> = undone.keep.iter().map(|(p, _)| Path::new(p)).collect();
+    assert_eq!(left.len(), 1, "{left:?}");
+    assert!(left[0].ends_with("p/Target"), "{left:?}");
+}
+
 #[test]
 fn the_first_write_creates_the_directory_and_the_file() {
     let dir = tempfile::tempdir().unwrap();
