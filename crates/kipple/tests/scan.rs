@@ -34,6 +34,7 @@ use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs;
 use std::io::{self, Write};
+use std::path::Path;
 use std::process::ExitCode;
 use std::time::SystemTime;
 
@@ -334,7 +335,9 @@ fn a_venv_holding_an_editable_checkout_is_protected_as_holds_repository() {
     );
     tree.build_in(temp.path()).unwrap();
     let project = temp.path().join("home/projects/editable");
-    let venv_path = project.join(".venv").display().to_string();
+    // `--root` resolves its parent (D-045), so the reported path may differ from the
+    // temp path by more than its spelling (`/var` is `/private/var` on macOS).
+    let venv_tail = Path::new("projects").join("editable").join(".venv");
 
     let (code, json, _) = kipple(
         &env,
@@ -347,7 +350,11 @@ fn a_venv_holding_an_editable_checkout_is_protected_as_holds_repository() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|f| f["path"]["display"] == venv_path.as_str())
+        .find(|f| {
+            f["path"]["display"]
+                .as_str()
+                .is_some_and(|p| Path::new(p).ends_with(&venv_tail))
+        })
         .unwrap_or_else(|| panic!("no .venv finding in {json}"));
     assert_eq!(venv["verdict"]["bucket"], "protected", "{venv}");
     let reasons = venv["verdict"]["reasons"].as_array().unwrap();
