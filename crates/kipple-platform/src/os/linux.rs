@@ -289,6 +289,8 @@ pub(crate) fn context(pid: u32, owners: &Owners) -> Context {
         root_dir: fs::metadata(path("root"))
             .map(|meta| identity_of(&meta))
             .map_err(unread),
+        root_path: fs::read_link(path("root")).map_err(unread),
+        root_entry: Ok(path("root")),
         capabilities: status.and_then(|status| effective_caps(&status)),
     }
 }

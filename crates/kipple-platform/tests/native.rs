@@ -86,6 +86,19 @@ fn this_process_shows_its_mount_namespace_root_and_capabilities() {
     me.capabilities.expect("the capabilities are readable");
 }
 
+#[cfg(target_os = "linux")]
+#[test]
+fn this_process_names_its_root_and_its_files_resolve_through_it() {
+    let me = me().expect("this process is listed");
+
+    assert_eq!(me.root_path.unwrap(), std::path::Path::new("/"));
+    // The file it runs, reached through its root, is the same file.
+    let exe = std::env::current_exe().unwrap();
+    let through = me.root_entry.unwrap().join(exe.strip_prefix("/").unwrap());
+    let identity = |path: &std::path::Path| NoFollowFs.metadata(path).unwrap().identity;
+    assert_eq!(identity(&through), identity(&exe));
+}
+
 /// The runner is a whole VM, so its process table holds the kernel's threads, whose
 /// `exe` a user who isn't root is refused.
 #[cfg(target_os = "linux")]

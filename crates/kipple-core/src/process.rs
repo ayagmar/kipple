@@ -146,6 +146,12 @@ pub struct ProcessRecord {
     /// The identity of its root directory, which differs from `/` in a container or a
     /// chroot (Linux).
     pub root_dir: Probed<FileIdentity>,
+    /// Its root directory as kipple names it: where `/proc/<pid>/root` leads (Linux). That
+    /// name is kipple's own only for a process in kipple's mount namespace.
+    pub root_path: Probed<PathBuf>,
+    /// A path through which kipple reaches the files the process names, whatever its mount
+    /// namespace: `/proc/<pid>/root` (Linux).
+    pub root_entry: Probed<PathBuf>,
     /// Its effective capabilities (Linux).
     pub capabilities: Probed<Capabilities>,
 }
@@ -164,6 +170,8 @@ impl ProcessRecord {
             mapped_files: Err(Unread::Unsupported),
             mount_namespace: Err(Unread::Unsupported),
             root_dir: Err(Unread::Unsupported),
+            root_path: Err(Unread::Unsupported),
+            root_entry: Err(Unread::Unsupported),
             capabilities: Err(Unread::Unsupported),
         }
     }

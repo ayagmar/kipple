@@ -415,6 +415,8 @@ pub(crate) fn context(pid: u32, owners: &Owners) -> Context {
         mapped_files: Err(Unread::Unsupported),
         mount_namespace: Err(Unread::Unsupported),
         root_dir: Err(Unread::Unsupported),
+        root_path: Err(Unread::Unsupported),
+        root_entry: Err(Unread::Unsupported),
         capabilities: Err(Unread::Unsupported),
     }
 }

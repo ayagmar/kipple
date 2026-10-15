@@ -35,6 +35,8 @@ impl ProcessProbe for OsProcesses {
                     mapped_files: context.mapped_files,
                     mount_namespace: context.mount_namespace,
                     root_dir: context.root_dir,
+                    root_path: context.root_path,
+                    root_entry: context.root_entry,
                     capabilities: context.capabilities,
                 }
             })
@@ -56,5 +58,7 @@ pub(crate) struct Context {
     pub(crate) mapped_files: Probed<Vec<PathBuf>>,
     pub(crate) mount_namespace: Probed<MountNamespace>,
     pub(crate) root_dir: Probed<FileIdentity>,
+    pub(crate) root_path: Probed<PathBuf>,
+    pub(crate) root_entry: Probed<PathBuf>,
     pub(crate) capabilities: Probed<Capabilities>,
 }
