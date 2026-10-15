@@ -86,6 +86,18 @@ fn this_process_shows_its_mount_namespace_root_and_capabilities() {
     me.capabilities.expect("the capabilities are readable");
 }
 
+/// The runner is a whole VM, so its process table holds the kernel's threads, whose
+/// `exe` a user who isn't root is refused.
+#[cfg(target_os = "linux")]
+#[test]
+fn kernel_threads_run_no_program_file() {
+    let snapshot = OsProcesses.snapshot().unwrap();
+
+    let kthreads = snapshot.processes.iter();
+    let kthreads = kthreads.filter(|p| matches!(p.outcome, ProcessOutcome::NoExecutable));
+    assert!(kthreads.count() > 0);
+}
+
 #[test]
 fn the_home_root_resolves_to_an_existing_directory() {
     let vars: Vec<(OsString, OsString)> = std::env::vars_os().collect();

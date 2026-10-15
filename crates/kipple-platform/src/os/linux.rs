@@ -186,7 +186,8 @@ pub(crate) fn probe_pid(pid: u32) -> ProcessOutcome {
 /// a zombie or a kernel thread stays unknown.
 fn classify(pid: u32, error: io::Error) -> ProcessOutcome {
     if error.kind() == io::ErrorKind::PermissionDenied {
-        return ProcessOutcome::Denied(Arc::new(error));
+        let stat = fs::read_to_string(format!("/proc/{pid}/stat"));
+        return denied(error, stat.as_deref().ok());
     }
     if error.raw_os_error() == Some(ESRCH) {
         return ProcessOutcome::Gone;
@@ -204,6 +205,16 @@ fn classify(pid: u32, error: io::Error) -> ProcessOutcome {
             Some(StatState::KernelThread) => ProcessOutcome::NoExecutable,
             None => ProcessOutcome::Other(Arc::new(error)),
         },
+    }
+}
+
+/// A process whose `exe` was refused. A reader who isn't root is refused a kernel
+/// thread's like any root process's, though it runs no program; its `stat`, which anyone
+/// can read, tells them apart. Anything short of the kernel-thread flag stays denied.
+fn denied(error: io::Error, stat: Option<&str>) -> ProcessOutcome {
+    match stat.and_then(stat_state) {
+        Some(StatState::KernelThread) => ProcessOutcome::NoExecutable,
+        _ => ProcessOutcome::Denied(Arc::new(error)),
     }
 }
 
@@ -665,5 +676,41 @@ mod tests {
         // A process named like a zombie is still running and still unknown.
         let sleeping = "77 (Z) Z) S 1 77 77 0 -1 4194560 0 0";
         assert_eq!(stat_state(sleeping), None);
+    }
+
+    /// A refused `exe`, and what `stat` gave.
+    fn refused(stat: Option<&str>) -> ProcessOutcome {
+        denied(io::ErrorKind::PermissionDenied.into(), stat)
+    }
+
+    #[test]
+    fn a_kernel_thread_whose_exe_is_refused_runs_no_program() {
+        let kworker = "8 (kworker/0:0H-events_highpri) I 2 0 0 0 -1 69238880 0 0 0 0";
+
+        assert!(matches!(
+            refused(Some(kworker)),
+            ProcessOutcome::NoExecutable
+        ));
+    }
+
+    #[test]
+    fn a_refused_process_stays_denied_unless_its_stat_shows_a_kernel_thread() {
+        // A `stat` that couldn't be read.
+        assert!(matches!(refused(None), ProcessOutcome::Denied(_)));
+        for stat in [
+            // A root daemon: its flags lack the kernel-thread bit.
+            "812 (sshd) S 1 812 812 0 -1 4194560 0 0 0 0",
+            // A name that spells out a kernel thread's fields before the real ones.
+            "900 (x) S 0 0 0 0 -1 2129984 ) S 1 900 900 0 -1 4194560 0 0",
+            // Cut short before the flags, or with flags that aren't a number.
+            "900 (sshd) S 1 812 812 0 -1",
+            "900 (sshd) S 1 812 812 0 -1 0x200000 0",
+            "",
+        ] {
+            assert!(
+                matches!(refused(Some(stat)), ProcessOutcome::Denied(_)),
+                "{stat}"
+            );
+        }
     }
 }
