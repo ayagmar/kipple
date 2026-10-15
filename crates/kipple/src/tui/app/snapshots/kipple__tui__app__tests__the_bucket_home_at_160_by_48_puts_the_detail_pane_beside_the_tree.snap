@@ -8,7 +8,7 @@ kipple  Careful · Balanced · Thorough (level: Balanced) · scanned in 1.2 s
 ●     api/target  Cargo build output                 512.0 MiB                          │What it is        Cargo build output
       tool/__pycache__  Python bytecode cache          2.0 MiB                          │Why it's here     Cargo writes compiled crates here when you build.
   ▾ Review (1)                                       300.0 MiB loses more, or recent    │Why it's safe     passes every check at Balanced: recognised, comes
-    ▾ Dev (1)                                        300.0 MiB                          │back, untracked, no executable running inside, not recent
+    ▾ Dev (1)                                        300.0 MiB                          │back, untracked, no running program shows it in use, not recent
       web/node_modules  Node dependencies            300.0 MiB recent                   │What you lose     The next build compiles everything again.
   ▾ Protected (2)                                   1020.0 MiB not eligible             │How it comes back the next build makes it again, without the network
     ▾ Dev (1)                                        120.0 MiB                          │Restore cost      unknown
