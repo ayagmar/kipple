@@ -222,6 +222,8 @@ struct Index {
     partial: Option<String>,
     /// Whether the OS shows every user's command line.
     command_lines_public: bool,
+    /// Whether the OS shows any path of a process besides its executable.
+    process_paths: bool,
 }
 
 impl Index {
@@ -240,6 +242,7 @@ impl Index {
                 Inventory::Partial { reason } => Some(reason.clone()),
             },
             command_lines_public: snapshot.observer.command_lines_public,
+            process_paths: snapshot.observer.process_paths,
         };
         for process in snapshot.processes.iter().filter(|p| running(p)) {
             let (view, paths) = view(process, &snapshot.observer, fs);
@@ -877,6 +880,10 @@ impl Processes {
         }
         if let Some(reason) = &index.partial {
             return Activity::Unknown(ActivityGap::Partial(reason.clone()));
+        }
+        let needs_paths = kinds(subject.evidence) != [Kind::Executable];
+        if needs_paths && !index.process_paths {
+            return Activity::Unknown(ActivityGap::Unsupported);
         }
         self.uninspected(index, scope, subject)
     }

@@ -272,6 +272,7 @@ impl Host {
                 mount_namespace: Ok(OUR_NAMESPACE),
                 root_dir: Ok(Disk::default().identity(&abs("/"))),
                 command_lines_public: true,
+                process_paths: true,
             },
             inventory: Inventory::Complete,
             processes,
@@ -1234,4 +1235,25 @@ fn a_runtime_naming_a_path_in_the_project_holds_its_interpreted_layout_from_anyw
     let shell = Host::new(vec![runtime("/usr/bin/bash", &["bash", server])]);
     assert!(matches!(shell.activity(NODE, modules), Activity::Idle));
     assert!(matches!(node.activity(CARGO, TARGET), Activity::Idle));
+}
+
+#[test]
+fn where_the_os_shows_no_process_paths_an_interpreted_layout_is_never_idle() {
+    // Windows in M2 reads only each process's executable and owner.
+    let mut windows = Host::new(Vec::new());
+    windows.observer = Observer {
+        process_paths: false,
+        ..Observer::PLAIN
+    };
+
+    for (evidence, path) in [(PYTHON, VENV), (NODE, "/home/u/code/app/node_modules")] {
+        assert!(
+            matches!(
+                windows.activity(evidence, path),
+                Activity::Unknown(ActivityGap::Unsupported)
+            ),
+            "{path}"
+        );
+    }
+    assert!(matches!(windows.activity(CARGO, TARGET), Activity::Idle));
 }

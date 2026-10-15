@@ -335,7 +335,8 @@ pub enum ActivityOut {
     },
     /// Some processes that count couldn't be inspected, so it might be in use.
     Unknown {
-        /// Why: `no-listing`, `partial` or `uninspected`.
+        /// Why: `no-listing`, `partial`, `uninspected`, or `unsupported` (the OS doesn't
+        /// show the paths of running programs its layout needs).
         reason: &'static str,
         /// What happened. For people; not a stable value.
         message: String,
@@ -378,6 +379,7 @@ impl From<&Activity> for ActivityOut {
             Activity::Unknown(ActivityGap::NoListing(_)) => unknown("no-listing"),
             Activity::Unknown(ActivityGap::Partial(_)) => unknown("partial"),
             Activity::Unknown(ActivityGap::Uninspected(_)) => unknown("uninspected"),
+            Activity::Unknown(ActivityGap::Unsupported) => unknown("unsupported"),
         }
     }
 }

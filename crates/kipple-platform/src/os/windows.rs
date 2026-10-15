@@ -280,9 +280,16 @@ const WTS_ANY_SESSION: u32 = 0xFFFF_FFFE;
 /// users.
 const SYSTEM_SID: &str = "S-1-5-18";
 
-/// No mount namespaces or chroots to compare, and other users' command lines are hidden.
+/// Whether a process's paths besides its executable are read: not in M2.
+pub(crate) const PROCESS_PATHS: bool = false;
+
+/// No mount namespaces or chroots to compare, other users' command lines are hidden, and
+/// no process's paths besides its executable are read.
 pub(crate) const fn observer() -> Observer {
-    Observer::PLAIN
+    Observer {
+        process_paths: PROCESS_PATHS,
+        ..Observer::PLAIN
+    }
 }
 
 /// Who every listed process runs as: its user (`TokenUser`, not `TokenOwner`), from one

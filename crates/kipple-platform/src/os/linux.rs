@@ -250,6 +250,9 @@ impl Owners {
     }
 }
 
+/// Whether a process's paths besides its executable are read: from `/proc/<pid>`.
+pub(crate) const PROCESS_PATHS: bool = true;
+
 /// How kipple itself sees files: its own mount namespace and root directory. Linux shows
 /// every user's command line in `/proc/<pid>/cmdline`.
 pub(crate) fn observer() -> Observer {
@@ -261,6 +264,7 @@ pub(crate) fn observer() -> Observer {
             .map(|meta| identity_of(&meta))
             .map_err(unread),
         command_lines_public: true,
+        process_paths: PROCESS_PATHS,
     }
 }
 

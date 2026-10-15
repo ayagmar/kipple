@@ -205,15 +205,20 @@ pub struct Observer {
     /// Whether the OS shows every user's command line to every user, as Linux does. Then
     /// a root process whose command line couldn't be read is not one kipple may leave out.
     pub command_lines_public: bool,
+    /// Whether kipple reads each process's working directory, arguments, environment and
+    /// mapped files at all. Windows doesn't in M2, so no process there can show an
+    /// interpreted layout in use.
+    pub process_paths: bool,
 }
 
 impl Observer {
     /// An OS without mount namespaces or chroots to compare, that keeps other users'
-    /// command lines to themselves: macOS and Windows, and a host faked in a test.
+    /// command lines to themselves: macOS, and a host faked in a test.
     pub const PLAIN: Self = Self {
         mount_namespace: Err(Unread::Unsupported),
         root_dir: Err(Unread::Unsupported),
         command_lines_public: false,
+        process_paths: true,
     };
 }
 

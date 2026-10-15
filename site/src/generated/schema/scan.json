@@ -136,7 +136,7 @@
               "type": "string"
             },
             "reason": {
-              "description": "Why: `no-listing`, `partial` or `uninspected`.",
+              "description": "Why: `no-listing`, `partial`, `uninspected`, or `unsupported` (the OS doesn't\nshow the paths of running programs its layout needs).",
               "type": "string"
             },
             "state": {

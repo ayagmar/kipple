@@ -88,8 +88,9 @@ expression: "serde_json::to_string_pretty(&report)?"
     },
     {
       "activity": {
-        "state": "idle",
-        "unchecked_system": 0
+        "message": "this OS doesn't show which paths running programs use, beyond their executable",
+        "reason": "unsupported",
+        "state": "unknown"
       },
       "category": "dependency-install",
       "consequence": null,
@@ -119,14 +120,16 @@ expression: "serde_json::to_string_pretty(&report)?"
         "bucket": "protected",
         "reasons": [
           "unknown-layout",
-          "unknown-consequence"
+          "unknown-consequence",
+          "unknown-activity"
         ]
       }
     },
     {
       "activity": {
-        "state": "idle",
-        "unchecked_system": 0
+        "message": "this OS doesn't show which paths running programs use, beyond their executable",
+        "reason": "unsupported",
+        "state": "unknown"
       },
       "category": "dependency-install",
       "consequence": {
@@ -160,14 +163,17 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unique_reclaim": "[redacted]"
       },
       "verdict": {
-        "bucket": "safe",
-        "reasons": []
+        "bucket": "protected",
+        "reasons": [
+          "unknown-activity"
+        ]
       }
     },
     {
       "activity": {
-        "state": "idle",
-        "unchecked_system": 0
+        "message": "this OS doesn't show which paths running programs use, beyond their executable",
+        "reason": "unsupported",
+        "state": "unknown"
       },
       "category": "dependency-install",
       "consequence": {
@@ -201,16 +207,17 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unique_reclaim": "[redacted]"
       },
       "verdict": {
-        "bucket": "review",
+        "bucket": "protected",
         "reasons": [
-          "recent"
+          "unknown-activity"
         ]
       }
     },
     {
       "activity": {
-        "state": "idle",
-        "unchecked_system": 0
+        "message": "this OS doesn't show which paths running programs use, beyond their executable",
+        "reason": "unsupported",
+        "state": "unknown"
       },
       "category": "cache",
       "consequence": {
@@ -240,14 +247,17 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unique_reclaim": "[redacted]"
       },
       "verdict": {
-        "bucket": "safe",
-        "reasons": []
+        "bucket": "protected",
+        "reasons": [
+          "unknown-activity"
+        ]
       }
     },
     {
       "activity": {
-        "state": "idle",
-        "unchecked_system": 0
+        "message": "this OS doesn't show which paths running programs use, beyond their executable",
+        "reason": "unsupported",
+        "state": "unknown"
       },
       "category": "dependency-install",
       "consequence": {
@@ -281,14 +291,17 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unique_reclaim": "[redacted]"
       },
       "verdict": {
-        "bucket": "safe",
-        "reasons": []
+        "bucket": "protected",
+        "reasons": [
+          "unknown-activity"
+        ]
       }
     },
     {
       "activity": {
-        "state": "idle",
-        "unchecked_system": 0
+        "message": "this OS doesn't show which paths running programs use, beyond their executable",
+        "reason": "unsupported",
+        "state": "unknown"
       },
       "category": "dependency-install",
       "consequence": {
@@ -322,8 +335,10 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unique_reclaim": "[redacted]"
       },
       "verdict": {
-        "bucket": "safe",
-        "reasons": []
+        "bucket": "protected",
+        "reasons": [
+          "unknown-activity"
+        ]
       }
     }
   ],

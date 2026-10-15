@@ -361,9 +361,16 @@ pub(crate) fn on_network(path: &CStr) -> io::Result<bool> {
     Ok(flags & libc::MNT_LOCAL.cast_unsigned() == 0)
 }
 
+/// Whether a process's paths besides its executable are read: through `proc_pidinfo` and
+/// `KERN_PROCARGS2`.
+pub(crate) const PROCESS_PATHS: bool = true;
+
 /// No mount namespaces or chroots to compare, and other users' command lines are hidden.
 pub(crate) const fn observer() -> Observer {
-    Observer::PLAIN
+    Observer {
+        process_paths: PROCESS_PATHS,
+        ..Observer::PLAIN
+    }
 }
 
 /// Who kipple runs as, to tell the current user's processes from others'.

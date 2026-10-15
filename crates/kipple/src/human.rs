@@ -235,6 +235,10 @@ pub(crate) fn activity(activity: &Activity) -> String {
             "the running programs couldn't be listed: {}",
             escaped(&error.to_string())
         ),
+        Activity::Unknown(ActivityGap::Unsupported) => {
+            "this OS doesn't show which paths running programs use, beyond their executable"
+                .to_owned()
+        }
     }
 }
 

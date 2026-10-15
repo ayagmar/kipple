@@ -220,6 +220,8 @@ pub enum ActivityGap {
     /// This many processes that count couldn't be inspected: some path they could show
     /// couldn't be read, or they see files through another mount namespace or root.
     Uninspected(usize),
+    /// The OS doesn't show the paths of running programs that the finding's layout needs.
+    Unsupported,
 }
 
 /// How long ago something inside the finding last changed.
