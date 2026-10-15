@@ -1,14 +1,14 @@
-//! The bucket table of `docs/04-safety-model.md` §2a at the Balanced level: the first
-//! matching row wins, unknown facts hold a finding in Protected and never make it Review,
-//! and the level moves only the line between Safe and Review.
+//! The bucket table of `docs/04-safety-model.md` §2a: the first matching row wins,
+//! unknown facts hold a finding in Protected and never make it Review, and the level moves
+//! only the line between Safe and Review.
 
 use std::io;
 use std::path::PathBuf;
 use std::time::Duration;
 
 use kipple_core::{
-    Activity, ActivityGap, Caution, Consequence, Cost, Facts, Hold, Level, Loss, Method, Modified,
-    ProbeError, Proposal, Recovery, Tracked, Verdict, classify,
+    Activity, ActivityGap, Bucket, Caution, Consequence, Cost, Facts, Hold, Level, Loss, Method,
+    Modified, ProbeError, Proposal, Recovery, Tracked, Verdict, classify,
 };
 
 const DAY: Duration = Duration::from_hours(24);
@@ -222,6 +222,191 @@ fn a_repository_around_or_inside_a_finding_or_one_not_ruled_out_holds_it_in_prot
             balanced(&facts),
             Verdict::Protected(vec![hold]),
             "{facts:?}"
+        );
+    }
+}
+
+/// What each level lets a Safe finding have, written out from `docs/04-safety-model.md`
+/// §2a's table rather than read back from the code.
+const fn table(level: Level) -> (&'static [Recovery], &'static [Loss], u32) {
+    match level {
+        Level::Careful => (
+            &[Recovery::Automatic, Recovery::RebuildLocal],
+            &[Loss::CacheWarmth],
+            14,
+        ),
+        Level::Balanced => (
+            &[
+                Recovery::Automatic,
+                Recovery::RebuildLocal,
+                Recovery::Reinstall,
+                Recovery::Redownload,
+            ],
+            &[Loss::CacheWarmth, Loss::OfflineAbility],
+            7,
+        ),
+        Level::Thorough => (
+            &[
+                Recovery::Automatic,
+                Recovery::RebuildLocal,
+                Recovery::Reinstall,
+                Recovery::Redownload,
+            ],
+            &[
+                Loss::CacheWarmth,
+                Loss::OfflineAbility,
+                Loss::RollbackAbility,
+            ],
+            2,
+        ),
+    }
+}
+
+/// The bucket the table gives a finding that recovers by `recovery` and loses `loss`.
+fn expected(level: Level, recovery: Recovery, loss: Loss) -> Verdict {
+    let (recoveries, losses, _) = table(level);
+    let mut cautions = Vec::new();
+    if !recoveries.contains(&recovery) {
+        cautions.push(Caution::Recovery);
+    }
+    if !losses.contains(&loss) {
+        cautions.push(Caution::Loss);
+    }
+    if cautions.is_empty() {
+        Verdict::Safe
+    } else {
+        Verdict::Review(cautions)
+    }
+}
+
+#[test]
+fn each_level_puts_each_recovery_and_loss_where_its_table_says() {
+    let cases = Level::ALL.iter().flat_map(|&level| {
+        Recovery::ALL
+            .iter()
+            .flat_map(move |&recovery| Loss::ALL.iter().map(move |loss| (level, recovery, loss)))
+    });
+
+    for (level, recovery, loss) in cases {
+        let facts = Facts {
+            consequence: Some(Consequence {
+                recovery,
+                loss: std::slice::from_ref(loss),
+                cost: Cost::Low,
+            }),
+            ..build_output()
+        };
+        assert_eq!(
+            classify(&facts, level),
+            expected(level, recovery, *loss),
+            "{level}: {recovery} losing {loss}"
+        );
+    }
+}
+
+#[test]
+fn a_level_never_makes_history_none_high_cost_or_recent_safe() {
+    let with = |recovery, loss: &'static [Loss], cost| Facts {
+        consequence: Some(Consequence {
+            recovery,
+            loss,
+            cost,
+        }),
+        ..build_output()
+    };
+    let history = with(Recovery::Automatic, &[Loss::History], Cost::Low);
+    let none = with(Recovery::None, &[], Cost::Low);
+    let costly = with(Recovery::Automatic, &[], Cost::High);
+    let recent = Facts {
+        modified: Modified::Ago(Duration::ZERO),
+        ..build_output()
+    };
+
+    for &level in Level::ALL {
+        assert_eq!(
+            classify(&history, level),
+            Verdict::Review(vec![Caution::Loss])
+        );
+        assert_eq!(
+            classify(&none, level),
+            Verdict::Review(vec![Caution::Recovery])
+        );
+        assert_eq!(
+            classify(&costly, level),
+            Verdict::Review(vec![Caution::HighCost])
+        );
+        assert_eq!(
+            classify(&recent, level),
+            Verdict::Review(vec![Caution::Recent])
+        );
+    }
+}
+
+#[test]
+fn no_level_moves_a_held_finding_out_of_protected() {
+    let held = [
+        Facts {
+            proposal: Proposal::Report,
+            ..build_output()
+        },
+        Facts {
+            layout_verified: false,
+            ..build_output()
+        },
+        Facts {
+            consequence: None,
+            ..build_output()
+        },
+        Facts {
+            tracked: Tracked::Unwalked,
+            ..build_output()
+        },
+        Facts {
+            activity: Activity::Unknown(ActivityGap::Uninspected(1)),
+            ..build_output()
+        },
+        Facts {
+            modified: Modified::Unknown,
+            ..build_output()
+        },
+    ];
+
+    for facts in &held {
+        let at = |level| classify(facts, level);
+        assert_eq!(at(Level::Careful).bucket(), Bucket::Protected, "{facts:?}");
+        assert_eq!(at(Level::Careful), at(Level::Balanced), "{facts:?}");
+        assert_eq!(at(Level::Thorough), at(Level::Balanced), "{facts:?}");
+    }
+}
+
+#[test]
+fn each_level_has_its_own_recent_window_and_a_rule_can_only_lengthen_it() {
+    let aged = |days, recent_days| Facts {
+        modified: Modified::Ago(days * DAY),
+        recent_days,
+        ..build_output()
+    };
+    let recent = Verdict::Review(vec![Caution::Recent]);
+
+    for &level in Level::ALL {
+        let (_, _, window) = table(level);
+        assert_eq!(classify(&aged(window - 1, None), level), recent, "{level}");
+        assert_eq!(
+            classify(&aged(window, None), level),
+            Verdict::Safe,
+            "{level}"
+        );
+        // A rule's shorter window changes nothing; a longer one wins.
+        assert_eq!(
+            classify(&aged(window - 1, Some(1)), level),
+            recent,
+            "{level}"
+        );
+        assert_eq!(classify(&aged(29, Some(30)), level), recent, "{level}");
+        assert_eq!(
+            classify(&aged(30, Some(30)), level),
+            Verdict::Safe,
+            "{level}"
         );
     }
 }

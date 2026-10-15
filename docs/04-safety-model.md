@@ -1,6 +1,6 @@
 # Safety model
 
-Status: mostly planned. The bucket classification of §2a is built at the Balanced level (D-047), with the facts listed there. The rest are release gates. An operation that cannot meet them on a given OS or filesystem stays report-only there, with the limitation published. A failing integration doesn't block releasing the integrations that pass.
+Status: mostly planned. The bucket classification of §2a is built at all three levels (D-047), with the facts listed there; the frontends still use Balanced until the level can be configured. The rest are release gates. An operation that cannot meet them on a given OS or filesystem stays report-only there, with the limitation published. A failing integration doesn't block releasing the integrations that pass.
 
 ## 1. Who holds authority
 

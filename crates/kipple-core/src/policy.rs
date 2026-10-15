@@ -68,9 +68,14 @@ named! {
     /// How careful kipple is: where the line between Safe and Review sits. It never moves
     /// anything out of Protected.
     Level {
+        /// Only build output and regenerated caches are Safe: they come back without the
+        /// network and lose nothing more than cache warmth.
+        Careful = "careful",
         /// The default: rebuilt, reinstalled and re-downloaded things are Safe when they
         /// lose nothing more than cache warmth and offline use.
         Balanced = "balanced",
+        /// Balanced, plus things whose removal costs a rollback.
+        Thorough = "thorough",
     }
 }
 
@@ -78,7 +83,8 @@ impl Level {
     /// The recoveries a Safe finding may have at this level.
     const fn recoveries(self) -> &'static [Recovery] {
         match self {
-            Self::Balanced => &[
+            Self::Careful => &[Recovery::Automatic, Recovery::RebuildLocal],
+            Self::Balanced | Self::Thorough => &[
                 Recovery::Automatic,
                 Recovery::RebuildLocal,
                 Recovery::Reinstall,
@@ -90,7 +96,13 @@ impl Level {
     /// The losses a Safe finding may have at this level.
     const fn losses(self) -> &'static [Loss] {
         match self {
+            Self::Careful => &[Loss::CacheWarmth],
             Self::Balanced => &[Loss::CacheWarmth, Loss::OfflineAbility],
+            Self::Thorough => &[
+                Loss::CacheWarmth,
+                Loss::OfflineAbility,
+                Loss::RollbackAbility,
+            ],
         }
     }
 
@@ -98,7 +110,9 @@ impl Level {
     #[must_use]
     pub const fn recent_days(self) -> u16 {
         match self {
+            Self::Careful => 14,
             Self::Balanced => 7,
+            Self::Thorough => 2,
         }
     }
 }
