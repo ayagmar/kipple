@@ -456,6 +456,37 @@ fn an_incomplete_scan_lists_what_it_could_not_cover_instead_of_looking_empty() {
     assert!(screen.contains("partial: 1 not covered"), "{screen}");
 }
 
+// Catches the D-050 notice reaching `scan` and `doctor` but not the home screen.
+#[test]
+fn processes_left_out_of_the_activity_check_are_listed_with_the_gaps() {
+    let ended = |unchecked_system| {
+        let mut app = App::new(catalog(), 160, 48);
+        app.update(Msg::Finished {
+            report: Box::new(ScanReport {
+                outcome: ScanOutcome::Completed,
+                integrations: Vec::new(),
+                findings: Vec::new(),
+                unchecked_system,
+            }),
+            elapsed: Duration::from_secs(1),
+        });
+        app
+    };
+
+    let app = ended(3);
+
+    let messages: Vec<&str> = app.gaps.iter().map(|gap| gap.message.as_str()).collect();
+    assert_eq!(
+        messages,
+        [
+            "3 processes owned by root or SYSTEM couldn't be inspected and were not counted for items in your home."
+        ]
+    );
+    let screen = screen(&app, colour(), 160, 48);
+    assert!(screen.contains("3 processes owned by root"), "{screen}");
+    assert_eq!(ended(0).gaps, []);
+}
+
 #[test]
 fn totals_count_what_is_eligible_and_selected_and_frees_only_storage_nothing_else_holds() {
     let mut app = App::new(catalog(), 160, 48);

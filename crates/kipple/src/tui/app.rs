@@ -190,7 +190,9 @@ impl Row {
 /// Something the scan couldn't cover.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Gap {
-    pub(crate) integration: String,
+    /// The integration it concerns, or `None` for the whole scan, as with processes left
+    /// out of the activity check (D-050).
+    pub(crate) integration: Option<String>,
     pub(crate) message: String,
 }
 
@@ -457,7 +459,7 @@ impl App {
                 integration,
                 omissions,
             } => self.gaps.extend(omissions.iter().map(|omission| Gap {
-                integration: integration.0.to_owned(),
+                integration: Some(integration.0.to_owned()),
                 message: OmissionOut::from(omission).message,
             })),
             ScanEvent::ScanStarted { .. }
@@ -496,6 +498,12 @@ impl App {
             .filter(|integration| !integration.advice.is_empty())
             .map(|integration| (integration.id, integration.advice))
             .collect();
+        if let Some(message) = crate::human::unchecked_system(report.unchecked_system) {
+            self.gaps.push(Gap {
+                integration: None,
+                message,
+            });
+        }
         self.progress = Progress::Done {
             outcome: report.outcome,
             elapsed,

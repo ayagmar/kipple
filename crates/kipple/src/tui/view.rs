@@ -505,11 +505,17 @@ fn detail(app: &App, look: Look, node: Node) -> Vec<Text<'static>> {
             ),
         ],
         Node::Gap(index) => app.gaps.get(index).map_or_else(Vec::new, |gap| {
-            vec![
-                heading("Not covered"),
-                labelled("Integration", gap.integration.clone()),
-                labelled("What happened", escaped(&gap.message)),
-            ]
+            let mut lines = vec![heading("Not covered")];
+            if let Some(integration) = &gap.integration {
+                lines.push(labelled("Integration", integration.clone()));
+            }
+            lines.push(labelled("What happened", escaped(&gap.message)));
+            if gap.integration.is_none() {
+                lines.push(Text::from(
+                    "kipple couldn't see what they use, so an item in your home may be in use by one of them. Items outside your home count them and stay Protected.",
+                ));
+            }
+            lines
         }),
     }
 }
