@@ -238,17 +238,18 @@ project_roots = ["~/projects", "~/work"]
 paths = ["~/projects/keep-this/target"]
 rules = ["builtin.node.node-modules"]
 
-[review]
-confirm_by_typing_above = "5 GB"
-
-[retention]
-"builtin.codex.stale-releases" = { keep_additional = 1 }
+# Not supported yet: kipple exits 2 on these until they are built.
+# [review]
+# confirm_by_typing_above = "5 GB"
+#
+# [retention]
+# "builtin.codex.stale-releases" = { keep_additional = 1 }
 
 # Every built-in rule can be tuned or switched off.
 [rules."builtin.node.node-modules"]
 level = "careful"             # stricter than the global level for this rule only
 recent_days = 30
-method = "trash"
+# method = "trash"            # not supported yet
 
 [keep]                        # written by `p` in the TUI
 paths = [{ path = "~/projects/demo/target", note = "benchmark baseline" }]

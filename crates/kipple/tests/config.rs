@@ -852,6 +852,25 @@ fn an_edit_keeps_comments_and_every_other_key_and_survives_an_editors_change() {
     assert_eq!(undone.rules.len(), 0);
 }
 
+/// The example in 03 §6 held keys that exit 2, so a user copying it got an unusable config.
+#[test]
+fn the_example_config_in_the_spec_loads() {
+    let spec = include_str!("../../../docs/03-functional-spec.md");
+    let example = spec
+        .split_once("### Example (not the defaults)")
+        .and_then(|(_, rest)| rest.split_once("```toml\n"))
+        .and_then(|(_, rest)| rest.split_once("\n```"))
+        .map(|(toml, _)| toml)
+        .expect("03 §6 has a toml example");
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("config.toml");
+    fs::write(&file, example).unwrap();
+
+    let loaded = config::load(&location(&file), &catalog());
+
+    assert!(loaded.is_ok(), "{loaded:?}");
+}
+
 /// Undoing a keep removed every entry equal ignoring case, so on a case-sensitive file
 /// system it also unprotected a different directory the user never chose.
 #[test]
