@@ -586,7 +586,7 @@ fn why(row: &Row) -> String {
     match &row.verdict {
         None => "still being measured and checked".to_owned(),
         Some(Verdict::Safe) => format!(
-            "passes every check at {}: recognised, comes back, untracked, idle, not recent",
+            "passes every check at {}: recognised, comes back, untracked, no executable running inside, not recent",
             title_case(LEVEL.name())
         ),
         Some(verdict) => human::reasons(verdict),

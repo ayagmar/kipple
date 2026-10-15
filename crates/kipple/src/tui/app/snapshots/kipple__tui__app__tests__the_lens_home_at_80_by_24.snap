@@ -20,7 +20,7 @@ Cargo build output · Safe to clean at Balanced
 What it is        Cargo build output
 Why it's here     Cargo writes compiled crates here when you build.
 Why it's safe     passes every check at Balanced: recognised, comes back,
-untracked, idle, not recent
+untracked, no executable running inside, not recent
 What you lose     The next build compiles everything again.
 How it comes back the next build makes it again, without the network
 Restore cost      unknown
