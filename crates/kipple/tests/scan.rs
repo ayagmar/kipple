@@ -29,6 +29,7 @@ mod uv_v0_12_23;
 #[path = "../../kipple-adapters/tests/fixtures/python/venv_v3_14_8.rs"]
 mod venv_v3_14_8;
 
+use std::collections::BTreeMap;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs;
@@ -151,7 +152,15 @@ fn balanced_puts_at_least_80_percent_of_regenerable_bytes_of_the_demo_home_in_sa
     let report: Value = serde_json::from_str(&json).unwrap();
     assert_eq!(report["level"], "balanced");
     let (mut regenerable, mut safe) = (0, 0);
+    let mut buckets = BTreeMap::<&str, u64>::new();
     for finding in report["findings"].as_array().unwrap() {
+        let bytes = finding.pointer("/size/apparent").unwrap().as_u64().unwrap();
+        let bucket = finding
+            .pointer("/verdict/bucket")
+            .unwrap()
+            .as_str()
+            .unwrap();
+        *buckets.entry(bucket).or_default() += bytes;
         let recovery = finding.pointer("/consequence/recovery");
         let comes_back = ["rebuild-local", "reinstall", "redownload"]
             .iter()
@@ -159,16 +168,17 @@ fn balanced_puts_at_least_80_percent_of_regenerable_bytes_of_the_demo_home_in_sa
         if !comes_back {
             continue;
         }
-        let bytes = finding.pointer("/size/apparent").unwrap().as_u64().unwrap();
         regenerable += bytes;
-        if finding.pointer("/verdict/bucket") == Some(&Value::from("safe")) {
+        if bucket == "safe" {
             safe += bytes;
         }
     }
     assert!(regenerable > 0, "{json}");
     assert!(
         safe * 10 >= regenerable * 8,
-        "{safe} of {regenerable}: {json}"
+        "only {safe} of {regenerable} regenerable bytes are Safe; bytes by bucket: \
+         {buckets:?}. If every finding is held as unknown-git, the temp dir \
+         (TMPDIR) is probably inside a git repository. {json}"
     );
 }
 
