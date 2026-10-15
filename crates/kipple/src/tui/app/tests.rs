@@ -1,6 +1,9 @@
 //! The home screen's transitions (`docs/03-functional-spec.md` §2 J1 and J2, §5) and its
 //! rendered buffers at 80×24 and 160×48 (`docs/08-engineering-standards.md`), from scan
-//! events built here, so no file system or clock is read.
+//! events built here, so no file system or clock is read. Keeping and settings, which
+//! write a config file in a temp dir, are in `settings`.
+
+mod settings;
 
 use std::path::PathBuf;
 use std::time::Duration;

@@ -2,7 +2,7 @@
 source: crates/kipple/src/tui/app/tests.rs
 expression: "screen(&app, colour(), 160, 48)"
 ---
-kipple · read-only · level: Balanced · scanned in 1.2 s
+kipple  Careful · Balanced · Thorough (level: Balanced) · scanned in 1.2 s
   ▾ Safe to clean (2)                                514.0 MiB passes every check       │Cargo build output · Safe to clean at Balanced
     ▾ Dev (2)                                        514.0 MiB                          │/home/ada/projects/api/target
 ●     api/target  Cargo build output                 512.0 MiB                          │What it is        Cargo build output
@@ -49,4 +49,4 @@ kipple · read-only · level: Balanced · scanned in 1.2 s
                                                                                         │
                                                                                         │
 found 1.7 GiB · eligible 814.0 MiB · selected 1 (512.0 MiB) · frees 512.0 MiB
-j/k move  h/l fold  / filter  tab lens  s select  c safe  ? help  q quit
+j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit

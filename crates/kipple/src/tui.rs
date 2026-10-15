@@ -7,22 +7,25 @@
 
 mod app;
 mod filter;
+mod settings;
 mod view;
 
 use std::io;
-use std::thread::{self, ScopedJoinHandle};
+use std::thread::{self, Scope, ScopedJoinHandle};
 use std::time::{Duration, Instant};
 
-use kipple_core::{CancelToken, EventRx, ScanOutcome, ScanReport, ScanRequest, event_channel};
+use kipple_core::{
+    CancelToken, Engine, EventRx, ScanOutcome, ScanReport, ScanRequest, event_channel,
+};
 use kipple_platform::Environment;
 use ratatui::Terminal;
 use ratatui::backend::Backend;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 pub use self::app::Key;
-use self::app::{App, Catalog, Msg};
+use self::app::{App, Catalog, Effect, Msg, Saved};
 pub use self::view::Look;
-use crate::config::Settings;
+use crate::config::{self, Edit, Loaded, Settings};
 use crate::setup::Builtin;
 
 /// How long the loop waits for a key while the scan streams: one frame at 60 Hz.
@@ -61,8 +64,9 @@ pub trait Keys {
 /// Runs the home screen on `terminal` until it is closed.
 ///
 /// It scans the roots of `settings` on the machine `env` describes, with their policy, and
-/// returns how long the scan took when it finished before the screen was closed. Closing
-/// it earlier cancels the scan.
+/// returns how long the last scan took when it finished before the screen was closed.
+/// Closing it earlier cancels the scan. Keeping a finding or changing a setting writes
+/// the config file `settings` was loaded from, and nothing else.
 ///
 /// # Errors
 /// When the terminal can't be read or drawn, or the built-in rules don't load.
@@ -78,34 +82,29 @@ where
 {
     let builtin = Builtin::load().map_err(io::Error::other)?;
     let engine = builtin.engine(env).map_err(io::Error::other)?;
-    let request = ScanRequest {
-        roots: settings.roots.clone(),
-        lens: None,
-        exclude: settings.policy.exclude.clone(),
-    };
     let size = terminal.size().map_err(io::Error::other)?;
     let mut app = App::new(Catalog::new(&builtin), size.width, size.height);
-    app.policy = settings.policy.clone();
-    let cancel = CancelToken::new();
-    let (events, received) = event_channel(STREAM_CAPACITY, &cancel);
+    app.configure(Saved::of(settings));
+    let store = Store {
+        env,
+        catalog: config::catalog(&builtin),
+        settings: settings.clone(),
+    };
     thread::scope(|scope| {
-        let started = Instant::now();
-        let scan = scope.spawn(|| {
-            let events = events;
-            engine.scan(&request, &events, &cancel)
-        });
         let mut screen = Screen {
             terminal,
             look,
             app: &mut app,
-            received,
-            scan: Some(scan),
-            started,
+            store,
+            scope,
+            engine: &engine,
+            scan: None,
             elapsed: None,
         };
+        screen.start();
         let ran = screen.drive(keys);
         // Stops a scan still running, so leaving the scope doesn't wait for it.
-        cancel.cancel();
+        screen.stop();
         ran.map(|()| screen.elapsed)
     })
 }
@@ -129,21 +128,112 @@ impl Drop for Restore {
     }
 }
 
+/// The config file the home screen writes, and the settings it last gave.
+struct Store<'e> {
+    env: &'e Environment,
+    catalog: config::Catalog,
+    settings: Settings,
+}
+
+impl Store<'_> {
+    /// Writes `edits` to the config file and rebuilds the settings from what was
+    /// written. The answer for the home screen.
+    fn write(&mut self, edits: &[Edit]) -> Msg {
+        let location = &self.settings.loaded.location;
+        let written = config::write(location, edits, &self.settings.roots, &self.catalog).and_then(
+            |config| {
+                let loaded = Loaded {
+                    location: location.clone(),
+                    exists: true,
+                    config,
+                };
+                Settings::from_loaded(self.env, loaded, &[])
+            },
+        );
+        match written {
+            Ok(settings) => {
+                let saved = Saved::of(&settings);
+                self.settings = settings;
+                Msg::Saved(Box::new(saved))
+            }
+            Err(error) => Msg::NotSaved(error.to_string()),
+        }
+    }
+}
+
+/// A scan in progress, or finished.
+struct Scan<'scope> {
+    cancel: CancelToken,
+    received: EventRx,
+    /// Until the report has been taken.
+    report: Option<ScopedJoinHandle<'scope, ScanReport>>,
+    started: Instant,
+}
+
 /// One home screen session: the state, the scan feeding it and the terminal drawing it.
-struct Screen<'s, 'scope, B: Backend> {
+struct Screen<'s, 'scope, 'env, B: Backend> {
     terminal: &'s mut Terminal<B>,
     look: Look,
     app: &'s mut App,
-    received: EventRx,
-    scan: Option<ScopedJoinHandle<'scope, ScanReport>>,
-    started: Instant,
+    store: Store<'env>,
+    scope: &'scope Scope<'scope, 'env>,
+    engine: &'env Engine,
+    scan: Option<Scan<'scope>>,
     elapsed: Option<Duration>,
 }
 
-impl<B: Backend> Screen<'_, '_, B>
+impl<B: Backend> Screen<'_, '_, '_, B>
 where
     B::Error: Send + Sync + 'static,
 {
+    /// Starts a scan of the roots the settings give, cancelling the one running.
+    fn start(&mut self) {
+        self.stop();
+        let settings = &self.store.settings;
+        let request = ScanRequest {
+            roots: settings.roots.clone(),
+            lens: None,
+            exclude: settings.policy.exclude.clone(),
+        };
+        let cancel = CancelToken::new();
+        let (events, received) = event_channel(STREAM_CAPACITY, &cancel);
+        let engine = self.engine;
+        let token = cancel.clone();
+        let report = self
+            .scope
+            .spawn(move || engine.scan(&request, &events, &token));
+        self.scan = Some(Scan {
+            cancel,
+            received,
+            report: Some(report),
+            started: Instant::now(),
+        });
+        self.elapsed = None;
+    }
+
+    fn stop(&self) {
+        if let Some(scan) = &self.scan {
+            scan.cancel.cancel();
+        }
+    }
+
+    fn scanning(&self) -> bool {
+        self.scan.as_ref().is_some_and(|scan| scan.report.is_some())
+    }
+
+    /// Carries out what the home screen asked for: config writes and new scans.
+    fn effects(&mut self) {
+        while let Some(effect) = self.app.take_effect() {
+            match effect {
+                Effect::Write(edits) => {
+                    let answer = self.store.write(&edits);
+                    self.app.update(answer);
+                }
+                Effect::Rescan => self.start(),
+            }
+        }
+    }
+
     /// Reads keys and scan events until the screen is closed. A key is drawn at once;
     /// scan events are drawn at most once a frame.
     fn drive(&mut self, keys: &mut dyn Keys) -> io::Result<()> {
@@ -151,12 +241,13 @@ where
         let mut drawn = Instant::now();
         let mut stale = false;
         while !self.app.quit {
-            let wait = if self.scan.is_some() { FRAME } else { IDLE };
+            let wait = if self.scanning() { FRAME } else { IDLE };
             if let Some(input) = keys.next(wait)? {
                 self.app.update(match input {
                     Input::Key(key) => Msg::Key(key),
                     Input::Resize { width, height } => Msg::Resize { width, height },
                 });
+                self.effects();
                 self.draw()?;
                 drawn = Instant::now();
                 stale = false;
@@ -174,23 +265,26 @@ where
     /// Applies the scan events that have arrived, at most a batch of them, and the
     /// report once the scan has ended. Whether anything changed.
     fn receive(&mut self) -> bool {
+        let Some(scan) = &mut self.scan else {
+            return false;
+        };
         let mut changed = false;
         for _ in 0..BATCH {
-            let Some(sequenced) = self.received.poll(Duration::ZERO) else {
+            let Some(sequenced) = scan.received.poll(Duration::ZERO) else {
                 break;
             };
             self.app.update(Msg::Scan(Box::new(sequenced.event)));
             changed = true;
         }
-        if self.received.ended()
-            && let Some(scan) = self.scan.take()
+        if scan.received.ended()
+            && let Some(report) = scan.report.take()
         {
-            let report = scan.join().unwrap_or_else(|_| ScanReport {
+            let report = report.join().unwrap_or_else(|_| ScanReport {
                 outcome: ScanOutcome::Cancelled,
                 integrations: Vec::new(),
                 findings: Vec::new(),
             });
-            let elapsed = self.started.elapsed();
+            let elapsed = scan.started.elapsed();
             self.elapsed = Some(elapsed);
             self.app.update(Msg::Finished {
                 report: Box::new(report),

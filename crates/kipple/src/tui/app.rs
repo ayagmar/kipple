@@ -1,17 +1,24 @@
 //! The home screen's state machine (`docs/05-architecture.md` §4): [`App::update`] takes
 //! one message at a time, and nothing else changes the state, so every transition is
 //! testable without a terminal. Selecting only marks findings: nothing here removes,
-//! moves or runs anything.
+//! moves or runs anything. Changing a setting asks the loop for an [`Effect`], a config
+//! write, and the screen changes only once the loop says it was written.
+
+mod keep;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use kipple_core::{
-    Advice, Finding, FindingId, IntegrationId, Lens, Policy, RuleId, RuleText, ScanEvent,
+    Advice, Caution, Finding, FindingId, IntegrationId, Lens, Policy, RuleId, RuleText, ScanEvent,
     ScanOutcome, ScanReport, Verdict,
 };
 
+pub(crate) use self::keep::{Effect, Saved};
 use super::filter;
+use super::settings::{Action, Panel};
+use crate::config::Config;
 use crate::json::{OmissionOut, SizeOut};
 use crate::setup::Builtin;
 
@@ -62,6 +69,10 @@ pub(crate) enum Msg {
         report: Box<ScanReport>,
         elapsed: Duration,
     },
+    /// The config was written; this is what it says now.
+    Saved(Box<Saved>),
+    /// The config couldn't be written, for this reason. Nothing changed.
+    NotSaved(String),
 }
 
 /// Where a finding stands: its bucket, or still being measured. Nothing is Safe until
@@ -116,6 +127,10 @@ pub(crate) enum Mode {
     /// Typing the filter.
     Filter,
     Help,
+    /// Typing the note for keeping this finding.
+    Note(FindingId),
+    /// The settings panel.
+    Settings,
 }
 
 /// How far the scan has got.
@@ -163,6 +178,12 @@ impl Row {
     /// Whether it may be selected: Safe or Review, never Protected or unmeasured.
     const fn eligible(&self) -> bool {
         matches!(self.shelf(), Shelf::Safe | Shelf::Review)
+    }
+
+    /// Whether it changed within its rule's recent window, which keeps it out of every
+    /// group shortcut.
+    fn recent(&self) -> bool {
+        matches!(&self.verdict, Some(Verdict::Review(cautions)) if cautions.contains(&Caution::Recent))
     }
 }
 
@@ -213,6 +234,12 @@ pub(crate) struct Totals {
 pub(crate) struct App {
     /// What every row's bucket comes from: the config's level, rules and paths.
     pub(crate) policy: Policy,
+    /// The config file, when its directory is known.
+    pub(crate) file: Option<PathBuf>,
+    /// What the config file says.
+    pub(crate) config: Config,
+    /// The project roots scanned, as configured or by default.
+    pub(crate) roots: Vec<PathBuf>,
     pub(crate) catalog: Catalog,
     pub(crate) rows: Vec<Row>,
     by_id: HashMap<FindingId, usize>,
@@ -221,10 +248,19 @@ pub(crate) struct App {
     pub(crate) progress: Progress,
     collapsed: BTreeSet<Node>,
     pub(crate) selected: BTreeSet<FindingId>,
+    /// The selected findings a shortcut (`a`, `c`) added, with the bucket each was in.
+    shortcut: BTreeMap<FindingId, Shelf>,
     pub(crate) filter: String,
     pub(crate) lens: Option<Lens>,
     pub(crate) mode: Mode,
     pub(crate) notice: Option<String>,
+    /// The note being typed for `p`.
+    pub(crate) note: String,
+    pub(crate) panel: Panel,
+    /// What the loop is asked to do next.
+    effect: Option<Effect>,
+    /// What to say once the config write asked for has succeeded.
+    pending: Option<String>,
     cursor: Option<Node>,
     /// Where the cursor was, for when its line goes away.
     hint: usize,
@@ -238,6 +274,9 @@ impl App {
     pub(crate) fn new(catalog: Catalog, width: u16, height: u16) -> Self {
         Self {
             policy: Policy::default(),
+            file: None,
+            config: Config::default(),
+            roots: Vec::new(),
             catalog,
             rows: Vec::new(),
             by_id: HashMap::new(),
@@ -246,10 +285,15 @@ impl App {
             progress: Progress::Scanning,
             collapsed: BTreeSet::new(),
             selected: BTreeSet::new(),
+            shortcut: BTreeMap::new(),
             filter: String::new(),
             lens: None,
             mode: Mode::Browse,
             notice: None,
+            note: String::new(),
+            panel: Panel::default(),
+            effect: None,
+            pending: None,
             cursor: None,
             hint: 0,
             scroll: 0,
@@ -270,6 +314,8 @@ impl App {
             }
             Msg::Scan(event) => self.scan_event(*event),
             Msg::Finished { report, elapsed } => self.finished(*report, elapsed),
+            Msg::Saved(saved) => self.saved(*saved),
+            Msg::NotSaved(error) => self.not_saved(&error),
         }
     }
 
@@ -464,12 +510,29 @@ impl App {
         match self.mode {
             Mode::Help => self.mode = Mode::Browse,
             Mode::Filter => self.filter_key(key),
+            Mode::Note(id) => self.note_key(id, key),
+            Mode::Settings => {
+                self.notice = None;
+                self.settings_key(key);
+            }
             Mode::Browse => {
                 self.notice = None;
                 self.browse_key(key);
             }
         }
         self.settle();
+    }
+
+    fn settings_key(&mut self, key: Key) {
+        let mut panel = std::mem::take(&mut self.panel);
+        let action = panel.key(key, self);
+        self.panel = panel;
+        match action {
+            Action::Nothing => {}
+            Action::Close => self.mode = Mode::Browse,
+            Action::Save { edits, done } => self.save(edits, done),
+            Action::Say(text) => self.notice = Some(text),
+        }
     }
 
     fn filter_key(&mut self, key: Key) {
@@ -512,6 +575,9 @@ impl App {
             Key::Char('s') => self.toggle(),
             Key::Char('a') => self.add_group(),
             Key::Char('c') => self.add_safe(),
+            Key::Char('p') => self.keep_finding(),
+            Key::Char('P') => self.keep_rule(),
+            Key::Char(',') => self.mode = Mode::Settings,
             Key::Enter => self.review(),
             Key::Tab => self.next_lens(),
             Key::Esc => self.filter.clear(),
@@ -580,13 +646,15 @@ impl App {
             self.notice = Some(not_selectable(row));
             return;
         }
+        // Chosen by hand now, so no longer a shortcut's.
+        self.shortcut.remove(&id);
         if !self.selected.remove(&id) {
             self.selected.insert(id);
         }
     }
 
     /// Adds every eligible finding of the focused group, or of the focused finding's
-    /// group. Never adds a Protected or unmeasured one.
+    /// group. Never adds a Protected, unmeasured or recent one.
     fn add_group(&mut self) {
         let Some(focus) = self.focus() else {
             return;
@@ -598,12 +666,12 @@ impl App {
             },
             other @ (Node::Shelf(_) | Node::Group(..) | Node::Gaps | Node::Gap(_)) => other,
         };
-        let ids: Vec<FindingId> = self
+        let ids: Vec<(FindingId, Shelf)> = self
             .under(node)
-            .filter(|row| row.eligible())
-            .map(|row| row.finding.id)
+            .filter(|row| row.eligible() && !row.recent())
+            .map(|row| (row.finding.id, row.shelf()))
             .collect();
-        let added = ids.iter().filter(|&&id| self.selected.insert(id)).count();
+        let added = self.add_by_shortcut(&ids);
         self.notice = Some(match ids.len() {
             0 => "Nothing here can be selected.".to_owned(),
             _ => format!("Added {added} of {} findings in this group.", ids.len()),
@@ -613,18 +681,30 @@ impl App {
     /// Selects the whole Safe bucket as it stands at this keypress, never Review, then
     /// says what review would do.
     fn add_safe(&mut self) {
-        let safe: Vec<FindingId> = self
+        let safe: Vec<(FindingId, Shelf)> = self
             .rows
             .iter()
             .filter(|row| row.shelf() == Shelf::Safe)
-            .map(|row| row.finding.id)
+            .map(|row| (row.finding.id, Shelf::Safe))
             .collect();
         if safe.is_empty() {
             self.notice = Some("Nothing is Safe to clean yet.".to_owned());
             return;
         }
-        self.selected.extend(safe.iter().copied());
+        self.add_by_shortcut(&safe);
         self.review();
+    }
+
+    /// Selects `ids`, remembering the bucket of each one this adds. How many it added.
+    fn add_by_shortcut(&mut self, ids: &[(FindingId, Shelf)]) -> usize {
+        let mut added = 0;
+        for &(id, shelf) in ids {
+            if self.selected.insert(id) {
+                self.shortcut.insert(id, shelf);
+                added += 1;
+            }
+        }
+        added
     }
 
     /// Review and cleaning are not built yet (M3): say what is selected and that

@@ -149,11 +149,26 @@ impl Settings {
         let upstream = resolve_roots(env, &[]);
         let location = locate(env, flag, &upstream);
         let loaded = load(&location, catalog)?;
+        Self::from_loaded(env, loaded, given)
+    }
+
+    /// The settings `loaded` gives, with the project roots `given` on the command line,
+    /// if any, else the config's. A caller that has just written the config rebuilds its
+    /// settings from what it wrote with this.
+    ///
+    /// # Errors
+    /// When the config names a project root under an unknown home directory.
+    pub fn from_loaded(
+        env: &Environment,
+        loaded: Loaded,
+        given: &[PathBuf],
+    ) -> Result<Self, ConfigError> {
+        let upstream = resolve_roots(env, &[]);
         let configured = loaded
             .config
             .project_roots(&upstream)
             .map_err(|message| ConfigError {
-                location: location.clone(),
+                location: loaded.location.clone(),
                 position: None,
                 message,
             })?;
