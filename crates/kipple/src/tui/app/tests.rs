@@ -457,9 +457,9 @@ fn an_incomplete_scan_lists_what_it_could_not_cover_instead_of_looking_empty() {
     assert!(screen.contains("partial: 1 not covered"), "{screen}");
 }
 
-// Catches the D-050 notice reaching `scan` and `doctor` but not the home screen, or
-// being counted as something the scan didn't cover, which would call a complete scan
-// partial.
+// Catches the D-050 and D-052 notices reaching `scan` and `doctor` but not the home
+// screen, or being counted as something the scan didn't cover, which would call a
+// complete scan partial.
 #[test]
 fn processes_left_out_of_the_activity_check_are_a_notice_not_a_gap() {
     let ended = |unchecked_system, by_command_line| {
@@ -477,12 +477,13 @@ fn processes_left_out_of_the_activity_check_are_a_notice_not_a_gap() {
         app
     };
 
-    let app = ended(3, 0);
+    let app = ended(3, 2);
 
     assert_eq!(
         app.notices,
         [
-            "3 processes owned by root or SYSTEM, or running with root's rights, couldn't be inspected and were not counted for items in your home."
+            "3 processes owned by root or SYSTEM, or running with root's rights, couldn't be inspected and were not counted for items in your home.",
+            "2 of your own processes couldn't be fully inspected and were checked by their command line only for items in your home."
         ]
     );
     assert_eq!(app.gaps, []);
@@ -493,6 +494,7 @@ fn processes_left_out_of_the_activity_check_are_a_notice_not_a_gap() {
     );
     assert!(!screen.contains("partial"), "{screen}");
     assert!(!screen.contains("Not covered"), "{screen}");
+    assert!(screen.contains("Note: 2 of your own processes"), "{screen}");
     assert_eq!(ended(0, 0).notices, Vec::<String>::new());
 }
 

@@ -768,9 +768,13 @@ const fn heading(node: Node) -> bool {
 
 /// The notices `report` carries, each in words.
 fn notices(report: &ScanReport) -> Vec<String> {
-    crate::human::unchecked_system(report.unchecked_system)
-        .into_iter()
-        .collect()
+    [
+        crate::human::unchecked_system(report.unchecked_system),
+        crate::human::by_command_line(report.by_command_line),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }
 
 /// Why `row` can't be selected.
