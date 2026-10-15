@@ -1,5 +1,6 @@
 //! The home screen (`docs/03-functional-spec.md` §2 J1 and §5): `kipple` with no
-//! arguments in a terminal.
+//! arguments in a terminal, after the first run's questions (J0) when there is no config
+//! file yet.
 //!
 //! A state machine (`app`) and a pure renderer (`view`), driven by one loop that
 //! reads keys and scan events and draws at most once a frame. It is read-only: selecting
@@ -7,6 +8,7 @@
 
 mod app;
 mod filter;
+mod onboarding;
 mod settings;
 mod view;
 
@@ -24,6 +26,8 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, Ke
 
 pub use self::app::Key;
 use self::app::{App, Catalog, Effect, Msg, Saved};
+pub use self::onboarding::{LevelTotals, due as first_run_due, level_totals};
+use self::onboarding::{Onboarding, Outcome};
 pub use self::view::Look;
 use crate::config::{self, Edit, Loaded, Settings};
 use crate::setup::Builtin;
@@ -80,11 +84,46 @@ pub fn run<B: Backend>(
 where
     B::Error: Send + Sync + 'static,
 {
+    let start = Start {
+        env,
+        settings,
+        look,
+        first: false,
+    };
+    session(terminal, keys, &start)
+}
+
+/// What a session runs with: the machine, the settings and the look, and whether the
+/// first run's questions come before the home screen.
+struct Start<'a> {
+    env: &'a Environment,
+    settings: &'a Settings,
+    look: Look,
+    first: bool,
+}
+
+/// [`run`], with the first run's questions over the home screen, while the scan already
+/// runs, when `start` asks for them.
+fn session<B: Backend>(
+    terminal: &mut Terminal<B>,
+    keys: &mut dyn Keys,
+    start: &Start<'_>,
+) -> io::Result<Option<Duration>>
+where
+    B::Error: Send + Sync + 'static,
+{
+    let &Start {
+        env,
+        settings,
+        look,
+        first,
+    } = start;
     let builtin = Builtin::load().map_err(io::Error::other)?;
     let engine = builtin.engine(env).map_err(io::Error::other)?;
     let size = terminal.size().map_err(io::Error::other)?;
     let mut app = App::new(Catalog::new(&builtin), size.width, size.height);
     app.configure(Saved::of(settings));
+    let onboarding = first.then(|| Onboarding::new(&app));
     let store = Store {
         env,
         catalog: config::catalog(&builtin),
@@ -95,6 +134,7 @@ where
             terminal,
             look,
             app: &mut app,
+            onboarding,
             store,
             scope,
             engine: &engine,
@@ -110,13 +150,21 @@ where
 }
 
 /// Opens the home screen in this terminal and restores the terminal however it ends:
-/// on quit, on error, and on panic (ratatui's panic hook).
+/// on quit, on error, and on panic (ratatui's panic hook). Without a config file at the
+/// default location, the first run's questions come first (J0).
 pub(crate) fn open(env: &Environment, settings: &Settings, look: Look) -> io::Result<()> {
+    let first = onboarding::due(&settings.loaded);
     // Before `try_init`: it enables raw mode first, and that stays on if entering the
     // alternate screen then fails.
     let _restore = Restore;
     let mut terminal = ratatui::try_init()?;
-    run(&mut terminal, &mut TerminalKeys, env, settings, look).map(|_| ())
+    let start = Start {
+        env,
+        settings,
+        look,
+        first,
+    };
+    session(&mut terminal, &mut TerminalKeys, &start).map(|_| ())
 }
 
 /// Leaves raw mode and the alternate screen when dropped.
@@ -175,6 +223,8 @@ struct Screen<'s, 'scope, 'env, B: Backend> {
     terminal: &'s mut Terminal<B>,
     look: Look,
     app: &'s mut App,
+    /// The first run's questions, until they are answered.
+    onboarding: Option<Onboarding>,
     store: Store<'env>,
     scope: &'scope Scope<'scope, 'env>,
     engine: &'env Engine,
@@ -243,10 +293,7 @@ where
         while !self.app.quit {
             let wait = if self.scanning() { FRAME } else { IDLE };
             if let Some(input) = keys.next(wait)? {
-                self.app.update(match input {
-                    Input::Key(key) => Msg::Key(key),
-                    Input::Resize { width, height } => Msg::Resize { width, height },
-                });
+                self.input(input);
                 self.effects();
                 self.draw()?;
                 drawn = Instant::now();
@@ -260,6 +307,30 @@ where
             }
         }
         Ok(())
+    }
+
+    /// Passes `input` to the first run's questions while they are open, else to the home
+    /// screen. Finishing them asks the home screen to write the answers.
+    fn input(&mut self, input: Input) {
+        let key = match input {
+            Input::Key(key) => key,
+            Input::Resize { width, height } => {
+                self.app.update(Msg::Resize { width, height });
+                return;
+            }
+        };
+        let Some(onboarding) = &mut self.onboarding else {
+            self.app.update(Msg::Key(key));
+            return;
+        };
+        match onboarding.key(key) {
+            Outcome::Stay => {}
+            Outcome::Quit => self.app.quit = true,
+            Outcome::Finish(edits) => {
+                self.onboarding = None;
+                onboarding::finish(self.app, edits);
+            }
+        }
     }
 
     /// Applies the scan events that have arrived, at most a batch of them, and the
@@ -297,9 +368,12 @@ where
     }
 
     fn draw(&mut self) -> io::Result<()> {
-        let (app, look) = (&*self.app, self.look);
+        let (app, look, onboarding) = (&*self.app, self.look, self.onboarding.as_ref());
         self.terminal
-            .draw(|frame| view::render(app, look, frame))
+            .draw(|frame| match onboarding {
+                Some(onboarding) => onboarding::render(onboarding, app, look, frame),
+                None => view::render(app, look, frame),
+            })
             .map(|_| ())
             .map_err(io::Error::other)
     }

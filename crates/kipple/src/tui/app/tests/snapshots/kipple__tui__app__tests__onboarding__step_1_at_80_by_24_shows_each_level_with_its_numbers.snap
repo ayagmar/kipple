@@ -1,0 +1,29 @@
+---
+source: crates/kipple/src/tui/app/tests/onboarding.rs
+assertion_line: 385
+expression: "screen(&first, &app, 80, 24)"
+---
+ Welcome to kipple · step 1 of 4 · scanning…
+────────────────────────────────────────────────────────────────────────────────
+How careful should kipple be?
+Each level shows what it would offer on this machine. It changes nothing.
+
+  Careful
+    Safe: build output and regenerated caches; recent: 14 days
+    514.0 MiB safe to clean, 300.0 MiB to review
+> Balanced (the default)
+    Safe: rebuilt, reinstalled, re-downloaded; recent: 7 days
+    514.0 MiB safe to clean, 300.0 MiB to review
+  Thorough
+    Safe: Balanced plus what costs a rollback; recent: 2 days
+    814.0 MiB safe to clean, 0 B to review
+
+The numbers grow while the scan runs.
+
+
+
+
+
+
+
+ enter choose · tab skip · q quit, saving nothing

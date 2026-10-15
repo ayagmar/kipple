@@ -167,7 +167,7 @@ impl App {
     }
 
     /// Asks the loop to write `edits`, and to say `done` once they are written.
-    pub(super) fn save(&mut self, edits: Vec<Edit>, done: String) {
+    pub(crate) fn save(&mut self, edits: Vec<Edit>, done: String) {
         self.effect = Some(Effect::Write(edits));
         self.pending = Some(done);
     }

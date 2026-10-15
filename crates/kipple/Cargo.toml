@@ -37,5 +37,9 @@ required-features = ["test-roots"]
 name = "config"
 required-features = ["test-roots"]
 
+[[test]]
+name = "onboarding"
+required-features = ["test-roots"]
+
 [lints]
 workspace = true

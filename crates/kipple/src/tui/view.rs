@@ -47,7 +47,7 @@ const ASCII_BORDER: border::Set<'static> = border::Set {
 };
 
 impl Look {
-    const fn border(self) -> border::Set<'static> {
+    pub(crate) const fn border(self) -> border::Set<'static> {
         if self.ascii {
             ASCII_BORDER
         } else {
@@ -55,7 +55,7 @@ impl Look {
         }
     }
 
-    const fn dot(self) -> &'static str {
+    pub(crate) const fn dot(self) -> &'static str {
         if self.ascii { " - " } else { " · " }
     }
 
@@ -68,7 +68,7 @@ impl Look {
         }
     }
 
-    fn ellipsis(self, text: &str) -> String {
+    pub(crate) fn ellipsis(self, text: &str) -> String {
         format!("{text}{}", if self.ascii { "..." } else { "…" })
     }
 
@@ -93,7 +93,7 @@ impl Look {
         })
     }
 
-    const fn dim(self) -> Style {
+    pub(crate) const fn dim(self) -> Style {
         if self.color {
             Style::new().fg(Color::DarkGray)
         } else {
@@ -775,7 +775,7 @@ fn level_spans(app: &App, look: Look) -> Vec<Span<'static>> {
 }
 
 /// What `level` puts in Safe (`docs/04-safety-model.md` §2a).
-const fn level_about(level: Level) -> &'static str {
+pub(crate) const fn level_about(level: Level) -> &'static str {
     match level {
         Level::Careful => "Safe: build output and regenerated caches; recent: 14 days",
         Level::Balanced => "Safe: rebuilt, reinstalled, re-downloaded; recent: 7 days",

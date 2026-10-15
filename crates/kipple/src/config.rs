@@ -386,7 +386,7 @@ fn check(entry: &HeldPath) -> Option<String> {
 }
 
 /// Whether `path` is absolute or starts with `~`, as a config path must.
-fn is_config_path(path: &str) -> bool {
+pub(crate) fn is_config_path(path: &str) -> bool {
     let tilde = path
         .strip_prefix('~')
         .is_some_and(|rest| rest.is_empty() || rest.starts_with(path::is_separator));
