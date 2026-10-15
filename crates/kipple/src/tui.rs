@@ -242,14 +242,16 @@ impl Keys for TerminalKeys {
 }
 
 /// The home screen's key for a key press. Ctrl-C interrupts. A character held with both
-/// Ctrl and Alt is typed as it is: Windows reports Alt Gr that way, and Alt Gr types `@`
-/// and `{` on many layouts. Any other key held with Ctrl or Alt means nothing, so
-/// Ctrl-S doesn't select and Alt-Q doesn't quit.
+/// Ctrl and Alt, other than an ASCII letter or digit, is typed as it is: Windows reports
+/// Alt Gr that way, and Alt Gr types `@`, `{` or `ł` on many layouts. Any other key held
+/// with Ctrl or Alt means nothing, so Ctrl-S and Ctrl-Alt-S don't select and Alt-Q
+/// doesn't quit.
 const fn key_of(key: KeyEvent) -> Option<Key> {
     if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
         return Some(Key::Interrupt);
     }
     if let KeyCode::Char(c) = key.code
+        && !c.is_ascii_alphanumeric()
         && key
             .modifiers
             .contains(KeyModifiers::CONTROL.union(KeyModifiers::ALT))
@@ -328,6 +330,19 @@ mod tests {
         }
         assert_eq!(press(KeyCode::Char('c'), altgr), Some(Key::Interrupt));
         assert_eq!(press(KeyCode::Enter, altgr), None);
+    }
+
+    // Catches Ctrl-Alt-S selecting a finding and Ctrl-Alt-Q closing the screen: Alt Gr
+    // never types an ASCII letter or digit, so those are shortcuts, not text.
+    #[test]
+    fn ctrl_alt_with_an_ascii_letter_or_digit_does_nothing_but_altgr_letters_are_typed() {
+        let altgr = KeyModifiers::CONTROL.union(KeyModifiers::ALT);
+        for c in ['s', 'q', 'S', 'a', '1'] {
+            assert_eq!(press(KeyCode::Char(c), altgr), None, "{c:?}");
+        }
+        for c in ['ł', 'ß', '€'] {
+            assert_eq!(press(KeyCode::Char(c), altgr), Some(Key::Char(c)), "{c:?}");
+        }
     }
 
     // Catches the modifier check swallowing the one modified key the screen answers.
