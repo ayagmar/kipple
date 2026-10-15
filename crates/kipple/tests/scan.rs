@@ -166,9 +166,10 @@ fn balanced_puts_at_least_80_percent_of_regenerable_bytes_of_the_demo_home_in_sa
         let comes_back = ["rebuild-local", "reinstall", "redownload"]
             .iter()
             .any(|kind| recovery == Some(&Value::from(*kind)));
-        // Where the OS doesn't show the process paths a layout needs (Windows), it is
-        // always Protected (04 §4), so the target covers only what can be judged.
-        let judged = finding.pointer("/activity/reason") != Some(&Value::from("unsupported"));
+        // Windows doesn't show the process paths an interpreted layout needs, so there
+        // it is always Protected (04 §4) and the target covers only the rest.
+        let judged = kipple_platform::PLATFORM != kipple_core::Platform::Windows
+            || finding.pointer("/activity/reason") != Some(&Value::from("unsupported"));
         if !comes_back || !judged {
             continue;
         }
@@ -336,6 +337,9 @@ fn kipple_without_a_terminal_prints_each_buckets_total_instead_of_the_home_scree
     };
     assert!(line("Safe to clean").ends_with(&count("safe")), "{out}");
     assert!(line("Review").ends_with(&count("review")), "{out}");
+    // Every OS has at least the two Cargo targets Safe and the recent install in Review.
+    assert!(!line("Safe to clean").ends_with(" 0 findings"), "{out}");
+    assert!(line("Review").ends_with("1 finding"), "{out}");
     assert!(line("Protected").contains("finding"), "{out}");
     assert!(out.contains("Nothing was changed."), "{out}");
 }

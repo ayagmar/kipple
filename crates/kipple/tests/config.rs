@@ -471,13 +471,12 @@ fn scan_honours_the_configured_level_and_a_rules_own_level() {
             .collect()
     };
 
-    // Reinstalled dependencies are Safe at Balanced and only Review at Careful. Where the
-    // OS doesn't show the process paths they need (Windows), they are never Safe.
-    let unsupported = findings(&balanced)
-        .iter()
-        .filter(|f| f["rule"] == "builtin.node.node-modules")
-        .all(|f| f["activity"]["reason"] == "unsupported");
-    assert!(unsupported || node(&balanced).iter().any(|(_, b, _)| b == "safe"));
+    // Reinstalled dependencies are Safe at Balanced and only Review at Careful. Windows
+    // doesn't show the process paths they need, so there they are never Safe (04 §4).
+    assert_ne!(node(&balanced).len(), 0);
+    if kipple_platform::PLATFORM != kipple_core::Platform::Windows {
+        assert!(node(&balanced).iter().any(|(_, b, _)| b == "safe"));
+    }
     for report in [scan_with(&env, &careful), scan_with(&env, &node_careful)] {
         assert_ne!(node(&report).len(), 0);
         for (path, bucket, level) in node(&report) {
