@@ -768,8 +768,8 @@ pub struct ProcessCensus {
     pub by_command_line: usize,
     /// Processes that count for every such artifact, so every one stays unknown: the
     /// current user's that can't be judged by their command line, those of an unknown
-    /// owner, and those with root's reach whose command line names a path kipple
-    /// couldn't place.
+    /// owner, other users' whose capabilities couldn't be read, and those with root's
+    /// reach whose command line names a path kipple couldn't place.
     pub counted: usize,
 }
 
@@ -796,7 +796,7 @@ pub fn census(snapshot: &ProcessSnapshot, fs: &dyn FsProbe) -> ProcessCensus {
             ProcessOwner::CurrentUser if public && view.judged_by_command_line() => {
                 census.by_command_line += 1;
             }
-            ProcessOwner::OtherUser(_) if !view.roots_reach(public) => {}
+            ProcessOwner::OtherUser(_) if view.modes == Modes::Bound => {}
             ProcessOwner::Root
             | ProcessOwner::System
             | ProcessOwner::Elevated

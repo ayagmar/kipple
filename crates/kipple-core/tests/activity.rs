@@ -1039,6 +1039,11 @@ fn doctor_counts_the_own_processes_judged_by_their_command_line() {
             uninspectable(9, ProcessOwner::Root, &["/usr/bin/sshd"]),
             uninspectable(10, ProcessOwner::Elevated, &["/usr/bin/fusermount3"]),
             uninspectable(11, ProcessOwner::Elevated, &["./helper"]),
+            ProcessRecord {
+                capabilities: Err(failed()),
+                ..uninspectable(12, other_user(), &["/usr/bin/colord"])
+            },
+            uninspectable(13, other_user(), &["/usr/bin/colord"]),
         ],
         inventory: Inventory::Complete,
         observer: Host::new(Vec::new()).observer,
@@ -1048,7 +1053,9 @@ fn doctor_counts_the_own_processes_judged_by_their_command_line() {
 
     assert_eq!(census.by_command_line, 1);
     assert_eq!(census.unchecked_system, 2);
-    assert_eq!(census.counted, 2);
+    // Another user's process whose capabilities couldn't be read counts for every one;
+    // one that can't read past the mode bits depends on the artifact's directories.
+    assert_eq!(census.counted, 3);
 }
 
 #[test]
