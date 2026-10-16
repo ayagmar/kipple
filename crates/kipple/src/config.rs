@@ -261,8 +261,8 @@ pub fn load(location: &Location, catalog: &Catalog) -> Result<Loaded, ConfigErro
 }
 
 impl Config {
-    /// The project roots it names, `~` expanded from `roots`' home. `None` when it names
-    /// none, so the defaults apply.
+    /// The project roots it names, `~` expanded from `roots`' home. `None` when it has no
+    /// `scan.project_roots`, so the defaults apply; an empty list means none.
     ///
     /// # Errors
     /// When a root starts with `~` and the home directory is unknown.

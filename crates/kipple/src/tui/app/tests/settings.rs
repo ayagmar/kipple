@@ -393,6 +393,30 @@ fn adding_or_removing_a_project_root_rescans_and_says_the_selection_was_cleared(
     assert_eq!(app.roots, [PathBuf::from("~/work")]);
 }
 
+// Catches removing the last root writing nothing, which leaves the defaults scanned
+// while the panel lists none.
+#[test]
+fn removing_the_last_project_root_writes_an_empty_list_and_rescans() {
+    let disk = Disk::new();
+    let config = Config {
+        project_roots: Some(vec!["~/projects".to_owned()]),
+        ..Config::default()
+    };
+    let mut app = screen_on(&disk, config);
+    press(&mut app, &[Key::Char('c')]);
+
+    settings_at(&mut app, 1);
+    press(&mut app, &[Key::Char('d')]);
+
+    assert_eq!(disk.run(&mut app), [Effect::Rescan]);
+    assert_eq!(app.roots, Vec::<PathBuf>::new());
+    assert!(
+        disk.text().contains("project_roots = []"),
+        "{}",
+        disk.text()
+    );
+}
+
 // Catches the stored method not being written, or written as something else.
 #[test]
 fn the_default_method_is_stored() {

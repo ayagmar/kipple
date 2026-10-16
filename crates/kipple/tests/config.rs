@@ -41,7 +41,7 @@ use clap::Parser as _;
 use kipple::config::{self, Edit, Location, Source};
 use kipple::setup::Builtin;
 use kipple::{Cli, USAGE};
-use kipple_core::{Level, Roots, RuleId};
+use kipple_core::{Level, Roots, RuleId, SymbolicRoot};
 use kipple_platform::Environment;
 use serde_json::Value;
 
@@ -722,6 +722,64 @@ fn the_configs_project_roots_replace_the_defaults_and_a_missing_one_is_an_omissi
             .iter()
             .filter(|f| f["lens"] == "dev")
             .all(|f| !path_of(f).starts_with(&web))
+    );
+}
+
+// Catches an empty list (onboarding with every root unchecked, or settings after the
+// last root was removed) bringing the default project roots back while the screen shows
+// none.
+#[test]
+fn an_empty_list_of_project_roots_scans_no_project_and_only_root_replaces_it() {
+    let demo = Demo::new(&[], "");
+    let env = demo.env(&[]);
+    let file = demo.config(
+        "roots.toml",
+        "[scan]\nproject_roots = [\"~/projects/web\"]\n",
+    );
+    let at = location(&file);
+    let roots = kipple_platform::resolve_roots(&env, &[]);
+    // The write the first run and the settings panel make, and the settings the home
+    // screen rescans with after it.
+    let config = config::write(&at, &[Edit::ProjectRoots(Vec::new())], &roots, &catalog()).unwrap();
+    assert!(
+        fs::read_to_string(&file)
+            .unwrap()
+            .contains("project_roots = []")
+    );
+    let loaded = config::Loaded {
+        location: at,
+        exists: true,
+        config,
+    };
+    let settings = config::Settings::from_loaded(&env, loaded, &[]).unwrap();
+    assert!(settings.roots.all(SymbolicRoot::ProjectRoots).is_empty());
+
+    let dev = |report: &Value| {
+        findings(report)
+            .iter()
+            .filter(|f| f["lens"] == "dev")
+            .map(path_of)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(dev(&scan_with(&env, &file)), Vec::<PathBuf>::new());
+    // `--root` still replaces it.
+    let (code, out, err) = kipple(
+        &env,
+        &[
+            "--config",
+            file.to_str().unwrap(),
+            "scan",
+            "--json",
+            "--root",
+            demo.path("home/projects/web").to_str().unwrap(),
+        ],
+    );
+    assert_eq!(code, ExitCode::SUCCESS, "{err}");
+    let given = dev(&serde_json::from_str(&out).unwrap());
+    assert_ne!(given.len(), 0);
+    assert!(
+        given.iter().all(|p| p.ends_with("web/node_modules")),
+        "{given:?}"
     );
 }
 

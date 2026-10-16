@@ -318,6 +318,29 @@ fn a_change_of_roots_is_written_and_the_home_screen_opens_on_a_rescan() {
     assert!(notice.contains("Scanning again"), "{notice}");
 }
 
+// Catches unchecking every root writing nothing, which leaves the defaults scanned while
+// the user chose none.
+#[test]
+fn unchecking_every_root_writes_an_empty_list_and_rescans() {
+    let disk = Disk::new();
+    let (mut app, mut first) = disk.first_run();
+    answer(&mut first, &[Key::Enter]);
+
+    answer(&mut first, &[Key::Char(' '), Key::Down, Key::Char(' ')]);
+    let edits = finished(answer(&mut first, &[Key::Enter, Key::Tab, Key::Tab]));
+
+    assert_eq!(
+        edits,
+        [Edit::Level(Level::Balanced), Edit::ProjectRoots(Vec::new())]
+    );
+    assert_eq!(disk.finish(&mut app, edits), [Effect::Rescan]);
+    assert!(
+        disk.text().contains("project_roots = []"),
+        "{}",
+        disk.text()
+    );
+}
+
 // Catches a typed relative path being accepted, which would make the whole batch fail
 // to write and every answer be lost.
 #[test]

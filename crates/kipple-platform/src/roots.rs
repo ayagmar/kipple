@@ -33,19 +33,25 @@ const PROJECT_ROOTS: [&str; 10] = [
     "source/repos",
 ];
 
-/// Resolves every root this OS has. `project_roots`, when given, replace the default
-/// project roots, as `--root` does.
+/// Resolves every root this OS has. `project_roots`, when given (`--root`), replace the
+/// default project roots; none given means the defaults.
 ///
 /// A malformed explicit setting leaves its root unresolved; it never falls back to the
 /// default. A root whose own path is a link is resolved to where the link leads (see
 /// [`follow_root_links`]).
 #[must_use]
 pub fn resolve_roots(env: &Environment, project_roots: &[PathBuf]) -> Roots {
+    if project_roots.is_empty() {
+        return each_path_once(&follow_root_links(&upstream_roots(env)));
+    }
     resolve_roots_from(env, project_roots, RootSource::CommandLine)
 }
 
 /// The same, with `project_roots` given by `source`, such as the config's
 /// `scan.project_roots`. They are resolved exactly as `--root` paths are.
+///
+/// They replace the default project roots even when there are none: an empty list means
+/// no project roots.
 #[must_use]
 pub fn resolve_roots_from(
     env: &Environment,
@@ -53,11 +59,9 @@ pub fn resolve_roots_from(
     source: RootSource,
 ) -> Roots {
     let mut roots = upstream_roots(env);
-    if !project_roots.is_empty() {
-        roots.remove(SymbolicRoot::ProjectRoots);
-        for path in project_roots {
-            roots.add(SymbolicRoot::ProjectRoots, command_line_root(path, source));
-        }
+    roots.remove(SymbolicRoot::ProjectRoots);
+    for path in project_roots {
+        roots.add(SymbolicRoot::ProjectRoots, command_line_root(path, source));
     }
     each_path_once(&follow_root_links(&roots))
 }
