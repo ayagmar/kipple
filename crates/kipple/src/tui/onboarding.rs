@@ -7,7 +7,7 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use kipple_core::{Finding, Level, Method, Policy, ScanOutcome, Verdict};
+use kipple_core::{Finding, Level, Method, Policy, ScanOutcome, Suggestion, Verdict};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Modifier, Style};
@@ -15,6 +15,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use super::app::{App, Key, Progress};
+use super::settings::{Found, describe, search_notes};
 use super::view::{Look, level_about, title_case};
 use crate::config::{Edit, Loaded, Source, is_config_path, same_config_path};
 use crate::human::{bytes, escaped};
@@ -106,6 +107,13 @@ pub(crate) struct Root {
     pub(crate) checked: bool,
 }
 
+/// A root kipple suggests in step 2 (D-053), unchecked until the user checks it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Offer {
+    pub(crate) suggestion: Suggestion,
+    pub(crate) checked: bool,
+}
+
 /// What a key asks of the loop.
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum Outcome {
@@ -125,7 +133,10 @@ pub(crate) struct Onboarding {
     pub(crate) level: Level,
     /// The project roots kipple found, then any added, each checked or not.
     pub(crate) roots: Vec<Root>,
-    /// The line the cursor is on in step 2: a root, or "add another" after them.
+    /// The roots kipple suggests, below "add another".
+    pub(crate) offers: Vec<Offer>,
+    /// The line the cursor is on in step 2: a root, "add another" after them, then a
+    /// suggestion.
     pub(crate) root_cursor: usize,
     /// The root being typed, if any.
     pub(crate) typing: Option<String>,
@@ -159,6 +170,7 @@ impl Onboarding {
             step: Step::Level,
             level: Level::Balanced,
             roots,
+            offers: Vec::new(),
             root_cursor: 0,
             typing: None,
             method: Method::Delete,
@@ -170,6 +182,18 @@ impl Onboarding {
             chosen_roots: None,
             chosen_method: None,
         }
+    }
+
+    /// Lists the suggestions of the search that just ended, each unchecked.
+    pub(crate) fn suggested(&mut self, found: &Found) {
+        self.offers = found
+            .suggestions
+            .iter()
+            .map(|suggestion| Offer {
+                suggestion: suggestion.clone(),
+                checked: false,
+            })
+            .collect();
     }
 
     /// Applies `key`: enter answers the step and goes on, tab skips it, esc goes back,
@@ -225,15 +249,7 @@ impl Onboarding {
     fn answer(&mut self, given: bool) {
         match self.step {
             Step::Level => self.chosen_level = given.then_some(self.level),
-            Step::Roots => {
-                self.chosen_roots = given.then(|| {
-                    self.roots
-                        .iter()
-                        .filter(|root| root.checked)
-                        .map(|root| root.path.clone())
-                        .collect()
-                });
-            }
+            Step::Roots => self.chosen_roots = given.then(|| self.checked_roots()),
             Step::Method => self.chosen_method = given.then_some(self.method),
             Step::Tips => {}
         }
@@ -263,15 +279,33 @@ impl Onboarding {
         edits
     }
 
+    /// The checked roots, then the checked suggestions that aren't among them.
+    fn checked_roots(&self) -> Vec<PathBuf> {
+        let mut chosen: Vec<PathBuf> = self
+            .roots
+            .iter()
+            .filter(|root| root.checked)
+            .map(|root| root.path.clone())
+            .collect();
+        let home = self.home.as_deref();
+        for offer in self.offers.iter().filter(|offer| offer.checked) {
+            let path = &offer.suggestion.path;
+            if !chosen.iter().any(|root| same_config_path(root, path, home)) {
+                chosen.push(path.clone());
+            }
+        }
+        chosen
+    }
+
     const fn on_add(&self) -> bool {
-        self.root_cursor >= self.roots.len()
+        self.root_cursor == self.roots.len()
     }
 
     fn move_by(&mut self, by: isize) {
         match self.step {
             Step::Level => self.level = step_through(Level::ALL, self.level, by),
             Step::Roots => {
-                let last = self.roots.len();
+                let last = self.roots.len() + self.offers.len();
                 self.root_cursor = self.root_cursor.saturating_add_signed(by).min(last);
             }
             Step::Method => self.method = step_through(Method::ALL, self.method, by),
@@ -281,9 +315,16 @@ impl Onboarding {
     }
 
     fn toggle_root(&mut self) {
-        match self.roots.get_mut(self.root_cursor) {
-            Some(root) => root.checked = !root.checked,
-            None => self.typing = Some(String::new()),
+        let at = self.root_cursor;
+        if let Some(root) = self.roots.get_mut(at) {
+            root.checked = !root.checked;
+        } else if let Some(offer) = at
+            .checked_sub(self.roots.len() + 1)
+            .and_then(|index| self.offers.get_mut(index))
+        {
+            offer.checked = !offer.checked;
+        } else {
+            self.typing = Some(String::new());
         }
     }
 
@@ -303,7 +344,9 @@ impl Onboarding {
                 let listed = self
                     .roots
                     .iter()
-                    .any(|root| same_config_path(&root.path, Path::new(&typed), home));
+                    .map(|root| &root.path)
+                    .chain(self.offers.iter().map(|offer| &offer.suggestion.path))
+                    .any(|path| same_config_path(path, Path::new(&typed), home));
                 if typed.is_empty() {
                     self.typing = None;
                 } else if listed {
@@ -365,7 +408,7 @@ pub(crate) fn render(onboarding: &Onboarding, app: &App, look: Look, frame: &mut
     frame.render_widget(head(onboarding, app, look), header);
     let lines = match onboarding.step {
         Step::Level => level_lines(onboarding, app, look),
-        Step::Roots => root_lines(onboarding, look),
+        Step::Roots => root_lines(onboarding, app, look),
         Step::Method => method_lines(onboarding, look),
         Step::Tips => tip_lines(app, look),
     };
@@ -461,7 +504,7 @@ fn level_lines(onboarding: &Onboarding, app: &App, look: Look) -> Vec<Line<'stat
     lines
 }
 
-fn root_lines(onboarding: &Onboarding, look: Look) -> Vec<Line<'static>> {
+fn root_lines(onboarding: &Onboarding, app: &App, look: Look) -> Vec<Line<'static>> {
     let mut lines = question(
         "Where are your projects?",
         "kipple looks for build output and dependencies below these folders.",
@@ -486,11 +529,32 @@ fn root_lines(onboarding: &Onboarding, look: Look) -> Vec<Line<'static>> {
         |typed| format!("+ {}_", escaped(typed)),
     );
     lines.push(choice(onboarding.on_add(), &add));
+    suggestion_lines(onboarding, app, look, &mut lines);
     if let Some(notice) = &onboarding.notice {
         lines.push(Line::from(""));
         lines.push(Line::from(notice.clone()));
     }
     lines
+}
+
+/// The roots kipple suggests, below "add another", with what the search says.
+fn suggestion_lines(onboarding: &Onboarding, app: &App, look: Look, lines: &mut Vec<Line<'_>>) {
+    let notes = search_notes(&app.search, look);
+    if onboarding.offers.is_empty() && notes.is_empty() {
+        return;
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::styled(
+        "Suggested: projects found elsewhere in your home folder",
+        bold(),
+    ));
+    let first = onboarding.roots.len() + 1;
+    for (index, offer) in onboarding.offers.iter().enumerate() {
+        let mark = if offer.checked { "[x]" } else { "[ ]" };
+        let text = format!("{mark} {}", describe(&offer.suggestion, look));
+        lines.push(choice(onboarding.root_cursor == first + index, &text));
+    }
+    lines.extend(notes.into_iter().map(|note| Line::styled(note, look.dim())));
 }
 
 fn method_lines(onboarding: &Onboarding, look: Look) -> Vec<Line<'static>> {

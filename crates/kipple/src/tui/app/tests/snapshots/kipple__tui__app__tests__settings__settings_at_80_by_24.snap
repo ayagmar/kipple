@@ -11,12 +11,12 @@ Level              Careful  [Balanced]  Thorough
 Project roots     ~/projects
                   ~/work
                   + add another
+Suggested roots   /home/ada/Documents (4 projects: thesis, uni/compilers, uni/os
+                  /home/ada/notes (1 project: notes)
+                  stopped early: the list may be incomplete
 Default method    trash  stored only: nothing is removed yet
 Kept              ~/projects/api/target  benchmark baseline
 Rules turned off  pacman package cache  builtin.pacman.cache
-
-
-
 
 
 
