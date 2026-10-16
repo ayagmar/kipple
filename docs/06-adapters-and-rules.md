@@ -246,7 +246,7 @@ Every integration descriptor declares its **protected subresources** (04 §3.9),
 | Gradle, Maven, Playwright, JetBrains | Report-only inventory | Deferred until lifecycle and locking are verified |
 | Pacman, AUR helpers, apt, dnf, journald | Report-only, plus native retention advice (`paccache -rk3` with a timer, `journalctl --vacuum-time`) | Never executed in v0.1 (root) |
 | Ollama, LM Studio, Hugging Face | Report-only model inventory | Model removal deferred (shared blobs and manifests) |
-| Trash | Report size and age | Emptying deferred to v0.2 (`trash` crate purge with review) |
+| Trash | Report size and age | Emptying comes after 0.1.0 (`trash` crate purge with review) |
 
 ### 5a. Built today
 

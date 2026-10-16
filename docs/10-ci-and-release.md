@@ -100,7 +100,8 @@ Alternative considered: hand-written tag workflow with `gh release create`, as i
 - **Lockstep versions.** All four crates share one version through release-plz's `version_group`. There is one changelog, at the root.
 - **One tag.** Only the `kipple` package has `git_tag_enable = true`, with `git_tag_name = "v{{ version }}"`. The library crates have tags and GitHub releases disabled. Without this, release-plz's multi-package default produces package-prefixed tags.
 - **Git-only mode.** `[workspace] git_only = true`, so release-plz takes the previous version from `v*` tags rather than from crates.io, which doesn't have these crates. `xtask` has `release = false`.
-- **No crates.io publishing in v0.1.** Every crate has `publish = false` (Cargo) and `publish = false` (release-plz), so release-plz never uploads anything from `main`. The only thing that publishes is the dist workflow on the tag, after its gate. crates.io (`cargo install` and `binstall` from crates.io) is **M-later**, with its own pre-publication gate that runs *before* any upload.
+- **Publishing only from the tag (D-017, amended 2026-10-16).** release-plz never uploads anything from `main`: every crate keeps `publish = false` for release-plz. Everything that publishes runs in the tag's release workflow after its gate: dist's GitHub release, installers, Homebrew and npm jobs, and a crates.io job that publishes the four crates in dependency order (`kipple-core`, then `kipple-adapters` and `kipple-platform`, then `kipple`) after a pre-publication gate (`cargo publish --dry-run` for each, package contents checked) that runs before any upload. The library crates say in their README and docs that they are internal, with no API stability before 1.0.
+- **Versions.** release-plz's default for 0.x applies: a `feat` bumps the patch (0.1.0 to 0.1.1), a breaking change the minor. New rules, integrations and commands ship as 0.1.x releases; a change to the config, JSON schemas or CLI that breaks existing use makes 0.2.
 - **Token.** Tags pushed with the default `GITHUB_TOKEN` don't trigger other workflows. release-plz uses a GitHub App installation token scoped to `contents` and `pull-requests` on this repo, so the tag push triggers dist. `release-plz release` only creates the tag; `git_release_enable = false`, because dist creates the GitHub release.
 
 ### Flow
@@ -148,11 +149,12 @@ Linux ships static musl binaries so one artifact runs on glibc and musl distros.
 | 1 | GitHub Releases + shell/PowerShell installers | dist | first release |
 | 2 | Homebrew tap (repo name decided at M7) | dist `installers = ["homebrew"]`, `publish-jobs = ["homebrew"]` | first release |
 | 3 | AUR `kipple-bin` (release archive) and `kipple` (source build) | custom dist publish job that renders PKGBUILDs and pushes to AUR over SSH | soon after first release |
-| 4 | crates.io (`cargo install kipple`, `cargo binstall kipple`) | publish all four crates, documented as internal with no API stability before 1.0, behind a pre-publication gate | **M-later**. Reserve the names early (`kipple` was free on 2026-10-08) |
-| 5 | Scoop bucket | custom job writing the manifest from release checksums | **M-later** |
-| 6 | winget | manifest PR via a winget releaser action or `wingetcreate` | **M-later** |
-| 7 | Nix (flake in repo, then nixpkgs) | | **M-later** |
-| 8 | Distro repos (Debian, Fedora, Alpine) | packager-driven | **M-later**, not planned by us |
+| 4 | crates.io (`cargo install kipple`, `cargo binstall kipple`) | the tag workflow's crates.io job (above); `binstall` finds the release archives through `[package.metadata.binstall]` | first release. All four names were free on 2026-10-16 |
+| 5 | npm (`npm i -g kipple-cli`, `npx kipple-cli`) | dist `installers = ["npm"]`, `publish-jobs = ["npm"]`: a small package that downloads the release archive for the platform, checks it and runs `kipple`. `kipple` on npm is taken by an abandoned package (D-001); `kipple-cli` was free on 2026-10-16 (Q-npm) | first release |
+| 6 | Scoop bucket | custom job writing the manifest from release checksums | **M-later** |
+| 7 | winget | manifest PR via a winget releaser action or `wingetcreate` | **M-later** |
+| 8 | Nix (flake in repo, then nixpkgs) | | **M-later** |
+| 9 | Distro repos (Debian, Fedora, Alpine) | packager-driven | **M-later**, not planned by us |
 
 Package-manager installs never run our installer script and never self-update.
 
@@ -177,6 +179,6 @@ Before the first public tag:
 ## 5. Open items
 
 - Confirm the PowerShell installer's checksum verification before advertising it.
-- When crates.io publishing is enabled (M-later): ownership, token or trusted publishing, and the pre-publication gate. Not verified here.
+- crates.io and npm publishing (M7): crate and package ownership, trusted publishing or tokens, and the pre-publication gate. Not verified here.
 - Create the GitHub App for release-plz's token.
 - Homebrew tap repo name and AUR maintainer account.

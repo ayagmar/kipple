@@ -138,8 +138,10 @@ Verify:
 
 ## M6: Site and docs
 
+M6 shares no files with the crates, so its design direction and the site's skeleton may start alongside M3 (founder, 2026-10-16). The Safety pages and every command shown wait for the behaviour they describe, and 09 §3's rule that each command comes from a tape or test that ran in CI still holds.
+
 Build ([09-site-and-docs.md](09-site-and-docs.md)):
-- the Astro and Starlight site, with the landing page built through the design process
+- the Astro and Starlight site, with the landing page built through the design process and to 09 §3's direction (minimal, distinct, nothing generic) and page-weight budget
 - Safety pages checked against tests
 - tapes and the `/next/` preview deploy
 - turn on `cargo xtask site` in CI
@@ -153,9 +155,10 @@ Verify:
 Build ([10-ci-and-release.md](10-ci-and-release.md)):
 - release-plz and dist configured as specified
 - a GitHub App token, Homebrew tap and AUR jobs, the distro smoke matrix
+- crates.io publishing of the four crates and the npm package (`kipple-cli` unless Q-npm says otherwise), both from the tag after the pre-publication gate (10 §3, D-017)
 
 Verify:
-- A rehearsal on a fork or branch produces every artifact, checksum, installer, attestation and SBOM without publishing.
+- A rehearsal on a fork or branch produces every artifact, checksum, installer, attestation and SBOM without publishing, and `cargo publish --dry-run` and `npm pack` succeed for every package.
 - The installers run on clean containers and VMs.
 - The release-candidate site is promoted.
 - `release-readiness-certification` reaches READY.
@@ -163,11 +166,13 @@ Verify:
 
 ## After 0.1
 
-| Version | Theme |
+Features ship as 0.1.x releases as each one is ready (D-017); a change that breaks the config, JSON schemas or CLI makes 0.2. Each item goes through the same milestone loop: spec, fixtures for every upstream layout, review, and a green gate on three OSes. Rough order:
+
+| Release | Theme |
 | --- | --- |
-| 0.2 | Scheduled runs from a profile (systemd user timer, launchd agent, Task Scheduler entry, created and removed by `kipple schedule`), curated pack index, more agents (Gemini CLI, OpenCode, Copilot CLI, Aider), Docker and Podman native prune, emptying the Trash, Flatpak, Homebrew, Xcode DerivedData, Go, Bun, a Downloads inventory (old installers as Review, never Safe) |
-| 0.3 | Report-only listing of leftover agent processes (orphaned MCP servers, headless browsers) with their memory use; kipple never kills them. Pack signatures and revocation, store-specific session adapters (Pi first, since it is file-per-session with a documented in-app delete; Codex next, since its rollouts have no upstream retention), each needing verified semantics, fixtures and activity evidence. Model stores (Ollama manifests and blobs). crates.io publishing |
-| 0.4 | `analyze`: a full-disk explorer that knows what it is looking at |
-| 0.5 | Privileged native operations, only after a separate reviewed design: a narrow privileged helper (never an elevated TUI or plugin host), typed operations, verified executable and config identity, re-checks after elevation, receipts. Covers pacman, apt, dnf and journald |
-| GUI | Not planned before the CLI and TUI reach 1.0. The core stays GUI-ready (D-002, D-029). Later, a Tauri or native app would be a second composition root over the same core. Its first step moves what both frontends need out of the binary into a library crate: config loading, validation and editing, the keep, level and project-root actions with the rescan they start, the level totals and the scan notices. The TUI then keeps only its view and keys, and no setting or total is worked out in two places |
+| 0.1.x | Scheduled runs from a profile (systemd user timer, launchd agent, Task Scheduler entry, created and removed by `kipple schedule`). More agents (Gemini CLI, OpenCode, Copilot CLI, Aider). More ecosystems: Go, Bun, Flatpak, Homebrew, Xcode DerivedData, Docker and Podman native prune, emptying the Trash, a Downloads inventory (old installers as Review, never Safe). A curated pack index |
+| 0.1.x | Report-only listing of leftover agent processes (orphaned MCP servers, headless browsers) with their memory use; kipple never kills them. Pack signatures and revocation. Store-specific session adapters (Pi first, since it is file-per-session with a documented in-app delete; Codex next, since its rollouts have no upstream retention), each needing verified semantics, fixtures and activity evidence. Model stores (Ollama manifests and blobs) |
+| 0.1.x | `analyze`: a full-disk explorer that knows what it is looking at |
+| 0.1.x or later | Privileged native operations, only after a separate reviewed design: a narrow privileged helper (never an elevated TUI or plugin host), typed operations, verified executable and config identity, re-checks after elevation, receipts. Covers pacman, apt, dnf and journald. It is the riskiest item here and ships only when its design review reaches READY |
+| GUI | Deferred; planned after the CLI and TUI settle. The core stays GUI-ready (D-002, D-029). Later, a Tauri or native app would be a second composition root over the same core. Its first step moves what both frontends need out of the binary into a library crate: config loading, validation and editing, the keep, level and project-root actions with the rescan they start, the level totals and the scan notices. The TUI then keeps only its view and keys, and no setting or total is worked out in two places |
 | Maybe | An MCP server so agents can ask kipple what they can safely clean, via the same engine and grants |
