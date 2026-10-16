@@ -150,7 +150,7 @@ Linux ships static musl binaries so one artifact runs on glibc and musl distros.
 | 2 | Homebrew tap (repo name decided at M7) | dist `installers = ["homebrew"]`, `publish-jobs = ["homebrew"]` | first release |
 | 3 | AUR `kipple-bin` (release archive) and `kipple` (source build) | custom dist publish job that renders PKGBUILDs and pushes to AUR over SSH | soon after first release |
 | 4 | crates.io (`cargo install kipple`, `cargo binstall kipple`) | the tag workflow's crates.io job (above); `binstall` finds the release archives through `[package.metadata.binstall]` | first release. All four names were free on 2026-10-16 |
-| 5 | npm (`npm i -g kipple-cli`, `npx kipple-cli`) | dist `installers = ["npm"]`, `publish-jobs = ["npm"]`: a small package that downloads the release archive for the platform, checks it and runs `kipple`. `kipple` on npm is taken by an abandoned package (D-001); `kipple-cli` was free on 2026-10-16 (Q-npm) | first release |
+| 5 | npm (`npm i -g @ayagmar/kipple`, `npx @ayagmar/kipple`) | dist `installers = ["npm"]`, `publish-jobs = ["npm"]`, `npm-scope = "@ayagmar"`, `npm-package = "kipple"`: a small package that downloads the release archive for the platform, checks it and runs `kipple`. Unscoped `kipple` is taken by an abandoned package (D-001) | first release |
 | 6 | Scoop bucket | custom job writing the manifest from release checksums | **M-later** |
 | 7 | winget | manifest PR via a winget releaser action or `wingetcreate` | **M-later** |
 | 8 | Nix (flake in repo, then nixpkgs) | | **M-later** |
