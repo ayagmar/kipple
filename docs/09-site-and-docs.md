@@ -75,6 +75,18 @@ Both groups come first. AI agents are the hook, and ordinary developer leftovers
 - Every command shown on the page must come from a tape or test that ran in CI.
 - Run a `humanizer` pass over user-facing prose at the end of each site milestone and before release.
 
+### Direction (founder, 2026-10-16)
+
+Sleek, minimal and recognisably kipple's own. The terminal is the product, so the page is built around real output and type, not illustration. What it must not look like, because these read as generated and interchangeable:
+- gradient blobs, glows, glassmorphism, purple-to-blue gradients, noise overlays
+- a grid of feature cards with an icon each, emoji as bullets, "trusted by" rows
+- stock 3D renders, AI-made illustrations, mock dashboards with invented numbers
+- headings that announce instead of saying something ("Supercharge your workflow")
+
+What makes it distinct comes from the brand (`assets/brand/BRAND.md`): one typeface pairing, a restrained palette taken from the TUI's bucket colours, generous space, and the streaming scan as the one moving thing. The direction is decided through 09 §4's design process and signed off before the build.
+
+**Performance budget**, checked by `cargo xtask site` on the static build: Lighthouse 100 (09 §4); the landing page at most 150 KB compressed on first load with fonts and at most 10 KB of JavaScript; no client framework hydrated on the landing page; fonts self-hosted and subset, at most two files; no layout shift while the hero streams in.
+
 ### Motion
 
 Motion explains something, or it's left out. The planned piece is the hero scan streaming in group by group (Agents, Dev tools, System), the way the real TUI fills in. CSS animation and at most a small inline script. Respect `prefers-reduced-motion` with a static final frame. No scroll-jacking or parallax, and no animation that shows up as jank in a Lighthouse trace (the modmgr landing page felt laggy, so don't repeat that).

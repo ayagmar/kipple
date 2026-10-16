@@ -63,8 +63,8 @@ kipple pack remove dev.example.bun                # removes pack + grants; never
 
 ## 4. Registry (later)
 
-- **v0.2:** a curated index repo (`kipple-dev/packs`) listing pack ID, source, versions and digests. Packs that pass review get a `reviewed` badge. "First-party" is a trust status in the index, not a name prefix.
-- **v0.3:** signatures with pinned publisher keys (minisign or Sigstore, decided by spike), plus revocation through the index. Signatures prove who published a pack, not that it is safe.
+- **First, after 0.1.0:** a curated index repo (`kipple-dev/packs`) listing pack ID, source, versions and digests. Packs that pass review get a `reviewed` badge. "First-party" is a trust status in the index, not a name prefix.
+- **Then:** signatures with pinned publisher keys (minisign or Sigstore, decided by spike), plus revocation through the index. Signatures prove who published a pack, not that it is safe.
 
 Until then the docs say plainly that an out-of-band `--sha256` makes installs reproducible but doesn't authenticate the publisher.
 
