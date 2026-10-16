@@ -155,7 +155,7 @@ Verify:
 Build ([10-ci-and-release.md](10-ci-and-release.md)):
 - release-plz and dist configured as specified
 - a GitHub App token, Homebrew tap and AUR jobs, the distro smoke matrix
-- crates.io publishing of the four crates and the npm package (`kipple-cli` unless Q-npm says otherwise), both from the tag after the pre-publication gate (10 §3, D-017)
+- crates.io publishing of the four crates and the npm package `@ayagmar/kipple`, both from the tag after the pre-publication gate (10 §3, D-017)
 
 Verify:
 - A rehearsal on a fork or branch produces every artifact, checksum, installer, attestation and SBOM without publishing, and `cargo publish --dry-run` and `npm pack` succeed for every package.
