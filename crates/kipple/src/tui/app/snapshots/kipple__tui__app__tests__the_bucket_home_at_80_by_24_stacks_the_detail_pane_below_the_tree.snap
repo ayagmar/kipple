@@ -2,7 +2,7 @@
 source: crates/kipple/src/tui/app/tests.rs
 expression: "screen(&app, colour(), 80, 24)"
 ---
-kipple  Careful · Balanced · Thorough (level: Balanced) · scanned in 1.2 s
+kipple  Careful · [Balanced] · Thorough · scanned in 1.2 s · ~/projects
   ▾ Safe to clean (2)                        514.0 MiB passes every check
     ▾ Dev (2)                                514.0 MiB
 ●     api/target  Cargo build output         512.0 MiB

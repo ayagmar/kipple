@@ -1,6 +1,7 @@
 //! The first run on `demo-home` (`docs/03-functional-spec.md` §2 J0): when it is due,
 //! and that the numbers its first step shows for each level are the totals
-//! `kipple scan --json` gives at that level. Built only with the `test-roots` feature:
+//! `kipple scan --json` gives at that level; and the home screen's header there once a
+//! config exists (§5). Built only with the `test-roots` feature:
 //! every root, the config directory included, points into a temp dir.
 
 #[path = "../../kipple-adapters/tests/fixtures/tree.rs"]
@@ -32,18 +33,21 @@ mod venv_v3_14_8;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::thread;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use clap::Parser as _;
 use kipple::config::{self, Settings};
 use kipple::setup::Builtin;
-use kipple::tui::{LevelTotals, first_run_due, level_totals};
+use kipple::tui::{self, Input, Key, Keys, LevelTotals, Look, first_run_due, level_totals};
 use kipple::{Cli, USAGE};
 use kipple_core::{CancelToken, Finding, Level, ScanRequest, event_channel};
 use kipple_platform::Environment;
+use ratatui::Terminal;
+use ratatui::backend::TestBackend;
 use serde_json::Value;
 
 /// `demo-home` in a temp dir, with every demo root but those `left_out` names.
@@ -202,4 +206,51 @@ fn with_an_unknown_config_directory_the_home_screen_exits_2_before_opening() {
     assert_eq!(code, ExitCode::from(USAGE));
     let err = String::from_utf8(err).unwrap();
     assert!(err.contains("config directory is unknown"), "{err}");
+}
+
+/// One `q` once the first frame is up.
+struct Quit {
+    asked: bool,
+}
+
+impl Keys for Quit {
+    fn next(&mut self, _timeout: Duration) -> io::Result<Option<Input>> {
+        let first = !self.asked;
+        self.asked = true;
+        Ok(first.then_some(Input::Key(Key::Char('q'))))
+    }
+}
+
+// Catches the project roots missing from the header, or squeezed off it, on an
+// 80-column terminal once a config exists and the home screen opens without questions.
+#[test]
+fn on_demo_home_the_header_names_the_project_root_at_80_by_24() {
+    let (temp, roots) = demo(&[]);
+    let named = temp.path().join("named.toml");
+    fs::write(&named, "").unwrap();
+    let env = env(&roots, &[(config::VAR, &named)]);
+    let builtin = Builtin::load().unwrap();
+    let settings = settings(&env, &builtin);
+    let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+    let look = Look {
+        color: false,
+        ascii: true,
+    };
+
+    tui::run(
+        &mut terminal,
+        &mut Quit { asked: false },
+        &env,
+        &settings,
+        look,
+    )
+    .unwrap();
+
+    let buffer = terminal.backend().buffer();
+    let header: String = (0..80)
+        .map(|x| buffer.cell((x, 0)).map_or(" ", |cell| cell.symbol()))
+        .collect();
+    // However the temp dir is spelled on this system, the root ends in `projects`.
+    assert!(header.trim_end().ends_with("projects"), "{header}");
+    assert!(header.contains("[Balanced]"), "{header}");
 }

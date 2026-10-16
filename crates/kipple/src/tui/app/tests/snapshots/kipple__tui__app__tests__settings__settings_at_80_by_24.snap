@@ -2,7 +2,7 @@
 source: crates/kipple/src/tui/app/tests/settings.rs
 expression: "screen(&app, colour(), 80, 24)"
 ---
-kipple  Careful · Balanced · Thorough (level: Balanced) · scanning…
+kipple  Careful · [Balanced] · Thorough · scanning… · ~/projects +1
  Settings ──────────────────────────────────────────────────────────────────────
 Config file       /home/ada/.config/kipple/config.toml
 
