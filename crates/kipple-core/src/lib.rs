@@ -55,6 +55,7 @@ mod process;
 mod root;
 mod rule;
 mod size;
+mod suggest;
 
 pub use activity::{ProcessCensus, census};
 pub use cancel::CancelToken;
@@ -92,3 +93,4 @@ pub use rule::{
     Selector, Test,
 };
 pub use size::{Allocated, Apparent, Completeness, Measurement, SpaceEstimate};
+pub use suggest::{Suggestion, is_within, suggest};

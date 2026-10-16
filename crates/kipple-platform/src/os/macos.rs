@@ -26,6 +26,12 @@ use crate::roots::under;
 
 pub(crate) const PLATFORM: Platform = Platform::Macos;
 
+/// Whether Finder hides the entry: its `UF_HIDDEN` flag, as `~/Library` has.
+pub(crate) fn hidden(meta: &std::fs::Metadata) -> bool {
+    use std::os::macos::fs::MetadataExt as _;
+    meta.st_flags() & libc::UF_HIDDEN != 0
+}
+
 pub(crate) const PERMISSION_HINT: Option<&str> = Some(
     "macOS may be blocking access: give the terminal that runs kipple Full Disk Access in \
      System Settings > Privacy & Security > Full Disk Access.",

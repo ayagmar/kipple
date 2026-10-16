@@ -12,6 +12,7 @@ mod fs_probe;
 mod host;
 mod os;
 mod process;
+mod project_search;
 mod roots;
 mod runner;
 #[cfg(feature = "test-roots")]
@@ -24,6 +25,7 @@ pub use environment::Environment;
 pub use fs_probe::NoFollowFs;
 pub use host::{SystemClock, clock, processes};
 pub use process::OsProcesses;
+pub use project_search::{ProjectSearch, ProjectsFound, SearchLimits, search_projects};
 pub use roots::{
     CONFIG_FILE, KippleDir, KippleDirs, follow_root_links, kipple_dirs, resolve_roots,
     resolve_roots_from,
