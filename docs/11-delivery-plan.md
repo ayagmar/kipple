@@ -70,20 +70,23 @@ Verify:
 
 ## M2: TUI home
 
-Status (2026-10-15): in progress. Built: bucket classification at Careful, Balanced and Thorough with the facts it needs (D-047) and the 80% check on `demo-home`; the config file (D-051); project activity scoped by declared evidence (D-050); the home screen (D-048) in the bucket layout the founder chose (D-049), with keep (`p`/`P`), the settings screen and the first-run onboarding (J0), their state-transition tests and buffer snapshots at 80×24 and 160×48; `cargo xtask bench-tui` (p95 2.2 ms on the founder's workstation); the `demo-home` snapshots at Careful, Balanced and Thorough; and the vhs tapes for the first scan and navigation, which CI's `tapes` job (09 §7) rendered green in run 38786997494. Left: the founder's look at the bucket layout.
+Status (2026-10-16): in progress. Built: bucket classification at Careful, Balanced and Thorough with the facts it needs (D-047) and the 80% check on `demo-home`; the config file (D-051); project activity scoped by declared evidence (D-050); the home screen (D-048) in the bucket layout the founder chose (D-049), with keep (`p`/`P`), the settings screen and the first-run onboarding (J0), their state-transition tests and buffer snapshots at 80×24 and 160×48; `cargo xtask bench-tui` (p95 2.2 ms on the founder's workstation); the `demo-home` snapshots at Careful, Balanced and Thorough; and the vhs tapes for the first scan and navigation, which CI's `tapes` job (09 §7) rendered green in run 38786997494. Left: the home screen polish the founder asked for after a first look (2026-10-16): the M2c items below, then their sign-off on the result.
 
 Build:
 - state machine plus a pure renderer: Safe / Review / Protected buckets with Agents / Dev / System grouping, detail pane (what it is, why it's here, why kipple thinks it's safe, what you lose, how it comes back), streaming sizes, fuzzy filter, selection and the `c` Safe shortcut, help, narrow layout, `NO_COLOR` and `--ascii`
 - a lens-first variant behind a dev flag, used only for the M2 comparison and then deleted
 - first-run onboarding (J0), carefulness levels, keep (`p`/`P`), and the settings screen
 - vhs tapes for first scan and navigation
+- M2c, the home screen polish (03 §5, D-054): the project roots in the header, findings grouped by project, `o` for the sort order with the cursor kept on its line, size bars, `y` to copy a path through OSC 52, a detail pane that scrolls with `J`/`K` and says "not estimated" for an unknown restore cost
+- M2c, suggested project roots (03 §6, D-053): the bounded read-only search of home, the pure suggestion function in `kipple-core`, and the unchecked suggestions in onboarding step 2 and settings
 
 Verify:
 - State-transition tests pass.
+- M2c: a project with two or more findings in a group is one collapsible line whose `a` skips recent findings; `o` keeps the cursor on its finding; on `demo-home` the header shows the project roots at 80×24. The suggestion function never suggests home, an existing root, a path inside one or an excluded path, and folds nested suggestions. The search over a `FixtureTree` home stops at its depth, hidden-directory, link, project and budget limits and says when it stopped early. Choosing a suggestion writes `scan.project_roots` once and rescans; quitting writes nothing.
 - On `demo-home`, Balanced puts at least 80% of rebuildable, reinstallable and re-downloadable bytes in Safe (04 §2a), among the findings whose activity the OS lets kipple judge. Careful and Thorough match their snapshots.
 - Buffer snapshots at 80×24 and 160×48 match.
 - Keypress-to-frame p95 is under 50 ms while scanning the 1M reference tree, measured by `xtask bench-tui`.
-- The founder compares the bucket and lens layouts on the same fixture data, picks one, and signs off on the feel. The loser is removed.
+- The founder compares the bucket and lens layouts on the same fixture data, picks one, and signs off on the feel. The loser is removed. Done: D-049. The sign-off on the feel comes after M2c.
 
 ## M3: Safe mutation (two sessions)
 
