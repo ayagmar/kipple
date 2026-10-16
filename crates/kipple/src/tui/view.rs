@@ -737,6 +737,22 @@ fn settings_head(app: &App, look: Look, panel: &mut PanelLines) {
         ""
     };
     panel.push(Some(&Item::AddRoot), add, vec![Span::raw("+ add another")]);
+    for (index, suggestion) in app.search.suggestions().iter().enumerate() {
+        let label = if index == 0 { "Suggested roots" } else { "" };
+        let line = vec![Span::raw(settings::describe(suggestion, look))];
+        panel.push(Some(&Item::Suggested(index)), label, line);
+    }
+    for (index, note) in settings::search_notes(&app.search, look)
+        .into_iter()
+        .enumerate()
+    {
+        let label = if index == 0 && app.search.suggestions().is_empty() {
+            "Suggested roots"
+        } else {
+            ""
+        };
+        panel.push(None, label, vec![Span::styled(note, look.dim())]);
+    }
     let method = vec![
         Span::raw(settings::method(app).name()),
         Span::styled("  stored only: nothing is removed yet", look.dim()),

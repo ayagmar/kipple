@@ -12,14 +12,19 @@ mod onboarding;
 mod settings;
 mod view;
 
+use std::ffi::OsString;
 use std::io;
+use std::path::PathBuf;
 use std::thread::{self, Scope, ScopedJoinHandle};
 use std::time::{Duration, Instant};
 
 use kipple_core::{
-    CancelToken, Engine, EventRx, ScanOutcome, ScanReport, ScanRequest, event_channel,
+    CancelToken, Engine, EventRx, ScanOutcome, ScanReport, ScanRequest, Selector, SymbolicRoot,
+    event_channel, suggest,
 };
-use kipple_platform::Environment;
+use kipple_platform::{
+    Environment, ProjectSearch, SearchLimits, SystemClock, kipple_dirs, search_projects,
+};
 use ratatui::Terminal;
 use ratatui::backend::Backend;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -28,6 +33,7 @@ pub use self::app::Key;
 use self::app::{App, Catalog, Effect, Msg, Saved};
 pub use self::onboarding::{LevelTotals, due as first_run_due, level_totals};
 use self::onboarding::{Onboarding, Outcome};
+use self::settings::Found;
 pub use self::view::Look;
 use crate::config::{self, Edit, Loaded, Settings};
 use crate::setup::Builtin;
@@ -124,6 +130,10 @@ where
     let mut app = App::new(Catalog::new(&builtin), size.width, size.height);
     app.configure(Saved::of(settings));
     let onboarding = first.then(|| Onboarding::new(&app));
+    if first {
+        app.start_search();
+    }
+    let markers = markers(&builtin);
     let store = Store {
         env,
         catalog: config::catalog(&builtin),
@@ -138,13 +148,19 @@ where
             store,
             scope,
             engine: &engine,
+            markers: &markers,
             scan: None,
+            search: None,
             elapsed: None,
         };
         screen.start();
+        screen.effects();
         let ran = screen.drive(keys);
-        // Stops a scan still running, so leaving the scope doesn't wait for it.
+        // Stops a scan or search still running, so leaving the scope doesn't wait for it.
         screen.stop();
+        if let Some(search) = &screen.search {
+            search.cancel.cancel();
+        }
         ran.map(|()| screen.elapsed)
     })
 }
@@ -228,8 +244,18 @@ struct Screen<'s, 'scope, 'env, B: Backend> {
     store: Store<'env>,
     scope: &'scope Scope<'scope, 'env>,
     engine: &'env Engine,
+    /// The file names that mark a project for the root search.
+    markers: &'env [OsString],
     scan: Option<Scan<'scope>>,
+    /// The root search, until its answer has been taken.
+    search: Option<RootSearch<'scope>>,
     elapsed: Option<Duration>,
+}
+
+/// The search for roots to suggest, running on its own thread.
+struct RootSearch<'scope> {
+    cancel: CancelToken,
+    found: ScopedJoinHandle<'scope, Found>,
 }
 
 impl<B: Backend> Screen<'_, '_, '_, B>
@@ -267,6 +293,18 @@ where
         }
     }
 
+    /// Starts the search for roots to suggest, from the settings as they are now.
+    fn search(&mut self) {
+        let settings = self.store.settings.clone();
+        let markers = self.markers;
+        let cancel = CancelToken::new();
+        let token = cancel.clone();
+        let found = self
+            .scope
+            .spawn(move || find_roots(&settings, markers, &token));
+        self.search = Some(RootSearch { cancel, found });
+    }
+
     fn scanning(&self) -> bool {
         self.scan.as_ref().is_some_and(|scan| scan.report.is_some())
     }
@@ -280,6 +318,7 @@ where
                     self.app.update(answer);
                 }
                 Effect::Rescan => self.start(),
+                Effect::Search => self.search(),
             }
         }
     }
@@ -300,6 +339,7 @@ where
                 stale = false;
             }
             stale |= self.receive();
+            stale |= self.suggested();
             if stale && drawn.elapsed() >= FRAME {
                 self.draw()?;
                 drawn = Instant::now();
@@ -368,6 +408,27 @@ where
         changed
     }
 
+    /// Passes the root search's answer on once it has ended. Whether it had.
+    fn suggested(&mut self) -> bool {
+        if !self
+            .search
+            .as_ref()
+            .is_some_and(|search| search.found.is_finished())
+        {
+            return false;
+        }
+        let Some(search) = self.search.take() else {
+            return false;
+        };
+        // A search that panicked found nothing, and says it stopped early.
+        let found = search.found.join().unwrap_or_default();
+        if let Some(onboarding) = &mut self.onboarding {
+            onboarding.suggested(&found);
+        }
+        self.app.update(Msg::Suggested(Box::new(found)));
+        true
+    }
+
     fn draw(&mut self) -> io::Result<()> {
         let (app, look, onboarding) = (&*self.app, self.look, self.onboarding.as_ref());
         self.terminal
@@ -377,6 +438,62 @@ where
             })
             .map(|_| ())
             .map_err(io::Error::other)
+    }
+}
+
+/// The file names that mark a project for the root search: the markers of every
+/// built-in `project-artifact` rule.
+fn markers(builtin: &Builtin) -> Vec<OsString> {
+    let mut markers: Vec<OsString> = builtin
+        .rules()
+        .filter_map(|(_, rule)| match &rule.selector {
+            Selector::ProjectArtifact { markers, .. } => Some(markers),
+            Selector::DirsMatching { .. }
+            | Selector::FilesMatching { .. }
+            | Selector::Integration(_) => None,
+        })
+        .flatten()
+        .map(|name| OsString::from(&name.0))
+        .collect();
+    markers.sort();
+    markers.dedup();
+    markers
+}
+
+/// Searches the home directory `settings` names for projects outside its project roots,
+/// and turns them into suggested roots (D-053). With home unknown nothing can be
+/// searched, so the answer says it stopped early.
+fn find_roots(settings: &Settings, markers: &[OsString], cancel: &CancelToken) -> Found {
+    let Some(home) = config::home(&settings.roots) else {
+        return Found::default();
+    };
+    let roots: Vec<PathBuf> = settings
+        .roots
+        .all(SymbolicRoot::ProjectRoots)
+        .iter()
+        .filter_map(|root| root.as_ref().ok())
+        .flat_map(|root| [root.path.clone(), root.configured().clone()])
+        .collect();
+    let dirs = kipple_dirs(&settings.roots);
+    let mut skip = roots.clone();
+    skip.extend(
+        [dirs.config, dirs.data, dirs.cache]
+            .into_iter()
+            .filter_map(|dir| dir.path.ok()),
+    );
+    let exclude = &settings.policy.exclude;
+    let search = ProjectSearch {
+        home,
+        markers,
+        skip: &skip,
+        exclude,
+        limits: SearchLimits::default(),
+    };
+    let found = search_projects(&search, &SystemClock, cancel);
+    Found {
+        suggestions: suggest(home, &found.projects, &roots, exclude),
+        complete: found.complete,
+        unreadable: found.unreadable,
     }
 }
 

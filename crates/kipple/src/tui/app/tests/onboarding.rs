@@ -7,7 +7,7 @@ use std::path::PathBuf;
 
 use kipple_core::{
     Advice, IntegrationReport, Level, Method, ResolvedRoot, RootSource, Roots, ScanOutcome,
-    ScanReport, SymbolicRoot,
+    ScanReport, Suggestion, SymbolicRoot,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -16,6 +16,7 @@ use super::{PACMAN, colour, home};
 use crate::config::{self, Catalog, Config, Edit, Loaded, Location, Settings, Source};
 use crate::tui::app::{App, Effect, Key, Msg, Saved};
 use crate::tui::onboarding::{self, Onboarding, Outcome, Step};
+use crate::tui::settings::Found;
 
 /// A temp dir with a home directory holding `projects` and `code`, which kipple found as
 /// project roots, and no config file at the default location yet.
@@ -429,4 +430,143 @@ fn step_4_says_when_no_tip_is_known() {
 
     let text = screen(&first, &app, 80, 24);
     assert!(text.contains("knows no retention setting"), "{text}");
+}
+
+/// The search ending with `paths` suggested, each holding one project, as the loop
+/// passes it to both the questions and the home screen.
+fn suggest(app: &mut App, first: &mut Onboarding, paths: &[PathBuf], complete: bool) {
+    let found = Found {
+        suggestions: paths
+            .iter()
+            .map(|path| Suggestion {
+                path: path.clone(),
+                projects: vec![path.join("app")],
+            })
+            .collect(),
+        complete,
+        unreadable: 0,
+    };
+    first.suggested(&found);
+    app.update(Msg::Suggested(Box::new(found)));
+}
+
+// Catches a suggestion arriving checked, so finishing step 2 as it stands writes roots
+// the user never chose and freezes the defaults.
+#[test]
+fn suggestions_start_unchecked_and_finishing_without_one_writes_as_before() {
+    let disk = Disk::new();
+    let (mut app, mut first) = disk.first_run();
+    app.start_search();
+    let documents = disk.home().join("Documents");
+    suggest(&mut app, &mut first, &[documents], true);
+
+    assert!(first.offers.iter().all(|offer| !offer.checked));
+    let edits = finished(answer(
+        &mut first,
+        &[Key::Enter, Key::Enter, Key::Tab, Key::Tab],
+    ));
+    assert_eq!(edits, [Edit::Level(Level::Balanced)]);
+    assert_eq!(disk.finish(&mut app, edits), []);
+    assert_eq!(
+        config::load(&disk.location(), &disk.catalog)
+            .unwrap()
+            .config
+            .project_roots,
+        None
+    );
+}
+
+// Catches a checked suggestion being lost, written twice when also typed, or written
+// some other way than with the other roots in the one batch finishing writes.
+#[test]
+fn a_checked_suggestion_is_written_once_with_the_other_roots() {
+    let disk = Disk::new();
+    let (mut app, mut first) = disk.first_run();
+    let documents = disk.home().join("Documents");
+    suggest(&mut app, &mut first, std::slice::from_ref(&documents), true);
+    answer(&mut first, &[Key::Enter]);
+
+    // projects, code, "add another", then the suggestion.
+    answer(
+        &mut first,
+        &[Key::Down, Key::Down, Key::Down, Key::Char(' ')],
+    );
+    assert!(first.offers[0].checked);
+    // Typing it as well is refused: it is in the list.
+    answer(&mut first, &[Key::Up, Key::Enter]);
+    for c in documents.display().to_string().chars() {
+        first.key(Key::Char(c));
+    }
+    answer(&mut first, &[Key::Enter]);
+    let notice = first.notice.as_deref().unwrap();
+    assert!(notice.contains("is already in the list"), "{notice}");
+
+    let edits = finished(answer(
+        &mut first,
+        &[Key::Down, Key::Enter, Key::Tab, Key::Tab],
+    ));
+    let roots = vec![
+        disk.home().join("projects"),
+        disk.home().join("code"),
+        documents,
+    ];
+    assert_eq!(
+        edits,
+        [Edit::Level(Level::Balanced), Edit::ProjectRoots(roots)]
+    );
+    assert_eq!(disk.finish(&mut app, edits), [Effect::Rescan]);
+    let written = config::load(&disk.location(), &disk.catalog).unwrap();
+    let written = written.config.project_roots.unwrap();
+    assert_eq!(written.len(), 3, "{written:?}");
+    assert!(written[2].ends_with("Documents"), "{written:?}");
+}
+
+// Catches quitting after checking a suggestion writing it anyway.
+#[test]
+fn quitting_with_a_checked_suggestion_writes_nothing() {
+    let disk = Disk::new();
+    let (mut app, mut first) = disk.first_run();
+    suggest(&mut app, &mut first, &[disk.home().join("Documents")], true);
+    answer(
+        &mut first,
+        &[Key::Enter, Key::Down, Key::Down, Key::Down, Key::Char(' ')],
+    );
+
+    assert_eq!(answer(&mut first, &[Key::Char('q')]), Outcome::Quit);
+    assert!(!disk.file().exists());
+}
+
+#[test]
+fn step_2_with_suggestions_at_80_by_24() {
+    let mut app = home();
+    app.roots = vec![PathBuf::from("/home/ada/projects")];
+    let mut first = Onboarding::new(&app);
+    app.start_search();
+    let running = {
+        answer(&mut first, &[Key::Enter]);
+        screen(&first, &app, 80, 24)
+    };
+    assert!(running.contains("looking for projects…"), "{running}");
+    let paths = [
+        PathBuf::from("/home/ada/Documents/uni"),
+        PathBuf::from("/home/ada/notes"),
+    ];
+    suggest(&mut app, &mut first, &paths, false);
+    answer(&mut first, &[Key::Down, Key::Down, Key::Char(' ')]);
+    insta::assert_snapshot!(screen(&first, &app, 80, 24));
+}
+
+#[test]
+fn step_2_with_suggestions_at_160_by_48() {
+    let mut app = home();
+    app.roots = vec![PathBuf::from("/home/ada/projects")];
+    let mut first = Onboarding::new(&app);
+    app.start_search();
+    let paths = [
+        PathBuf::from("/home/ada/Documents/uni"),
+        PathBuf::from("/home/ada/notes"),
+    ];
+    suggest(&mut app, &mut first, &paths, true);
+    answer(&mut first, &[Key::Enter, Key::Down, Key::Down]);
+    insta::assert_snapshot!(screen(&first, &app, 160, 48));
 }

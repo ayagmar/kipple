@@ -1,0 +1,28 @@
+---
+source: crates/kipple/src/tui/app/tests/onboarding.rs
+expression: "screen(&first, &app, 80, 24)"
+---
+ Welcome to kipple · step 2 of 4 · scanning…
+────────────────────────────────────────────────────────────────────────────────
+Where are your projects?
+kipple looks for build output and dependencies below these folders.
+
+  [x] /home/ada/projects
+  + add another
+
+Suggested: projects found elsewhere in your home folder
+> [x] /home/ada/Documents/uni (1 project: app)
+  [ ] /home/ada/notes (1 project: app)
+stopped early: the list may be incomplete
+
+
+
+
+
+
+
+
+
+
+
+ enter choose · space check · tab skip · esc back · q quit, saving nothing

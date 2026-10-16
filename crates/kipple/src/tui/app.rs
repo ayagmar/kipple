@@ -17,7 +17,7 @@ use kipple_core::{
 
 pub(crate) use self::keep::{Effect, Saved};
 use super::filter;
-use super::settings::{Action, Panel};
+use super::settings::{Action, Found, Panel, Search};
 use crate::config::Config;
 use crate::json::{OmissionOut, SizeOut};
 use crate::setup::Builtin;
@@ -73,6 +73,8 @@ pub(crate) enum Msg {
     Saved(Box<Saved>),
     /// The config couldn't be written, for this reason. Nothing changed.
     NotSaved(String),
+    /// The search for projects outside the roots ended with these suggestions.
+    Suggested(Box<Found>),
 }
 
 /// Where a finding stands: its bucket, or still being measured. Nothing is Safe until
@@ -265,6 +267,8 @@ pub(crate) struct App {
     /// The note being typed for `p`.
     pub(crate) note: String,
     pub(crate) panel: Panel,
+    /// The search for roots to suggest, once onboarding or settings asked for it.
+    pub(crate) search: Search,
     /// What the loop is asked to do next.
     effect: Option<Effect>,
     /// What to say once the config write asked for has succeeded.
@@ -302,6 +306,7 @@ impl App {
             notice: None,
             note: String::new(),
             panel: Panel::default(),
+            search: Search::default(),
             effect: None,
             pending: None,
             cursor: None,
@@ -326,6 +331,7 @@ impl App {
             Msg::Finished { report, elapsed } => self.finished(*report, elapsed),
             Msg::Saved(saved) => self.saved(*saved),
             Msg::NotSaved(error) => self.not_saved(&error),
+            Msg::Suggested(found) => self.suggested(*found),
         }
     }
 
@@ -592,7 +598,7 @@ impl App {
             Key::Char('c') => self.add_safe(),
             Key::Char('p') => self.keep_finding(),
             Key::Char('P') => self.keep_rule(),
-            Key::Char(',') => self.mode = Mode::Settings,
+            Key::Char(',') => self.open_settings(),
             Key::Enter => self.review(),
             Key::Tab => self.next_lens(),
             Key::Esc => self.filter.clear(),
