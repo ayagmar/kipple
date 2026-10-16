@@ -5,11 +5,11 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use kipple::doctor::{IntegrationRoots, Report, RootCheck};
+use kipple::doctor::{ConfigStatus, IntegrationRoots, Report, RootCheck};
 use kipple::{CANCELLED, exit_code};
 use kipple_core::{
-    FileIdentity, IntegrationId, Inventory, Lens, ProbeError, ProcessSnapshot, ResolvedRoot,
-    RootLink, RootSource, SymbolicRoot, UnresolvedRoot,
+    FileIdentity, IntegrationId, Inventory, Lens, Observer, ProbeError, ProcessSnapshot,
+    ResolvedRoot, RootLink, RootSource, SymbolicRoot, UnresolvedRoot,
 };
 use kipple_platform::{KippleDir, KippleDirs};
 
@@ -47,6 +47,7 @@ fn report(cache_error: io::ErrorKind) -> Report {
             cache: unresolved(SymbolicRoot::XdgCache),
         },
         config_file: None,
+        config: ConfigStatus::default(),
         roots: vec![RootCheck {
             root: SymbolicRoot::XdgCache,
             status: Ok((cache, Err(failure))),
@@ -56,6 +57,7 @@ fn report(cache_error: io::ErrorKind) -> Report {
         processes: Ok(ProcessSnapshot {
             processes: Vec::new(),
             inventory: Inventory::Complete,
+            observer: Observer::PLAIN,
         }),
         permission_hint: Some(HINT),
     }

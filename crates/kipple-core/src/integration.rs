@@ -56,6 +56,30 @@ pub struct IntegrationDescriptor {
     pub verified: &'static [&'static str],
 }
 
+/// What can show one of an integration's findings in use (`docs/04-safety-model.md` §4,
+/// D-050).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivityEvidence {
+    /// Every path a process shows counts, every process counts, and any path kipple
+    /// couldn't read leaves activity unknown. The strictest, and what an integration that
+    /// declares nothing gets.
+    Everything,
+    /// A project artifact that holds executables built in it, such as Cargo's `target/`:
+    /// the executable a process runs. Root, `SYSTEM` and other users' processes are
+    /// counted only as D-050 says.
+    BuiltExecutables,
+    /// A project artifact an interpreter loads, such as `.venv` or `node_modules`: every
+    /// path a process shows (its executable, working directory, path arguments,
+    /// environment paths and mapped files), and a process of one of these runtimes working
+    /// in the project. Root, `SYSTEM` and other users' processes are counted only as
+    /// D-050 says.
+    Interpreted {
+        /// The runtimes' program names, compared ignoring case. A trailing `*` matches
+        /// any ending, as in `python*`.
+        runtimes: &'static [&'static str],
+    },
+}
+
 /// A selector an integration publishes, with what it selects.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct IntegrationSelector {
@@ -107,6 +131,12 @@ pub enum IntegrationError {
 pub trait Integration: fmt::Debug + Send + Sync {
     /// Its ID and the roots it reads.
     fn descriptor(&self) -> IntegrationDescriptor;
+
+    /// What can show one of its findings in use. Unless it says otherwise, everything,
+    /// from every process.
+    fn activity_evidence(&self) -> ActivityEvidence {
+        ActivityEvidence::Everything
+    }
 
     /// Finds candidates under its roots and adds each one to `sink`.
     ///

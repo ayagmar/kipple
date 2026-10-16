@@ -4,7 +4,9 @@
 
 use std::ffi::OsString;
 
-use kipple_core::{EntryKind, FsProbe, ProcessOutcome, ProcessProbe, SymbolicRoot};
+use kipple_core::{
+    EntryKind, FsProbe, ProcessOutcome, ProcessOwner, ProcessProbe, ProcessRecord, SymbolicRoot,
+};
 use kipple_platform::{Environment, NoFollowFs, OsProcesses, resolve_roots};
 
 #[test]
@@ -24,6 +26,89 @@ fn this_process_is_identified_by_the_file_it_runs() {
         "{:?}",
         me.outcome
     );
+}
+
+/// This process's record in a fresh snapshot.
+fn me() -> Option<ProcessRecord> {
+    OsProcesses
+        .snapshot()
+        .ok()?
+        .processes
+        .into_iter()
+        .find(|process| process.pid == std::process::id())
+}
+
+#[test]
+fn this_process_is_owned_by_the_current_user() {
+    assert_eq!(
+        me().expect("this process is listed").owner,
+        ProcessOwner::CurrentUser
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn this_process_shows_its_working_directory_arguments_environment_and_mapped_executable() {
+    use std::path::Path;
+
+    let identity = |path: &Path| NoFollowFs.metadata(path).unwrap().identity.unwrap();
+    let me = me().expect("this process is listed");
+
+    // Compared by identity: the OS may report the directory by another form of its path.
+    let cwd = me.cwd.expect("the working directory is readable");
+    assert_eq!(identity(&cwd), identity(&std::env::current_dir().unwrap()));
+
+    let passed: Vec<OsString> = std::env::args_os().collect();
+    let argv = me.argv.expect("the arguments are readable");
+    assert_eq!(argv.first(), passed.first());
+    assert!(argv.iter().all(|arg| passed.contains(arg)), "{argv:?}");
+
+    me.env_paths.expect("the environment is readable");
+
+    let exe = identity(&std::env::current_exe().unwrap());
+    let mapped = me.mapped_files.expect("the mapped files are readable");
+    assert!(
+        mapped
+            .iter()
+            .any(|file| NoFollowFs.metadata(file).ok().and_then(|m| m.identity) == Some(exe)),
+        "{mapped:?}"
+    );
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn this_process_shows_its_mount_namespace_root_and_capabilities() {
+    let me = me().expect("this process is listed");
+
+    me.mount_namespace.expect("the mount namespace is readable");
+    let root = NoFollowFs.metadata(std::path::Path::new("/")).unwrap();
+    assert_eq!(me.root_dir.ok(), root.identity);
+    me.capabilities.expect("the capabilities are readable");
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn this_process_names_its_root_and_its_files_resolve_through_it() {
+    let me = me().expect("this process is listed");
+
+    assert_eq!(me.root_path.unwrap(), std::path::Path::new("/"));
+    // The file it runs, reached through its root, is the same file.
+    let exe = std::env::current_exe().unwrap();
+    let through = me.root_entry.unwrap().join(exe.strip_prefix("/").unwrap());
+    let identity = |path: &std::path::Path| NoFollowFs.metadata(path).unwrap().identity;
+    assert_eq!(identity(&through), identity(&exe));
+}
+
+/// The runner is a whole VM, so its process table holds the kernel's threads, whose
+/// `exe` a user who isn't root is refused.
+#[cfg(target_os = "linux")]
+#[test]
+fn kernel_threads_run_no_program_file() {
+    let snapshot = OsProcesses.snapshot().unwrap();
+
+    let kthreads = snapshot.processes.iter();
+    let kthreads = kthreads.filter(|p| matches!(p.outcome, ProcessOutcome::NoExecutable));
+    assert!(kthreads.count() > 0);
 }
 
 #[test]

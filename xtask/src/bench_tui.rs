@@ -4,7 +4,8 @@
 //! The tree is `bench-tree`'s, with the marker each hot spot's project needs added, so
 //! the Cargo and Node integrations find and size every `target` and `node_modules`. A
 //! given tree must carry `bench-tree`'s sentinel, and markers are only ever new files. The
-//! real home screen loop runs in process on a 160×48 test terminal while another thread
+//! real home screen loop runs in process on a 160×48 test terminal, with a config file of
+//! its own in a temp dir so the user's is never read, while another thread
 //! presses a key every 16 ms. A key's latency runs from when it was pressed to when the
 //! next frame after the loop read it was flushed, so time spent waiting for the loop
 //! counts. Only keys pressed while the scan ran count. A warm scan of the tree can take
@@ -21,7 +22,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use kipple::tui::{self, Input, Key, Keys, Layout, Look, Options};
+use kipple::config::{self, Settings};
+use kipple::setup::Builtin;
+use kipple::tui::{self, Input, Key, Keys, Look};
 use kipple_platform::Environment;
 use ratatui::Terminal;
 use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
@@ -100,13 +103,16 @@ pub(crate) fn run(root: &Path, given: Option<&Path>) -> Result<()> {
     fs::create_dir(&home)?;
     let env = Environment::from_vars([(OsString::from("HOME"), home.clone().into_os_string())])
         .with_system_root(home);
+    // A config of its own, so the real one is never read.
+    let config = temp.path().join("config.toml");
+    fs::write(&config, "[care]\nlevel = \"balanced\"\n")?;
 
     let mut latencies = Vec::new();
     let mut scans = Vec::new();
     // Enough keys for a long scan at first; then enough to outlast the last one.
     let mut keys = FIRST_KEYS;
     while latencies.len() < SAMPLES && scans.len() < MAX_SCANS {
-        let measured = scan(&tree, &env, keys)?;
+        let measured = scan(&tree, &env, &config, keys)?;
         latencies.extend(measured.latencies);
         if let Some(scanned) = measured.scanned {
             scans.push(scanned);
@@ -127,8 +133,9 @@ struct Measured {
     scanned: Option<Duration>,
 }
 
-/// Opens the home screen on `tree`, presses `keys` keys while it scans, then closes it.
-fn scan(tree: &Path, env: &Environment, keys: usize) -> Result<Measured> {
+/// Opens the home screen on `tree` with the config `file`, presses `keys` keys while it
+/// scans, then closes it.
+fn scan(tree: &Path, env: &Environment, file: &Path, keys: usize) -> Result<Measured> {
     let flushes = Arc::new(Mutex::new(Vec::new()));
     let (shown, first_frame) = mpsc::channel();
     let backend = Timed {
@@ -158,21 +165,16 @@ fn scan(tree: &Path, env: &Environment, keys: usize) -> Result<Measured> {
         inbox,
         delivered: Vec::new(),
     };
-    let options = Options {
-        layout: Layout::Buckets,
-        look: Look {
-            color: true,
-            ascii: false,
-        },
+    let look = Look {
+        color: true,
+        ascii: false,
     };
+    let builtin = Builtin::load().map_err(anyhow::Error::msg)?;
+    let catalog = config::catalog(&builtin);
+    let settings = Settings::load(env, Some(file), &[tree.to_owned()], &catalog)
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
     let started = Instant::now();
-    let scanned = tui::run(
-        &mut terminal,
-        &mut pressed,
-        env,
-        &[tree.to_owned()],
-        options,
-    )?;
+    let scanned = tui::run(&mut terminal, &mut pressed, env, &settings, look)?;
     drop(stop);
     typist
         .join()

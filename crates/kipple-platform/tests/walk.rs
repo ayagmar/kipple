@@ -73,7 +73,6 @@ fn an_item_is_sized_completely_and_links_out_of_it_are_never_followed() {
 
     assert_eq!(measured.size.apparent, Apparent(expected));
     assert_eq!(measured.size.completeness, Completeness::Complete);
-    assert!(!measured.skipped_mount);
 }
 
 #[test]
@@ -201,7 +200,7 @@ fn probes_report_a_link_as_a_link_and_never_what_it_points_to() {
 mod unix {
     use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 
-    use kipple_core::Allocated;
+    use kipple_core::{Allocated, FileSystem};
 
     use super::*;
 
@@ -268,6 +267,40 @@ mod unix {
         fs::set_permissions(&locked, fs::Permissions::from_mode(0o700)).unwrap();
 
         let completeness = size.unwrap().size.completeness;
-        assert_eq!(completeness, Completeness::Incomplete { unreadable: 1 });
+        assert_eq!(
+            completeness,
+            Completeness::Incomplete {
+                unreadable: 1,
+                skipped_mounts: 0
+            }
+        );
+    }
+
+    #[test]
+    fn a_group_or_other_execute_bit_opens_a_directory_and_a_link_is_not_followed() {
+        // Another user's process may use a directory only if it can enter every directory
+        // above it: the execute bits decide, not the read bits.
+        let temp = TempDir::new().unwrap();
+        let dir = temp.path().join("home");
+        fs::create_dir(&dir).unwrap();
+        let access = |mode| {
+            fs::set_permissions(&dir, fs::Permissions::from_mode(mode)).unwrap();
+            NoFollowFs.access(&dir).unwrap()
+        };
+
+        let private = access(0o744);
+        assert!(private.owned_by_current_user);
+        assert!(!private.open_to_others);
+        assert!(!private.acl);
+        assert_eq!(private.file_system, FileSystem::Local);
+        assert!(access(0o710).open_to_others);
+        assert!(access(0o701).open_to_others);
+
+        // A link to the private directory is what is checked, and a link is open.
+        fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
+        let link = temp.path().join("link");
+        symlink(&dir, &link);
+        assert!(NoFollowFs.access(&link).unwrap().open_to_others);
+        assert!(NoFollowFs.access(&temp.path().join("missing")).is_err());
     }
 }

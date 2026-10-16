@@ -1,21 +1,25 @@
 //! The home screen's transitions (`docs/03-functional-spec.md` §2 J1 and J2, §5) and its
 //! rendered buffers at 80×24 and 160×48 (`docs/08-engineering-standards.md`), from scan
-//! events built here, so no file system or clock is read.
+//! events built here, so no file system or clock is read. Keeping and settings, which
+//! write a config file in a temp dir, are in `settings`; the first run is in `onboarding`.
+
+mod onboarding;
+mod settings;
 
 use std::path::PathBuf;
 use std::time::Duration;
 
 use kipple_core::{
     Activity, Advice, Allocated, Apparent, Category, Completeness, Consequence, Cost, Evidence,
-    Facts, Finding, FindingId, IntegrationId, IntegrationReport, Lens, Loss, Method, Modified,
-    Omission, ProbeError, Proposal, Recovery, RuleId, RuleText, ScanEvent, ScanOutcome, ScanReport,
-    SpaceEstimate, Tracked,
+    Facts, Finding, FindingId, HeldPath, IntegrationId, IntegrationReport, Lens, Lineage, Loss,
+    Method, Modified, Omission, ProbeError, Proposal, Recovery, RuleId, RuleText, ScanEvent,
+    ScanOutcome, ScanReport, SpaceEstimate, Tracked, WalkGap,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::style::Color;
 
-use super::{App, Catalog, Key, Layout, Msg, Node, Shelf};
+use super::{App, Catalog, Key, Msg, Node, Shelf};
 use crate::tui::view::{self, Look};
 
 const DAY: Duration = Duration::from_hours(24);
@@ -101,6 +105,7 @@ fn safe() -> Facts {
         activity: Activity::Idle,
         modified: Modified::Ago(41 * DAY),
         recent_days: None,
+        lineage: Lineage::default(),
     }
 }
 
@@ -194,7 +199,7 @@ fn findings(app: &App) -> Vec<u64> {
         .iter()
         .filter_map(|line| match line.node {
             Node::Finding(id) => Some(id.0),
-            Node::Shelf(_) | Node::Lens(_) | Node::Group(..) | Node::Gaps | Node::Gap(_) => None,
+            Node::Shelf(_) | Node::Group(..) | Node::Gaps | Node::Gap(_) | Node::Notice(_) => None,
         })
         .collect()
 }
@@ -204,8 +209,8 @@ fn selected(app: &App) -> Vec<u64> {
 }
 
 /// A home with one finding in each bucket, as `demo-home` has them.
-fn home(layout: Layout) -> App {
-    let mut app = App::new(catalog(), layout, 160, 48);
+fn home() -> App {
+    let mut app = App::new(catalog(), 160, 48);
     found(
         &mut app,
         1,
@@ -251,7 +256,7 @@ fn home(layout: Layout) -> App {
 
 #[test]
 fn a_finding_waits_under_measuring_until_its_facts_arrive_and_is_never_safe_before() {
-    let mut app = App::new(catalog(), Layout::Buckets, 160, 48);
+    let mut app = App::new(catalog(), 160, 48);
     found(&mut app, 1, CARGO, "builtin.cargo.target", "/p/api/target");
 
     let row = app.row(FindingId(1)).unwrap();
@@ -271,7 +276,7 @@ fn a_finding_waits_under_measuring_until_its_facts_arrive_and_is_never_safe_befo
 
 #[test]
 fn c_selects_the_safe_bucket_as_it_stands_at_the_keypress_and_nothing_else() {
-    let mut app = home(Layout::Buckets);
+    let mut app = home();
     found(
         &mut app,
         6,
@@ -291,7 +296,7 @@ fn c_selects_the_safe_bucket_as_it_stands_at_the_keypress_and_nothing_else() {
 
 #[test]
 fn s_toggles_an_eligible_finding_and_refuses_a_protected_one_with_its_reason() {
-    let mut app = home(Layout::Buckets);
+    let mut app = home();
     app.update(Msg::Key(Key::Char('/')));
     typed(&mut app, "web");
     press(&mut app, &[Key::Enter]);
@@ -312,26 +317,56 @@ fn s_toggles_an_eligible_finding_and_refuses_a_protected_one_with_its_reason() {
     assert!(notice.contains("unknown: layout"), "{notice}");
 }
 
+// Catches the home screen judging with the default policy instead of the configured one,
+// which would offer a kept project's artifacts as Safe.
 #[test]
-fn a_adds_the_safe_and_review_findings_under_the_focused_heading_but_never_protected() {
-    let mut app = home(Layout::Lenses);
-    // Lens layout: Agents, Dev, System. Focus the Dev heading.
-    let dev = app
+fn a_finding_under_a_kept_path_is_protected_and_s_refuses_it_as_kept() {
+    let mut app = App::new(catalog(), 160, 48);
+    app.policy.keep.push(HeldPath {
+        forms: vec![PathBuf::from("/home/ada/projects/api")],
+        lineage: Lineage::default(),
+        note: Some("client work".to_owned()),
+    });
+    found(
+        &mut app,
+        1,
+        CARGO,
+        "builtin.cargo.target",
+        "/home/ada/projects/api/target",
+    );
+    measured(&mut app, 1, 512, safe());
+
+    assert_eq!(app.row(FindingId(1)).unwrap().shelf(), Shelf::Protected);
+    to(&mut app, 1);
+    press(&mut app, &[Key::Char('s')]);
+    assert!(app.selected.is_empty(), "a kept finding was selected");
+    let notice = app.notice.as_deref().unwrap();
+    assert!(notice.contains("kept"), "{notice}");
+}
+
+#[test]
+fn a_adds_the_eligible_findings_under_the_focused_heading_but_never_protected() {
+    let mut app = home();
+    // Safe to clean is the first line.
+    press(&mut app, &[Key::Char('a')]);
+    assert_eq!(selected(&app), [1, 4]);
+
+    let protected = app
         .lines()
         .iter()
-        .position(|line| line.node == Node::Lens(Lens::Dev))
+        .position(|line| line.node == Node::Shelf(Shelf::Protected))
         .unwrap();
-    press(&mut app, &vec![Key::Down; dev]);
-    assert_eq!(focus(&app), Some(Node::Lens(Lens::Dev)));
-
+    press(&mut app, &[Key::Char('g')]);
+    press(&mut app, &vec![Key::Down; protected]);
+    assert_eq!(focus(&app), Some(Node::Shelf(Shelf::Protected)));
     press(&mut app, &[Key::Char('a')]);
 
-    assert_eq!(selected(&app), [1, 2, 4]);
+    assert_eq!(selected(&app), [1, 4], "a Protected finding was added");
 }
 
 #[test]
 fn the_cursor_stays_on_its_finding_while_sizes_stream_in_and_reorder_the_tree() {
-    let mut app = App::new(catalog(), Layout::Buckets, 160, 48);
+    let mut app = App::new(catalog(), 160, 48);
     found(&mut app, 1, CARGO, "builtin.cargo.target", "/p/a/target");
     found(&mut app, 2, CARGO, "builtin.cargo.target", "/p/b/target");
     measured(&mut app, 1, 10, safe());
@@ -352,7 +387,7 @@ fn the_cursor_stays_on_its_finding_while_sizes_stream_in_and_reorder_the_tree() 
 
 #[test]
 fn the_fuzzy_filter_keeps_findings_whose_name_or_path_match_in_order_and_esc_clears_it() {
-    let mut app = home(Layout::Buckets);
+    let mut app = home();
 
     press(&mut app, &[Key::Char('/')]);
     typed(&mut app, "webnm");
@@ -369,7 +404,7 @@ fn the_fuzzy_filter_keeps_findings_whose_name_or_path_match_in_order_and_esc_cle
 
 #[test]
 fn tab_shows_one_lens_at_a_time_then_all_of_them() {
-    let mut app = home(Layout::Buckets);
+    let mut app = home();
 
     press(&mut app, &[Key::Tab]);
     assert!(findings(&app).is_empty(), "nothing in Agents");
@@ -383,7 +418,7 @@ fn tab_shows_one_lens_at_a_time_then_all_of_them() {
 
 #[test]
 fn h_folds_a_heading_and_from_a_finding_climbs_to_its_heading_and_l_unfolds() {
-    let mut app = home(Layout::Buckets);
+    let mut app = home();
     // Safe to clean, Dev, then the first Safe finding.
     press(&mut app, &[Key::Down, Key::Down]);
     assert_eq!(focus(&app), Some(Node::Finding(FindingId(1))));
@@ -401,7 +436,7 @@ fn h_folds_a_heading_and_from_a_finding_climbs_to_its_heading_and_l_unfolds() {
 
 #[test]
 fn an_incomplete_scan_lists_what_it_could_not_cover_instead_of_looking_empty() {
-    let mut app = App::new(catalog(), Layout::Buckets, 160, 48);
+    let mut app = App::new(catalog(), 160, 48);
     let error = ProbeError::io(
         &PathBuf::from("/home/ada/projects/secret"),
         std::io::ErrorKind::PermissionDenied.into(),
@@ -422,9 +457,50 @@ fn an_incomplete_scan_lists_what_it_could_not_cover_instead_of_looking_empty() {
     assert!(screen.contains("partial: 1 not covered"), "{screen}");
 }
 
+// Catches the D-050 and D-052 notices reaching `scan` and `doctor` but not the home
+// screen, or being counted as something the scan didn't cover, which would call a
+// complete scan partial.
+#[test]
+fn processes_left_out_of_the_activity_check_are_a_notice_not_a_gap() {
+    let ended = |unchecked_system, by_command_line| {
+        let mut app = App::new(catalog(), 160, 48);
+        app.update(Msg::Finished {
+            report: Box::new(ScanReport {
+                outcome: ScanOutcome::Completed,
+                integrations: Vec::new(),
+                findings: Vec::new(),
+                unchecked_system,
+                by_command_line,
+            }),
+            elapsed: Duration::from_secs(1),
+        });
+        app
+    };
+
+    let app = ended(3, 2);
+
+    assert_eq!(
+        app.notices,
+        [
+            "3 processes owned by root or SYSTEM, or running with root's rights, couldn't be inspected and were not counted for items in your home.",
+            "2 of your own processes couldn't be fully inspected and were checked by their command line only for items in your home."
+        ]
+    );
+    assert_eq!(app.gaps, []);
+    let screen = screen(&app, colour(), 160, 48);
+    assert!(
+        screen.contains("Note: 3 processes owned by root"),
+        "{screen}"
+    );
+    assert!(!screen.contains("partial"), "{screen}");
+    assert!(!screen.contains("Not covered"), "{screen}");
+    assert!(screen.contains("Note: 2 of your own processes"), "{screen}");
+    assert_eq!(ended(0, 0).notices, Vec::<String>::new());
+}
+
 #[test]
 fn totals_count_what_is_eligible_and_selected_and_frees_only_storage_nothing_else_holds() {
-    let mut app = App::new(catalog(), Layout::Buckets, 160, 48);
+    let mut app = App::new(catalog(), 160, 48);
     found(&mut app, 1, CARGO, "builtin.cargo.target", "/p/a/target");
     found(
         &mut app,
@@ -452,14 +528,14 @@ fn totals_count_what_is_eligible_and_selected_and_frees_only_storage_nothing_els
 
 #[test]
 fn q_and_ctrl_c_quit_and_any_key_closes_help() {
-    let mut app = home(Layout::Buckets);
+    let mut app = home();
     press(&mut app, &[Key::Char('?')]);
     press(&mut app, &[Key::Char('q')]);
     assert!(!app.quit, "q closes help first");
     press(&mut app, &[Key::Char('q')]);
     assert!(app.quit);
 
-    let mut typing = home(Layout::Buckets);
+    let mut typing = home();
     press(&mut typing, &[Key::Char('/'), Key::Interrupt]);
     assert!(typing.quit);
 }
@@ -507,6 +583,8 @@ fn finished(app: &mut App) {
             }],
         }],
         findings: Vec::new(),
+        unchecked_system: 0,
+        by_command_line: 0,
     };
     app.update(Msg::Finished {
         report: Box::new(report),
@@ -516,8 +594,8 @@ fn finished(app: &mut App) {
 
 /// The home on a `width` by `height` terminal with the cursor on the first Safe finding
 /// and one finding selected.
-fn sized(layout: Layout, width: u16, height: u16) -> App {
-    let mut app = home(layout);
+fn sized(width: u16, height: u16) -> App {
+    let mut app = home();
     finished(&mut app);
     app.update(Msg::Resize { width, height });
     to(&mut app, 1);
@@ -526,32 +604,56 @@ fn sized(layout: Layout, width: u16, height: u16) -> App {
 }
 
 #[test]
+fn a_finding_holding_a_mount_shows_its_size_as_a_lower_bound_and_names_the_mount() {
+    // A bind mount or btrfs subvolume inside a finding is never walked: its bytes are
+    // missing from the size and it could hold a checkout or recent files.
+    let mut app = App::new(catalog(), 160, 48);
+    found(&mut app, 1, CARGO, "builtin.cargo.target", "/p/api/target");
+    app.update(Msg::Scan(Box::new(ScanEvent::FindingUpdated {
+        id: FindingId(1),
+        size: Some(SpaceEstimate {
+            completeness: Completeness::Incomplete {
+                unreadable: 0,
+                skipped_mounts: 1,
+            },
+            ..size(512 * MIB, 512 * MIB)
+        }),
+        facts: Facts {
+            tracked: Tracked::Unwalked(WalkGap::OtherFileSystem),
+            modified: Modified::Unknown(WalkGap::OtherFileSystem),
+            ..safe()
+        },
+    })));
+    to(&mut app, 1);
+
+    let shown = screen(&app, colour(), 160, 48);
+
+    assert_eq!(app.row(FindingId(1)).unwrap().shelf(), Shelf::Protected);
+    assert!(shown.contains("Size              >= 512.0 MiB"), "{shown}");
+    for label in ["Git ", "Last change "] {
+        let line = shown.lines().find(|line| line.contains(label)).unwrap();
+        assert!(
+            line.contains("a directory inside is on another file system"),
+            "{shown}"
+        );
+    }
+}
+
+#[test]
 fn the_bucket_home_at_80_by_24_stacks_the_detail_pane_below_the_tree() {
-    let app = sized(Layout::Buckets, 80, 24);
+    let app = sized(80, 24);
     insta::assert_snapshot!(screen(&app, colour(), 80, 24));
 }
 
 #[test]
 fn the_bucket_home_at_160_by_48_puts_the_detail_pane_beside_the_tree() {
-    let app = sized(Layout::Buckets, 160, 48);
-    insta::assert_snapshot!(screen(&app, colour(), 160, 48));
-}
-
-#[test]
-fn the_lens_home_at_80_by_24() {
-    let app = sized(Layout::Lenses, 80, 24);
-    insta::assert_snapshot!(screen(&app, colour(), 80, 24));
-}
-
-#[test]
-fn the_lens_home_at_160_by_48() {
-    let app = sized(Layout::Lenses, 160, 48);
+    let app = sized(160, 48);
     insta::assert_snapshot!(screen(&app, colour(), 160, 48));
 }
 
 #[test]
 fn help_at_80_by_24_in_ascii() {
-    let mut app = home(Layout::Buckets);
+    let mut app = home();
     finished(&mut app);
     app.update(Msg::Resize {
         width: 80,
@@ -568,7 +670,7 @@ fn help_at_80_by_24_in_ascii() {
 #[test]
 fn no_color_draws_every_cell_in_the_terminals_own_colours_and_ascii_only_ascii() {
     for (width, height) in [(80, 24), (160, 48)] {
-        let mut app = sized(Layout::Buckets, width, height);
+        let mut app = sized(width, height);
         press(&mut app, &[Key::Char('?')]);
         let plain = Look {
             color: false,

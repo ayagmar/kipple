@@ -4,8 +4,12 @@
   "description": "`kipple doctor --json`.",
   "type": "object",
   "properties": {
+    "config": {
+      "description": "Where the config comes from and whether it can be used.",
+      "$ref": "#/$defs/ConfigOut"
+    },
     "config_file": {
-      "description": "The config file, when the config directory resolved.",
+      "description": "The config file, unless it is the default one and the config directory is unknown.",
       "anyOf": [
         {
           "$ref": "#/$defs/EntryOut"
@@ -72,12 +76,43 @@
     "kipple",
     "platform",
     "dirs",
+    "config",
     "roots",
     "integrations",
     "tools",
     "processes"
   ],
   "$defs": {
+    "ConfigOut": {
+      "description": "Where the config comes from and whether it can be used.",
+      "type": "object",
+      "properties": {
+        "problem": {
+          "description": "Why it can't be used, with its line and column, if it can't.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "`--config`, `KIPPLE_CONFIG` or `default`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "warnings": {
+          "description": "Each kept or excluded path that doesn't exist or can't be checked.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "warnings"
+      ]
+    },
     "DirOut": {
       "description": "One of kipple's directories.",
       "type": "object",
@@ -244,6 +279,18 @@
       "description": "What the process listing found.",
       "type": "object",
       "properties": {
+        "by_command_line": {
+          "description": "The current user's processes that can't be fully inspected and are checked by\ntheir command line only for project items in the home directory (D-052).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "counted_uninspected": {
+          "description": "Processes that can't be inspected and count for every project item, so none can be\nSafe: the current user's that can't be checked by their command line, those of an\nunknown owner, and those with root's rights whose command line names a relative\npath kipple couldn't place.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
         "exited": {
           "description": "Processes that exited while being listed.",
           "type": "integer",
@@ -282,6 +329,12 @@
           "format": "uint",
           "minimum": 0
         },
+        "unchecked_system": {
+          "description": "Processes owned by root or `SYSTEM`, or running with root's rights, that can't be\ninspected and aren't counted for project items in the home directory (D-050,\nD-052).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
         "unknown": {
           "description": "Processes kipple treats as possibly running a tool.",
           "type": "integer",
@@ -294,7 +347,10 @@
         "identified",
         "unknown",
         "exited",
-        "no_executable"
+        "no_executable",
+        "unchecked_system",
+        "by_command_line",
+        "counted_uninspected"
       ]
     },
     "RootOut": {

@@ -6,6 +6,7 @@
 //! definitions.
 #![forbid(unsafe_code)]
 
+pub mod config;
 pub mod doctor;
 mod explain;
 mod human;
@@ -16,14 +17,16 @@ pub mod setup;
 pub mod support;
 pub mod tui;
 
+use std::collections::HashMap;
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use kipple_core::{Lens, ScanOutcome};
+use kipple_core::{Engine, Lens, ScanOutcome};
 use kipple_platform::Environment;
 
+use crate::config::{ConfigError, Settings};
 use crate::json::{EventBody, ScanOut};
 use crate::setup::Builtin;
 
@@ -33,11 +36,13 @@ use crate::setup::Builtin;
     name = "kipple",
     version,
     about,
-    args_conflicts_with_subcommands = true,
     after_help = "Without a command, kipple opens the home screen in a terminal, or prints a \
                   summary when its output isn't a terminal. Read-only: nothing is changed."
 )]
 pub struct Cli {
+    /// Read the config from this file instead of `KIPPLE_CONFIG` or the default location.
+    #[arg(long, global = true, value_name = "FILE")]
+    pub config: Option<PathBuf>,
     /// The home screen's options.
     #[command(flatten)]
     pub home: HomeArgs,
@@ -52,18 +57,6 @@ pub struct HomeArgs {
     /// Draw the home screen with ASCII characters only.
     #[arg(long)]
     pub ascii: bool,
-    /// The home screen's layout. A development flag for comparing layouts.
-    #[arg(long, value_enum, default_value_t = LayoutArg::Buckets, hide = true)]
-    pub layout: LayoutArg,
-}
-
-/// A home screen layout.
-#[derive(Debug, Clone, Copy, ValueEnum)]
-pub enum LayoutArg {
-    /// Safe, Review and Protected first.
-    Buckets,
-    /// Agents, Dev and System first.
-    Lenses,
 }
 
 /// kipple's commands.
@@ -88,6 +81,21 @@ pub enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Show where the config file is, or what it says.
+    Config {
+        /// What to show.
+        #[command(subcommand)]
+        action: ConfigAction,
+    },
+}
+
+/// `kipple config` actions.
+#[derive(Debug, Clone, Copy, Subcommand)]
+pub enum ConfigAction {
+    /// Print the config file's path.
+    Path,
+    /// Print the settings the config gives, or why it can't be used.
+    Show,
 }
 
 /// `kipple scan` options.
@@ -150,13 +158,25 @@ pub fn run(
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> ExitCode {
+    // Clap can't exempt the global `--config` from a conflict with the commands, so the
+    // home screen's own option is refused here.
+    if cli.command.is_some() && cli.home.ascii {
+        let message = "kipple: --ascii is for the home screen, not a command";
+        writeln!(stderr, "{message}").ok();
+        return ExitCode::from(USAGE);
+    }
     let builtin = match Builtin::load() {
         Ok(builtin) => builtin,
         Err(message) => return fail(stderr, &message),
     };
+    let host = Host {
+        builtin: &builtin,
+        env,
+        config: cli.config.as_deref(),
+    };
     match &cli.command {
-        None => summary(&builtin, env, stdout, stderr),
-        Some(Command::Scan(args)) => scan(args, &builtin, env, stdout, stderr),
+        None => summary(&host, stdout, stderr),
+        Some(Command::Scan(args)) => scan(&host, args, stdout, stderr),
         Some(Command::Rules { json }) => {
             let rules = rules::RulesOut::new(&builtin);
             let written = if *json {
@@ -166,9 +186,10 @@ pub fn run(
             };
             exit_code(written, stderr)
         }
-        Some(Command::Explain { target }) => explain(target, &builtin, env, stdout, stderr),
+        Some(Command::Explain { target }) => explain(&host, target, stdout, stderr),
+        Some(Command::Config { action }) => config_command(&host, *action, stdout, stderr),
         Some(Command::Doctor { json }) => {
-            let report = doctor::gather(env, &builtin);
+            let report = doctor::gather(env, host.config, &builtin);
             let written = if *json {
                 write_json(stdout, &report.to_json())
             } else {
@@ -180,66 +201,117 @@ pub fn run(
 }
 
 /// Opens the home screen in this terminal (`docs/03-functional-spec.md` §2 J1). Colour
-/// follows `NO_COLOR`.
-pub fn home(args: &HomeArgs, env: &Environment, stderr: &mut dyn Write) -> ExitCode {
-    let options = tui::Options {
-        layout: match args.layout {
-            LayoutArg::Buckets => tui::Layout::Buckets,
-            LayoutArg::Lenses => tui::Layout::Lenses,
-        },
-        look: tui::Look {
-            color: env.get("NO_COLOR").is_none(),
-            ascii: args.ascii,
-        },
+/// follows `NO_COLOR`. It needs a config that can be used.
+pub fn home(cli: &Cli, env: &Environment, stderr: &mut dyn Write) -> ExitCode {
+    let builtin = match Builtin::load() {
+        Ok(builtin) => builtin,
+        Err(message) => return fail(stderr, &message),
     };
-    match tui::open(env, options) {
+    let host = Host {
+        builtin: &builtin,
+        env,
+        config: cli.config.as_deref(),
+    };
+    let settings = match host.settings(&[], stderr) {
+        Ok(settings) => settings,
+        Err(code) => return code,
+    };
+    let look = tui::Look {
+        color: env.get("NO_COLOR").is_none(),
+        ascii: cli.home.ascii,
+    };
+    match tui::open(env, &settings, look) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => fail(stderr, &format!("the home screen failed: {error}")),
     }
 }
 
+/// What every command runs with: the built-in rules, the environment snapshot and the
+/// config file `--config` names, if any.
+#[derive(Debug, Clone, Copy)]
+struct Host<'a> {
+    builtin: &'a Builtin,
+    env: &'a Environment,
+    config: Option<&'a Path>,
+}
+
+impl Host<'_> {
+    /// The config and roots a scan runs with, the project roots `given` on the command
+    /// line, if any. A config that can't be used is reported on `stderr` with exit code
+    /// 2; each kept or excluded path that is missing is warned about.
+    fn settings(&self, given: &[PathBuf], stderr: &mut dyn Write) -> Result<Settings, ExitCode> {
+        let catalog = config::catalog(self.builtin);
+        match Settings::load(self.env, self.config, given, &catalog) {
+            Ok(settings) => {
+                for warning in &settings.warnings {
+                    writeln!(stderr, "kipple: warning: {warning}").ok();
+                }
+                Ok(settings)
+            }
+            Err(error) => Err(config_failed(stderr, &error)),
+        }
+    }
+
+    fn engine(&self) -> Result<Engine, String> {
+        self.builtin.engine(self.env)
+    }
+}
+
+/// Reports a config that can't be used: exit code 2.
+fn config_failed(stderr: &mut dyn Write, error: &ConfigError) -> ExitCode {
+    writeln!(stderr, "kipple: {error}").ok();
+    ExitCode::from(USAGE)
+}
+
 /// `kipple` without a terminal: the buckets' totals, never the home screen.
-fn summary(
-    builtin: &Builtin,
-    env: &Environment,
-    stdout: &mut dyn Write,
-    stderr: &mut dyn Write,
-) -> ExitCode {
-    let engine = match builtin.engine(env) {
+fn summary(host: &Host<'_>, stdout: &mut dyn Write, stderr: &mut dyn Write) -> ExitCode {
+    let settings = match host.settings(&[], stderr) {
+        Ok(settings) => settings,
+        Err(code) => return code,
+    };
+    let engine = match host.engine() {
         Ok(engine) => engine,
         Err(message) => return fail(stderr, &message),
     };
-    let (report, _) = scan::run(&engine, env, &[], None, &mut |_| Ok(()));
-    let out = ScanOut::new(&report, &builtin.lenses());
+    let (report, _) = scan::run(&engine, &settings, None, &mut |_| Ok(()));
+    let out = ScanOut::new(&report, &host.builtin.lenses(), &settings.policy);
     exit_code(scan::write_summary(stdout, &out), stderr)
 }
 
 fn scan(
+    host: &Host<'_>,
     args: &ScanArgs,
-    builtin: &Builtin,
-    env: &Environment,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> ExitCode {
-    let engine = match builtin.engine(env) {
-        Ok(engine) => engine,
-        Err(message) => return fail(stderr, &message),
-    };
     let roots = match absolute(&args.roots) {
         Ok(roots) => roots,
         Err(error) => return fail(stderr, &format!("--root: {error}")),
     };
-    let lenses = builtin.lenses();
+    let settings = match host.settings(&roots, stderr) {
+        Ok(settings) => settings,
+        Err(code) => return code,
+    };
+    let engine = match host.engine() {
+        Ok(engine) => engine,
+        Err(message) => return fail(stderr, &message),
+    };
+    let lenses = host.builtin.lenses();
     let lens = args.lens.map(Lens::from);
     let mut last_seq = None;
-    let (report, streamed) = scan::run(&engine, env, &roots, lens, &mut |event| {
+    let mut stream = scan::Stream {
+        lenses: &lenses,
+        policy: &settings.policy,
+        found: HashMap::new(),
+    };
+    let (report, streamed) = scan::run(&engine, &settings, lens, &mut |event| {
         last_seq = Some(event.seq);
         match args.events {
-            Some(EventsFormat::Jsonl) => scan::write_event(stdout, &event, &lenses),
+            Some(EventsFormat::Jsonl) => scan::write_event(stdout, &event, &mut stream),
             None => Ok(()),
         }
     });
-    let out = ScanOut::new(&report, &lenses);
+    let out = ScanOut::new(&report, &lenses, &settings.policy);
     let written = streamed.and_then(|()| match args.events {
         Some(EventsFormat::Jsonl) => {
             let seq = last_seq.map_or(0, |seq| seq + 1);
@@ -260,12 +332,12 @@ fn scan(
 }
 
 fn explain(
+    host: &Host<'_>,
     target: &str,
-    builtin: &Builtin,
-    env: &Environment,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> ExitCode {
+    let builtin = host.builtin;
     if let Some((pack, rule)) = explain::find_rule(builtin, target) {
         let written =
             explain::write_rule(stdout, builtin, pack, rule).and_then(|()| stdout.flush());
@@ -276,15 +348,41 @@ fn explain(
         writeln!(stderr, "{message}").ok();
         return ExitCode::from(USAGE);
     }
-    let engine = match builtin.engine(env) {
+    let settings = match host.settings(&[], stderr) {
+        Ok(settings) => settings,
+        Err(code) => return code,
+    };
+    let engine = match host.engine() {
         Ok(engine) => engine,
         Err(message) => return fail(stderr, &message),
     };
-    let (report, _) = scan::run(&engine, env, &[], None, &mut |_| Ok(()));
+    let (report, _) = scan::run(&engine, &settings, None, &mut |_| Ok(()));
     let path = PathBuf::from(target);
-    let written =
-        explain::write_path(stdout, builtin, &path, &report).and_then(|()| stdout.flush());
+    let written = explain::write_path(stdout, builtin, &path, &report, &settings.policy)
+        .and_then(|()| stdout.flush());
     exit_code(written, stderr)
+}
+
+/// `kipple config path|show`: they explain a config that can't be used rather than fail
+/// before they can, then exit with code 2.
+fn config_command(
+    host: &Host<'_>,
+    action: ConfigAction,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> ExitCode {
+    let roots = kipple_platform::resolve_roots(host.env, &[]);
+    let location = config::locate(host.env, host.config, &roots);
+    let loaded = config::load(&location, &config::catalog(host.builtin));
+    let written = match action {
+        ConfigAction::Path => config::write_path(stdout, &location),
+        ConfigAction::Show => config::write_show(stdout, &location, loaded.as_ref().ok()),
+    };
+    match (exit_code(written, stderr), loaded) {
+        (code, Ok(_)) => code,
+        (code, Err(_)) if code != ExitCode::SUCCESS => code,
+        (_, Err(error)) => config_failed(stderr, &error),
+    }
 }
 
 /// `roots`, each made absolute against the current directory.

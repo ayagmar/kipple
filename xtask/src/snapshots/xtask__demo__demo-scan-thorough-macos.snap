@@ -1,0 +1,411 @@
+---
+source: xtask/src/demo.rs
+expression: "serde_json::to_string_pretty(&report)?"
+---
+{
+  "findings": [
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "build-artifact",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "cache-warmth"
+        ],
+        "recovery": "rebuild-local"
+      },
+      "evidence": [
+        {
+          "file": "Cargo.toml",
+          "kind": "marker"
+        },
+        {
+          "entry": "CACHEDIR.TAG",
+          "kind": "signature"
+        }
+      ],
+      "integration": "cargo",
+      "lens": "dev",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/projects/clients/acme/api/target"
+      },
+      "rule": "builtin.cargo.target",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 8388787,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "safe",
+        "reasons": []
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "build-artifact",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "cache-warmth"
+        ],
+        "recovery": "rebuild-local"
+      },
+      "evidence": [
+        {
+          "file": "Cargo.toml",
+          "kind": "marker"
+        },
+        {
+          "entry": "CACHEDIR.TAG",
+          "kind": "signature"
+        }
+      ],
+      "integration": "cargo",
+      "lens": "dev",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/projects/rust-app/target"
+      },
+      "rule": "builtin.cargo.target",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 8388787,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "safe",
+        "reasons": []
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "dependency-install",
+      "consequence": null,
+      "evidence": [
+        {
+          "file": "package.json",
+          "kind": "marker"
+        },
+        {
+          "kind": "no-signature"
+        }
+      ],
+      "integration": "node",
+      "lens": "dev",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/projects/bunapp/node_modules"
+      },
+      "rule": "builtin.node.node-modules",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 102414,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "unknown-layout",
+          "unknown-consequence"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "dependency-install",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "offline-ability"
+        ],
+        "recovery": "reinstall"
+      },
+      "evidence": [
+        {
+          "file": "package.json",
+          "kind": "marker"
+        },
+        {
+          "entry": ".modules.yaml",
+          "kind": "signature"
+        }
+      ],
+      "integration": "node",
+      "lens": "dev",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/projects/dash/node_modules"
+      },
+      "rule": "builtin.node.node-modules",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 204833,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "safe",
+        "reasons": []
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "dependency-install",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "offline-ability"
+        ],
+        "recovery": "reinstall"
+      },
+      "evidence": [
+        {
+          "file": "package.json",
+          "kind": "marker"
+        },
+        {
+          "entry": ".package-lock.json",
+          "kind": "signature"
+        }
+      ],
+      "integration": "node",
+      "lens": "dev",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/projects/web/node_modules"
+      },
+      "rule": "builtin.node.node-modules",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 307235,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "safe",
+        "reasons": []
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "cache",
+      "consequence": {
+        "cost": "low",
+        "loss": [
+          "cache-warmth"
+        ],
+        "recovery": "automatic"
+      },
+      "evidence": [
+        {
+          "entry": "*.pyc",
+          "kind": "signature"
+        }
+      ],
+      "integration": "python",
+      "lens": "dev",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/projects/tool/pkg/__pycache__"
+      },
+      "rule": "builtin.python.bytecode",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 2048,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "safe",
+        "reasons": []
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "dependency-install",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "offline-ability"
+        ],
+        "recovery": "reinstall"
+      },
+      "evidence": [
+        {
+          "file": "pyproject.toml",
+          "kind": "marker"
+        },
+        {
+          "entry": "pyvenv.cfg",
+          "kind": "signature"
+        }
+      ],
+      "integration": "python",
+      "lens": "dev",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/projects/tool/.venv"
+      },
+      "rule": "builtin.python.venv",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 1572947,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "safe",
+        "reasons": []
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "dependency-install",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "offline-ability"
+        ],
+        "recovery": "reinstall"
+      },
+      "evidence": [
+        {
+          "file": "pyproject.toml",
+          "kind": "marker"
+        },
+        {
+          "entry": "pyvenv.cfg",
+          "kind": "signature"
+        }
+      ],
+      "integration": "python",
+      "lens": "dev",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/projects/uvproj/.venv"
+      },
+      "rule": "builtin.python.venv",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 185,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "safe",
+        "reasons": []
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "trash",
+      "consequence": null,
+      "evidence": [
+        {
+          "kind": "root",
+          "root": "trash"
+        }
+      ],
+      "integration": "trash",
+      "lens": "system",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.local/share/Trash/files"
+      },
+      "rule": "builtin.trash.contents",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 67108864,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    }
+  ],
+  "integrations": [
+    {
+      "advice": [
+        {
+          "references": [
+            "https://code.claude.com/docs/en/claude-directory#cleaned-up-automatically",
+            "https://code.claude.com/docs/en/settings"
+          ],
+          "snippets": [
+            "{ \"cleanupPeriodDays\": 14 }"
+          ],
+          "text": "cleanupPeriodDays in your user settings: 14 days, from <demo>/home/.claude/settings.json. Claude Code deletes transcripts, file history, plans, debug logs and other session data older than this. The default is 30 and the minimum 1; 0 fails validation. Managed settings, and project or command-line settings, override the user setting, and kipple doesn't read them. It never deletes auto memory files (versions before v2.1.228 could delete old files below a memory directory), keeps Claude Desktop and Cowork transcripts unless desktopSessionCleanupPeriodDays is set, and doesn't sweep in --bare sessions.",
+          "title": "Claude Code's own transcript retention"
+        }
+      ],
+      "id": "claude-code",
+      "lens": "agents",
+      "omissions": []
+    },
+    {
+      "advice": [],
+      "id": "cargo",
+      "lens": "dev",
+      "omissions": []
+    },
+    {
+      "advice": [],
+      "id": "node",
+      "lens": "dev",
+      "omissions": []
+    },
+    {
+      "advice": [],
+      "id": "python",
+      "lens": "dev",
+      "omissions": []
+    },
+    {
+      "advice": [],
+      "id": "trash",
+      "lens": "system",
+      "omissions": []
+    }
+  ],
+  "kipple": "0.0.0",
+  "level": "thorough",
+  "outcome": "completed",
+  "platform": "macos",
+  "schema": "kipple.scan/v1",
+  "unchecked_system_processes": 0
+}

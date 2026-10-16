@@ -16,6 +16,8 @@ pub(crate) const ROOTS: &[(&str, &str)] = &[
     ("xdg.cache", "home/.cache"),
     ("xdg.data", "home/.local/share"),
     ("xdg.state", "home/.local/state"),
+    // kipple's own config directory on Windows; `xdg.config` holds it elsewhere.
+    ("known.roaming-app-data", "home/AppData/Roaming"),
     ("config.project-roots", "home/projects"),
     ("trash", "home/.local/share/Trash/files"),
     ("claude.config", "home/.claude"),
@@ -34,7 +36,8 @@ pub(crate) fn looked_at() -> SystemTime {
 
 /// The demo tree, looked at `now`: a home with projects for each supported layout, plus
 /// the system locations kipple reports. Its files were last modified 41 days before
-/// `now`, except one project's dependencies, installed 2 days before.
+/// `now`, except one project's dependencies, installed 4 days before: recent at Careful
+/// and Balanced, not at Thorough, and clear of every level's window edge.
 pub(crate) fn tree(now: SystemTime) -> FixtureTree {
     let mut tree = FixtureTree::new();
     let projects = "home/projects";
@@ -56,6 +59,6 @@ pub(crate) fn tree(now: SystemTime) -> FixtureTree {
     journald_v262::journal(&mut tree, "var/log/journal");
     tree.modified("home", now - 41 * DAY)
         .modified("var", now - 41 * DAY)
-        .modified(&format!("{projects}/web/node_modules"), now - 2 * DAY);
+        .modified(&format!("{projects}/web/node_modules"), now - 4 * DAY);
     tree
 }

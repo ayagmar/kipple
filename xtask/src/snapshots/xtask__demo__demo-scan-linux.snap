@@ -1,11 +1,14 @@
 ---
 source: xtask/src/demo.rs
-assertion_line: 78
 expression: "serde_json::to_string_pretty(&report)?"
 ---
 {
   "findings": [
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "build-artifact",
       "consequence": {
         "cost": "unknown",
@@ -26,6 +29,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "cargo",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/clients/acme/api/target"
       },
@@ -42,6 +46,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "build-artifact",
       "consequence": {
         "cost": "unknown",
@@ -62,6 +70,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "cargo",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/rust-app/target"
       },
@@ -78,6 +87,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "dependency-install",
       "consequence": null,
       "evidence": [
@@ -91,6 +104,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "node",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/bunapp/node_modules"
       },
@@ -110,6 +124,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "dependency-install",
       "consequence": {
         "cost": "unknown",
@@ -130,6 +148,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "node",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/dash/node_modules"
       },
@@ -146,6 +165,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "dependency-install",
       "consequence": {
         "cost": "unknown",
@@ -166,6 +189,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "node",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/web/node_modules"
       },
@@ -184,6 +208,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "cache",
       "consequence": {
         "cost": "low",
@@ -200,6 +228,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "python",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/tool/pkg/__pycache__"
       },
@@ -216,6 +245,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "dependency-install",
       "consequence": {
         "cost": "unknown",
@@ -236,6 +269,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "python",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/tool/.venv"
       },
@@ -252,6 +286,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "dependency-install",
       "consequence": {
         "cost": "unknown",
@@ -272,6 +310,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "python",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/uvproj/.venv"
       },
@@ -288,6 +327,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "log",
       "consequence": null,
       "evidence": [
@@ -298,6 +341,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "journald",
       "lens": "system",
+      "level": "balanced",
       "path": {
         "display": "<demo>/var/log/journal"
       },
@@ -316,6 +360,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "package-cache",
       "consequence": null,
       "evidence": [
@@ -326,6 +374,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "pacman",
       "lens": "system",
+      "level": "balanced",
       "path": {
         "display": "<demo>/var/cache/pacman/pkg"
       },
@@ -344,6 +393,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "trash",
       "consequence": null,
       "evidence": [
@@ -354,6 +407,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "trash",
       "lens": "system",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/.local/share/Trash/files"
       },
@@ -457,5 +511,6 @@ expression: "serde_json::to_string_pretty(&report)?"
   "level": "balanced",
   "outcome": "completed",
   "platform": "linux",
-  "schema": "kipple.scan/v1"
+  "schema": "kipple.scan/v1",
+  "unchecked_system_processes": 0
 }

@@ -33,30 +33,45 @@ const PROJECT_ROOTS: [&str; 10] = [
     "source/repos",
 ];
 
-/// Resolves every root this OS has. `project_roots`, when given, replace the default
-/// project roots.
+/// Resolves every root this OS has. `project_roots`, when given (`--root`), replace the
+/// default project roots; none given means the defaults.
 ///
 /// A malformed explicit setting leaves its root unresolved; it never falls back to the
 /// default. A root whose own path is a link is resolved to where the link leads (see
 /// [`follow_root_links`]).
 #[must_use]
 pub fn resolve_roots(env: &Environment, project_roots: &[PathBuf]) -> Roots {
+    if project_roots.is_empty() {
+        return each_path_once(&follow_root_links(&upstream_roots(env)));
+    }
+    resolve_roots_from(env, project_roots, RootSource::CommandLine)
+}
+
+/// The same, with `project_roots` given by `source`, such as the config's
+/// `scan.project_roots`. They are resolved exactly as `--root` paths are.
+///
+/// They replace the default project roots even when there are none: an empty list means
+/// no project roots.
+#[must_use]
+pub fn resolve_roots_from(
+    env: &Environment,
+    project_roots: &[PathBuf],
+    source: RootSource,
+) -> Roots {
     let mut roots = upstream_roots(env);
-    if !project_roots.is_empty() {
-        roots.remove(SymbolicRoot::ProjectRoots);
-        for path in project_roots {
-            roots.add(SymbolicRoot::ProjectRoots, command_line_root(path));
-        }
+    roots.remove(SymbolicRoot::ProjectRoots);
+    for path in project_roots {
+        roots.add(SymbolicRoot::ProjectRoots, command_line_root(path, source));
     }
     each_path_once(&follow_root_links(&roots))
 }
 
-/// A project root given on the command line, below the directory its parent names: the
+/// A project root given on the command line or in config, below the directory its parent names: the
 /// parent's links and `..` resolved, so the same directory given two ways is one root and
 /// nothing below it has a `..` component. Its own name is kept, so a root that is itself
 /// a link is resolved once, keeping its identity (D-041). A root that doesn't exist is
 /// unresolved: the user named it, so finding nothing there must not read as clean.
-fn command_line_root(path: &Path) -> Result<ResolvedRoot, UnresolvedRoot> {
+fn command_line_root(path: &Path, source: RootSource) -> Result<ResolvedRoot, UnresolvedRoot> {
     if !path.is_absolute() {
         return Err(UnresolvedRoot::NotAbsolute {
             var: "--root",
@@ -75,7 +90,7 @@ fn command_line_root(path: &Path) -> Result<ResolvedRoot, UnresolvedRoot> {
         source: Arc::new(e),
     })?;
     let root = SymbolicRoot::ProjectRoots;
-    Ok(ResolvedRoot::new(root, resolved, RootSource::CommandLine))
+    Ok(ResolvedRoot::new(root, resolved, source))
 }
 
 /// An absolute `path` below the directory its parent names, the parent's links and `..`

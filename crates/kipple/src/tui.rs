@@ -1,5 +1,6 @@
 //! The home screen (`docs/03-functional-spec.md` §2 J1 and §5): `kipple` with no
-//! arguments in a terminal.
+//! arguments in a terminal, after the first run's questions (J0) when there is no config
+//! file yet.
 //!
 //! A state machine (`app`) and a pure renderer (`view`), driven by one loop that
 //! reads keys and scan events and draws at most once a frame. It is read-only: selecting
@@ -7,22 +8,28 @@
 
 mod app;
 mod filter;
+mod onboarding;
+mod settings;
 mod view;
 
 use std::io;
-use std::path::PathBuf;
-use std::thread::{self, ScopedJoinHandle};
+use std::thread::{self, Scope, ScopedJoinHandle};
 use std::time::{Duration, Instant};
 
-use kipple_core::{CancelToken, EventRx, ScanOutcome, ScanReport, ScanRequest, event_channel};
-use kipple_platform::{Environment, resolve_roots};
+use kipple_core::{
+    CancelToken, Engine, EventRx, ScanOutcome, ScanReport, ScanRequest, event_channel,
+};
+use kipple_platform::Environment;
 use ratatui::Terminal;
 use ratatui::backend::Backend;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use self::app::{App, Catalog, Msg};
-pub use self::app::{Key, Layout};
+pub use self::app::Key;
+use self::app::{App, Catalog, Effect, Msg, Saved};
+pub use self::onboarding::{LevelTotals, due as first_run_due, level_totals};
+use self::onboarding::{Onboarding, Outcome};
 pub use self::view::Look;
+use crate::config::{self, Edit, Loaded, Settings};
 use crate::setup::Builtin;
 
 /// How long the loop waits for a key while the scan streams: one frame at 60 Hz.
@@ -58,20 +65,12 @@ pub trait Keys {
     fn next(&mut self, timeout: Duration) -> io::Result<Option<Input>>;
 }
 
-/// How the home screen looks and is laid out.
-#[derive(Debug, Clone, Copy)]
-pub struct Options {
-    /// Which grouping comes first.
-    pub layout: Layout,
-    /// Colour and symbols.
-    pub look: Look,
-}
-
 /// Runs the home screen on `terminal` until it is closed.
 ///
-/// It scans `roots` (or the default project roots) on the machine `env` describes, and
-/// returns how long the scan took when it finished before the screen was closed. Closing
-/// it earlier cancels the scan.
+/// It scans the roots of `settings` on the machine `env` describes, with their policy, and
+/// returns how long the last scan took when it finished before the screen was closed.
+/// Closing it earlier cancels the scan. Keeping a finding or changing a setting writes
+/// the config file `settings` was loaded from, and nothing else.
 ///
 /// # Errors
 /// When the terminal can't be read or drawn, or the built-in rules don't load.
@@ -79,55 +78,93 @@ pub fn run<B: Backend>(
     terminal: &mut Terminal<B>,
     keys: &mut dyn Keys,
     env: &Environment,
-    roots: &[PathBuf],
-    options: Options,
+    settings: &Settings,
+    look: Look,
 ) -> io::Result<Option<Duration>>
 where
     B::Error: Send + Sync + 'static,
 {
+    let start = Start {
+        env,
+        settings,
+        look,
+        first: false,
+    };
+    session(terminal, keys, &start)
+}
+
+/// What a session runs with: the machine, the settings and the look, and whether the
+/// first run's questions come before the home screen.
+struct Start<'a> {
+    env: &'a Environment,
+    settings: &'a Settings,
+    look: Look,
+    first: bool,
+}
+
+/// [`run`], with the first run's questions over the home screen, while the scan already
+/// runs, when `start` asks for them.
+fn session<B: Backend>(
+    terminal: &mut Terminal<B>,
+    keys: &mut dyn Keys,
+    start: &Start<'_>,
+) -> io::Result<Option<Duration>>
+where
+    B::Error: Send + Sync + 'static,
+{
+    let &Start {
+        env,
+        settings,
+        look,
+        first,
+    } = start;
     let builtin = Builtin::load().map_err(io::Error::other)?;
     let engine = builtin.engine(env).map_err(io::Error::other)?;
-    let request = ScanRequest {
-        roots: resolve_roots(env, roots),
-        lens: None,
-    };
     let size = terminal.size().map_err(io::Error::other)?;
-    let mut app = App::new(
-        Catalog::new(&builtin),
-        options.layout,
-        size.width,
-        size.height,
-    );
-    let cancel = CancelToken::new();
-    let (events, received) = event_channel(STREAM_CAPACITY, &cancel);
+    let mut app = App::new(Catalog::new(&builtin), size.width, size.height);
+    app.configure(Saved::of(settings));
+    let onboarding = first.then(|| Onboarding::new(&app));
+    let store = Store {
+        env,
+        catalog: config::catalog(&builtin),
+        settings: settings.clone(),
+    };
     thread::scope(|scope| {
-        let started = Instant::now();
-        let scan = scope.spawn(|| {
-            let events = events;
-            engine.scan(&request, &events, &cancel)
-        });
         let mut screen = Screen {
             terminal,
-            look: options.look,
+            look,
             app: &mut app,
-            received,
-            scan: Some(scan),
-            started,
+            onboarding,
+            store,
+            scope,
+            engine: &engine,
+            scan: None,
             elapsed: None,
         };
+        screen.start();
         let ran = screen.drive(keys);
         // Stops a scan still running, so leaving the scope doesn't wait for it.
-        cancel.cancel();
+        screen.stop();
         ran.map(|()| screen.elapsed)
     })
 }
 
 /// Opens the home screen in this terminal and restores the terminal however it ends:
-/// on quit, on error, and on panic (ratatui's panic hook).
-pub(crate) fn open(env: &Environment, options: Options) -> io::Result<()> {
-    let mut terminal = ratatui::try_init()?;
+/// on quit, on error, and on panic (ratatui's panic hook). Without a config file at the
+/// default location, the first run's questions come first (J0).
+pub(crate) fn open(env: &Environment, settings: &Settings, look: Look) -> io::Result<()> {
+    let first = onboarding::due(&settings.loaded);
+    // Before `try_init`: it enables raw mode first, and that stays on if entering the
+    // alternate screen then fails.
     let _restore = Restore;
-    run(&mut terminal, &mut TerminalKeys, env, &[], options).map(|_| ())
+    let mut terminal = ratatui::try_init()?;
+    let start = Start {
+        env,
+        settings,
+        look,
+        first,
+    };
+    session(&mut terminal, &mut TerminalKeys, &start).map(|_| ())
 }
 
 /// Leaves raw mode and the alternate screen when dropped.
@@ -139,21 +176,114 @@ impl Drop for Restore {
     }
 }
 
+/// The config file the home screen writes, and the settings it last gave.
+struct Store<'e> {
+    env: &'e Environment,
+    catalog: config::Catalog,
+    settings: Settings,
+}
+
+impl Store<'_> {
+    /// Writes `edits` to the config file and rebuilds the settings from what was
+    /// written. The answer for the home screen.
+    fn write(&mut self, edits: &[Edit]) -> Msg {
+        let location = &self.settings.loaded.location;
+        let written = config::write(location, edits, &self.settings.roots, &self.catalog).and_then(
+            |config| {
+                let loaded = Loaded {
+                    location: location.clone(),
+                    exists: true,
+                    config,
+                };
+                Settings::from_loaded(self.env, loaded, &[])
+            },
+        );
+        match written {
+            Ok(settings) => {
+                let saved = Saved::of(&settings);
+                self.settings = settings;
+                Msg::Saved(Box::new(saved))
+            }
+            Err(error) => Msg::NotSaved(error.to_string()),
+        }
+    }
+}
+
+/// A scan in progress, or finished.
+struct Scan<'scope> {
+    cancel: CancelToken,
+    received: EventRx,
+    /// Until the report has been taken.
+    report: Option<ScopedJoinHandle<'scope, ScanReport>>,
+    started: Instant,
+}
+
 /// One home screen session: the state, the scan feeding it and the terminal drawing it.
-struct Screen<'s, 'scope, B: Backend> {
+struct Screen<'s, 'scope, 'env, B: Backend> {
     terminal: &'s mut Terminal<B>,
     look: Look,
     app: &'s mut App,
-    received: EventRx,
-    scan: Option<ScopedJoinHandle<'scope, ScanReport>>,
-    started: Instant,
+    /// The first run's questions, until they are answered.
+    onboarding: Option<Onboarding>,
+    store: Store<'env>,
+    scope: &'scope Scope<'scope, 'env>,
+    engine: &'env Engine,
+    scan: Option<Scan<'scope>>,
     elapsed: Option<Duration>,
 }
 
-impl<B: Backend> Screen<'_, '_, B>
+impl<B: Backend> Screen<'_, '_, '_, B>
 where
     B::Error: Send + Sync + 'static,
 {
+    /// Starts a scan of the roots the settings give, cancelling the one running.
+    fn start(&mut self) {
+        self.stop();
+        let settings = &self.store.settings;
+        let request = ScanRequest {
+            roots: settings.roots.clone(),
+            lens: None,
+            exclude: settings.policy.exclude.clone(),
+        };
+        let cancel = CancelToken::new();
+        let (events, received) = event_channel(STREAM_CAPACITY, &cancel);
+        let engine = self.engine;
+        let token = cancel.clone();
+        let report = self
+            .scope
+            .spawn(move || engine.scan(&request, &events, &token));
+        self.scan = Some(Scan {
+            cancel,
+            received,
+            report: Some(report),
+            started: Instant::now(),
+        });
+        self.elapsed = None;
+    }
+
+    fn stop(&self) {
+        if let Some(scan) = &self.scan {
+            scan.cancel.cancel();
+        }
+    }
+
+    fn scanning(&self) -> bool {
+        self.scan.as_ref().is_some_and(|scan| scan.report.is_some())
+    }
+
+    /// Carries out what the home screen asked for: config writes and new scans.
+    fn effects(&mut self) {
+        while let Some(effect) = self.app.take_effect() {
+            match effect {
+                Effect::Write(edits) => {
+                    let answer = self.store.write(&edits);
+                    self.app.update(answer);
+                }
+                Effect::Rescan => self.start(),
+            }
+        }
+    }
+
     /// Reads keys and scan events until the screen is closed. A key is drawn at once;
     /// scan events are drawn at most once a frame.
     fn drive(&mut self, keys: &mut dyn Keys) -> io::Result<()> {
@@ -161,12 +291,10 @@ where
         let mut drawn = Instant::now();
         let mut stale = false;
         while !self.app.quit {
-            let wait = if self.scan.is_some() { FRAME } else { IDLE };
+            let wait = if self.scanning() { FRAME } else { IDLE };
             if let Some(input) = keys.next(wait)? {
-                self.app.update(match input {
-                    Input::Key(key) => Msg::Key(key),
-                    Input::Resize { width, height } => Msg::Resize { width, height },
-                });
+                self.input(input);
+                self.effects();
                 self.draw()?;
                 drawn = Instant::now();
                 stale = false;
@@ -181,26 +309,55 @@ where
         Ok(())
     }
 
+    /// Passes `input` to the first run's questions while they are open, else to the home
+    /// screen. Finishing them asks the home screen to write the answers.
+    fn input(&mut self, input: Input) {
+        let key = match input {
+            Input::Key(key) => key,
+            Input::Resize { width, height } => {
+                self.app.update(Msg::Resize { width, height });
+                return;
+            }
+        };
+        let Some(onboarding) = &mut self.onboarding else {
+            self.app.update(Msg::Key(key));
+            return;
+        };
+        match onboarding.key(key) {
+            Outcome::Stay => {}
+            Outcome::Quit => self.app.quit = true,
+            Outcome::Finish(edits) => {
+                self.onboarding = None;
+                onboarding::finish(self.app, edits);
+            }
+        }
+    }
+
     /// Applies the scan events that have arrived, at most a batch of them, and the
     /// report once the scan has ended. Whether anything changed.
     fn receive(&mut self) -> bool {
+        let Some(scan) = &mut self.scan else {
+            return false;
+        };
         let mut changed = false;
         for _ in 0..BATCH {
-            let Some(sequenced) = self.received.poll(Duration::ZERO) else {
+            let Some(sequenced) = scan.received.poll(Duration::ZERO) else {
                 break;
             };
             self.app.update(Msg::Scan(Box::new(sequenced.event)));
             changed = true;
         }
-        if self.received.ended()
-            && let Some(scan) = self.scan.take()
+        if scan.received.ended()
+            && let Some(report) = scan.report.take()
         {
-            let report = scan.join().unwrap_or_else(|_| ScanReport {
+            let report = report.join().unwrap_or_else(|_| ScanReport {
                 outcome: ScanOutcome::Cancelled,
                 integrations: Vec::new(),
                 findings: Vec::new(),
+                unchecked_system: 0,
+                by_command_line: 0,
             });
-            let elapsed = self.started.elapsed();
+            let elapsed = scan.started.elapsed();
             self.elapsed = Some(elapsed);
             self.app.update(Msg::Finished {
                 report: Box::new(report),
@@ -212,9 +369,12 @@ where
     }
 
     fn draw(&mut self) -> io::Result<()> {
-        let (app, look) = (&*self.app, self.look);
+        let (app, look, onboarding) = (&*self.app, self.look, self.onboarding.as_ref());
         self.terminal
-            .draw(|frame| view::render(app, look, frame))
+            .draw(|frame| match onboarding {
+                Some(onboarding) => onboarding::render(onboarding, app, look, frame),
+                None => view::render(app, look, frame),
+            })
             .map(|_| ())
             .map_err(io::Error::other)
     }
@@ -242,14 +402,16 @@ impl Keys for TerminalKeys {
 }
 
 /// The home screen's key for a key press. Ctrl-C interrupts. A character held with both
-/// Ctrl and Alt is typed as it is: Windows reports Alt Gr that way, and Alt Gr types `@`
-/// and `{` on many layouts. Any other key held with Ctrl or Alt means nothing, so
-/// Ctrl-S doesn't select and Alt-Q doesn't quit.
+/// Ctrl and Alt, other than an ASCII letter or digit, is typed as it is: Windows reports
+/// Alt Gr that way, and Alt Gr types `@`, `{` or `ł` on many layouts. Any other key held
+/// with Ctrl or Alt means nothing, so Ctrl-S and Ctrl-Alt-S don't select and Alt-Q
+/// doesn't quit.
 const fn key_of(key: KeyEvent) -> Option<Key> {
     if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('c')) {
         return Some(Key::Interrupt);
     }
     if let KeyCode::Char(c) = key.code
+        && !c.is_ascii_alphanumeric()
         && key
             .modifiers
             .contains(KeyModifiers::CONTROL.union(KeyModifiers::ALT))
@@ -328,6 +490,19 @@ mod tests {
         }
         assert_eq!(press(KeyCode::Char('c'), altgr), Some(Key::Interrupt));
         assert_eq!(press(KeyCode::Enter, altgr), None);
+    }
+
+    // Catches Ctrl-Alt-S selecting a finding and Ctrl-Alt-Q closing the screen: Alt Gr
+    // never types an ASCII letter or digit, so those are shortcuts, not text.
+    #[test]
+    fn ctrl_alt_with_an_ascii_letter_or_digit_does_nothing_but_altgr_letters_are_typed() {
+        let altgr = KeyModifiers::CONTROL.union(KeyModifiers::ALT);
+        for c in ['s', 'q', 'S', 'a', '1'] {
+            assert_eq!(press(KeyCode::Char(c), altgr), None, "{c:?}");
+        }
+        for c in ['ł', 'ß', '€'] {
+            assert_eq!(press(KeyCode::Char(c), altgr), Some(Key::Char(c)), "{c:?}");
+        }
     }
 
     // Catches the modifier check swallowing the one modified key the screen answers.

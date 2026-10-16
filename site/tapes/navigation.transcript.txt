@@ -1,0 +1,24 @@
+Navigating the home screen (recording of navigation.tape)
+
+The user runs "kipple --config navigation.toml", a config file that already sets the
+level, so the home screen opens straight away. The header shows the level and how long
+the scan took. The findings are sorted into Safe to clean, Review and Protected, each
+grouped into Agents, Dev and System. The detail pane says what the finding under the
+cursor is, why it is here, why kipple thinks it is safe or holds it, what you lose and how
+it comes back.
+
+The user presses j three times and k once: the cursor moves through the list and the
+detail pane follows it. h folds the group under the cursor and l unfolds it again.
+
+Tab shows one lens at a time: Agents, then Dev, which the header names as "lens: Dev",
+then System, then every finding again.
+
+/ starts a filter. The user types "venv" and presses enter: only the findings whose rule
+or path match stay, and the header shows "filter: venv". esc clears the filter.
+
+c selects the whole Safe bucket. enter says how much is selected, and that review and
+cleaning come in a later version: nothing was changed.
+
+, opens the settings screen: the config file, the level, the project roots, the default
+method and what is kept. esc goes back. ? opens the help, which lists every key, and
+another key closes it. q quits.

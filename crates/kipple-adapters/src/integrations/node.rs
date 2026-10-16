@@ -6,8 +6,9 @@
 use std::path::Path;
 
 use kipple_core::{
-    Consequence, Cost, DirEntryMeta, FindingSink, Integration, IntegrationDescriptor,
-    IntegrationError, IntegrationId, Lens, Loss, Platform, Recovery, ScanContext,
+    ActivityEvidence, Consequence, Cost, DirEntryMeta, FindingSink, Integration,
+    IntegrationDescriptor, IntegrationError, IntegrationId, Lens, Loss, Platform, Recovery,
+    ScanContext,
 };
 
 use super::project;
@@ -36,6 +37,13 @@ impl Integration for Node {
             artifacts: &["node_modules"],
             owner_files: &[],
             verified: &["npm 11.19.0", "pnpm 12.9.1", "Bun 1.4.2"],
+        }
+    }
+
+    fn activity_evidence(&self) -> ActivityEvidence {
+        // `node`, `bun` or `deno` run the packages from outside `node_modules`.
+        ActivityEvidence::Interpreted {
+            runtimes: &["node", "bun", "deno"],
         }
     }
 

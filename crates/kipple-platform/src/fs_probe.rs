@@ -4,7 +4,7 @@ use std::fs;
 use std::io::{self, Read as _};
 use std::path::{Path, PathBuf};
 
-use kipple_core::{DirEntryMeta, EntryKind, EntryMeta, FsProbe, ProbeError};
+use kipple_core::{DirAccess, DirEntryMeta, EntryKind, EntryMeta, FsProbe, ProbeError};
 
 use crate::os;
 
@@ -56,6 +56,10 @@ impl FsProbe for NoFollowFs {
             Ok(bytes)
         };
         read().map_err(|e| ProbeError::io(path, e))
+    }
+
+    fn access(&self, dir: &Path) -> Result<DirAccess, ProbeError> {
+        os::dir_access(&exact(dir)).map_err(|e| ProbeError::io(dir, e))
     }
 }
 

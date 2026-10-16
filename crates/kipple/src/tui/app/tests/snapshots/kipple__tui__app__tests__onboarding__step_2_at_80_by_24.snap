@@ -1,0 +1,29 @@
+---
+source: crates/kipple/src/tui/app/tests/onboarding.rs
+assertion_line: 406
+expression: "screen(&first, &app, 80, 24)"
+---
+ Welcome to kipple · step 2 of 4 · scan finished
+────────────────────────────────────────────────────────────────────────────────
+Where are your projects?
+kipple looks for build output and dependencies below these folders.
+
+> [ ] /home/ada/projects
+  [x] /home/ada/code
+  + add another
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ enter choose · space check · tab skip · esc back · q quit, saving nothing

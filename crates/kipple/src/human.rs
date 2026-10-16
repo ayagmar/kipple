@@ -1,8 +1,8 @@
 //! Text for people: escaping and sizes.
 
 use kipple_core::{
-    Activity, ActivityGap, Bucket, Caution, Facts, Hold, Level, Loss, Modified, Proposal, Recovery,
-    Tracked, Verdict,
+    Activity, ActivityGap, Bucket, Caution, Facts, Finding, Hold, Loss, Modified, Policy, Proposal,
+    Recovery, Seen, Tracked, Verdict, WalkGap,
 };
 
 use crate::json::{CompletenessOut, SizeOut};
@@ -73,6 +73,9 @@ pub(crate) const fn bucket(bucket: Bucket) -> &'static str {
 /// Why a finding is Protected, as a row shows it: never colour alone.
 pub(crate) const fn hold(hold: Hold) -> &'static str {
     match hold {
+        Hold::Disabled => "rule turned off",
+        Hold::Kept => "kept",
+        Hold::Excluded => "excluded by config",
         Hold::ReportOnly => "report only",
         Hold::Advice => "advice",
         Hold::UnknownLayout => "unknown: layout",
@@ -105,10 +108,18 @@ pub(crate) fn reasons(verdict: &Verdict) -> String {
     labels.join(", ")
 }
 
-/// What kipple established about a finding, as labelled lines for a detail view: what
-/// comes back and what is lost, then each check its bucket rests on.
-pub(crate) fn facts(facts: &Facts, level: Level) -> Vec<(&'static str, String)> {
+/// What kipple established about a finding, as labelled lines for a detail view: the
+/// note it is kept with, what comes back and what is lost, then each check its bucket
+/// rests on. Nothing until it is measured.
+pub(crate) fn facts(finding: &Finding, policy: &Policy) -> Vec<(&'static str, String)> {
     let mut lines = Vec::new();
+    let Some(facts) = &finding.facts else {
+        return lines;
+    };
+    if let Some(kept) = policy.kept(&finding.path, &facts.lineage) {
+        let note = kept.note.as_deref().unwrap_or("in the config's keep.paths");
+        lines.push(("Kept", escaped(note)));
+    }
     if let Some(consequence) = &facts.consequence {
         lines.push(("Comes back", recovery(consequence.recovery).to_owned()));
         lines.push(("You lose", losses(consequence.loss)));
@@ -128,7 +139,8 @@ pub(crate) fn facts(facts: &Facts, level: Level) -> Vec<(&'static str, String)> 
     }
     lines.push(("Git", tracked(&facts.tracked)));
     lines.push(("In use", activity(&facts.activity)));
-    lines.push(("Last change", modified(facts, level)));
+    let window = policy.recent_window_days(&finding.rule, facts);
+    lines.push(("Last change", modified(facts, window)));
     lines
 }
 
@@ -167,10 +179,10 @@ fn tracked(tracked: &Tracked) -> String {
             "a git checkout lives inside it at {}",
             escaped(&work_tree.display().to_string())
         ),
-        Tracked::Unwalked => {
-            "it couldn't be measured completely, so a git checkout inside can't be ruled out"
-                .to_owned()
-        }
+        Tracked::Unwalked(gap) => format!(
+            "{}, so a git checkout inside can't be ruled out",
+            walk_gap(*gap)
+        ),
         Tracked::InsideRepository { work_tree } => format!(
             "inside the repository at {}; whether git tracks files in it isn't checked yet",
             escaped(&work_tree.display().to_string())
@@ -182,16 +194,39 @@ fn tracked(tracked: &Tracked) -> String {
     }
 }
 
-fn activity(activity: &Activity) -> String {
+/// The D-050 notice, when any process was left out.
+pub(crate) fn unchecked_system(count: usize) -> Option<String> {
+    (count > 0).then(|| {
+        format!(
+            "{count} processes owned by root or SYSTEM, or running with root's rights, couldn't \
+             be inspected and were not counted for items in your home."
+        )
+    })
+}
+
+/// The D-052 notice, when any of the user's own processes was judged by its command line.
+pub(crate) fn by_command_line(count: usize) -> Option<String> {
+    (count > 0).then(|| {
+        format!(
+            "{count} of your own processes couldn't be fully inspected and were checked by \
+             their command line only for items in your home."
+        )
+    })
+}
+
+/// Whether a running program uses a finding, in words.
+pub(crate) fn activity(activity: &Activity) -> String {
     match activity {
-        Activity::Idle => "no running program runs an executable inside it".to_owned(),
-        Activity::InUse { pid, executable } => format!(
-            "process {pid} runs {}",
-            escaped(&executable.display().to_string())
+        Activity::Idle => "no running program shows it in use".to_owned(),
+        Activity::IdleExceptSystem {
+            unchecked,
+            by_command_line,
+        } => idle_except(*unchecked, *by_command_line),
+        Activity::InUse { pid, seen } => in_use(*pid, seen),
+        Activity::Unknown(ActivityGap::Uninspected(count)) => format!(
+            "{count} running programs that count couldn't be inspected, so one of them might \
+             use it"
         ),
-        Activity::Unknown(ActivityGap::Uninspected(count)) => {
-            format!("{count} running programs couldn't be identified, so one of them might use it")
-        }
         Activity::Unknown(ActivityGap::Partial(reason)) => format!(
             "the list of running programs may be incomplete ({})",
             escaped(reason)
@@ -200,12 +235,33 @@ fn activity(activity: &Activity) -> String {
             "the running programs couldn't be listed: {}",
             escaped(&error.to_string())
         ),
+        Activity::Unknown(ActivityGap::Unsupported) => {
+            "this OS doesn't show which paths running programs use, beyond their executable"
+                .to_owned()
+        }
     }
 }
 
-fn modified(facts: &Facts, level: Level) -> String {
-    let Modified::Ago(age) = facts.modified else {
-        return "unknown: it couldn't be measured completely".to_owned();
+/// How process `pid` was seen using a finding: only the path that matched.
+fn in_use(pid: u32, seen: &Seen) -> String {
+    let (how, path) = match seen {
+        Seen::Executable(path) => ("runs", path),
+        Seen::WorkingDirectory(path) => ("works in", path),
+        Seen::Argument(path) => ("was started with", path),
+        Seen::Environment(path) => ("has in its environment", path),
+        Seen::MappedFile(path) => ("has loaded", path),
+        Seen::Runtime(path) => ("is its runtime and uses its project at", path),
+    };
+    format!(
+        "process {pid} {how} {}",
+        escaped(&path.display().to_string())
+    )
+}
+
+fn modified(facts: &Facts, window: u16) -> String {
+    let age = match facts.modified {
+        Modified::Ago(age) => age,
+        Modified::Unknown(gap) => return format!("unknown: {}", walk_gap(gap)),
     };
     let days = age.as_secs() / (24 * 60 * 60);
     let ago = match days {
@@ -213,10 +269,38 @@ fn modified(facts: &Facts, level: Level) -> String {
         1 => "1 day ago".to_owned(),
         days => format!("{days} days ago"),
     };
-    let window = facts.recent_window_days(level);
     if days < u64::from(window) {
         format!("{ago}, within the {window}-day recent window")
     } else {
         ago
     }
 }
+
+const fn walk_gap(gap: WalkGap) -> &'static str {
+    match gap {
+        WalkGap::Unread => "it couldn't be measured completely",
+        WalkGap::OtherFileSystem => "a directory inside is on another file system and wasn't read",
+        WalkGap::Untimed => "an entry inside didn't say when it last changed",
+    }
+}
+
+/// An idle finding in the home directory that some processes couldn't be fully checked
+/// for, in words.
+fn idle_except(unchecked: usize, by_command_line: usize) -> String {
+    let system = (unchecked > 0).then(|| {
+        format!(
+            "{unchecked} owned by root or SYSTEM, or running with root's rights, couldn't be \
+             inspected and weren't counted, since it is in your home"
+        )
+    });
+    let own = (by_command_line > 0)
+        .then(|| format!("{by_command_line} of your own were checked by their command line only"));
+    std::iter::once("no running program kipple could inspect shows it in use".to_owned())
+        .chain(system)
+        .chain(own)
+        .collect::<Vec<_>>()
+        .join("; ")
+}
+
+#[cfg(test)]
+mod tests;

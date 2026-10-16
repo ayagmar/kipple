@@ -4,7 +4,7 @@
 
 use std::path::Path;
 
-use kipple_core::{Lens, ScanOutcome, Verdict};
+use kipple_core::{Lens, Level, ScanOutcome, Verdict};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout as Split, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -12,9 +12,9 @@ use ratatui::symbols::border;
 use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
-use super::app::{App, Layout, Line, Mode, Node, Progress, Row, Shelf};
+use super::app::{App, Line, Mode, Node, Progress, Row, Shelf};
+use super::settings::{self, Item};
 use crate::human::{self, bytes, escaped};
-use crate::json::LEVEL;
 
 /// A terminal at least this wide shows the detail pane beside the tree; a narrower one
 /// shows it below.
@@ -47,7 +47,7 @@ const ASCII_BORDER: border::Set<'static> = border::Set {
 };
 
 impl Look {
-    const fn border(self) -> border::Set<'static> {
+    pub(crate) const fn border(self) -> border::Set<'static> {
         if self.ascii {
             ASCII_BORDER
         } else {
@@ -55,7 +55,7 @@ impl Look {
         }
     }
 
-    const fn dot(self) -> &'static str {
+    pub(crate) const fn dot(self) -> &'static str {
         if self.ascii { " - " } else { " · " }
     }
 
@@ -66,6 +66,10 @@ impl Look {
             (true, false) => "v ",
             (true, true) => "> ",
         }
+    }
+
+    pub(crate) fn ellipsis(self, text: &str) -> String {
+        format!("{text}{}", if self.ascii { "..." } else { "…" })
     }
 
     const fn mark(self) -> &'static str {
@@ -89,7 +93,7 @@ impl Look {
         })
     }
 
-    const fn dim(self) -> Style {
+    pub(crate) const fn dim(self) -> Style {
         if self.color {
             Style::new().fg(Color::DarkGray)
         } else {
@@ -101,6 +105,8 @@ impl Look {
 /// Where each part of the screen goes.
 struct Areas {
     header: Rect,
+    /// The tree and the detail pane together, where the settings panel goes.
+    body: Rect,
     list: Rect,
     detail: Rect,
     footer: Rect,
@@ -122,6 +128,7 @@ fn areas(area: Rect) -> Areas {
     };
     Areas {
         header,
+        body,
         list,
         detail,
         footer,
@@ -160,6 +167,11 @@ pub(crate) fn render(app: &App, look: Look, frame: &mut Frame<'_>) {
         lines: &lines,
     };
     frame.render_widget(header(app, look), areas.header);
+    frame.render_widget(footer(app, look), areas.footer);
+    if app.mode == Mode::Settings {
+        render_settings(app, look, areas.body, frame);
+        return;
+    }
     render_list(app, look, &tree, areas.list, frame);
     let focus = lines.get(tree.at).map(|line| line.node);
     let borders = if areas.wide {
@@ -175,7 +187,6 @@ pub(crate) fn render(app: &App, look: Look, frame: &mut Frame<'_>) {
         .block(block)
         .wrap(Wrap { trim: false });
     frame.render_widget(detail, areas.detail);
-    frame.render_widget(footer(app, look), areas.footer);
     if app.mode == Mode::Help {
         render_help(look, frame);
     }
@@ -183,7 +194,7 @@ pub(crate) fn render(app: &App, look: Look, frame: &mut Frame<'_>) {
 
 fn header(app: &App, look: Look) -> Paragraph<'static> {
     let state = match app.progress {
-        Progress::Scanning => "scanning…".to_owned(),
+        Progress::Scanning => look.ellipsis("scanning"),
         Progress::Done { outcome, .. } if outcome != ScanOutcome::Completed => {
             "scan stopped early".to_owned()
         }
@@ -195,15 +206,25 @@ fn header(app: &App, look: Look) -> Paragraph<'static> {
             )
         }
     };
-    let mut spans = vec![
-        Span::styled("kipple", Style::new().add_modifier(Modifier::BOLD)),
-        Span::raw(look.dot()),
-        Span::raw("read-only"),
-        Span::raw(look.dot()),
-        Span::raw(format!("level: {}", title_case(LEVEL.name()))),
-        Span::raw(look.dot()),
-        Span::raw(state),
-    ];
+    let mut spans = vec![Span::styled(
+        "kipple",
+        Style::new().add_modifier(Modifier::BOLD),
+    )];
+    for (index, &level) in Level::ALL.iter().enumerate() {
+        spans.push(Span::raw(if index == 0 { "  " } else { look.dot() }));
+        let style = if level == app.policy.level {
+            look.fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        } else {
+            look.dim()
+        };
+        spans.push(Span::styled(title_case(level.name()), style));
+    }
+    spans.push(Span::raw(format!(
+        " (level: {})",
+        title_case(app.policy.level.name())
+    )));
+    spans.push(Span::raw(look.dot()));
+    spans.push(Span::raw(state));
     if !app.gaps.is_empty() {
         spans.push(Span::raw(look.dot()));
         spans.push(Span::styled(
@@ -281,30 +302,12 @@ fn cells(app: &App, look: Look, line: Line) -> Cells {
                 state: Text::styled(format!(" {}", shelf_hint(shelf)), look.dim()),
             }
         }
-        Node::Lens(lens) => {
+        Node::Group(_, lens) => {
             let (count, total) = sum(app, line.node);
             Cells {
                 label: Text::from(vec![
                     Span::raw(format!("  {indent}{}", fold(line.node))),
-                    Span::styled(
-                        format!("{} ({count})", lens_title(lens)),
-                        Style::new().add_modifier(Modifier::BOLD),
-                    ),
-                ]),
-                size: bytes(total),
-                state: Text::from(""),
-            }
-        }
-        Node::Group(shelf, lens) => {
-            let (count, total) = sum(app, line.node);
-            let (name, style) = match app.layout {
-                Layout::Buckets => (lens_title(lens), Style::new()),
-                Layout::Lenses => (shelf_title(shelf), look.tint(shelf)),
-            };
-            Cells {
-                label: Text::from(vec![
-                    Span::raw(format!("  {indent}{}", fold(line.node))),
-                    Span::styled(format!("{name} ({count})"), style),
+                    Span::raw(format!("{} ({count})", lens_title(lens))),
                 ]),
                 size: bytes(total),
                 state: Text::from(""),
@@ -320,6 +323,19 @@ fn cells(app: &App, look: Look, line: Line) -> Cells {
             ]),
             size: String::new(),
             state: Text::styled(" so this report is partial", look.dim()),
+        },
+        Node::Notice(index) => Cells {
+            label: Text::from(vec![
+                Span::raw(format!("  {indent}")),
+                Span::styled("Note: ", Style::new().add_modifier(Modifier::BOLD)),
+                Span::raw(
+                    app.notices
+                        .get(index)
+                        .map_or_else(String::new, |notice| escaped(notice)),
+                ),
+            ]),
+            size: String::new(),
+            state: Text::from(""),
         },
         Node::Gap(index) => Cells {
             label: Text::raw(format!(
@@ -426,7 +442,7 @@ const fn lens_title(lens: Lens) -> &'static str {
     }
 }
 
-fn title_case(name: &str) -> String {
+pub(crate) fn title_case(name: &str) -> String {
     let mut chars = name.chars();
     chars.next().map_or_else(String::new, |first| {
         first.to_uppercase().chain(chars).collect()
@@ -448,15 +464,41 @@ fn footer(app: &App, look: Look) -> Paragraph<'static> {
         Span::raw(look.dot()),
         Span::raw(format!("frees {}", bytes(totals.reclaim))),
     ];
-    let second = match (app.mode, &app.notice) {
-        (Mode::Filter, _) => Text::from(vec![
-            Span::raw(format!("/{}", escaped(&app.filter))),
+    let typing = |prompt: String, text: &str, hint: &'static str| {
+        Text::from(vec![
+            Span::raw(format!("{prompt}{}", escaped(text))),
             Span::styled("_", Style::new().add_modifier(Modifier::SLOW_BLINK)),
-            Span::styled("  enter keeps it, esc clears it", look.dim()),
-        ]),
-        (_, Some(notice)) => Text::styled(notice.clone(), look.fg(Color::Cyan)),
-        (_, None) => Text::styled(
-            "j/k move  h/l fold  / filter  tab lens  s select  c safe  ? help  q quit",
+            Span::styled(hint, look.dim()),
+        ])
+    };
+    let second = match (app.mode, &app.notice, &app.panel.typing) {
+        (Mode::Filter, _, _) => typing(
+            "/".to_owned(),
+            &app.filter,
+            "  enter keeps it, esc clears it",
+        ),
+        (Mode::Note(id), _, _) => {
+            let what = app
+                .row(id)
+                .map_or_else(String::new, |row| escaped(&tail(&row.finding.path)));
+            typing(
+                format!("Keep {what}. Note (optional): "),
+                &app.note,
+                "  enter keeps, esc cancels",
+            )
+        }
+        (Mode::Settings, _, Some(typed)) => typing(
+            "Project root to add (absolute or ~/...): ".to_owned(),
+            typed,
+            "  enter adds, esc cancels",
+        ),
+        (_, Some(notice), _) => Text::styled(notice.clone(), look.fg(Color::Cyan)),
+        (Mode::Settings, None, None) => Text::styled(
+            "j/k move  h/l change  enter change or add  d remove  esc back",
+            look.dim(),
+        ),
+        (_, None, _) => Text::styled(
+            "j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit",
             look.dim(),
         ),
     };
@@ -469,7 +511,6 @@ fn detail(app: &App, look: Look, node: Node) -> Vec<Text<'static>> {
             .row(id)
             .map_or_else(Vec::new, |row| finding_detail(app, look, row)),
         Node::Shelf(shelf) | Node::Group(shelf, _) => shelf_detail(app, look, node, shelf),
-        Node::Lens(lens) => lens_detail(app, look, lens),
         Node::Gaps => vec![
             heading("Not covered"),
             Text::from(
@@ -481,6 +522,16 @@ fn detail(app: &App, look: Look, node: Node) -> Vec<Text<'static>> {
                 heading("Not covered"),
                 labelled("Integration", gap.integration.clone()),
                 labelled("What happened", escaped(&gap.message)),
+            ]
+        }),
+        Node::Notice(index) => app.notices.get(index).map_or_else(Vec::new, |notice| {
+            vec![
+                heading("Note"),
+                Text::from(escaped(notice)),
+                Text::styled(
+                    "It doesn't make the scan partial: it says how far the check for running programs went.",
+                    look.dim(),
+                ),
             ]
         }),
     }
@@ -503,10 +554,7 @@ fn labelled(label: &str, text: String) -> Text<'static> {
 fn finding_detail(app: &App, look: Look, row: &Row) -> Vec<Text<'static>> {
     let finding = &row.finding;
     let text = app.catalog.rules.get(&finding.rule);
-    let facts = finding
-        .facts
-        .as_ref()
-        .map_or_else(Vec::new, |facts| human::facts(facts, LEVEL));
+    let facts = human::facts(finding, &app.policy);
     let mut lines = vec![
         Text::from(vec![
             Span::styled(
@@ -514,7 +562,7 @@ fn finding_detail(app: &App, look: Look, row: &Row) -> Vec<Text<'static>> {
                 Style::new().add_modifier(Modifier::BOLD),
             ),
             Span::raw(look.dot()),
-            verdict_span(look, row),
+            verdict_span(look, row, app.policy.level_of(&row.finding.rule)),
         ]),
         Text::raw(escaped(&finding.path.display().to_string())),
     ];
@@ -527,7 +575,8 @@ fn finding_detail(app: &App, look: Look, row: &Row) -> Vec<Text<'static>> {
         lines.push(labelled("What it is", escaped(what)));
         lines.push(labelled("Why it's here", escaped(&text.why)));
     }
-    lines.push(labelled(why_label(row.shelf()), why(row)));
+    let level = app.policy.level_of(&row.finding.rule);
+    lines.push(labelled(why_label(row.shelf()), why(row, level)));
     if let Some(text) = text {
         lines.push(labelled("What you lose", escaped(&text.loss)));
     }
@@ -559,14 +608,14 @@ fn finding_detail(app: &App, look: Look, row: &Row) -> Vec<Text<'static>> {
     lines
 }
 
-fn verdict_span(look: Look, row: &Row) -> Span<'static> {
+fn verdict_span(look: Look, row: &Row, level: Level) -> Span<'static> {
     let text = row.verdict.as_ref().map_or_else(
         || "measuring".to_owned(),
         |verdict| {
             format!(
                 "{} at {}",
                 human::bucket(verdict.bucket()),
-                title_case(LEVEL.name())
+                title_case(level.name())
             )
         },
     );
@@ -582,12 +631,12 @@ const fn why_label(shelf: Shelf) -> &'static str {
     }
 }
 
-fn why(row: &Row) -> String {
+fn why(row: &Row, level: Level) -> String {
     match &row.verdict {
         None => "still being measured and checked".to_owned(),
         Some(Verdict::Safe) => format!(
-            "passes every check at {}: recognised, comes back, untracked, idle, not recent",
-            title_case(LEVEL.name())
+            "passes every check at {}: recognised, comes back, untracked, no running program shows it in use, not recent",
+            title_case(level.name())
         ),
         Some(verdict) => human::reasons(verdict),
     }
@@ -597,7 +646,7 @@ fn shelf_detail(app: &App, look: Look, node: Node, shelf: Shelf) -> Vec<Text<'st
     let (count, total) = sum(app, node);
     let about = match shelf {
         Shelf::Safe => {
-            "Passes every check at this level: kipple recognised it, knows how it comes back, nothing inside is tracked by git, no running program runs an executable inside it, and it hasn't changed recently. c selects all of it."
+            "Passes every check at this level: kipple recognised it, knows how it comes back, nothing inside is tracked by git, no running program shows it in use, and it hasn't changed recently. c selects all of it."
         }
         Shelf::Review => {
             "Eligible, but it loses more than this level allows, costs a lot to bring back, or changed recently. Each row says which."
@@ -620,21 +669,135 @@ fn shelf_detail(app: &App, look: Look, node: Node, shelf: Shelf) -> Vec<Text<'st
     ]
 }
 
-fn lens_detail(app: &App, look: Look, lens: Lens) -> Vec<Text<'static>> {
-    let about = match lens {
-        Lens::Agents => "What AI coding agents leave behind.",
-        Lens::Dev => "Developer tools and projects.",
-        Lens::System => "The operating system and its package managers.",
+/// The settings panel in place of the tree and the detail pane. Every line says its
+/// value in words, so the cursor and the current level read without colour.
+fn render_settings(app: &App, look: Look, area: Rect, frame: &mut Frame<'_>) {
+    let items = settings::items(app);
+    let mut panel = PanelLines {
+        focus: app.panel.focus(&items),
+        lines: Vec::new(),
+        at: 0,
     };
-    let mut lines = vec![heading(lens_title(lens)), Text::raw(about), Text::from("")];
-    for shelf in Shelf::SORTED {
-        let (count, total) = sum(app, Node::Group(shelf, lens));
-        lines.push(Text::from(vec![
-            Span::styled(format!("{:<17} ", shelf_title(shelf)), look.tint(shelf)),
-            Span::raw(format!("{}, {}", human::findings(count), bytes(total))),
-        ]));
+    settings_head(app, look, &mut panel);
+    settings_lists(app, look, &mut panel);
+    let block = Block::new()
+        .borders(Borders::TOP)
+        .border_set(look.border())
+        .border_style(look.dim())
+        .title(" Settings ");
+    let rows = usize::from(area.height.saturating_sub(1));
+    let first = offset(0, panel.at, rows, panel.lines.len());
+    let shown: Vec<Text<'static>> = panel.lines.into_iter().skip(first).collect();
+    frame.render_widget(Paragraph::new(shown).block(block), area);
+}
+
+/// The settings panel's lines as they are built, and which one the cursor is on.
+struct PanelLines {
+    focus: Option<Item>,
+    lines: Vec<Text<'static>>,
+    at: usize,
+}
+
+impl PanelLines {
+    /// A line with `label` in the first column; reversed when it is `item` and focused.
+    fn push(&mut self, item: Option<&Item>, label: &str, value: Vec<Span<'static>>) {
+        let mut spans = vec![Span::styled(
+            format!("{label:<17} "),
+            Style::new().add_modifier(Modifier::BOLD),
+        )];
+        spans.extend(value);
+        let mut line = Text::from(spans);
+        if item.is_some() && item == self.focus.as_ref() {
+            line = line.style(Style::new().add_modifier(Modifier::REVERSED));
+            self.at = self.lines.len();
+        }
+        self.lines.push(line);
     }
-    lines
+}
+
+/// The config file, the level, the project roots and the method.
+fn settings_head(app: &App, look: Look, panel: &mut PanelLines) {
+    let file = app.file.as_ref().map_or_else(
+        || "unknown, so nothing can be saved".to_owned(),
+        |file| escaped(&file.display().to_string()),
+    );
+    panel.push(None, "Config file", vec![Span::styled(file, look.dim())]);
+    panel.push(None, "", Vec::new());
+    panel.push(Some(&Item::Level), "Level", level_spans(app, look));
+    let about = Span::styled(level_about(app.policy.level), look.dim());
+    panel.push(None, "", vec![about]);
+    for (index, root) in app.roots.iter().enumerate() {
+        let label = if index == 0 { "Project roots" } else { "" };
+        let root = escaped(&root.display().to_string());
+        panel.push(Some(&Item::Root(index)), label, vec![Span::raw(root)]);
+    }
+    let add = if app.roots.is_empty() {
+        "Project roots"
+    } else {
+        ""
+    };
+    panel.push(Some(&Item::AddRoot), add, vec![Span::raw("+ add another")]);
+    let method = vec![
+        Span::raw(settings::method(app).name()),
+        Span::styled("  stored only: nothing is removed yet", look.dim()),
+    ];
+    panel.push(Some(&Item::Method), "Default method", method);
+}
+
+/// The kept paths and the rules turned off, each undone with `d`.
+fn settings_lists(app: &App, look: Look, panel: &mut PanelLines) {
+    for (index, (path, note)) in app.config.keep.iter().enumerate() {
+        let label = if index == 0 { "Kept" } else { "" };
+        let mut value = vec![Span::raw(escaped(path))];
+        if let Some(note) = note {
+            value.push(Span::styled(format!("  {}", escaped(note)), look.dim()));
+        }
+        panel.push(Some(&Item::Kept(index)), label, value);
+    }
+    if app.config.keep.is_empty() {
+        let none = Span::styled("nothing yet: p keeps a finding", look.dim());
+        panel.push(None, "Kept", vec![none]);
+    }
+    let disabled = settings::disabled(app);
+    for (index, rule) in disabled.iter().enumerate() {
+        let label = if index == 0 { "Rules turned off" } else { "" };
+        let value = vec![
+            Span::raw(app.catalog.title(rule).to_owned()),
+            Span::styled(format!("  {rule}"), look.dim()),
+        ];
+        panel.push(Some(&Item::Disabled(rule.clone())), label, value);
+    }
+    if disabled.is_empty() {
+        let none = Span::styled("none: P turns a finding's rule off", look.dim());
+        panel.push(None, "Rules turned off", vec![none]);
+    }
+}
+
+/// The three levels, the current one in brackets.
+fn level_spans(app: &App, look: Look) -> Vec<Span<'static>> {
+    Level::ALL
+        .iter()
+        .map(|&level| {
+            let name = title_case(level.name());
+            if level == app.policy.level {
+                Span::styled(
+                    format!("[{name}] "),
+                    look.fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::raw(format!(" {name}  "))
+            }
+        })
+        .collect()
+}
+
+/// What `level` puts in Safe (`docs/04-safety-model.md` §2a).
+pub(crate) const fn level_about(level: Level) -> &'static str {
+    match level {
+        Level::Careful => "Safe: build output and regenerated caches; recent: 14 days",
+        Level::Balanced => "Safe: rebuilt, reinstalled, re-downloaded; recent: 7 days",
+        Level::Thorough => "Safe: Balanced plus what costs a rollback; recent: 2 days",
+    }
 }
 
 fn render_help(look: Look, frame: &mut Frame<'_>) {
@@ -647,6 +810,9 @@ fn render_help(look: Look, frame: &mut Frame<'_>) {
         ("s", "select or unselect the finding"),
         ("a", "add the group's Safe and Review findings"),
         ("c", "select the whole Safe bucket"),
+        ("p", "keep the finding for good, with an optional note"),
+        ("P", "keep every finding of its rule: turn the rule off"),
+        (",", "settings: level, project roots, method, what is kept"),
         ("enter", "show what is selected"),
         ("?", "this help"),
         ("q", "quit"),
@@ -679,7 +845,7 @@ fn render_help(look: Look, frame: &mut Frame<'_>) {
     let area = frame.area();
     // Full width when narrow, so nothing shows beside it.
     let width = if area.width < WIDE { area.width } else { 72 };
-    let height = area.height.saturating_sub(2).min(16);
+    let height = area.height.saturating_sub(2).min(19);
     let popup = Rect::new(
         area.x + (area.width - width) / 2,
         area.y + (area.height - height) / 2,
