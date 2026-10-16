@@ -5,6 +5,7 @@
 //! write, and the screen changes only once the loop says it was written.
 
 mod keep;
+mod tree;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
@@ -12,10 +13,12 @@ use std::time::Duration;
 
 use kipple_core::{
     Advice, Caution, Finding, FindingId, IntegrationId, Lens, Policy, RuleId, RuleText, ScanEvent,
-    ScanOutcome, ScanReport, Verdict,
+    ScanOutcome, ScanReport, SymbolicRoot, Verdict,
 };
 
 pub(crate) use self::keep::{Effect, Saved};
+use self::tree::Spot;
+pub(crate) use self::tree::{Order, ProjectId};
 use super::filter;
 use super::settings::{Action, Found, Panel, Search};
 use crate::config::Config;
@@ -107,6 +110,8 @@ pub(crate) enum Node {
     Shelf(Shelf),
     /// A lens within a bucket.
     Group(Shelf, Lens),
+    /// A project with two or more findings in a bucket's lens.
+    Project(Shelf, Lens, ProjectId),
     /// A finding.
     Finding(FindingId),
     /// The heading of what the scan couldn't cover.
@@ -155,6 +160,8 @@ pub(crate) struct Row {
     pub(crate) lens: Lens,
     pub(crate) verdict: Option<Verdict>,
     pub(crate) size: Option<SizeOut>,
+    /// Its project, if any, and its label.
+    pub(crate) spot: Spot,
     /// Its rule's title and its path, lowercased, for the filter.
     haystack: String,
 }
@@ -247,6 +254,13 @@ pub(crate) struct App {
     pub(crate) roots: Vec<PathBuf>,
     /// The home directory `~` stands for, when it is known.
     pub(crate) home: Option<PathBuf>,
+    /// The project roots this scan opened, as it reported them.
+    scanned_roots: Vec<PathBuf>,
+    /// Every project seen this session, by [`ProjectId`].
+    projects: Vec<tree::Project>,
+    project_ids: HashMap<PathBuf, ProjectId>,
+    /// What groups and projects are sorted by.
+    pub(crate) order: Order,
     pub(crate) catalog: Catalog,
     pub(crate) rows: Vec<Row>,
     by_id: HashMap<FindingId, usize>,
@@ -290,6 +304,10 @@ impl App {
             config: Config::default(),
             roots: Vec::new(),
             home: None,
+            scanned_roots: Vec::new(),
+            projects: Vec::new(),
+            project_ids: HashMap::new(),
+            order: Order::default(),
             catalog,
             rows: Vec::new(),
             by_id: HashMap::new(),
@@ -356,7 +374,7 @@ impl App {
         }
         let mut lines = Vec::new();
         let mut last_top = None;
-        for ((top, group), mut rows) in groups {
+        for ((top, group), rows) in groups {
             if last_top != Some(top) {
                 lines.push(Line {
                     node: top,
@@ -374,11 +392,9 @@ impl App {
             if self.is_collapsed(group) {
                 continue;
             }
-            rows.sort_by(|a, b| (b.bytes(), &a.finding.path).cmp(&(a.bytes(), &b.finding.path)));
-            lines.extend(rows.iter().map(|row| Line {
-                node: Node::Finding(row.finding.id),
-                depth: 2,
-            }));
+            if let Node::Group(shelf, lens) = group {
+                lines.extend(self.group_lines((shelf, lens), rows));
+            }
         }
         self.gap_lines(&mut lines);
         lines.extend((0..self.notices.len()).map(|index| Line {
@@ -435,6 +451,9 @@ impl App {
         match node {
             Node::Shelf(_) => node == top,
             Node::Group(..) => node == group,
+            Node::Project(shelf, lens, id) => {
+                group == Node::Group(shelf, lens) && row.spot.project == Some(id)
+            }
             Node::Finding(id) => id == row.finding.id,
             Node::Gaps | Node::Gap(_) | Node::Notice(_) => false,
         }
@@ -480,9 +499,14 @@ impl App {
                 integration: integration.0.to_owned(),
                 message: OmissionOut::from(omission).message,
             })),
-            ScanEvent::ScanStarted { .. }
-            | ScanEvent::RootOpened { .. }
-            | ScanEvent::ScanCompleted { .. } => {}
+            ScanEvent::RootOpened {
+                root: SymbolicRoot::ProjectRoots,
+                path,
+                ..
+            } => self.open_root(path),
+            // A new scan opens its roots again, which may have changed.
+            ScanEvent::ScanStarted { .. } => self.scanned_roots.clear(),
+            ScanEvent::RootOpened { .. } | ScanEvent::ScanCompleted { .. } => {}
         }
     }
 
@@ -499,12 +523,14 @@ impl App {
             finding.path.display()
         )
         .to_lowercase();
+        let spot = self.spot(&finding.path);
         self.by_id.insert(finding.id, self.rows.len());
         self.rows.push(Row {
             finding,
             lens,
             verdict: None,
             size: None,
+            spot,
             haystack,
         });
     }
@@ -598,6 +624,7 @@ impl App {
             Key::Char('c') => self.add_safe(),
             Key::Char('p') => self.keep_finding(),
             Key::Char('P') => self.keep_rule(),
+            Key::Char('o') => self.sort(),
             Key::Char(',') => self.open_settings(),
             Key::Enter => self.review(),
             Key::Tab => self.next_lens(),
@@ -674,8 +701,8 @@ impl App {
         }
     }
 
-    /// Adds every eligible finding of the focused group, or of the focused finding's
-    /// group. Never adds a Protected, unmeasured or recent one.
+    /// Adds every eligible finding of the focused group or project, or of the focused
+    /// finding's group. Never adds a Protected, unmeasured or recent one.
     fn add_group(&mut self) {
         let Some(focus) = self.focus() else {
             return;
@@ -687,6 +714,7 @@ impl App {
             },
             other @ (Node::Shelf(_)
             | Node::Group(..)
+            | Node::Project(..)
             | Node::Gaps
             | Node::Gap(_)
             | Node::Notice(_)) => other,
@@ -699,7 +727,15 @@ impl App {
         let added = self.add_by_shortcut(&ids);
         self.notice = Some(match ids.len() {
             0 => "Nothing here can be selected.".to_owned(),
-            _ => format!("Added {added} of {} findings in this group.", ids.len()),
+            _ => format!(
+                "Added {added} of {} findings in this {}.",
+                ids.len(),
+                if matches!(node, Node::Project(..)) {
+                    "project"
+                } else {
+                    "group"
+                }
+            ),
         });
     }
 
@@ -745,6 +781,12 @@ impl App {
                 crate::human::bytes(totals.selected)
             )
         });
+    }
+
+    /// `o`: the next order, said in words.
+    fn sort(&mut self) {
+        self.order = self.order.next();
+        self.notice = Some(self.order.said().to_owned());
     }
 
     const fn next_lens(&mut self) {

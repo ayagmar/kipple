@@ -2,7 +2,8 @@
 //! into a ratatui frame (`docs/03-functional-spec.md` §5). A finding's state is always
 //! a word; colour only repeats it.
 
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{MAIN_SEPARATOR, Path};
 
 use kipple_core::{Lens, Level, ScanOutcome, Verdict};
 use ratatui::Frame;
@@ -12,7 +13,7 @@ use ratatui::symbols::border;
 use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
-use super::app::{App, Line, Mode, Node, Progress, Row, Shelf};
+use super::app::{App, Line, Mode, Node, Progress, ProjectId, Row, Shelf};
 use super::settings::{self, Item};
 use crate::human::{self, bytes, escaped};
 
@@ -21,6 +22,8 @@ use crate::human::{self, bytes, escaped};
 const WIDE: u16 = 100;
 /// The size column, wide enough for `>= 1023.9 GiB`.
 const SIZE: u16 = 13;
+/// The size bar column from [`WIDE`] columns: a space, then the bar.
+const BAR: u16 = 7;
 /// The state column, wide enough for its longest text: the gaps hint
 /// ` so this report is partial`. The longest row state is ` unknown: what is lost +3`.
 const STATE: u16 = 26;
@@ -70,6 +73,26 @@ impl Look {
 
     pub(crate) fn ellipsis(self, text: &str) -> String {
         format!("{text}{}", if self.ascii { "..." } else { "…" })
+    }
+
+    /// A bar `eighths` eighths of a cell long, padded to `cells` cells.
+    fn bar(self, eighths: u64, cells: usize) -> String {
+        const PARTS: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
+        let full = usize::try_from(eighths / 8).unwrap_or(cells).min(cells);
+        let part = usize::try_from(eighths % 8).unwrap_or(0);
+        let mut bar = if self.ascii {
+            // Whole cells only, rounded to the nearest.
+            "#".repeat((full + usize::from(part >= 4)).min(cells))
+        } else {
+            let mut bar = "█".repeat(full);
+            if full < cells {
+                bar.push_str(PARTS.get(part).copied().unwrap_or(""));
+            }
+            bar
+        };
+        let drawn = bar.chars().count();
+        bar.push_str(&" ".repeat(cells.saturating_sub(drawn)));
+        bar
     }
 
     const fn mark(self) -> &'static str {
@@ -165,8 +188,10 @@ pub(crate) fn render(app: &App, look: Look, frame: &mut Frame<'_>) {
     let tree = Tree {
         at: app.cursor_index(&lines),
         lines: &lines,
+        clashing: app.clashing(),
+        scale: areas.wide.then(|| scale(app, &lines)),
     };
-    frame.render_widget(header(app, look), areas.header);
+    frame.render_widget(header(app, look, areas.header.width), areas.header);
     frame.render_widget(footer(app, look), areas.footer);
     if app.mode == Mode::Settings {
         render_settings(app, look, areas.body, frame);
@@ -192,7 +217,7 @@ pub(crate) fn render(app: &App, look: Look, frame: &mut Frame<'_>) {
     }
 }
 
-fn header(app: &App, look: Look) -> Paragraph<'static> {
+fn header(app: &App, look: Look, width: u16) -> Paragraph<'static> {
     let state = match app.progress {
         Progress::Scanning => look.ellipsis("scanning"),
         Progress::Done { outcome, .. } if outcome != ScanOutcome::Completed => {
@@ -212,19 +237,35 @@ fn header(app: &App, look: Look) -> Paragraph<'static> {
     )];
     for (index, &level) in Level::ALL.iter().enumerate() {
         spans.push(Span::raw(if index == 0 { "  " } else { look.dot() }));
-        let style = if level == app.policy.level {
-            look.fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        let name = title_case(level.name());
+        // The brackets mark the level without colour.
+        spans.push(if level == app.policy.level {
+            Span::styled(
+                format!("[{name}]"),
+                look.fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )
         } else {
-            look.dim()
-        };
-        spans.push(Span::styled(title_case(level.name()), style));
+            Span::styled(name, look.dim())
+        });
     }
-    spans.push(Span::raw(format!(
-        " (level: {})",
-        title_case(app.policy.level.name())
-    )));
     spans.push(Span::raw(look.dot()));
     spans.push(Span::raw(state));
+    spans.push(Span::raw(look.dot()));
+    // The roots get the rest of the line, less what the sort order needs.
+    let used: usize = spans.iter().map(Span::width).sum();
+    let room = usize::from(width).saturating_sub(used);
+    let order = app.order.title();
+    let reserved = order.map_or(0, |order| cols(order) + cols(look.dot()));
+    let roots = roots(app, look, room.saturating_sub(reserved))
+        .or_else(|| roots(app, look, room))
+        .unwrap_or_default();
+    // The order only whole: `o` also says it in the footer.
+    let left = room.saturating_sub(cols(&roots));
+    spans.push(Span::raw(roots));
+    if let Some(order) = order.filter(|_| reserved <= left) {
+        spans.push(Span::raw(look.dot()));
+        spans.push(Span::raw(order));
+    }
     if !app.gaps.is_empty() {
         spans.push(Span::raw(look.dot()));
         spans.push(Span::styled(
@@ -243,10 +284,67 @@ fn header(app: &App, look: Look) -> Paragraph<'static> {
     Paragraph::new(Text::from(spans))
 }
 
+/// The project roots in at most `room` columns: the first one and how many more,
+/// the first one shortened from the left, or only how many. `None` when not even that
+/// fits.
+fn roots(app: &App, look: Look, room: usize) -> Option<String> {
+    let fits = |text: String| (cols(&text) <= room).then_some(text);
+    let Some((first, rest)) = app.roots.split_first() else {
+        return fits("no project roots".to_owned());
+    };
+    let first = escaped(&homed(first, app.home.as_deref()));
+    let more = if rest.is_empty() {
+        String::new()
+    } else {
+        format!(" +{}", rest.len())
+    };
+    if let Some(full) = fits(format!("{first}{more}")) {
+        return Some(full);
+    }
+    let ellipsis = look.ellipsis("");
+    let keep = room.saturating_sub(cols(&more) + cols(&ellipsis));
+    // Fewer than a few characters of a path say nothing; the count says more.
+    if keep >= 4 {
+        let mut taken = 0;
+        let start = first
+            .char_indices()
+            .rev()
+            .find_map(|(index, c)| {
+                taken += cols(c.encode_utf8(&mut [0; 4]));
+                (taken > keep).then_some(index + c.len_utf8())
+            })
+            .unwrap_or(0);
+        let end = first.get(start..).unwrap_or_default();
+        return fits(format!("{ellipsis}{end}{more}"));
+    }
+    fits(match app.roots.len() {
+        1 => "1 root".to_owned(),
+        count => format!("{count} roots"),
+    })
+}
+
+/// How many columns `text` takes.
+fn cols(text: &str) -> usize {
+    Span::raw(text).width()
+}
+
+/// `path` with `~` for the home directory.
+fn homed(path: &Path, home: Option<&Path>) -> String {
+    match home.and_then(|home| path.strip_prefix(home).ok()) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
+        Some(rest) => format!("~{MAIN_SEPARATOR}{}", rest.display()),
+        None => path.display().to_string(),
+    }
+}
+
 /// The visible tree and the cursor's line in it.
 struct Tree<'a> {
     lines: &'a [Line],
     at: usize,
+    /// The projects whose lines show their path from home.
+    clashing: BTreeSet<ProjectId>,
+    /// What a full size bar stands for, when there are bars.
+    scale: Option<u64>,
 }
 
 fn render_list(app: &App, look: Look, tree: &Tree<'_>, area: Rect, frame: &mut Frame<'_>) {
@@ -254,15 +352,18 @@ fn render_list(app: &App, look: Look, tree: &Tree<'_>, area: Rect, frame: &mut F
     let rows = usize::from(area.height);
     let first = offset(app.scroll, at, rows, lines.len());
     let shown = lines.iter().enumerate().skip(first).take(rows);
+    // Reserved even while nothing is measured, so no column moves as sizes stream in.
+    let bar = if tree.scale.is_some() { BAR } else { 0 };
     for (y, (index, line)) in (area.y..).zip(shown) {
         let row = Rect::new(area.x, y, area.width, 1);
-        let [label, size, state] = Split::horizontal([
+        let [label, size, bars, state] = Split::horizontal([
             Constraint::Fill(1),
             Constraint::Length(SIZE),
+            Constraint::Length(bar),
             Constraint::Length(STATE),
         ])
         .areas(row);
-        let cells = cells(app, look, *line);
+        let cells = cells(app, look, tree, *line);
         let base = if index == at {
             Style::new().add_modifier(Modifier::REVERSED)
         } else {
@@ -270,24 +371,54 @@ fn render_list(app: &App, look: Look, tree: &Tree<'_>, area: Rect, frame: &mut F
         };
         frame.render_widget(Paragraph::new(cells.label).style(base), label);
         frame.render_widget(Paragraph::new(cells.size).style(base).right_aligned(), size);
+        frame.render_widget(Paragraph::new(cells.bar).style(base), bars);
         frame.render_widget(Paragraph::new(cells.state).style(base), state);
     }
 }
 
-/// One tree line's three columns.
+/// The largest size among the measured findings in `lines`: what a full bar stands for.
+fn scale(app: &App, lines: &[Line]) -> u64 {
+    lines
+        .iter()
+        .filter_map(|line| match line.node {
+            Node::Finding(id) => app.row(id).filter(|row| measured(row)),
+            Node::Shelf(_)
+            | Node::Group(..)
+            | Node::Project(..)
+            | Node::Gaps
+            | Node::Gap(_)
+            | Node::Notice(_) => None,
+        })
+        .map(Row::bytes)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Whether `row` has its bucket and its size, so it has a bar.
+fn measured(row: &Row) -> bool {
+    row.shelf() != Shelf::Measuring && row.size.is_some()
+}
+
+/// One tree line's columns.
 struct Cells {
     label: Text<'static>,
     size: String,
+    bar: Text<'static>,
     state: Text<'static>,
 }
 
-fn cells(app: &App, look: Look, line: Line) -> Cells {
+fn cells(app: &App, look: Look, tree: &Tree<'_>, line: Line) -> Cells {
     let indent = "  ".repeat(usize::from(line.depth));
     let fold = |node| look.fold(app.is_collapsed(node));
     match line.node {
-        Node::Finding(id) => app
-            .row(id)
-            .map_or_else(empty_cells, |row| finding_cells(app, look, row, &indent)),
+        Node::Finding(id) => app.row(id).map_or_else(empty_cells, |row| {
+            let label = finding_label(app, tree, row, line.depth);
+            let mut cells = finding_cells(app, look, row, &format!("{indent}{label}"));
+            if let Some(scale) = tree.scale.filter(|_| measured(row)) {
+                cells.bar = Text::styled(bar(look, row.bytes(), scale), look.tint(row.shelf()));
+            }
+            cells
+        }),
         Node::Shelf(shelf) => {
             let (count, total) = sum(app, line.node);
             Cells {
@@ -299,19 +430,16 @@ fn cells(app: &App, look: Look, line: Line) -> Cells {
                     ),
                 ]),
                 size: bytes(total),
+                bar: Text::from(""),
                 state: Text::styled(format!(" {}", shelf_hint(shelf)), look.dim()),
             }
         }
         Node::Group(_, lens) => {
-            let (count, total) = sum(app, line.node);
-            Cells {
-                label: Text::from(vec![
-                    Span::raw(format!("  {indent}{}", fold(line.node))),
-                    Span::raw(format!("{} ({count})", lens_title(lens))),
-                ]),
-                size: bytes(total),
-                state: Text::from(""),
-            }
+            heading_cells(app, line, &indent, fold(line.node), lens_title(lens))
+        }
+        Node::Project(_, _, id) => {
+            let name = project_name(app, tree, id);
+            heading_cells(app, line, &indent, fold(line.node), &name)
         }
         Node::Gaps => Cells {
             label: Text::from(vec![
@@ -322,6 +450,7 @@ fn cells(app: &App, look: Look, line: Line) -> Cells {
                 ),
             ]),
             size: String::new(),
+            bar: Text::from(""),
             state: Text::styled(" so this report is partial", look.dim()),
         },
         Node::Notice(index) => Cells {
@@ -335,6 +464,7 @@ fn cells(app: &App, look: Look, line: Line) -> Cells {
                 ),
             ]),
             size: String::new(),
+            bar: Text::from(""),
             state: Text::from(""),
         },
         Node::Gap(index) => Cells {
@@ -345,12 +475,65 @@ fn cells(app: &App, look: Look, line: Line) -> Cells {
                     .map_or_else(String::new, |gap| escaped(&gap.message))
             )),
             size: String::new(),
+            bar: Text::from(""),
             state: Text::from(""),
         },
     }
 }
 
-fn finding_cells(app: &App, look: Look, row: &Row, indent: &str) -> Cells {
+/// A group's or a project's line: its name, how many findings and their total.
+fn heading_cells(app: &App, line: Line, indent: &str, fold: &str, name: &str) -> Cells {
+    let (count, total) = sum(app, line.node);
+    Cells {
+        label: Text::from(vec![
+            Span::raw(format!("  {indent}{fold}")),
+            Span::raw(format!("{} ({count})", escaped(name))),
+        ]),
+        size: bytes(total),
+        bar: Text::from(""),
+        state: Text::from(""),
+    }
+}
+
+/// A project's name, or its path from home when another project shown shares it.
+fn project_name(app: &App, tree: &Tree<'_>, id: ProjectId) -> String {
+    app.project(id).map_or_else(String::new, |project| {
+        if !tree.clashing.contains(&id) {
+            return project.name.clone();
+        }
+        let home = app.home.as_deref();
+        home.and_then(|home| project.path.strip_prefix(home).ok())
+            .map_or_else(
+                || project.path.display().to_string(),
+                |rest| format!("~/{}", slashed(rest)),
+            )
+    })
+}
+
+/// A finding's label: its path inside its project under the project's line, else the
+/// project and that path, else its last two components.
+fn finding_label(app: &App, tree: &Tree<'_>, row: &Row, depth: u8) -> String {
+    let spot = &row.spot;
+    match spot.project {
+        Some(_) if depth > 2 => spot.inside.clone(),
+        Some(id) if tree.clashing.contains(&id) => {
+            format!("{}/{}", project_name(app, tree, id), spot.inside)
+        }
+        Some(_) | None => spot.name.clone(),
+    }
+}
+
+/// A bar for `bytes` out of `scale`, in `look`'s symbols, as wide as the column.
+fn bar(look: Look, bytes: u64, scale: u64) -> String {
+    let cells = usize::from(BAR - 1);
+    let eighths = u128::from(bytes) * (cells as u128 * 8) / u128::from(scale.max(1));
+    format!(
+        " {}",
+        look.bar(u64::try_from(eighths).unwrap_or(u64::MAX), cells)
+    )
+}
+
+fn finding_cells(app: &App, look: Look, row: &Row, label: &str) -> Cells {
     let selected = app.selected.contains(&row.finding.id);
     let mark = if selected {
         Span::styled(format!("{} ", look.mark()), look.fg(Color::Cyan))
@@ -360,7 +543,7 @@ fn finding_cells(app: &App, look: Look, row: &Row, indent: &str) -> Cells {
     Cells {
         label: Text::from(vec![
             mark,
-            Span::raw(format!("{indent}{}", escaped(&tail(&row.finding.path)))),
+            Span::raw(escaped(label)),
             Span::styled(
                 format!("  {}", app.catalog.title(&row.finding.rule)),
                 look.dim(),
@@ -370,6 +553,7 @@ fn finding_cells(app: &App, look: Look, row: &Row, indent: &str) -> Cells {
             .size
             .as_ref()
             .map_or_else(String::new, |size| human::size(Some(size))),
+        bar: Text::from(""),
         state: Text::styled(format!(" {}", state(row)), look.tint(row.shelf())),
     }
 }
@@ -378,6 +562,7 @@ fn empty_cells() -> Cells {
     Cells {
         label: Text::from(""),
         size: String::new(),
+        bar: Text::from(""),
         state: Text::from(""),
     }
 }
@@ -405,13 +590,22 @@ fn sum(app: &App, node: Node) -> (usize, u64) {
 }
 
 /// The last two components of `path`: the project and the artifact, for example
-/// `web/node_modules`.
-fn tail(path: &Path) -> String {
+/// `web/node_modules`. The label of a finding outside every project root.
+pub(crate) fn tail(path: &Path) -> String {
     let parts: Vec<_> = path.components().rev().take(2).collect();
     let parts: Vec<String> = parts
         .iter()
         .rev()
         .map(|part| part.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    parts.join("/")
+}
+
+/// `path`'s components with `/` between them, as the tree writes paths on every system.
+pub(crate) fn slashed(path: &Path) -> String {
+    let parts: Vec<_> = path
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy())
         .collect();
     parts.join("/")
 }
@@ -510,7 +704,9 @@ fn detail(app: &App, look: Look, node: Node) -> Vec<Text<'static>> {
         Node::Finding(id) => app
             .row(id)
             .map_or_else(Vec::new, |row| finding_detail(app, look, row)),
-        Node::Shelf(shelf) | Node::Group(shelf, _) => shelf_detail(app, look, node, shelf),
+        Node::Shelf(shelf) | Node::Group(shelf, _) | Node::Project(shelf, ..) => {
+            shelf_detail(app, look, node, shelf)
+        }
         Node::Gaps => vec![
             heading("Not covered"),
             Text::from(
@@ -819,15 +1015,16 @@ pub(crate) const fn level_about(level: Level) -> &'static str {
 fn render_help(look: Look, frame: &mut Frame<'_>) {
     let keys = [
         ("j k  ↓ ↑", "move"),
-        ("h l  ← →", "fold and unfold a group"),
+        ("h l  ← →", "fold and unfold a group or project"),
         ("g G", "first and last line"),
         ("/", "filter by name or path; enter keeps it, esc clears it"),
         ("tab", "show one lens: Agents, Dev, System, then all"),
         ("s", "select or unselect the finding"),
-        ("a", "add the group's Safe and Review findings"),
+        ("a", "add the group's or project's Safe and Review findings"),
         ("c", "select the whole Safe bucket"),
         ("p", "keep the finding for good, with an optional note"),
         ("P", "keep every finding of its rule: turn the rule off"),
+        ("o", "sort by size, last change or name"),
         (",", "settings: level, project roots, method, what is kept"),
         ("enter", "show what is selected"),
         ("?", "this help"),
@@ -861,7 +1058,7 @@ fn render_help(look: Look, frame: &mut Frame<'_>) {
     let area = frame.area();
     // Full width when narrow, so nothing shows beside it.
     let width = if area.width < WIDE { area.width } else { 72 };
-    let height = area.height.saturating_sub(2).min(19);
+    let height = area.height.saturating_sub(2).min(20);
     let popup = Rect::new(
         area.x + (area.width - width) / 2,
         area.y + (area.height - height) / 2,
