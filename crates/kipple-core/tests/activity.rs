@@ -924,6 +924,22 @@ fn a_sandboxed_path_that_cant_be_resolved_leaves_its_kind_uninspected() {
 }
 
 #[test]
+fn a_sandboxed_path_ending_in_a_link_to_the_finding_is_never_idle() {
+    // `VIRTUAL_ENV=/venv` inside the container is a link to the host's `.venv`; kipple
+    // would follow it from its own root, so the environment can't be placed.
+    let mut disk = sandbox_disk();
+    disk.symlinks = vec![abs("/proc/7/root/venv")];
+    let mut process = sandboxed(&disk, "/usr/bin/python3");
+    process.env_paths = Ok(vec![EnvPath {
+        var: "VIRTUAL_ENV".into(),
+        path: abs("/venv"),
+    }]);
+    let host = sandbox_host(process, disk);
+
+    assert!(is_unknown(&host.activity(PYTHON, VENV)));
+}
+
+#[test]
 fn a_sandboxed_process_whose_root_or_executable_cant_be_placed_stays_uninspected() {
     let disk = sandbox_disk();
     let python = || sandboxed(&disk, "/usr/bin/python3");

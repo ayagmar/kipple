@@ -671,27 +671,24 @@ impl Walk<'_> {
     /// The identities of `path` and of each directory above it up to the process's root,
     /// as the process sees them, the deepest first, and whether `path` itself exists.
     /// Where a directory on the way doesn't exist, nothing below it does. `None` when it
-    /// can't be resolved: it isn't absolute, climbs with `..`, passes through a link
-    /// (which would be followed from kipple's root, not the process's), or a part of it
-    /// can't be read.
+    /// can't be resolved: it isn't absolute, climbs with `..`, holds a link anywhere, the
+    /// last part included (which would be followed from kipple's root, not the
+    /// process's), or a part of it can't be read.
     fn resolve(&mut self, path: &Path) -> Option<(Vec<FileIdentity>, bool)> {
         if !path.has_root() {
             return None;
         }
-        let parts = from_root(path);
         let mut ids = vec![self.root];
         let mut at = self.entry.to_owned();
-        let mut parts = parts.filter(|part| *part != Component::CurDir).peekable();
-        while let Some(part) = parts.next() {
+        for part in from_root(path).filter(|part| *part != Component::CurDir) {
             let Component::Normal(name) = part else {
                 return None;
             };
             at.push(name);
             match self.step(&at) {
-                Step::Found(EntryKind::Symlink, _) if parts.peek().is_some() => return None,
+                Step::Found(EntryKind::Symlink, _) | Step::Unreadable => return None,
                 Step::Found(_, identity) => ids.push(identity),
                 Step::Missing => return Some((rev(ids), false)),
-                Step::Unreadable => return None,
             }
         }
         Some((rev(ids), true))
