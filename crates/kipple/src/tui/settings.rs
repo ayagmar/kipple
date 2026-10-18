@@ -1,7 +1,8 @@
 //! The settings panel (`,`, `docs/03-functional-spec.md` §2 J2 and §5): the level, the
-//! project roots and the roots kipple suggests (D-053), the default method, the kept items
-//! and the rules turned off. Each change is a config edit the loop writes; nothing here
-//! changes the screen before that write succeeded.
+//! theme, the project roots and the roots kipple suggests (D-053), the default method, the
+//! kept items and the rules turned off. Each change is a config edit the loop writes;
+//! nothing here changes the screen before that write succeeded, except a theme's preview,
+//! which only changes the look and goes when settings close without `enter` (D-055).
 
 use std::path::{Path, PathBuf};
 
@@ -17,6 +18,8 @@ use crate::human::escaped;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Item {
     Level,
+    /// The theme, previewed as it changes.
+    Theme,
     /// A project root, by its index in [`App::roots`].
     Root(usize),
     /// Where another root is typed.
@@ -41,6 +44,8 @@ pub(crate) enum Outcome {
         done: String,
     },
     Say(String),
+    /// Preview the theme this many places on.
+    Preview(isize),
 }
 
 /// The search for projects outside the roots, whose suggestions onboarding and settings
@@ -95,7 +100,7 @@ pub(crate) struct Panel {
 /// The panel's lines, in order: the level, each root and "add another", the method, each
 /// kept path and each rule turned off.
 pub(crate) fn items(app: &App) -> Vec<Item> {
-    let mut items = vec![Item::Level];
+    let mut items = vec![Item::Level, Item::Theme];
     items.extend((0..app.roots.len()).map(Item::Root));
     items.push(Item::AddRoot);
     items.extend((0..app.search.suggestions().len()).map(Item::Suggested));
@@ -148,6 +153,7 @@ impl Panel {
             Action::First => self.step(isize::MIN, items.len()),
             Action::Last => self.step(isize::MAX, items.len()),
             Action::ChangeBack => self.change(app, &items, -1),
+            Action::Choose if self.focus(&items) == Some(Item::Theme) => choose_theme(app),
             Action::Change | Action::Choose => self.change(app, &items, 1),
             Action::Remove => self.remove(app, &items),
             Action::PageDown
@@ -223,6 +229,7 @@ impl Panel {
                     |key| format!("{key} removes it."),
                 ))
             }
+            Some(Item::Theme) => Outcome::Preview(by),
             Some(Item::Suggested(_)) | None => Outcome::Nothing,
         }
     }
@@ -249,9 +256,8 @@ impl Panel {
                     enabled: true,
                 }],
             },
-            Some(Item::Level | Item::Method | Item::AddRoot | Item::Suggested(_)) | None => {
-                Outcome::Nothing
-            }
+            Some(Item::Level | Item::Theme | Item::Method | Item::AddRoot | Item::Suggested(_))
+            | None => Outcome::Nothing,
         }
     }
 
@@ -285,6 +291,20 @@ impl Panel {
             | Key::Interrupt => {}
         }
         Outcome::Nothing
+    }
+}
+
+/// Keeps the theme shown by writing it as `ui.theme`, or says why it can't be used.
+fn choose_theme(app: &App) -> Outcome {
+    let Some(choice) = app.themes.shown() else {
+        return Outcome::Nothing;
+    };
+    match &choice.drawn {
+        Ok(_) => Outcome::Save {
+            edits: vec![Edit::Theme(choice.name.clone())],
+            done: format!("Theme set to {}.", choice.name),
+        },
+        Err(error) => Outcome::Say(format!("{} can't be used: {}", choice.name, escaped(error))),
     }
 }
 

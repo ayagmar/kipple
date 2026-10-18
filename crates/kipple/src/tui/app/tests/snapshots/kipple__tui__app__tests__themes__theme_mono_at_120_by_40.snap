@@ -1,0 +1,44 @@
+---
+source: crates/kipple/src/tui/app/tests/themes.rs
+expression: "styled(&draw(&app, look(&theme), 120, 40))"
+---
+«bold|kipple»  Careful · «bold|[Balanced]» · Thorough · scanning… · no project roots
+«reversed|  ▾ »«bold,reversed|Safe to clean (2»«reversed|    514.0 MiB        passes every check       »│«bold|Safe to clean»
+    ▾ Dev (2)           514.0 MiB                                 │2 findings, 514.0 MiB
+      api/target  Ca    512.0 MiB ███▍                            │
+      tool/__pycache      2.0 MiB                                 │Passes every check at this level: kipple recognised
+  ▾ «bold|Review (1)»          300.0 MiB        loses more, or recent    │it, knows how it comes back, nothing inside is
+    ▾ Dev (1)           300.0 MiB                                 │tracked by git, no running program shows it in use,
+      web/node_modul    300.0 MiB ██     recent                   │and it hasn't changed recently. c selects all of it.
+  ▾ «bold|Protected (2)»      1020.0 MiB        not eligible             │
+    ▾ Dev (1)           120.0 MiB                                 │
+      bunapp/node_mo    120.0 MiB ▊      layout not recognised +1 │
+    ▾ System (1)        900.0 MiB                                 │
+      pacman/pkg  pa    900.0 MiB ██████ advice only              │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+                                                                  │
+found 1.7 GiB · eligible 814.0 MiB · selected 0 (0 B) · frees 0 B
+j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit

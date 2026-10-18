@@ -43,7 +43,8 @@ use std::time::{Duration, SystemTime};
 use clap::Parser as _;
 use kipple::config::{self, Settings};
 use kipple::setup::Builtin;
-use kipple::theme::{Glyphs, Look, Theme};
+use kipple::theme::{Catalog, Colours, Glyphs};
+use kipple::tui::Appearance;
 use kipple::tui::{self, Input, Key, Keys, LevelTotals, first_run_due, level_totals};
 use kipple::{Cli, USAGE};
 use kipple_core::{CancelToken, Finding, Level, ScanRequest, event_channel};
@@ -139,7 +140,7 @@ fn json_totals(env: &Environment, dir: &Path, level: Level) -> LevelTotals {
         "--json",
     ]);
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = kipple::run(&cli, env, &mut out, &mut err);
+    let code = kipple::run(&cli, env, false, &mut out, &mut err);
     assert_eq!(code, ExitCode::SUCCESS, "{}", String::from_utf8_lossy(&err));
     let report: Value = serde_json::from_slice(&out).unwrap();
     let mut totals = LevelTotals::default();
@@ -240,18 +241,15 @@ fn on_demo_home_the_header_names_the_project_root_at_80_by_24() {
         written: Vec::new(),
     })
     .unwrap();
-    let mono = Theme::builtin("mono").unwrap();
-    let look = Look {
-        theme: &mono,
-        glyphs: Glyphs::Ascii,
-    };
+    let appearance =
+        Appearance::new(Catalog::builtin(), "kipple", Colours::Off, Glyphs::Ascii).unwrap();
 
     tui::run(
         &mut terminal,
         &mut Quit { asked: false },
         &env,
         &settings,
-        look,
+        appearance,
     )
     .unwrap();
 
@@ -386,18 +384,15 @@ fn y_on_demo_home_writes_the_focused_path_to_the_terminal_as_osc_52() {
     keys.extend([Key::Enter, Key::Char('g')]);
     keys.extend([Key::Char('j'); 2]);
     keys.push(Key::Char('y'));
-    let mono = Theme::builtin("mono").unwrap();
-    let look = Look {
-        theme: &mono,
-        glyphs: Glyphs::Ascii,
-    };
+    let appearance =
+        Appearance::new(Catalog::builtin(), "kipple", Colours::Off, Glyphs::Ascii).unwrap();
 
     tui::run(
         &mut terminal,
         &mut AfterScan { keys },
         &env,
         &settings,
-        look,
+        appearance,
     )
     .unwrap();
 

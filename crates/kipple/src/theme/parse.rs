@@ -3,6 +3,7 @@
 //!
 //! ```toml
 //! version = 1
+//! extends = "kipple"
 //! [roles]
 //! safe = { fg = "green", bold = true }
 //! "bar.safe" = { fg = "#7FD47F" }
@@ -13,11 +14,11 @@ use std::ops::Range;
 use ratatui::style::{Color, Modifier, Style};
 use toml_edit::{Document, Item, TableLike, Value};
 
-use super::{Role, Theme, ThemeError};
+use super::{Role, Theme, ThemeError, valid_name};
 use crate::config::position;
 
 /// The ANSI colour names a theme may use, in the terminal's palette order.
-const ANSI: [(&str, Color); 16] = [
+pub(super) const ANSI: [(&str, Color); 16] = [
     ("black", Color::Black),
     ("red", Color::Red),
     ("green", Color::Green),
@@ -37,7 +38,7 @@ const ANSI: [(&str, Color); 16] = [
 ];
 
 /// The modifiers a role may switch on, by their key.
-const MODIFIERS: [(&str, Modifier); 5] = [
+pub(super) const MODIFIERS: [(&str, Modifier); 5] = [
     ("bold", Modifier::BOLD),
     ("dim", Modifier::DIM),
     ("italic", Modifier::ITALIC),
@@ -47,25 +48,52 @@ const MODIFIERS: [(&str, Modifier); 5] = [
 
 const COLOUR: &str = "an ANSI colour name, #rrggbb, an index from 0 to 255, or reset";
 
-/// The theme `text` describes.
-pub(super) fn parse(text: &str) -> Result<Theme, ThemeError> {
+/// What a theme file says: the theme it extends, if any, and its own roles.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(super) struct ThemeFile {
+    /// The theme it starts from, and where its name is in the file.
+    pub(super) extends: Option<(String, (usize, usize))>,
+    /// The roles it sets; each replaces the style the base theme gives it.
+    pub(super) roles: Vec<(Role, Style)>,
+}
+
+impl ThemeFile {
+    /// `base` with this file's roles set over it.
+    pub(super) fn over(&self, mut base: Theme) -> Theme {
+        for &(role, style) in &self.roles {
+            base.set(role, style);
+        }
+        base
+    }
+}
+
+/// The theme file `text`.
+pub(super) fn parse(text: &str) -> Result<ThemeFile, ThemeError> {
     let document = Document::parse(text).map_err(|e| ThemeError {
+        file: None,
         position: e.span().map(|span| position(text, span.start)),
         message: e.message().trim_end().to_owned(),
     })?;
+    let place = |span: Option<Range<usize>>| span.map(|span| position(text, span.start));
     let at = |span: Option<Range<usize>>, message: String| ThemeError {
-        position: span.map(|span| position(text, span.start)),
+        file: None,
+        position: place(span),
         message,
     };
-    Reader { at: &at }.theme(document.as_table())
+    Reader {
+        at: &at,
+        place: &place,
+    }
+    .theme(document.as_table())
 }
 
 struct Reader<'a> {
     at: &'a dyn Fn(Option<Range<usize>>, String) -> ThemeError,
+    place: &'a dyn Fn(Option<Range<usize>>) -> Option<(usize, usize)>,
 }
 
 impl Reader<'_> {
-    fn theme(&self, root: &dyn TableLike) -> Result<Theme, ThemeError> {
+    fn theme(&self, root: &dyn TableLike) -> Result<ThemeFile, ThemeError> {
         let version = root.get("version");
         if version.and_then(Item::as_integer) != Some(1) {
             return Err((self.at)(
@@ -73,11 +101,12 @@ impl Reader<'_> {
                 "version: expected 1".to_owned(),
             ));
         }
-        let mut theme = Theme::default();
+        let mut theme = ThemeFile::default();
         for (name, item) in root.iter() {
             let span = root.key(name).and_then(toml_edit::Key::span);
             match name {
                 "version" => {}
+                "extends" => theme.extends = Some(self.extends(item)?),
                 "roles" => self.roles(item, &mut theme)?,
                 _ => return Err((self.at)(span, format!("unknown key {name}"))),
             }
@@ -85,7 +114,20 @@ impl Reader<'_> {
         Ok(theme)
     }
 
-    fn roles(&self, roles: &Item, theme: &mut Theme) -> Result<(), ThemeError> {
+    /// The name of the theme `extends` names, and where it is.
+    fn extends(&self, item: &Item) -> Result<(String, (usize, usize)), ThemeError> {
+        let name = item
+            .as_str()
+            .filter(|name| valid_name(name))
+            .ok_or_else(|| {
+                let wanted = "extends: expected a theme name: lowercase letters, digits and -";
+                (self.at)(item.span(), wanted.to_owned())
+            })?;
+        let place = (self.place)(item.span()).unwrap_or((1, 1));
+        Ok((name.to_owned(), place))
+    }
+
+    fn roles(&self, roles: &Item, theme: &mut ThemeFile) -> Result<(), ThemeError> {
         let table = roles
             .as_table_like()
             .ok_or_else(|| (self.at)(roles.span(), "roles: expected a table".to_owned()))?;
@@ -93,7 +135,7 @@ impl Reader<'_> {
             let span = table.key(name).and_then(toml_edit::Key::span);
             let role = Role::from_name(name)
                 .ok_or_else(|| (self.at)(span, format!("unknown role {name}")))?;
-            theme.set(role, self.style(name, value)?);
+            theme.roles.push((role, self.style(name, value)?));
         }
         Ok(())
     }
@@ -146,7 +188,7 @@ impl Reader<'_> {
 }
 
 /// The colour `name` stands for.
-fn colour(name: &str) -> Option<Color> {
+pub(super) fn colour(name: &str) -> Option<Color> {
     if name == "reset" {
         return Some(Color::Reset);
     }

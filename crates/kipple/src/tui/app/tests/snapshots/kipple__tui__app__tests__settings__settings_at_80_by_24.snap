@@ -8,6 +8,7 @@ Config file       /home/ada/.config/kipple/config.toml
 
 Level              Careful  [Balanced]  Thorough
                   Safe: rebuilt, reinstalled, re-downloaded; recent: 7 days
+Theme             kipple  1 of 5, built-in
 Project roots     ~/projects
                   ~/work
                   + add another
@@ -17,7 +18,6 @@ Suggested roots   /home/ada/Documents (4 projects: thesis, uni/compilers, uni/os
 Default method    trash  stored only: nothing is removed yet
 Kept              ~/projects/api/target  benchmark baseline
 Rules turned off  pacman package cache  builtin.pacman.cache
-
 
 
 

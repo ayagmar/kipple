@@ -308,7 +308,7 @@ impl Reader<'_> {
         (self.at)(key.span(), format!("unknown key {name}"))
     }
 
-    fn bad(&self, item: &Item, key: &str, wanted: &str) -> ParseError {
+    pub(super) fn bad(&self, item: &Item, key: &str, wanted: &str) -> ParseError {
         (self.at)(item.span(), format!("{key}: expected {wanted}"))
     }
 }

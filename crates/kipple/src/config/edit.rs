@@ -37,6 +37,8 @@ pub enum Edit {
         /// Whether it runs.
         enabled: bool,
     },
+    /// Sets `ui.theme`.
+    Theme(String),
 }
 
 /// Applies `edits` to the config file at `location` in one atomic write.
@@ -130,6 +132,9 @@ fn apply(document: &mut DocumentMut, edit: &Edit, home: Option<&Path>) -> Result
             }
         }
         Edit::RuleEnabled { rule, enabled } => set_enabled(root, rule, *enabled)?,
+        Edit::Theme(name) => {
+            table(root, "ui")?.insert("theme", value(name.as_str()));
+        }
     }
     Ok(())
 }

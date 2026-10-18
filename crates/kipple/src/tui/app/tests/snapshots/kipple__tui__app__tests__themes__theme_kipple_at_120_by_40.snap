@@ -1,0 +1,44 @@
+---
+source: crates/kipple/src/tui/app/tests/themes.rs
+expression: "styled(&draw(&app, look(&theme), 120, 40))"
+---
+«bold|kipple»  «fg=DarkGray|Careful» · «fg=Cyan,bold|[Balanced]» · «fg=DarkGray|Thorough» · scanning… · no project roots
+«reversed|  ▾ »«fg=Green,bold,reversed|Safe to clean (2»«reversed|    514.0 MiB       »«fg=DarkGray,reversed| passes every check»«reversed|       »«fg=DarkGray|│»«fg=Green,bold|Safe to clean»
+    ▾ Dev (2)           514.0 MiB                                 «fg=DarkGray|│»2 findings, 514.0 MiB
+      api/target«fg=DarkGray|  Ca»    512.0 MiB«fg=Green| ███▍   »                         «fg=DarkGray|│»
+      tool/__pycache      2.0 MiB«fg=Green|        »                         «fg=DarkGray|│»Passes every check at this level: kipple recognised
+  ▾ «fg=Yellow,bold|Review (1)»          300.0 MiB       «fg=DarkGray| loses more, or recent»    «fg=DarkGray|│»it, knows how it comes back, nothing inside is
+    ▾ Dev (1)           300.0 MiB                                 «fg=DarkGray|│»tracked by git, no running program shows it in use,
+      web/node_modul    300.0 MiB«fg=Yellow| ██     recent»                   «fg=DarkGray|│»and it hasn't changed recently. c selects all of it.
+  ▾ «fg=Blue,bold|Protected (2)»      1020.0 MiB       «fg=DarkGray| not eligible»             «fg=DarkGray|│»
+    ▾ Dev (1)           120.0 MiB                                 «fg=DarkGray|│»
+      bunapp/node_mo    120.0 MiB«fg=Blue| ▊      layout not recognised +1» «fg=DarkGray|│»
+    ▾ System (1)        900.0 MiB                                 «fg=DarkGray|│»
+      pacman/pkg«fg=DarkGray|  pa»    900.0 MiB«fg=Blue| ██████ advice only»              «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+                                                                  «fg=DarkGray|│»
+found 1.7 GiB · eligible 814.0 MiB · selected 0 (0 B) · frees 0 B
+«fg=DarkGray|j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit»

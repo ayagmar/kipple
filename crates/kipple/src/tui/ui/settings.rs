@@ -12,7 +12,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use super::tree::offset;
 use super::{Look, level_about, title_case};
 use crate::human::escaped;
-use crate::theme::Role;
+use crate::theme::{Colours, Role};
 use crate::tui::app::App;
 use crate::tui::settings::{self, Item, Search};
 
@@ -80,6 +80,7 @@ fn settings_head(app: &App, look: Look<'_>, panel: &mut PanelLines<'_>) {
     panel.push(Some(&Item::Level), "Level", level_spans(app, look));
     let about = Span::styled(level_about(app.policy.level), look.style(Role::Muted));
     panel.push(None, "", vec![about]);
+    panel.push(Some(&Item::Theme), "Theme", theme_spans(app, look));
     for (index, root) in app.roots.iter().enumerate() {
         let label = if index == 0 { "Project roots" } else { "" };
         let root = escaped(&root.display().to_string());
@@ -151,6 +152,31 @@ fn settings_lists(app: &App, look: Look<'_>, panel: &mut PanelLines<'_>) {
         );
         panel.push(None, "Rules turned off", vec![none]);
     }
+}
+
+/// The theme shown, which of how many, and where it comes from: a preview says so in
+/// words, and a theme that can't be used says why.
+fn theme_spans(app: &App, look: Look<'_>) -> Vec<Span<'static>> {
+    let Some(choice) = app.themes.shown() else {
+        return Vec::new();
+    };
+    let (at, count) = app.themes.place();
+    let about = match &choice.drawn {
+        Err(error) => format!("{at} of {count}, can't be used: {}", escaped(error)),
+        Ok(_) if app.themes.previewing() => {
+            format!("previewing {at} of {count}: enter keeps it, esc goes back")
+        }
+        Ok(_) => format!("{at} of {count}, {}", escaped(&choice.origin.to_string())),
+    };
+    let off = if app.themes.colours == Colours::Off {
+        "; colour is off, so every theme draws without it"
+    } else {
+        ""
+    };
+    vec![
+        Span::raw(choice.name.clone()),
+        Span::styled(format!("  {about}{off}"), look.style(Role::Muted)),
+    ]
 }
 
 /// The three levels, the current one in brackets.

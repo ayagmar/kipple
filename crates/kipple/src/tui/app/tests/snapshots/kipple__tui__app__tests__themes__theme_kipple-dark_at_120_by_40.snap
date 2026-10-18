@@ -1,0 +1,44 @@
+---
+source: crates/kipple/src/tui/app/tests/themes.rs
+expression: "styled(&draw(&app, look(&theme), 120, 40))"
+---
+«fg=#F4EADE,bold|kipple»«fg=#F4EADE|  »«fg=#8A8178|Careful»«fg=#F4EADE| · »«fg=#CA8848,bold|[Balanced]»«fg=#F4EADE| · »«fg=#8A8178|Thorough»«fg=#F4EADE| · scanning… · no project roots                                                  »
+«fg=#F4EADE,bg=#3A3F4B|  ▾ »«fg=#8CC084,bg=#3A3F4B,bold|Safe to clean (2»«fg=#F4EADE,bg=#3A3F4B|    514.0 MiB       »«fg=#8A8178,bg=#3A3F4B| passes every check»«fg=#F4EADE,bg=#3A3F4B|       »«fg=#5A4234|│»«fg=#8CC084,bold|Safe to clean»«fg=#F4EADE|                                        »
+«fg=#F4EADE|    ▾ Dev (2)           514.0 MiB                                 »«fg=#5A4234|│»«fg=#F4EADE|2 findings, 514.0 MiB                                »
+«fg=#F4EADE|      api/target»«fg=#8A8178|  Ca»«fg=#F4EADE|    512.0 MiB»«fg=#8CC084| ███▍   »«fg=#F4EADE|                         »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|      tool/__pycache      2.0 MiB»«fg=#8CC084|        »«fg=#F4EADE|                         »«fg=#5A4234|│»«fg=#F4EADE|Passes every check at this level: kipple recognised  »
+«fg=#F4EADE|  ▾ »«fg=#D9C36A,bold|Review (1)»«fg=#F4EADE|          300.0 MiB       »«fg=#8A8178| loses more, or recent»«fg=#F4EADE|    »«fg=#5A4234|│»«fg=#F4EADE|it, knows how it comes back, nothing inside is       »
+«fg=#F4EADE|    ▾ Dev (1)           300.0 MiB                                 »«fg=#5A4234|│»«fg=#F4EADE|tracked by git, no running program shows it in use,  »
+«fg=#F4EADE|      web/node_modul    300.0 MiB»«fg=#D9C36A| ██     recent»«fg=#F4EADE|                   »«fg=#5A4234|│»«fg=#F4EADE|and it hasn't changed recently. c selects all of it. »
+«fg=#F4EADE|  ▾ »«fg=#86A9CF,bold|Protected (2)»«fg=#F4EADE|      1020.0 MiB       »«fg=#8A8178| not eligible»«fg=#F4EADE|             »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|    ▾ Dev (1)           120.0 MiB                                 »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|      bunapp/node_mo    120.0 MiB»«fg=#86A9CF| ▊      layout not recognised +1»«fg=#F4EADE| »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|    ▾ System (1)        900.0 MiB                                 »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|      pacman/pkg»«fg=#8A8178|  pa»«fg=#F4EADE|    900.0 MiB»«fg=#86A9CF| ██████ advice only»«fg=#F4EADE|              »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|                                                                  »«fg=#5A4234|│»«fg=#F4EADE|                                                     »
+«fg=#F4EADE|found 1.7 GiB · eligible 814.0 MiB · selected 0 (0 B) · frees 0 B                                                       »
+«fg=#8A8178|j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit»«fg=#F4EADE|                                                »

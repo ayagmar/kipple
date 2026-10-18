@@ -5,13 +5,14 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use kipple_core::{Operation, Pack, Policy, Rule, ScanOutcome, ScanReport, Selector};
+use kipple_core::{Bucket, Operation, Pack, Policy, Rule, ScanOutcome, ScanReport, Selector};
 use kipple_platform::PLATFORM;
 
 use crate::human::{self, bytes, escaped, size};
 use crate::json::{EvidenceOut, FindingOut, LensOut};
 use crate::rules::lens;
 use crate::setup::Builtin;
+use crate::theme::{Ink, Role};
 
 /// The rule called `id`, with its pack.
 pub(crate) fn find_rule<'b>(builtin: &'b Builtin, id: &str) -> Option<(&'b Pack, &'b Rule)> {
@@ -21,6 +22,7 @@ pub(crate) fn find_rule<'b>(builtin: &'b Builtin, id: &str) -> Option<(&'b Pack,
 /// Writes what `rule` selects and why.
 pub(crate) fn write_rule(
     out: &mut dyn Write,
+    ink: &Ink,
     builtin: &Builtin,
     pack: &Pack,
     rule: &Rule,
@@ -51,17 +53,23 @@ pub(crate) fn write_rule(
         ("What you lose", rule.text.loss.clone()),
         ("Operation", operation(&rule.operation)),
     ];
-    writeln!(out, "{}: {}", rule.id, escaped(&rule.text.title))?;
+    let title = escaped(&format!("{}: {}", rule.id, rule.text.title));
+    writeln!(out, "{}", ink.paint(Role::Title, &title))?;
     if !rule.text.description.is_empty() {
         writeln!(out, "  {}", escaped(&rule.text.description))?;
     }
     for (name, value) in rows {
-        writeln!(out, "  {name:<15} {}", escaped(&value))?;
+        writeln!(out, "  {} {}", label(ink, name), escaped(&value))?;
     }
     for reference in &rule.text.references {
-        writeln!(out, "  {:<15} {}", "Reference", escaped(reference))?;
+        writeln!(out, "  {} {}", label(ink, "Reference"), escaped(reference))?;
     }
     Ok(())
+}
+
+/// `name` padded to the label column, in the label role.
+fn label(ink: &Ink, name: &str) -> String {
+    ink.paint(Role::Label, &format!("{name:<15}"))
 }
 
 fn operation(operation: &Operation) -> String {
@@ -99,14 +107,22 @@ fn selects(selector: &Selector) -> String {
     }
 }
 
+/// A scan's report and the policy its findings are judged by.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Judged<'a> {
+    pub(crate) report: &'a ScanReport,
+    pub(crate) policy: &'a Policy,
+}
+
 /// Writes what was found at `path`, or that nothing was.
 pub(crate) fn write_path(
     out: &mut dyn Write,
+    ink: &Ink,
     builtin: &Builtin,
     path: &Path,
-    report: &ScanReport,
-    policy: &Policy,
+    judged: Judged<'_>,
 ) -> io::Result<()> {
+    let Judged { report, policy } = judged;
     let findings = &report.findings;
     let wanted = comparable(path);
     let at = findings.iter().find(|f| comparable(&f.path) == wanted);
@@ -135,42 +151,53 @@ pub(crate) fn write_path(
     };
     let lens = builtin.lenses().get(&finding.integration).copied();
     let shown = FindingOut::new(finding, lens.unwrap_or(kipple_core::Lens::System), policy);
-    writeln!(out, "{}", escaped(&shown.path.display))?;
-    writeln!(out, "  {:<15} {}", "Storage", size(shown.size.as_ref()))?;
+    writeln!(
+        out,
+        "{}",
+        ink.paint(Role::Title, &escaped(&shown.path.display))
+    )?;
+    writeln!(
+        out,
+        "  {} {}",
+        label(ink, "Storage"),
+        size(shown.size.as_ref())
+    )?;
     if let Some(measured) = &shown.size {
-        writeln!(
-            out,
-            "  {:<15} {}",
-            "Apparent size",
-            bytes(measured.apparent)
-        )?;
+        let apparent = bytes(measured.apparent);
+        writeln!(out, "  {} {apparent}", label(ink, "Apparent size"))?;
     }
     for evidence in &shown.evidence {
-        writeln!(
-            out,
-            "  {:<15} {}",
-            "Evidence",
-            escaped(&evidence_line(evidence))
-        )?;
+        let line = escaped(&evidence_line(evidence));
+        writeln!(out, "  {} {line}", label(ink, "Evidence"))?;
     }
     if let Some(verdict) = finding.verdict(policy) {
         let reasons = human::reasons_in_full(&verdict);
-        let bucket = human::bucket(verdict.bucket());
+        let name = human::bucket(verdict.bucket());
+        let bucket = ink.paint(bucket_role(verdict.bucket()), name);
         let level = policy.level_of(&finding.rule);
         let line = if reasons.is_empty() {
             format!("{bucket} at the {level} level")
         } else {
             format!("{bucket} at the {level} level: {reasons}")
         };
-        writeln!(out, "  {:<15} {line}", "Bucket")?;
+        writeln!(out, "  {} {line}", label(ink, "Bucket"))?;
     }
-    for (label, text) in human::facts(finding, policy) {
-        writeln!(out, "  {label:<15} {text}")?;
+    for (name, text) in human::facts(finding, policy) {
+        writeln!(out, "  {} {text}", label(ink, name))?;
     }
     writeln!(out)?;
     match find_rule(builtin, &finding.rule.0) {
-        Some((pack, rule)) => write_rule(out, builtin, pack, rule),
+        Some((pack, rule)) => write_rule(out, ink, builtin, pack, rule),
         None => writeln!(out, "Found by {}.", finding.rule),
+    }
+}
+
+/// The role a bucket is painted in, as on the home screen.
+const fn bucket_role(bucket: Bucket) -> Role {
+    match bucket {
+        Bucket::Safe => Role::Safe,
+        Bucket::Review => Role::Review,
+        Bucket::Protected => Role::Protected,
     }
 }
 

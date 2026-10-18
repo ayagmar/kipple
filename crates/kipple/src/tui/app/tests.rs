@@ -7,6 +7,7 @@ mod detail;
 mod keys;
 mod onboarding;
 mod settings;
+mod themes;
 mod tree;
 
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};

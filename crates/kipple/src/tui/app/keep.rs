@@ -221,7 +221,13 @@ impl App {
     pub(super) fn saved(&mut self, saved: Saved) {
         let done = self.pending.take().unwrap_or_default();
         let rescan = saved.roots != self.roots;
+        let theme = (saved.config.ui.theme != self.config.ui.theme)
+            .then(|| saved.config.ui.theme.clone())
+            .flatten();
         self.configure(saved);
+        if let Some(theme) = theme {
+            self.themes.adopt(&theme);
+        }
         if let Search::Done(found) = &mut self.search {
             found.drop_roots(&self.roots, self.home.as_deref());
         }

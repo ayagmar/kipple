@@ -22,6 +22,7 @@ pub(crate) use self::tree::{Order, ProjectId};
 use super::filter;
 use super::keymap::{self, Action, Keymap};
 use super::settings::{Found, Outcome, Panel, Search};
+use super::themes::Picker;
 use crate::config::Config;
 use crate::json::{OmissionOut, SizeOut};
 use crate::setup::Builtin;
@@ -282,6 +283,8 @@ pub(crate) struct App {
     /// The note being typed for `p`.
     pub(crate) note: String,
     pub(crate) panel: Panel,
+    /// The themes to draw with, and the one settings previews.
+    pub(crate) themes: Picker,
     /// The search for roots to suggest, once onboarding or settings asked for it.
     pub(crate) search: Search,
     /// What the loop is asked to do next.
@@ -331,6 +334,7 @@ impl App {
             notice: None,
             note: String::new(),
             panel: Panel::default(),
+            themes: Picker::default(),
             search: Search::default(),
             effect: None,
             pending: None,
@@ -600,7 +604,11 @@ impl App {
         self.panel = panel;
         match action {
             Outcome::Nothing => {}
-            Outcome::Close => self.mode = Mode::Browse,
+            Outcome::Close => {
+                self.themes.revert();
+                self.mode = Mode::Browse;
+            }
+            Outcome::Preview(by) => self.themes.step(by),
             Outcome::Save { edits, done } => self.save(edits, done),
             Outcome::Say(text) => self.notice = Some(text),
         }

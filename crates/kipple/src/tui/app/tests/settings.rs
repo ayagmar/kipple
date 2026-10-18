@@ -290,15 +290,15 @@ fn settings_undo_a_kept_item_and_a_turned_off_rule() {
     assert_eq!(shelf(&app, 1), Shelf::Protected);
     assert_eq!(shelf(&app, 2), Shelf::Protected);
 
-    // No project roots: the level, add another, the method, then the kept item and the
+    // No project roots: the level, the theme, add another, the method, then the kept item and the
     // rule.
-    settings_at(&mut app, 3);
+    settings_at(&mut app, 4);
     press(&mut app, &[Key::Char('d')]);
     disk.run(&mut app);
     assert_eq!(shelf(&app, 1), Shelf::Safe);
     assert_eq!(app.config.keep, []);
 
-    settings_at(&mut app, 3);
+    settings_at(&mut app, 4);
     press(&mut app, &[Key::Char('d')]);
     disk.run(&mut app);
     assert_eq!(shelf(&app, 2), Shelf::Safe);
@@ -371,7 +371,7 @@ fn adding_or_removing_a_project_root_rescans_and_says_the_selection_was_cleared(
     press(&mut app, &[Key::Char('c')]);
 
     // Level, ~/projects, then "add another".
-    settings_at(&mut app, 2);
+    settings_at(&mut app, 3);
     press(&mut app, &[Key::Enter]);
     typed(&mut app, "~/work");
     press(&mut app, &[Key::Enter]);
@@ -390,7 +390,7 @@ fn adding_or_removing_a_project_root_rescans_and_says_the_selection_was_cleared(
         "{notice}"
     );
 
-    settings_at(&mut app, 1);
+    settings_at(&mut app, 2);
     press(&mut app, &[Key::Char('d')]);
     assert_eq!(disk.run(&mut app), [Effect::Rescan]);
     assert_eq!(app.roots, [PathBuf::from("~/work")]);
@@ -408,7 +408,7 @@ fn removing_the_last_project_root_writes_an_empty_list_and_rescans() {
     let mut app = screen_on(&disk, config);
     press(&mut app, &[Key::Char('c')]);
 
-    settings_at(&mut app, 1);
+    settings_at(&mut app, 2);
     press(&mut app, &[Key::Char('d')]);
 
     assert_eq!(disk.run(&mut app), [Effect::Rescan]);
@@ -425,8 +425,8 @@ fn removing_the_last_project_root_writes_an_empty_list_and_rescans() {
 fn the_default_method_is_stored() {
     let disk = Disk::new();
     let mut app = screen_on(&disk, Config::default());
-    // No project roots: the level, add another, then the method.
-    settings_at(&mut app, 2);
+    // No project roots: the level, the theme, add another, then the method.
+    settings_at(&mut app, 3);
     press(&mut app, &[Key::Enter]);
     disk.run(&mut app);
 
@@ -513,7 +513,7 @@ fn configured(width: u16, height: u16) -> App {
         unreadable: 0,
     };
     app.update(Msg::Suggested(Box::new(found)));
-    press(&mut app, &[Key::Down, Key::Down]);
+    press(&mut app, &[Key::Down; 3]);
     app
 }
 
@@ -611,7 +611,7 @@ fn a_project_root_already_listed_is_refused_however_it_is_spelled() {
     );
 
     // Level, ~/projects, then "add another".
-    settings_at(&mut app, 2);
+    settings_at(&mut app, 3);
     press(&mut app, &[Key::Enter]);
     typed(&mut app, &spelled);
     press(&mut app, &[Key::Enter]);
@@ -630,7 +630,7 @@ fn a_relative_project_root_is_refused_and_nothing_rescans() {
     let disk = Disk::new();
     let mut app = screen_on(&disk, Config::default());
     // No project roots: the level, then "add another".
-    settings_at(&mut app, 1);
+    settings_at(&mut app, 2);
     press(&mut app, &[Key::Enter]);
     typed(&mut app, "work");
     press(&mut app, &[Key::Enter]);
@@ -694,7 +694,7 @@ fn enter_on_a_suggestion_adds_it_like_a_typed_root_rescans_and_it_leaves_the_lis
     app.update(Msg::Suggested(Box::new(found_at(&[documents]))));
 
     // Level, ~/projects, "add another", then the suggestion.
-    settings_at(&mut app, 3);
+    settings_at(&mut app, 4);
     press(&mut app, &[Key::Enter]);
 
     assert_eq!(disk.run(&mut app), [Effect::Rescan]);
@@ -717,7 +717,7 @@ fn suggestions_a_root_added_during_the_search_covers_are_not_listed() {
     let disk = Disk::new();
     let mut app = screen_on(&disk, Config::default());
     // No project roots: the level, then "add another".
-    settings_at(&mut app, 1);
+    settings_at(&mut app, 2);
     press(&mut app, &[Key::Enter]);
     typed(&mut app, "~/Documents");
     press(&mut app, &[Key::Enter]);
@@ -753,7 +753,7 @@ fn a_suggestion_inside_a_root_added_later_leaves_the_list() {
     app.update(Msg::Suggested(Box::new(found_at(&paths))));
 
     // The level, then "add another".
-    settings_at(&mut app, 1);
+    settings_at(&mut app, 2);
     press(&mut app, &[Key::Enter]);
     typed(&mut app, "~/Documents");
     press(&mut app, &[Key::Enter]);
@@ -775,7 +775,7 @@ fn suggestions_arriving_keep_the_cursor_on_its_line() {
     let disk = Disk::new();
     let mut app = screen_on(&disk, Config::default());
     // No project roots: the level, "add another", then the method.
-    settings_at(&mut app, 2);
+    settings_at(&mut app, 3);
     let paths = [disk.home().join("Documents"), disk.home().join("notes")];
     app.update(Msg::Suggested(Box::new(found_at(&paths))));
     press(&mut app, &[Key::Enter]);
@@ -783,4 +783,87 @@ fn suggestions_arriving_keep_the_cursor_on_its_line() {
     disk.run(&mut app);
     assert_eq!(app.config.method, Some(Method::Trash));
     assert_eq!(app.roots, Vec::<PathBuf>::new());
+}
+
+/// The built-in theme `name` as the home screen draws it in full colour.
+fn theme(name: &str) -> crate::theme::Theme {
+    let colours = crate::theme::Colours::On(crate::theme::Depth::TrueColor);
+    crate::theme::Theme::builtin(name).unwrap().drawn(colours)
+}
+
+// Catches a preview that outlives settings, or one written to the config: `l` previews
+// the next theme at once, and esc puts the theme in force back without a write.
+#[test]
+fn the_theme_row_previews_as_it_moves_and_esc_puts_the_theme_in_force_back() {
+    let disk = Disk::new();
+    let mut app = screen_on(&disk, Config::default());
+    settings_at(&mut app, 1);
+    press(&mut app, &[Key::Char('l')]);
+    assert_eq!(*app.themes.theme(), theme("kipple-dark"));
+    press(&mut app, &[Key::Char('h'), Key::Char('h')]);
+    assert_eq!(*app.themes.theme(), theme("mono"), "h wraps around");
+
+    press(&mut app, &[Key::Esc]);
+    assert_eq!(app.mode, Mode::Browse);
+    assert_eq!(*app.themes.theme(), theme("kipple"));
+    assert_eq!(disk.run(&mut app), []);
+    assert!(!disk.file().exists(), "a preview wrote the config");
+}
+
+// Catches enter on the theme row not writing `ui.theme`, or the theme changing before
+// the write succeeded and so outliving a write that failed.
+#[test]
+fn enter_on_the_theme_row_writes_ui_theme_and_keeps_it_once_written() {
+    let disk = Disk::new();
+    let mut app = screen_on(&disk, Config::default());
+    settings_at(&mut app, 1);
+    press(&mut app, &[Key::Char('l'), Key::Enter]);
+    disk.run(&mut app);
+
+    assert!(
+        disk.text().contains("theme = \"kipple-dark\""),
+        "{}",
+        disk.text()
+    );
+    assert_eq!(app.config.ui.theme.as_deref(), Some("kipple-dark"));
+    press(&mut app, &[Key::Esc]);
+    assert_eq!(
+        *app.themes.theme(),
+        theme("kipple-dark"),
+        "kept after settings close"
+    );
+}
+
+// Catches a broken user theme drawn, or written as `ui.theme`, which would stop the
+// next home screen from opening: it is listed with why, and the look doesn't change.
+#[test]
+fn a_theme_that_cant_be_used_is_listed_but_never_drawn_or_kept() {
+    let disk = Disk::new();
+    let dir = disk.temp.path().join("themes");
+    fs::create_dir_all(&dir).unwrap();
+    fs::write(
+        dir.join("aaa.toml"),
+        "version = 1\n[roles]\nsafe = { fg = \"grean\" }\n",
+    )
+    .unwrap();
+    let catalog = crate::theme::Themes::in_dir(&dir).catalog();
+    let colours = crate::theme::Colours::On(crate::theme::Depth::TrueColor);
+    let mut app = screen_on(&disk, Config::default());
+    app.themes = crate::tui::themes::Picker::new(catalog, "kipple", colours).unwrap();
+
+    settings_at(&mut app, 1);
+    // After the five built-ins.
+    press(&mut app, &[Key::Char('h')]);
+    assert_eq!(*app.themes.theme(), theme("kipple"));
+    let row = screen(&app, colour(), 160, 48);
+    assert!(row.contains("aaa  6 of 6, can't be used:"), "{row}");
+    press(&mut app, &[Key::Enter]);
+    assert_eq!(disk.run(&mut app), []);
+    assert!(!disk.file().exists());
+    assert!(
+        app.notice
+            .as_deref()
+            .unwrap_or_default()
+            .contains("aaa can't be used")
+    );
 }

@@ -11,6 +11,7 @@ mod filter;
 pub(crate) mod keymap;
 mod onboarding;
 mod settings;
+mod themes;
 mod ui;
 
 use std::ffi::OsString;
@@ -35,9 +36,10 @@ use self::app::{App, Catalog, Effect, Msg, Saved};
 pub use self::onboarding::{LevelTotals, due as first_run_due, level_totals};
 use self::onboarding::{Onboarding, Outcome};
 use self::settings::Found;
+use self::themes::Picker;
 use crate::config::{self, Edit, Loaded, Settings};
 use crate::setup::Builtin;
-use crate::theme::Look;
+use crate::theme::{self, Colours, Glyphs, Look, ThemeError};
 
 /// How long the loop waits for a key while the scan streams: one frame at 60 Hz.
 const FRAME: Duration = Duration::from_millis(16);
@@ -72,6 +74,30 @@ pub trait Keys {
     fn next(&mut self, timeout: Duration) -> io::Result<Option<Input>>;
 }
 
+/// How the home screen is drawn: the themes it can switch between in settings, the one
+/// in force, whether colour is used, and the glyphs.
+#[derive(Debug, Clone)]
+pub struct Appearance {
+    themes: Picker,
+    glyphs: Glyphs,
+}
+
+impl Appearance {
+    /// The themes of `catalog` drawn with `colours`, `active` in force, and `glyphs`.
+    ///
+    /// # Errors
+    /// When there is no theme `active` in `catalog`, or it can't be used.
+    pub fn new(
+        catalog: theme::Catalog,
+        active: &str,
+        colours: Colours,
+        glyphs: Glyphs,
+    ) -> Result<Self, ThemeError> {
+        let themes = Picker::new(catalog, active, colours)?;
+        Ok(Self { themes, glyphs })
+    }
+}
+
 /// Runs the home screen on `terminal` until it is closed. `y` writes to the backend, so it
 /// is also an [`io::Write`]: the terminal's one writer.
 ///
@@ -87,7 +113,7 @@ pub fn run<B: Backend + io::Write>(
     keys: &mut dyn Keys,
     env: &Environment,
     settings: &Settings,
-    look: Look<'_>,
+    appearance: Appearance,
 ) -> io::Result<Option<Duration>>
 where
     B::Error: Send + Sync + 'static,
@@ -95,18 +121,18 @@ where
     let start = Start {
         env,
         settings,
-        look,
+        appearance,
         first: false,
     };
-    session(terminal, keys, &start)
+    session(terminal, keys, start)
 }
 
-/// What a session runs with: the machine, the settings and the look, and whether the
-/// first run's questions come before the home screen.
+/// What a session runs with: the machine, the settings and the appearance, and whether
+/// the first run's questions come before the home screen.
 struct Start<'a> {
     env: &'a Environment,
     settings: &'a Settings,
-    look: Look<'a>,
+    appearance: Appearance,
     first: bool,
 }
 
@@ -115,15 +141,15 @@ struct Start<'a> {
 fn session<B: Backend + io::Write>(
     terminal: &mut Terminal<B>,
     keys: &mut dyn Keys,
-    start: &Start<'_>,
+    start: Start<'_>,
 ) -> io::Result<Option<Duration>>
 where
     B::Error: Send + Sync + 'static,
 {
-    let &Start {
+    let Start {
         env,
         settings,
-        look,
+        appearance,
         first,
     } = start;
     let builtin = Builtin::load().map_err(io::Error::other)?;
@@ -131,6 +157,7 @@ where
     let size = terminal.size().map_err(io::Error::other)?;
     let mut app = App::new(Catalog::new(&builtin), size.width, size.height);
     app.configure(Saved::of(settings));
+    app.themes = appearance.themes;
     let onboarding = first.then(|| Onboarding::new(&app));
     if first {
         app.start_search();
@@ -144,7 +171,7 @@ where
     thread::scope(|scope| {
         let mut screen = Screen {
             terminal,
-            look,
+            glyphs: appearance.glyphs,
             app: &mut app,
             onboarding,
             store,
@@ -169,7 +196,11 @@ where
 /// Opens the home screen in this terminal and restores the terminal however it ends:
 /// on quit, on error, and on panic (ratatui's panic hook). Without a config file at the
 /// default location, the first run's questions come first (J0).
-pub(crate) fn open(env: &Environment, settings: &Settings, look: Look<'_>) -> io::Result<()> {
+pub(crate) fn open(
+    env: &Environment,
+    settings: &Settings,
+    appearance: Appearance,
+) -> io::Result<()> {
     let first = onboarding::due(&settings.loaded);
     // Before `try_init`: it enables raw mode first, and that stays on if entering the
     // alternate screen then fails.
@@ -178,10 +209,10 @@ pub(crate) fn open(env: &Environment, settings: &Settings, look: Look<'_>) -> io
     let start = Start {
         env,
         settings,
-        look,
+        appearance,
         first,
     };
-    session(&mut terminal, &mut TerminalKeys, &start).map(|_| ())
+    session(&mut terminal, &mut TerminalKeys, start).map(|_| ())
 }
 
 /// Leaves raw mode and the alternate screen when dropped.
@@ -238,7 +269,7 @@ struct Scan<'scope> {
 /// One home screen session: the state, the scan feeding it and the terminal drawing it.
 struct Screen<'s, 'scope, 'env, B: Backend> {
     terminal: &'s mut Terminal<B>,
-    look: Look<'env>,
+    glyphs: Glyphs,
     app: &'s mut App,
     /// The first run's questions, until they are answered.
     onboarding: Option<Onboarding>,
@@ -434,7 +465,11 @@ where
     }
 
     fn draw(&mut self) -> io::Result<()> {
-        let (app, look, onboarding) = (&*self.app, self.look, self.onboarding.as_ref());
+        let (app, onboarding) = (&*self.app, self.onboarding.as_ref());
+        let look = Look {
+            theme: app.themes.theme(),
+            glyphs: self.glyphs,
+        };
         self.terminal
             .draw(|frame| match onboarding {
                 Some(onboarding) => ui::onboarding::render(onboarding, app, look, frame),

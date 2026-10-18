@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use kipple::doctor::{ConfigStatus, IntegrationRoots, Report, RootCheck};
+use kipple::theme::Ink;
 use kipple::{CANCELLED, exit_code};
 use kipple_core::{
     FileIdentity, IntegrationId, Inventory, Lens, Observer, ProbeError, ProcessSnapshot,
@@ -69,7 +70,7 @@ fn report(cache_error: io::ErrorKind) -> Report {
 )]
 fn printed(report: &Report) -> String {
     let mut out = Vec::new();
-    report.write_to(&mut out).unwrap();
+    report.write_to(&mut out, &Ink::plain()).unwrap();
     String::from_utf8(out).unwrap()
 }
 
@@ -77,7 +78,7 @@ fn printed(report: &Report) -> String {
 fn a_closed_stdout_exits_130_and_says_nothing_more() {
     let mut stderr = Vec::new();
 
-    let written = report(io::ErrorKind::NotFound).write_to(&mut ClosedPipe);
+    let written = report(io::ErrorKind::NotFound).write_to(&mut ClosedPipe, &Ink::plain());
     let code = exit_code(written, &mut stderr);
 
     assert_eq!(code, ExitCode::from(CANCELLED));

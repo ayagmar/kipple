@@ -17,6 +17,7 @@ use crate::json::{
     BucketOut, EVENT, EventBody, EventOut, FindingOut, LensOut, OmissionOut, PathOut, ScanOut,
     SizeOut, VerdictOut,
 };
+use crate::theme::{Ink, Role};
 
 /// How many undelivered events the stream holds before the scan waits.
 const STREAM_CAPACITY: usize = 256;
@@ -143,39 +144,41 @@ pub(crate) fn write_record(out: &mut dyn Write, seq: u64, event: EventBody) -> i
 }
 
 /// Writes the report for people, grouped by lens.
-pub(crate) fn write_human(out: &mut dyn Write, report: &ScanOut) -> io::Result<()> {
+pub(crate) fn write_human(out: &mut dyn Write, report: &ScanOut, ink: &Ink) -> io::Result<()> {
     writeln!(out, "kipple {} scan (read-only)", report.kipple)?;
     for lens in [LensOut::Agents, LensOut::Dev, LensOut::System] {
         let found: Vec<&FindingOut> = report.findings.iter().filter(|f| f.lens == lens).collect();
-        writeln!(out, "\n{}", lens_title(lens))?;
+        writeln!(out, "\n{}", ink.paint(Role::Title, lens_title(lens)))?;
         if found.is_empty() {
-            writeln!(out, "  nothing found")?;
+            writeln!(out, "  {}", ink.paint(Role::Muted, "nothing found"))?;
         }
         for finding in found {
-            let bucket = finding
-                .verdict
-                .as_ref()
-                .map_or("unsized", |v| bucket_word(v.bucket));
+            let bucket = finding.verdict.as_ref().map(|v| v.bucket);
+            let word = bucket.map_or("unsized", bucket_word);
+            let bucket = ink.paint(
+                bucket.map_or(Role::Muted, bucket_role),
+                &format!("{word:<9}"),
+            );
             let reasons = finding
                 .verdict
                 .as_ref()
                 .filter(|verdict| !verdict.reasons.is_empty())
                 .map(|verdict| {
                     let words: Vec<&str> = verdict.reasons.iter().map(|&r| reason(r)).collect();
-                    format!("  ({})", words.join(", "))
+                    ink.paint(Role::Muted, &format!("  ({})", words.join(", ")))
                 })
                 .unwrap_or_default();
+            let rule = ink.paint(Role::Muted, &format!("{:<26}", finding.rule));
             writeln!(
                 out,
-                "  {:>12}  {bucket:<9}  {:<26}  {}{reasons}",
+                "  {:>12}  {bucket}  {rule}  {}{reasons}",
                 size(finding.size.as_ref()),
-                finding.rule,
                 escaped(&finding.path.display)
             )?;
         }
     }
-    write_advice(out, report)?;
-    write_omissions(out, report)?;
+    write_advice(out, report, ink)?;
+    write_omissions(out, report, ink)?;
     let notices = process_notices(report);
     if !notices.is_empty() {
         writeln!(out)?;
@@ -200,7 +203,7 @@ pub(crate) fn write_human(out: &mut dyn Write, report: &ScanOut) -> io::Result<(
 
 /// Writes `kipple` without a terminal: each bucket's findings and size, and whether the
 /// report is partial (`docs/03-functional-spec.md` §2 J1).
-pub(crate) fn write_summary(out: &mut dyn Write, report: &ScanOut) -> io::Result<()> {
+pub(crate) fn write_summary(out: &mut dyn Write, report: &ScanOut, ink: &Ink) -> io::Result<()> {
     writeln!(
         out,
         "kipple {} (read-only, level: {})",
@@ -226,19 +229,22 @@ pub(crate) fn write_summary(out: &mut dyn Write, report: &ScanOut) -> io::Result
             .filter_map(|f| f.size.as_ref())
             .map(|s| s.allocated.unwrap_or(s.apparent))
             .sum();
+        let title = ink.paint(
+            bucket.map_or(Role::Muted, bucket_role),
+            &format!("{title:<14}"),
+        );
         writeln!(
             out,
-            "  {title:<14} {:>12}  {}",
+            "  {title} {:>12}  {}",
             bytes(total),
             crate::human::findings(found.len())
         )?;
     }
     let gaps: usize = report.integrations.iter().map(|i| i.omissions.len()).sum();
     if gaps > 0 {
-        writeln!(
-            out,
-            "Partial: {gaps} places couldn't be covered; `kipple scan` lists them."
-        )?;
+        let partial =
+            format!("Partial: {gaps} places couldn't be covered; `kipple scan` lists them.");
+        writeln!(out, "{}", ink.paint(Role::Warning, &partial))?;
     }
     for notice in process_notices(report) {
         writeln!(out, "{notice}")?;
@@ -258,6 +264,15 @@ const fn bucket_word(bucket: BucketOut) -> &'static str {
     }
 }
 
+/// The role a bucket is painted in, as on the home screen.
+const fn bucket_role(bucket: BucketOut) -> Role {
+    match bucket {
+        BucketOut::Safe => Role::Safe,
+        BucketOut::Review => Role::Review,
+        BucketOut::Protected => Role::Protected,
+    }
+}
+
 const fn lens_title(lens: LensOut) -> &'static str {
     match lens {
         LensOut::Agents => "Agents",
@@ -266,7 +281,7 @@ const fn lens_title(lens: LensOut) -> &'static str {
     }
 }
 
-fn write_advice(out: &mut dyn Write, report: &ScanOut) -> io::Result<()> {
+fn write_advice(out: &mut dyn Write, report: &ScanOut, ink: &Ink) -> io::Result<()> {
     let advised = report
         .integrations
         .iter()
@@ -274,7 +289,8 @@ fn write_advice(out: &mut dyn Write, report: &ScanOut) -> io::Result<()> {
     let mut first = true;
     for (integration, advice) in advised {
         if first {
-            writeln!(out, "\nAdvice (kipple never runs these)")?;
+            let heading = ink.paint(Role::Title, "Advice (kipple never runs these)");
+            writeln!(out, "\n{heading}")?;
             first = false;
         }
         writeln!(out, "  {integration}: {}", escaped(&advice.title))?;
@@ -286,7 +302,7 @@ fn write_advice(out: &mut dyn Write, report: &ScanOut) -> io::Result<()> {
     Ok(())
 }
 
-fn write_omissions(out: &mut dyn Write, report: &ScanOut) -> io::Result<()> {
+fn write_omissions(out: &mut dyn Write, report: &ScanOut, ink: &Ink) -> io::Result<()> {
     let omitted = report
         .integrations
         .iter()
@@ -294,7 +310,8 @@ fn write_omissions(out: &mut dyn Write, report: &ScanOut) -> io::Result<()> {
     let mut first = true;
     for (integration, omission) in omitted {
         if first {
-            writeln!(out, "\nNot covered, so this report is partial")?;
+            let heading = ink.paint(Role::Warning, "Not covered, so this report is partial");
+            writeln!(out, "\n{heading}")?;
             first = false;
         }
         writeln!(out, "  {integration}: {}", escaped(&omission.message))?;

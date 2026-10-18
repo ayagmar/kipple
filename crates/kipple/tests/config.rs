@@ -123,7 +123,7 @@ impl Demo {
 fn kipple(env: &Environment, args: &[&str]) -> (ExitCode, String, String) {
     let cli = Cli::parse_from(std::iter::once("kipple").chain(args.iter().copied()));
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = kipple::run(&cli, env, &mut out, &mut err);
+    let code = kipple::run(&cli, env, false, &mut out, &mut err);
     let text = |bytes| String::from_utf8(bytes).unwrap();
     (code, text(out), text(err))
 }
@@ -222,10 +222,14 @@ fn every_config_kipple_cant_use_exits_2_with_the_reason_and_where_it_is() {
             "line 2, column 1: unknown key care.speed",
         ),
         ("colour = true", "line 1, column 1: unknown key colour"),
-        // [ui] exists but reads nothing yet: no key in it is silently ignored.
+        // [ui] reads only `theme`, as a name: no other key in it is silently ignored.
         (
-            "[ui]\ntheme = \"dusk\"",
-            "line 2, column 1: unknown key ui.theme",
+            "[ui]\nlayout = \"wide\"",
+            "line 2, column 1: unknown key ui.layout",
+        ),
+        (
+            "[ui]\ntheme = \"Dusk\"",
+            "line 2, column 9: ui.theme: expected a theme name",
         ),
         ("ui = 1", "ui: expected a table"),
         (
