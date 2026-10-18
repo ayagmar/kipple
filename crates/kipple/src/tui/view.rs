@@ -3,7 +3,7 @@
 //! a word; colour only repeats it.
 
 use std::collections::BTreeSet;
-use std::path::{MAIN_SEPARATOR, Path};
+use std::path::Path;
 
 use kipple_core::{Lens, Level, ScanOutcome, Verdict};
 use ratatui::Frame;
@@ -15,7 +15,7 @@ use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
 use super::app::{App, Line, Mode, Node, Progress, ProjectId, Row, Shelf};
 use super::settings::{self, Item};
-use crate::human::{self, bytes, escaped};
+use crate::human::{self, bytes, escaped, homed};
 
 /// A terminal at least this wide shows the detail pane beside the tree; a narrower one
 /// shows it below.
@@ -316,15 +316,6 @@ fn roots(app: &App, look: Look, room: usize) -> Option<String> {
 /// How many columns `text` takes.
 fn cols(text: &str) -> usize {
     Span::raw(text).width()
-}
-
-/// `path` with `~` for the home directory.
-fn homed(path: &Path, home: Option<&Path>) -> String {
-    match home.and_then(|home| path.strip_prefix(home).ok()) {
-        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
-        Some(rest) => format!("~{MAIN_SEPARATOR}{}", rest.display()),
-        None => path.display().to_string(),
-    }
 }
 
 /// The visible tree and the cursor's line in it.
@@ -1223,7 +1214,10 @@ fn render_help(look: Look, frame: &mut Frame<'_>) {
         ("j k  ↓ ↑", "move"),
         ("h l  ← →", "fold and unfold a group or project"),
         ("g G", "first and last line"),
-        ("/", "filter by name or path; enter keeps it, esc clears it"),
+        (
+            "/",
+            "filter by words of the path or rule; enter keeps it, esc clears it",
+        ),
         ("tab", "show one lens: Agents, Dev, System, then all"),
         ("s", "select or unselect the finding"),
         ("a", "add the group's or project's Safe and Review findings"),

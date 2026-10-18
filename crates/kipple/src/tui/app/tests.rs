@@ -226,7 +226,11 @@ fn selected(app: &App) -> Vec<u64> {
 
 /// A home with one finding in each bucket, as `demo-home` has them.
 fn home() -> App {
-    let mut app = App::new(catalog(), 160, 48);
+    with_findings(App::new(catalog(), 160, 48))
+}
+
+/// `app` with the findings of [`home`].
+fn with_findings(mut app: App) -> App {
     found(
         &mut app,
         1,
@@ -401,12 +405,40 @@ fn the_cursor_stays_on_its_finding_while_sizes_stream_in_and_reorder_the_tree() 
     assert!(focus(&app).is_some());
 }
 
+/// The findings `query` leaves shown, typed after `/` and cleared again with `esc`.
+fn filtered(app: &mut App, query: &str) -> Vec<u64> {
+    press(app, &[Key::Char('/')]);
+    typed(app, query);
+    let shown = findings(app);
+    press(app, &[Key::Esc]);
+    shown
+}
+
+// Catches the filter matching letters scattered across the title and the whole path, so
+// `/target` found `tool/.venv` (F3); terms that must be typed in the path's order; and a
+// term matching the home directory's own name, which every path below home shares.
 #[test]
-fn the_fuzzy_filter_keeps_findings_whose_name_or_path_match_in_order_and_esc_clears_it() {
+fn every_filter_term_must_appear_whole_in_the_path_as_shown_or_the_title() {
+    let mut app = App::new(catalog(), 160, 48);
+    app.home = Some(PathBuf::from("/home/ada"));
+    let mut app = with_findings(app);
+
+    assert_eq!(filtered(&mut app, "web node"), [2]);
+    assert_eq!(filtered(&mut app, "node web"), [2], "terms in any order");
+    assert_eq!(filtered(&mut app, "webnm"), Vec::<u64>::new(), "no fuzzy");
+    assert_eq!(filtered(&mut app, "/target"), [1]);
+    assert_eq!(filtered(&mut app, "ada"), Vec::<u64>::new(), "home is ~");
+    assert_eq!(filtered(&mut app, "~/projects/tool"), [4]);
+    assert_eq!(filtered(&mut app, "BYTECODE tool"), [4], "title and path");
+    assert_eq!(filtered(&mut app, "  "), [1, 4, 2, 3, 5]);
+}
+
+#[test]
+fn enter_keeps_the_filter_and_esc_clears_it() {
     let mut app = home();
 
     press(&mut app, &[Key::Char('/')]);
-    typed(&mut app, "webnm");
+    typed(&mut app, "web");
     assert_eq!(findings(&app), [2]);
     // q while typing is text, not quit.
     typed(&mut app, "q");

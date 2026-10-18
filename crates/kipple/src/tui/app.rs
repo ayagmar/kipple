@@ -162,8 +162,8 @@ pub(crate) struct Row {
     pub(crate) size: Option<SizeOut>,
     /// Its project, if any, and its label.
     pub(crate) spot: Spot,
-    /// Its rule's title and its path, lowercased, for the filter.
-    haystack: String,
+    /// What the filter searches.
+    haystack: filter::Haystack,
 }
 
 impl Row {
@@ -521,7 +521,11 @@ impl App {
             .get(&finding.integration)
             .copied()
             .unwrap_or(Lens::System);
-        let haystack = filter::haystack(self.catalog.title(&finding.rule), &finding.path);
+        let haystack = filter::Haystack::new(
+            self.catalog.title(&finding.rule),
+            &finding.path,
+            self.home.as_deref(),
+        );
         let spot = self.spot(&finding.path);
         self.by_id.insert(finding.id, self.rows.len());
         self.rows.push(Row {

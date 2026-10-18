@@ -1,25 +1,38 @@
-//! The home screen's fuzzy filter: a query matches when its characters appear in order,
-//! not necessarily together, so `webnm` finds `web/node_modules`.
+//! The home screen's filter: the query splits on spaces, and every term must appear
+//! whole, ignoring case, in the finding's path as the screen shows it or in its rule's
+//! title, so `web node` finds `~/projects/web/node_modules` and `/target` never finds
+//! `tool/.venv`.
 
 use std::path::{MAIN_SEPARATOR, Path};
 
-/// What the filter searches for a finding: its rule's title and its path, lowercased, with
-/// `/` between the path's parts on every system, as the tree writes them.
-pub(crate) fn haystack(title: &str, path: &Path) -> String {
-    format!("{title} {}", path.display())
-        .replace(MAIN_SEPARATOR, "/")
-        .to_lowercase()
+use crate::human::homed;
+
+/// What the filter searches for a finding, lowercased: its rule's title, and its path as
+/// the screen shows it, from `~` below home and with `/` between its parts on every
+/// system.
+#[derive(Debug)]
+pub(crate) struct Haystack {
+    title: String,
+    path: String,
 }
 
-/// Whether every character of `query` appears in `haystack` in order, ignoring case and
-/// the query's spaces, with the system's separator read as `/`. `haystack` is already
-/// lowercase. An empty query matches everything.
-pub(crate) fn matches(query: &str, haystack: &str) -> bool {
-    let mut rest = haystack.chars();
-    query
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .map(|c| if c == MAIN_SEPARATOR { '/' } else { c })
-        .flat_map(char::to_lowercase)
-        .all(|wanted| rest.any(|c| c == wanted))
+impl Haystack {
+    pub(crate) fn new(title: &str, path: &Path, home: Option<&Path>) -> Self {
+        Self {
+            title: title.to_lowercase(),
+            path: homed(path, home)
+                .replace(MAIN_SEPARATOR, "/")
+                .to_lowercase(),
+        }
+    }
+}
+
+/// Whether every space-separated term of `query` appears in `haystack`'s path or title,
+/// ignoring case, with the system's separator read as `/`. An empty query matches
+/// everything.
+pub(crate) fn matches(query: &str, haystack: &Haystack) -> bool {
+    query.split_whitespace().all(|term| {
+        let term = term.replace(MAIN_SEPARATOR, "/").to_lowercase();
+        haystack.path.contains(&term) || haystack.title.contains(&term)
+    })
 }

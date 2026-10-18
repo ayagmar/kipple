@@ -1,5 +1,7 @@
 //! Text for people: escaping and sizes.
 
+use std::path::{MAIN_SEPARATOR, Path};
+
 use kipple_core::{
     Activity, ActivityGap, Bucket, Caution, Cost, Facts, Finding, Hold, Loss, Modified, Policy,
     Proposal, Recovery, Seen, Tracked, Verdict, WalkGap,
@@ -171,6 +173,15 @@ pub(crate) fn reason(name: &'static str) -> &'static str {
 /// and escaping it whole would show its line breaks as `\n`.
 pub(crate) fn snippet_lines(snippet: &str) -> impl Iterator<Item = String> + '_ {
     snippet.lines().map(escaped)
+}
+
+/// `path` as the screen shows it: below the home directory, from `~`.
+pub(crate) fn homed(path: &Path, home: Option<&Path>) -> String {
+    match home.and_then(|home| path.strip_prefix(home).ok()) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
+        Some(rest) => format!("~{MAIN_SEPARATOR}{}", rest.display()),
+        None => path.display().to_string(),
+    }
 }
 
 /// What kipple established about a finding, as labelled lines for a detail view: the
