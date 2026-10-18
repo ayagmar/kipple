@@ -4,7 +4,7 @@
 use std::io::{self, Write};
 use std::ops::Range;
 
-use toml_edit::{Item, TableLike};
+use toml_edit::{Array, Item, TableLike};
 
 use super::parse::{ParseError, Reader, entries};
 use crate::human::escaped;
@@ -33,15 +33,16 @@ impl KeysConfig {
         })
     }
 
-    /// Its part of `kipple config show`: each entry that changes a default, `none` for
-    /// an action left without a key.
+    /// Its part of `kipple config show`: each entry that changes a default, as the TOML
+    /// array that would set it, so a `,` key reads unambiguously; `none` for an action
+    /// left without a key.
     pub(super) fn write_show(&self, out: &mut dyn Write) -> io::Result<()> {
         for (action, keys) in self.changed() {
-            let names: Vec<String> = keys.iter().map(|&key| key_name(key)).collect();
-            let shown = if names.is_empty() {
+            let shown = if keys.is_empty() {
                 "none".to_owned()
             } else {
-                escaped(&names.join(", "))
+                let names: Array = keys.iter().map(|&key| key_name(key)).collect();
+                escaped(&names.to_string())
             };
             writeln!(out, "{:<22}{shown}", format!("keys.{}", action.name()))?;
         }

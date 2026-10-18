@@ -1201,7 +1201,7 @@ fn config_errors_and_warnings_never_write_a_control_character_to_the_terminal() 
 
 // Catches `config show` leaving out the home screen's settings: `[ui]` with its defaults
 // filled in, and each `[keys]` entry that changes a default, so a user can check what
-// applies.
+// applies; and a `,` key (the default for settings) printed so it reads like a separator.
 #[test]
 fn config_show_prints_the_ui_settings_and_the_keys_that_differ_from_the_defaults() {
     let demo = Demo::new(&[], "");
@@ -1227,13 +1227,14 @@ fn config_show_prints_the_ui_settings_and_the_keys_that_differ_from_the_defaults
     assert!(!plain.contains("keys."), "{plain}");
 
     let text = "[ui]\ntheme = \"dusk\"\ndetail = \"off\"\nglyphs = \"ascii\"\n\
-                [keys]\nselect = [\"x\", \"space\"]\nmove-down = [\"j\", \"down\"]\ncopy = []\n";
+                [keys]\nselect = [\"x\", \"space\"]\nsettings = [\",\", \"S\"]\nmove-down = [\"j\", \"down\"]\ncopy = []\n";
     let custom = show(&demo.config("custom.toml", text));
     for line in [
         "ui.theme              dusk",
         "ui.detail             off",
         "ui.glyphs             ascii",
-        "keys.select           x, space",
+        "keys.select           [\"x\", \"space\"]",
+        "keys.settings         [\",\", \"S\"]",
         "keys.copy             none",
     ] {
         assert!(custom.lines().any(|l| l == line), "{line}:\n{custom}");
