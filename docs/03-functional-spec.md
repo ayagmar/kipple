@@ -58,7 +58,7 @@ Status (M2): built. It opens only when there is no config file at the default lo
 
 Inside each bucket, findings are grouped by **Agents**, **Dev** and **System**. A filter switches to one lens. Totals separate *discovered*, *eligible*, *selected* and *estimated immediate reclaim* (Trash counts as zero immediate reclaim). Sizes fill in as they are computed. Known roots appear within 250 ms. Project scanning covers the configured (or default) project roots.
 
-"Protected / report-only" shows *why* for each row: `blocked: in use`, `unknown: layout`, `needs grant`, `report only` or `advice`. These are distinct reasons, never lumped into one label.
+"Protected / report-only" shows *why* for each row in plain words: `in use`, `layout not recognised`, `can't tell if in use`, `report only` or `advice only`, and later `needs grant`. These are distinct reasons, never lumped into one label. The detail pane and `kipple explain` say each as a sentence.
 
 The founder chose this bucket layout over a lens-first one in M2 (D-049).
 
@@ -196,7 +196,7 @@ Status (M2, D-048, D-049): the home screen exists, removes nothing, and judges f
 - **Detail pane:** what doesn't fit scrolls with `J`/`K`, and its last line says there is more. A restore cost kipple can't estimate reads "not estimated", which never changes the bucket. A project's line shows its path, its findings per bucket and their totals.
 - **Keys:** `j/k` or arrows, `h/l` to collapse and expand, `/` fuzzy filter, `s` toggle, `a` add group, `c` add Safe bucket and review, `p`/`P` keep item/rule, `o` sort order, `y` copy the focused path, `J/K` scroll the detail pane, `enter` review, `?` help, `q` quit. Mouse optional. `y` sends the path to the terminal's clipboard with an OSC 52 escape, so it runs no program and works over SSH; a terminal that ignores OSC 52 copies nothing, and the message says the path was sent, not that it was copied.
 - **Streaming:** rows appear as they are found. Sizes animate in with no reflow jumps (stable sort and reserved columns).
-- **States:** `scanning`, `blocked` (with reason), `in use`, `recent`, `report-only`, `needs grant`, each a text label plus restrained colour. Never colour alone.
+- **States:** `measuring`, each hold (`in use`, `layout not recognised`, `unknown loss`, `can't tell if in use`, `report only`, `advice only`, `kept`, …), each caution (`recent`, `loses more`, …) and later `needs grant`, each a text label plus restrained colour. Never colour alone. A hold has a short label of at most 22 columns for the tree, its notices and `scan`'s report, and a sentence for the detail pane and `kipple explain`, from one table (D-059); `--json` keeps the reason names (`unknown-layout`).
 - **Empty or incomplete:** an incomplete scan is never shown as "nothing to clean". Omissions are listed.
 - **Terminal hygiene:** one writer owns the terminal. Raw mode and the alternate screen are restored on exit, error and panic (an RAII guard plus a panic hook).
 - **Inline mode:** `kipple clean` outside the home screen renders its review and progress inline (fixed height, scrollback kept) instead of taking over the screen. `--fullscreen` switches.

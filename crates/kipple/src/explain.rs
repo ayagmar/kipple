@@ -154,7 +154,7 @@ pub(crate) fn write_path(
         )?;
     }
     if let Some(verdict) = finding.verdict(policy) {
-        let reasons = human::reasons(&verdict);
+        let reasons = human::reasons_in_full(&verdict);
         let bucket = human::bucket(verdict.bucket());
         let level = policy.level_of(&finding.rule);
         let line = if reasons.is_empty() {

@@ -20,8 +20,8 @@ kipple  Careful · [Balanced] · Thorough · scanned in 1.2 s · ~/projects
   ▾ Protected (2)                             128.0 MiB        not eligible             │Size              100.0 MiB
     ▾ Dev (2)                                 128.0 MiB                                 │Rule              builtin.node.node-modules
       ▾ api (2)                               128.0 MiB                                 │
-        docs/node_modules  Node dependenci    120.0 MiB ▊      unknown: layout +1       │
-        old/__pycache__  Python bytecode c      8.0 MiB        unknown: layout +1       │
+        docs/node_modules  Node dependenci    120.0 MiB ▊      layout not recognised +1 │
+        old/__pycache__  Python bytecode c      8.0 MiB        layout not recognised +1 │
                                                                                         │
                                                                                         │
                                                                                         │

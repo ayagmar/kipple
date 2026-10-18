@@ -12,7 +12,7 @@ kipple  Careful · [Balanced] · Thorough · scanned in 1.2 s · ~/projects
       web/node_modules  Node dependencies    300.0 MiB recent
   ▾ Protected (2)                           1020.0 MiB not eligible
     ▾ Dev (1)                                120.0 MiB
-      bunapp/node_modules  Node dependenc    120.0 MiB unknown: layout +1
+      bunapp/node_modules  Node dependenc    120.0 MiB layout not recognised +1
     ▾ System (1)                             900.0 MiB
 ────────────────────────────────────────────────────────────────────────────────
 Cargo build output · Safe to clean at Balanced

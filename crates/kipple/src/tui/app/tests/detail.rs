@@ -266,6 +266,22 @@ fn beside(app: &App) -> Vec<String> {
         .collect()
 }
 
+// Catches a hold shown in the detail pane as a terse code (`unknown: layout`) instead of
+// the sentence that says what it means (F4).
+#[test]
+fn the_detail_pane_says_why_a_finding_is_held_in_sentences() {
+    let mut app = home();
+    to(&mut app, 3);
+
+    let words = beside(&app).join(" ");
+    let words: Vec<&str> = words.split_whitespace().collect();
+
+    let held = "kipple doesn't recognise what is inside, so it can't tell what is safe to \
+                remove. kipple can't tell what removing it would lose or how it would come \
+                back.";
+    assert!(words.join(" ").contains(held), "{words:?}");
+}
+
 // Catches a snippet that spans lines drawn as one line with a literal `\n` (F2).
 #[test]
 fn the_detail_pane_shows_each_line_of_an_advice_snippet_on_its_own_line() {

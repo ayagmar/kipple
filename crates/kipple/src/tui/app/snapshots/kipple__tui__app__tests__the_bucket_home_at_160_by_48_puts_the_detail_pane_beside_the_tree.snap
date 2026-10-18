@@ -12,9 +12,9 @@ kipple  Careful · [Balanced] · Thorough · scanned in 1.2 s · ~/projects
       web/node_modules  Node dependencies     300.0 MiB ██     recent                   │What you lose     The next build compiles everything again.
   ▾ Protected (2)                            1020.0 MiB        not eligible             │How it comes back the next build makes it again, without the network
     ▾ Dev (1)                                 120.0 MiB                                 │Restore cost      not estimated
-      bunapp/node_modules  Node dependenci    120.0 MiB ▊      unknown: layout +1       │Proposes          remove (delete or trash)
+      bunapp/node_modules  Node dependenci    120.0 MiB ▊      layout not recognised +1 │Proposes          remove (delete or trash)
     ▾ System (1)                              900.0 MiB                                 │Git               no repository holds it or lives inside it, so git
-      pacman/pkg  pacman package cache        900.0 MiB ██████ advice                   │tracks nothing inside
+      pacman/pkg  pacman package cache        900.0 MiB ██████ advice only              │tracks nothing inside
                                                                                         │In use            no running program shows it in use
                                                                                         │Last change       41 days ago
                                                                                         │Size              512.0 MiB

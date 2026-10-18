@@ -70,21 +70,59 @@ pub(crate) const fn bucket(bucket: Bucket) -> &'static str {
     }
 }
 
-/// Why a finding is Protected, as a row shows it: never colour alone.
+/// Why a finding is Protected, as a row shows it: never colour alone. At most 22
+/// columns, so it fits the state column with ` +N`.
 pub(crate) const fn hold(hold: Hold) -> &'static str {
+    hold_text(hold).0
+}
+
+/// Why a finding is Protected, as a sentence for the detail pane and `explain`.
+pub(crate) const fn hold_sentence(hold: Hold) -> &'static str {
+    hold_text(hold).1
+}
+
+/// Each hold's short and long text, in one table so the two never drift apart.
+const fn hold_text(hold: Hold) -> (&'static str, &'static str) {
     match hold {
-        Hold::Disabled => "rule turned off",
-        Hold::Kept => "kept",
-        Hold::Excluded => "excluded by config",
-        Hold::ReportOnly => "report only",
-        Hold::Advice => "advice",
-        Hold::UnknownLayout => "unknown: layout",
-        Hold::UnknownConsequence => "unknown: what is lost",
-        Hold::UnknownGit => "unknown: git",
-        Hold::HoldsRepository => "blocked: git checkout",
-        Hold::InUse => "blocked: in use",
-        Hold::UnknownActivity => "unknown: in use",
-        Hold::UnknownModified => "unknown: last change",
+        Hold::Disabled => (
+            "rule turned off",
+            "Its rule is turned off in your settings.",
+        ),
+        Hold::Kept => ("kept", "You chose to keep it."),
+        Hold::Excluded => (
+            "excluded",
+            "A path in your config's exclude list covers it.",
+        ),
+        Hold::ReportOnly => (
+            "report only",
+            "kipple only reports this kind of item; it never offers to remove it.",
+        ),
+        Hold::Advice => (
+            "advice only",
+            "Its own tool manages it; kipple shows how to trim it instead.",
+        ),
+        Hold::UnknownLayout => (
+            "layout not recognised",
+            "kipple doesn't recognise what is inside, so it can't tell what is safe to remove.",
+        ),
+        Hold::UnknownConsequence => (
+            "unknown loss",
+            "kipple can't tell what removing it would lose or how it would come back.",
+        ),
+        Hold::UnknownGit => (
+            "git state unknown",
+            "kipple couldn't check whether git tracks anything inside.",
+        ),
+        Hold::HoldsRepository => ("holds a git repo", "A git repository lives inside it."),
+        Hold::InUse => ("in use", "A running program is using it."),
+        Hold::UnknownActivity => (
+            "can't tell if in use",
+            "kipple couldn't check every running program, so it may be in use.",
+        ),
+        Hold::UnknownModified => (
+            "last change unknown",
+            "kipple couldn't read when it last changed.",
+        ),
     }
 }
 
@@ -106,6 +144,27 @@ pub(crate) fn reasons(verdict: &Verdict) -> String {
         Verdict::Protected(holds) => holds.iter().map(|&h| hold(h)).collect(),
     };
     labels.join(", ")
+}
+
+/// Every reason for `verdict` in full: a Protected finding's holds as sentences, a
+/// Review finding's cautions as in [`reasons`]. Empty when Safe.
+pub(crate) fn reasons_in_full(verdict: &Verdict) -> String {
+    match verdict {
+        Verdict::Protected(holds) => holds
+            .iter()
+            .map(|&h| hold_sentence(h))
+            .collect::<Vec<_>>()
+            .join(" "),
+        Verdict::Safe | Verdict::Review(_) => reasons(verdict),
+    }
+}
+
+/// A reason as reports name it (`unknown-layout`), in the words a row shows.
+pub(crate) fn reason(name: &'static str) -> &'static str {
+    Hold::from_name(name)
+        .map(hold)
+        .or_else(|| Caution::from_name(name).map(caution))
+        .unwrap_or(name)
 }
 
 /// An advice snippet's lines, each escaped for the terminal: a snippet may span lines,

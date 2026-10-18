@@ -330,7 +330,7 @@ fn s_toggles_an_eligible_finding_and_refuses_a_protected_one_with_its_reason() {
 
     assert!(app.selected.is_empty(), "a Protected finding was selected");
     let notice = app.notice.as_deref().unwrap();
-    assert!(notice.contains("unknown: layout"), "{notice}");
+    assert!(notice.contains("layout not recognised"), "{notice}");
 }
 
 // Catches the home screen judging with the default policy instead of the configured one,

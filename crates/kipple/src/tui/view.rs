@@ -1040,7 +1040,7 @@ fn why(row: &Row, level: Level) -> String {
             "passes every check at {}: recognised, comes back, untracked, no running program shows it in use, not recent",
             title_case(level.name())
         ),
-        Some(verdict) => human::reasons(verdict),
+        Some(verdict) => human::reasons_in_full(verdict),
     }
 }
 

@@ -12,7 +12,7 @@ use kipple_core::{
 };
 
 use crate::config::Settings;
-use crate::human::{bytes, escaped, size, snippet_lines};
+use crate::human::{bytes, escaped, reason, size, snippet_lines};
 use crate::json::{
     BucketOut, EVENT, EventBody, EventOut, FindingOut, LensOut, OmissionOut, PathOut, ScanOut,
     SizeOut, VerdictOut,
@@ -160,7 +160,10 @@ pub(crate) fn write_human(out: &mut dyn Write, report: &ScanOut) -> io::Result<(
                 .verdict
                 .as_ref()
                 .filter(|verdict| !verdict.reasons.is_empty())
-                .map(|verdict| format!("  ({})", verdict.reasons.join(", ")))
+                .map(|verdict| {
+                    let words: Vec<&str> = verdict.reasons.iter().map(|&r| reason(r)).collect();
+                    format!("  ({})", words.join(", "))
+                })
                 .unwrap_or_default();
             writeln!(
                 out,

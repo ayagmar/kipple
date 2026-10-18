@@ -567,7 +567,7 @@ fn a_kept_finding_is_protected_as_kept_in_the_report_the_json_the_events_and_exp
         &["--config", flag, "explain", target.to_str().unwrap()],
     );
     assert!(
-        explained.contains("Protected at the balanced level: kept"),
+        explained.contains("Protected at the balanced level: You chose to keep it."),
         "{explained}"
     );
     assert!(explained.contains("benchmark baseline"), "{explained}");
