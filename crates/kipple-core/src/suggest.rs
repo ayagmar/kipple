@@ -70,7 +70,10 @@ fn candidate(home: &Path, project: &Path) -> Option<PathBuf> {
 }
 
 /// Folds every candidate inside another into the outermost one, shallowest first so an
-/// outer candidate is placed before everything inside it, whatever its case.
+/// outer candidate is placed before everything inside it. Unlike a refusal, this compares
+/// exact components: on a case-sensitive file system `Documents` and `documents` are two
+/// directories, and adding one doesn't scan the other. The search reads each directory's
+/// name as the file system spells it, so one directory never comes in two spellings.
 fn fold(candidates: BTreeMap<PathBuf, Vec<PathBuf>>) -> Vec<Suggestion> {
     let mut shallowest: Vec<_> = candidates.into_iter().collect();
     shallowest.sort_by_key(|(path, _)| path.components().count());
@@ -78,7 +81,7 @@ fn fold(candidates: BTreeMap<PathBuf, Vec<PathBuf>>) -> Vec<Suggestion> {
     for (path, projects) in shallowest {
         match folded
             .iter_mut()
-            .find(|outer| is_within(&path, &outer.path))
+            .find(|outer| path.starts_with(&outer.path))
         {
             Some(outer) => outer.projects.extend(projects),
             None => folded.push(Suggestion { path, projects }),

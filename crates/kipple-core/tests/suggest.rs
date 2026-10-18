@@ -73,13 +73,19 @@ fn a_suggestion_inside_another_folds_into_the_outer_one() {
     );
 }
 
-// Catches the folding missing an outer folder spelled in another case, which a
-// case-insensitive file system treats as the same directory.
+// Catches folding merging two directories that differ only in case, which a
+// case-sensitive file system keeps apart: adding the one suggestion would scan only one
+// of them, so its project count couldn't come true.
 #[test]
-fn folding_ignores_case() {
+fn folding_keeps_directories_that_differ_in_case_apart() {
     let found = suggested(&["Documents/a", "documents/uni/b"], &[], &[]);
-    assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].projects.len(), 2);
+    assert_eq!(
+        found,
+        vec![
+            suggestion("Documents", &["Documents/a"]),
+            suggestion("documents/uni", &["documents/uni/b"]),
+        ]
+    );
 }
 
 // Catches an existing root, or a folder inside one, being offered again.
