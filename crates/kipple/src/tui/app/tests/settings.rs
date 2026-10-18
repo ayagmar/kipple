@@ -532,10 +532,14 @@ fn suggestion(path: &str, rests: &[&str]) -> Suggestion {
     }
 }
 
+// Also catches a path under home written out in full (F1): the config file, the roots
+// and the suggestions all read from `~`.
 #[test]
 fn settings_at_80_by_24() {
     let app = configured(80, 24);
-    insta::assert_snapshot!(screen(&app, colour(), 80, 24));
+    let shown = screen(&app, colour(), 80, 24);
+    assert!(!shown.contains("/home/ada"), "{shown}");
+    insta::assert_snapshot!(shown);
 }
 
 #[test]

@@ -38,8 +38,9 @@ use std::process::ExitCode;
 use std::time::SystemTime;
 
 use clap::Parser as _;
-use kipple::config::{self, Edit, Location, Source};
+use kipple::config::{self, DetailPlace, Edit, Location, Source};
 use kipple::setup::Builtin;
+use kipple::theme::Glyphs;
 use kipple::{Cli, USAGE};
 use kipple_core::{Level, Roots, RuleId, SymbolicRoot};
 use kipple_platform::Environment;
@@ -222,14 +223,9 @@ fn every_config_kipple_cant_use_exits_2_with_the_reason_and_where_it_is() {
             "line 2, column 1: unknown key care.speed",
         ),
         ("colour = true", "line 1, column 1: unknown key colour"),
-        // [ui] reads only `theme`, as a name: no other key in it is silently ignored.
         (
-            "[ui]\nlayout = \"wide\"",
-            "line 2, column 1: unknown key ui.layout",
-        ),
-        (
-            "[ui]\ntheme = \"Dusk\"",
-            "line 2, column 9: ui.theme: expected a theme name",
+            "[ui]\ncolour = true",
+            "line 2, column 1: unknown key ui.colour",
         ),
         ("ui = 1", "ui: expected a table"),
         (
@@ -970,6 +966,88 @@ fn an_edit_keeps_comments_and_every_other_key_and_survives_an_editors_change() {
     .unwrap();
     assert_eq!(undone.keep.len(), 0);
     assert_eq!(undone.rules.len(), 0);
+}
+
+/// A wrong `[ui]` value silently ignored would draw a screen the user didn't ask for.
+#[test]
+fn every_ui_value_kipple_cant_use_is_an_error_where_it_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("config.toml");
+    let cases = [
+        // A theme is a file name, so a name that can't be one is refused here; whether
+        // the theme exists is only asked by what draws.
+        (
+            "[ui]\ntheme = \"../dusk\"",
+            "line 2, column 9: ui.theme: expected a theme name",
+        ),
+        ("[ui]\ntheme = \"Dusk\"", "ui.theme: expected a theme name"),
+        (
+            "[ui]\ndetail = \"left\"",
+            "ui.detail: expected auto, right, bottom or off",
+        ),
+        ("[ui]\nbars = \"no\"", "ui.bars: expected true or false"),
+        ("[ui]\nsummary = 0", "ui.summary: expected true or false"),
+        (
+            "[ui]\nglyphs = \"emoji\"",
+            "ui.glyphs: expected unicode or ascii",
+        ),
+    ];
+    for (text, expected) in cases {
+        fs::write(&file, text).unwrap();
+
+        let error = config::load(&location(&file), &catalog()).unwrap_err();
+
+        assert!(error.to_string().contains(expected), "{text}: {error}");
+    }
+}
+
+/// `[ui]` read into the wrong option, or defaults that don't draw the dashboard, would
+/// change the home screen behind the user's back. A theme that doesn't exist must not
+/// make the config unusable: only what draws looks it up.
+#[test]
+fn the_ui_options_read_as_written_and_default_to_the_dashboard() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("config.toml");
+    fs::write(&file, "[care]\nlevel = \"careful\"\n").unwrap();
+    let defaults = config::load(&location(&file), &catalog())
+        .unwrap()
+        .config
+        .ui;
+    assert_eq!(defaults, config::UiConfig::default());
+    assert_eq!(
+        (
+            defaults.theme,
+            defaults.summary,
+            defaults.detail,
+            defaults.bars
+        ),
+        (None, true, DetailPlace::Auto, true)
+    );
+    assert_eq!(defaults.glyphs, Glyphs::Unicode);
+
+    fs::write(
+        &file,
+        "[ui]\ntheme = \"no-such-theme-2\"\nsummary = false\ndetail = \"off\"\nbars = false\nglyphs = \"ascii\"\n",
+    )
+    .unwrap();
+    let ui = config::load(&location(&file), &catalog())
+        .unwrap()
+        .config
+        .ui;
+
+    assert_eq!(ui.theme.as_deref(), Some("no-such-theme-2"));
+    assert_eq!(
+        (ui.summary, ui.detail, ui.bars, ui.glyphs),
+        (false, DetailPlace::Off, false, Glyphs::Ascii)
+    );
+    let demo = Demo::new(&[], "");
+    let named = demo.config("ui.toml", "[ui]\ntheme = \"no-such-theme\"\n");
+    let (code, out, err) = kipple(
+        &demo.env(&[]),
+        &["--config", named.to_str().unwrap(), "scan", "--json"],
+    );
+    assert_eq!(code, ExitCode::SUCCESS, "{err}");
+    assert!(serde_json::from_str::<Value>(&out).is_ok());
 }
 
 /// The example in 03 §6 held keys that exit 2, so a user copying it got an unusable config.

@@ -11,7 +11,7 @@ use kipple_core::{FindingId, Lineage, Policy, SymbolicRoot};
 
 use super::{App, Found, Key, Mode, Node, Progress, Row, Search, Shelf};
 use crate::config::{self, Config, Edit, Settings};
-use crate::human::{escaped, findings};
+use crate::human::{escaped, findings, homed};
 use crate::tui::settings;
 
 /// What the home screen asks of the loop.
@@ -172,7 +172,7 @@ impl App {
         let left = self.unselect(|row| row.finding.id == id);
         let mut done = format!(
             "Kept {}. {} undoes it.",
-            escaped(&path.display().to_string()),
+            escaped(&homed(&path, self.home.as_deref())),
             self.settings_hint()
         );
         if left > 0 {

@@ -5,13 +5,13 @@ use std::path::Path;
 
 use kipple_core::{Level, Suggestion};
 use ratatui::Frame;
-use ratatui::layout::Rect;
+use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::text::{Line as Text, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 
 use super::tree::offset;
 use super::{Look, level_about, title_case};
-use crate::human::escaped;
+use crate::human::{escaped, homed};
 use crate::theme::{Colours, Role};
 use crate::tui::app::App;
 use crate::tui::settings::{self, Item, Search};
@@ -28,15 +28,16 @@ pub(super) fn render(app: &App, look: Look<'_>, area: Rect, frame: &mut Frame<'_
     };
     settings_head(app, look, &mut panel);
     settings_lists(app, look, &mut panel);
-    let block = Block::new()
-        .borders(Borders::TOP)
-        .border_set(look.glyphs.border())
-        .border_style(look.style(Role::Border))
-        .title(" Settings ");
-    let rows = usize::from(area.height.saturating_sub(1));
+    let area = area.inner(Margin::new(1, 0));
+    let [head, list] = Layout::vertical([Constraint::Length(2), Constraint::Fill(1)]).areas(area);
+    frame.render_widget(
+        Paragraph::new(Text::styled("Settings", look.style(Role::Title))),
+        head,
+    );
+    let rows = usize::from(list.height);
     let first = offset(0, panel.at, rows, panel.lines.len());
     let shown: Vec<Text<'static>> = panel.lines.into_iter().skip(first).collect();
-    frame.render_widget(Paragraph::new(shown).block(block), area);
+    frame.render_widget(Paragraph::new(shown), list);
 }
 
 /// The settings panel's lines as they are built, and which one the cursor is on.
@@ -69,7 +70,7 @@ impl PanelLines<'_> {
 fn settings_head(app: &App, look: Look<'_>, panel: &mut PanelLines<'_>) {
     let file = app.file.as_ref().map_or_else(
         || "unknown, so nothing can be saved".to_owned(),
-        |file| escaped(&file.display().to_string()),
+        |file| escaped(&homed(file, app.home.as_deref())),
     );
     panel.push(
         None,
@@ -83,7 +84,7 @@ fn settings_head(app: &App, look: Look<'_>, panel: &mut PanelLines<'_>) {
     panel.push(Some(&Item::Theme), "Theme", theme_spans(app, look));
     for (index, root) in app.roots.iter().enumerate() {
         let label = if index == 0 { "Project roots" } else { "" };
-        let root = escaped(&root.display().to_string());
+        let root = escaped(&homed(root, app.home.as_deref()));
         panel.push(Some(&Item::Root(index)), label, vec![Span::raw(root)]);
     }
     let add = if app.roots.is_empty() {
@@ -94,7 +95,7 @@ fn settings_head(app: &App, look: Look<'_>, panel: &mut PanelLines<'_>) {
     panel.push(Some(&Item::AddRoot), add, vec![Span::raw("+ add another")]);
     for (index, suggestion) in app.search.suggestions().iter().enumerate() {
         let label = if index == 0 { "Suggested roots" } else { "" };
-        let line = vec![Span::raw(describe(suggestion, look))];
+        let line = vec![Span::raw(describe(suggestion, app.home.as_deref(), look))];
         panel.push(Some(&Item::Suggested(index)), label, line);
     }
     for (index, note) in search_notes(&app.search, look).into_iter().enumerate() {
@@ -188,14 +189,14 @@ fn level_spans(app: &App, look: Look<'_>) -> Vec<Span<'static>> {
             if level == app.policy.level {
                 Span::styled(format!("[{name}] "), look.style(Role::LevelCurrent))
             } else {
-                Span::raw(format!(" {name}  "))
+                Span::styled(format!(" {name}  "), look.style(Role::LevelOther))
             }
         })
         .collect()
 }
 
 /// A suggestion as a line: its path, how many projects it holds and the first names.
-pub(crate) fn describe(suggestion: &Suggestion, look: Look<'_>) -> String {
+pub(crate) fn describe(suggestion: &Suggestion, home: Option<&Path>, look: Look<'_>) -> String {
     const SHOWN: usize = 3;
     let names: Vec<String> = suggestion
         .projects
@@ -219,7 +220,7 @@ pub(crate) fn describe(suggestion: &Suggestion, look: Look<'_>) -> String {
     let projects = if count == 1 { "project" } else { "projects" };
     format!(
         "{} ({count} {projects}: {}{more})",
-        escaped(&suggestion.path.display().to_string()),
+        escaped(&homed(&suggestion.path, home)),
         names.join(", ")
     )
 }

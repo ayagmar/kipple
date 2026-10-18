@@ -3,28 +3,31 @@
 
 use kipple_core::{Level, Method, ScanOutcome};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
+use ratatui::layout::{Constraint, Layout, Margin};
+use ratatui::text::Line;
+use ratatui::widgets::{Paragraph, Wrap};
 
 use super::settings::{describe, search_notes};
 use super::{Look, level_about, title_case};
-use crate::human::{self, bytes, escaped};
+use crate::human::{self, bytes, escaped, homed};
 use crate::theme::Role;
 use crate::tui::app::{App, Progress};
 use crate::tui::keymap::{Action, Mode};
 use crate::tui::onboarding::{Onboarding, Step, level_totals};
 
-/// Draws the step `onboarding` is on, with `app`'s scan for the numbers and tips.
+/// Draws the step `onboarding` is on, with `app`'s scan for the numbers and tips, in
+/// the home screen's frame.
 pub(crate) fn render(onboarding: &Onboarding, app: &App, look: Look<'_>, frame: &mut Frame<'_>) {
-    let [header, body, footer] = Layout::vertical([
-        Constraint::Length(1),
+    look.fill(frame);
+    let area = frame.area();
+    let inner = area.inner(Margin::new(2, 1));
+    let [body, rule, footer] = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(1),
+        Constraint::Length(1),
     ])
-    .areas(frame.area());
-    look.fill(frame);
-    frame.render_widget(head(onboarding, app, look), header);
+    .areas(inner);
+    super::frame::outline(look, area, &[rule.y], frame);
     let lines = match onboarding.step {
         Step::Level => level_lines(onboarding, app, look),
         Step::Roots => root_lines(onboarding, app, look),
@@ -36,19 +39,15 @@ pub(crate) fn render(onboarding: &Onboarding, app: &App, look: Look<'_>, frame: 
     } else {
         0
     };
-    let block = Block::new()
-        .borders(Borders::TOP)
-        .border_set(look.glyphs.border())
-        .border_style(look.style(Role::Border));
     let paragraph = Paragraph::new(lines)
-        .block(block)
         .wrap(Wrap { trim: false })
         .scroll((scroll, 0));
     frame.render_widget(paragraph, body);
     frame.render_widget(keys(onboarding, look), footer);
+    super::frame::title(look, head(onboarding, app, look), area, frame);
 }
 
-fn head(onboarding: &Onboarding, app: &App, look: Look<'_>) -> Paragraph<'static> {
+fn head(onboarding: &Onboarding, app: &App, look: Look<'_>) -> Line<'static> {
     let state = match app.progress {
         Progress::Scanning => look.glyphs.ellipsis("scanning"),
         Progress::Done { outcome, .. } if outcome != ScanOutcome::Completed => {
@@ -56,16 +55,8 @@ fn head(onboarding: &Onboarding, app: &App, look: Look<'_>) -> Paragraph<'static
         }
         Progress::Done { .. } => "scan finished".to_owned(),
     };
-    Paragraph::new(Line::from(vec![
-        Span::styled(" Welcome to kipple", look.style(Role::Title)),
-        Span::raw(format!(
-            "{}step {} of 4{}",
-            look.glyphs.dot(),
-            onboarding.step.number(),
-            look.glyphs.dot()
-        )),
-        Span::styled(state, look.style(Role::Muted)),
-    ]))
+    let step = format!("step {} of 4", onboarding.step.number());
+    super::frame::plain(look, &["Welcome to kipple".to_owned(), step, state])
 }
 
 fn question(text: &str, about: &str, look: Look<'_>) -> Vec<Line<'static>> {
@@ -129,7 +120,7 @@ fn root_lines(onboarding: &Onboarding, app: &App, look: Look<'_>) -> Vec<Line<'s
     }
     for (index, root) in onboarding.roots.iter().enumerate() {
         let mark = if root.checked { "[x]" } else { "[ ]" };
-        let path = escaped(&root.path.display().to_string());
+        let path = escaped(&homed(&root.path, app.home.as_deref()));
         lines.push(choice(
             look,
             index == onboarding.root_cursor,
@@ -163,7 +154,10 @@ fn suggestion_lines(onboarding: &Onboarding, app: &App, look: Look<'_>, lines: &
     let first = onboarding.roots.len() + 1;
     for (index, offer) in onboarding.offers.iter().enumerate() {
         let mark = if offer.checked { "[x]" } else { "[ ]" };
-        let text = format!("{mark} {}", describe(&offer.suggestion, look));
+        let text = format!(
+            "{mark} {}",
+            describe(&offer.suggestion, app.home.as_deref(), look)
+        );
         lines.push(choice(look, onboarding.root_cursor == first + index, &text));
     }
     lines.extend(
@@ -219,7 +213,7 @@ fn tip_lines(app: &App, look: Look<'_>) -> Vec<Line<'static>> {
 }
 
 fn keys(onboarding: &Onboarding, look: Look<'_>) -> Paragraph<'static> {
-    let mut text = String::from(" ");
+    let mut text = String::new();
     if onboarding.typing.is_some() {
         text.push_str("type a path, enter adds it, esc cancels");
     } else {

@@ -297,7 +297,7 @@ pub fn home(cli: &Cli, env: &Environment, stderr: &mut dyn Write) -> ExitCode {
     let glyphs = if cli.home.ascii {
         Glyphs::Ascii
     } else {
-        Glyphs::Unicode
+        settings.loaded.config.ui.glyphs
     };
     let active = host.theme_name(Some(&settings.loaded.config));
     let catalog = Themes::new(env).catalog();

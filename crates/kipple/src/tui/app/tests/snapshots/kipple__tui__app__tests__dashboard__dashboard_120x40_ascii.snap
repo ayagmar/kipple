@@ -1,0 +1,45 @@
+---
+source: crates/kipple/src/tui/app/tests/dashboard.rs
+assertion_line: 35
+expression: "screen(&app, look(true, ascii), width, height)"
+---
++ kipple - Balanced - scanned in 1.2 s - ~/projects ------------+-------------------------------+----------------------+
+| SAFE 514.0 MiB - 2            | REVIEW 300.0 MiB - 1          | PROTECTED 1020.0 MiB - 2      | found 1.7 GiB        |
+| ########                      | #####                         | ################              | eligible 814.0 MiB   |
++-------------------------------+-------------------------------+--------+----------------------+----------------------+
+|   v Safe to clean (2)       514.0 MiB        passes every check        | api/target                                  |
+|     v Dev (2)               514.0 MiB                                  | Cargo build output - Safe to clean at       |
+| *     api/target...         512.0 MiB ###                              | Balanced                                    |
+|   ...                         2.0 MiB                                  |                                             |
+|   v Review (1)              300.0 MiB        loses more, or recent     | What it is    Cargo build output            |
+|     v Dev (1)               300.0 MiB                                  | Why it's here Cargo writes compiled crates  |
+|   ...                       300.0 MiB ##     recent                    |               here when you build.          |
+|   v Protected (2)          1020.0 MiB        not eligible              | Why safe      passes every check at         |
+|     v Dev (1)               120.0 MiB                                  |               Balanced: recognised, comes   |
+|   ...                       120.0 MiB #      layout not recognised +1  |               back, untracked, no running   |
+|     v System (1)            900.0 MiB                                  |               program shows it in use, not  |
+|       pacman/pkg...         900.0 MiB ###### advice only               |               recent                        |
+|                                                                        | You lose      The next build compiles       |
+|                                                                        |               everything again.             |
+|                                                                        | Comes back    the next build makes it       |
+|                                                                        |               again, without the network    |
+|                                                                        | Restore cost  not estimated                 |
+|                                                                        | Proposes      remove (delete or trash)      |
+|                                                                        | In use        no running program shows it   |
+|                                                                        |               in use                        |
+|                                                                        | Git           no repository holds it or     |
+|                                                                        |               lives inside it, so git       |
+|                                                                        |               tracks nothing inside         |
+|                                                                        | Last change   41 days ago                   |
+|                                                                        | Size          512.0 MiB                     |
+|                                                                        | Path          ~/projects/api/target         |
+|                                                                        | Rule          builtin.cargo.target          |
+|                                                                        |                                             |
+|                                                                        |                                             |
+|                                                                        |                                             |
+|                                                                        |                                             |
+|                                                                        |                                             |
+|                                                                        |                                             |
++------------------------------------------------------------------------+---------------------------------------------+
+| j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit  * selected 1 - 512.0 MiB - frees 512.0 MiB |
++----------------------------------------------------------------------------------------------------------------------+

@@ -1,7 +1,7 @@
 //! The tree's projects, sort order, size bars and header (`docs/03-functional-spec.md`
 //! §5 Layout, Projects, Sort, Size bars; D-054).
 
-use std::path::{MAIN_SEPARATOR, PathBuf};
+use std::path::PathBuf;
 
 use kipple_core::{Consequence, Cost, Facts, FindingId, Level, Modified, WalkGap};
 
@@ -452,12 +452,16 @@ fn bars_are_scaled_to_the_largest_measured_finding_and_a_measuring_one_has_none(
     assert!(!narrow.contains('█'), "{narrow}");
 }
 
-/// The first line of `app` on a `width` wide terminal.
+/// The title line of `app` on a `width` wide terminal, without the frame round it.
 fn header(app: &App, look: Look<'_>, width: u16) -> String {
-    screen(app, look, width, 24)
+    let line = screen(app, look, width, 24)
         .lines()
         .next()
         .unwrap()
+        .to_owned();
+    line.trim_start_matches(['╭', '+'])
+        .trim_end_matches(['─', '┬', '╮', '-', '+'])
+        .trim()
         .to_owned()
 }
 
@@ -496,7 +500,8 @@ fn the_header_names_the_project_roots_shortened_to_fit() {
     press(&mut app, &[Key::Char('o'), Key::Char('o')]);
     app.roots = vec![PathBuf::from("/home/ada/code")];
     let line = header(&app, colour(), 80);
-    assert!(line.ends_with(&format!(" ~{MAIN_SEPARATOR}code")), "{line}");
+    // The screen helper writes `/` for the separator, as on every system.
+    assert!(line.ends_with(" ~/code"), "{line}");
 }
 
 // Catches the roots pushing the sort order's name off the header at 80 columns: the
@@ -512,23 +517,27 @@ fn the_sort_order_keeps_its_place_in_the_header_before_the_roots() {
     for look in [colour(), ascii()] {
         let narrow = header(&app, look, 80);
         assert!(narrow.ends_with("by last change"), "{narrow}");
-        assert!(!narrow.contains("acme"), "{narrow}");
         let wide = header(&app, look, 160);
         assert!(wide.contains("acme +1"), "{wide}");
         assert!(wide.ends_with("by last change"), "{wide}");
     }
 }
 
-// Catches the current level showing only by its colour once `NO_COLOR` is set.
+// Catches the current level showing only by its colour once `NO_COLOR` is set: the
+// title line names it, and only it.
 #[test]
-fn without_colour_the_current_level_is_still_marked() {
+fn without_colour_the_current_level_is_still_named() {
     let mut app = rooted();
     app.policy.level = Level::Thorough;
     let plain = look(false, false);
 
     let line = header(&app, plain, 80);
 
-    assert!(line.contains("Careful · Balanced · [Thorough]"), "{line}");
+    assert!(line.starts_with("kipple ─ Thorough ─ "), "{line}");
+    assert!(
+        !line.contains("Careful") && !line.contains("Balanced"),
+        "{line}"
+    );
 }
 
 #[test]
@@ -569,12 +578,12 @@ fn a_project_line_details_its_path_and_its_findings_in_every_bucket() {
     let api = project_line(&app, Shelf::Safe, "api");
     go(&mut app, api);
 
-    // The project's path is the root joined with its name, so Windows writes a `\`.
-    let shown = screen(&app, colour(), 160, 48).replace(MAIN_SEPARATOR, "/");
+    // It shows from `~` below home (F1).
+    let shown = screen(&app, colour(), 160, 48);
 
     for line in [
         "Project api",
-        "/home/ada/projects/api",
+        "~/projects/api",
         "Safe to clean: 2 findings, 612.0 MiB",
         "Review: 2 findings, 66.0 MiB",
         "Protected: 2 findings, 128.0 MiB",

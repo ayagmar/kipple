@@ -12,19 +12,28 @@ use super::{
 use crate::tui::app::{App, Effect, Key, Msg, Node, Saved, Shelf};
 
 /// The detail pane's lines on an 80×24 screen, where it sits below the tree: between
-/// its top border and the two footer lines.
+/// the rule above it and the key bar's, inside the frame.
 fn pane(app: &App) -> Vec<String> {
     let shown = screen(app, colour(), 80, 24);
     let lines: Vec<&str> = shown.lines().collect();
-    let top = lines
-        .iter()
-        .position(|line| line.starts_with('─'))
-        .unwrap_or_else(|| panic!("no detail pane in {shown}"));
+    let rules: Vec<usize> = (0..lines.len())
+        .filter(|&at| lines.get(at).is_some_and(|line| line.starts_with('├')))
+        .collect();
+    let (Some(&top), Some(&bottom)) = (rules.get(1), rules.get(2)) else {
+        panic!("no detail pane in {shown}");
+    };
     lines
-        .get(top + 1..lines.len() - 2)
+        .get(top + 1..bottom)
         .unwrap_or_default()
         .iter()
-        .map(|&line| line.to_owned())
+        .map(|&line| {
+            let inside = line.trim_start_matches('│').trim_end_matches('│');
+            inside
+                .strip_prefix(' ')
+                .unwrap_or(inside)
+                .trim_end()
+                .to_owned()
+        })
         .collect()
 }
 
@@ -262,7 +271,11 @@ fn y_refuses_a_path_that_isnt_utf8_with_a_message() {
 fn beside(app: &App) -> Vec<String> {
     screen(app, colour(), 160, 48)
         .lines()
-        .filter_map(|line| line.split_once('│').map(|(_, pane)| pane.to_owned()))
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.split('│').collect();
+            // The frame's two sides and the line between the tree and the pane.
+            (parts.len() == 4).then(|| parts.get(2).map(|pane| (*pane).to_owned()))?
+        })
         .collect()
 }
 

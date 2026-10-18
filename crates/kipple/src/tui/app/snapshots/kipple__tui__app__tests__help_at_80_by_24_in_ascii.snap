@@ -1,8 +1,8 @@
 ---
 source: crates/kipple/src/tui/app/tests.rs
+assertion_line: 897
 expression: "screen(&app, look, 80, 24)"
 ---
-kipple  Careful - [Balanced] - Thorough - scanned in 1.2 s - no project roots
 + Keys ------------------------------------------------------------------------+
 |j k  dn up move                                                               |
 |h l  lt rt fold and unfold a group or project                                 |
@@ -24,5 +24,6 @@ kipple  Careful - [Balanced] - Thorough - scanned in 1.2 s - no project roots
 |                                                                              |
 |This version only finds and explains: selecting removes nothing.              |
 |                                                                              |
+|                                                                              |
+|                                                                              |
 +------------------------------------------------------------------------------+
-j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit

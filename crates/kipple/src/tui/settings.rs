@@ -12,7 +12,7 @@ use super::app::{App, Key};
 use super::keymap::{Action, Mode};
 use super::ui::title_case;
 use crate::config::{Edit, same_config_path, within_config_path};
-use crate::human::escaped;
+use crate::human::{escaped, homed};
 
 /// One line of the panel the cursor can stand on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -245,7 +245,10 @@ impl Panel {
                 let gone = roots.remove(index);
                 Outcome::Save {
                     edits: vec![Edit::ProjectRoots(roots)],
-                    done: format!("Removed {} from the project roots.", gone.display()),
+                    done: format!(
+                        "Removed {} from the project roots.",
+                        escaped(&homed(&gone, app.home.as_deref()))
+                    ),
                 }
             }
             Some(Item::Kept(index)) => unkeep(app, index),
@@ -319,7 +322,7 @@ fn add_root(app: &App, path: &Path) -> Outcome {
     {
         return Outcome::Say(format!(
             "{} is already a project root.",
-            escaped(&path.display().to_string())
+            escaped(&homed(path, home))
         ));
     }
     let mut roots = app.roots.clone();
@@ -328,7 +331,7 @@ fn add_root(app: &App, path: &Path) -> Outcome {
         edits: vec![Edit::ProjectRoots(roots)],
         done: format!(
             "Added {} to the project roots.",
-            escaped(&path.display().to_string())
+            escaped(&homed(path, home))
         ),
     }
 }

@@ -1,52 +1,53 @@
 ---
 source: crates/kipple/src/tui/app/tests/settings.rs
+assertion_line: 548
 expression: "screen(&app, colour(), 160, 48)"
 ---
-kipple  Careful · [Balanced] · Thorough · scanning… · ~/projects +1
- Settings ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-Config file       /home/ada/.config/kipple/config.toml
-
-Level              Careful  [Balanced]  Thorough
-                  Safe: rebuilt, reinstalled, re-downloaded; recent: 7 days
-Theme             kipple  1 of 5, built-in
-Project roots     ~/projects
-                  ~/work
-                  + add another
-Suggested roots   /home/ada/Documents (4 projects: thesis, uni/compilers, uni/os, …)
-                  /home/ada/notes (1 project: notes)
-                  stopped early: the list may be incomplete
-Default method    trash  stored only: nothing is removed yet
-Kept              ~/projects/api/target  benchmark baseline
-Rules turned off  pacman package cache  builtin.pacman.cache
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-found 1.7 GiB · eligible 814.0 MiB · selected 0 (0 B) · frees 0 B
-j/k move  h/l change  enter change or add  d remove  esc back
+╭ kipple ─ Balanced ─ scanning… ─ ~/projects +1 ─ found 1.7 GiB · eligible 814.0 MiB ──────────────────────────────────────────────────────────────────────────╮
+│ Settings                                                                                                                                                     │
+│                                                                                                                                                              │
+│ Config file       ~/.config/kipple/config.toml                                                                                                               │
+│                                                                                                                                                              │
+│ Level              Careful  [Balanced]  Thorough                                                                                                             │
+│                   Safe: rebuilt, reinstalled, re-downloaded; recent: 7 days                                                                                  │
+│ Theme             kipple  1 of 5, built-in                                                                                                                   │
+│ Project roots     ~/projects                                                                                                                                 │
+│                   ~/work                                                                                                                                     │
+│                   + add another                                                                                                                              │
+│ Suggested roots   ~/Documents (4 projects: thesis, uni/compilers, uni/os, …)                                                                                 │
+│                   ~/notes (1 project: notes)                                                                                                                 │
+│                   stopped early: the list may be incomplete                                                                                                  │
+│ Default method    trash  stored only: nothing is removed yet                                                                                                 │
+│ Kept              ~/projects/api/target  benchmark baseline                                                                                                  │
+│ Rules turned off  pacman package cache  builtin.pacman.cache                                                                                                 │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+│                                                                                                                                                              │
+├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ j/k move  h/l change  enter change or add  d remove  esc back                                                                   selected 0 · 0 B · frees 0 B │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

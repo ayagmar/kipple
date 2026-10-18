@@ -1,29 +1,29 @@
 ---
 source: crates/kipple/src/tui/app/tests/onboarding.rs
-assertion_line: 410
+assertion_line: 449
 expression: "screen(&first, &app, 80, 24)"
 ---
- Welcome to kipple · step 4 of 4 · scan finished
-────────────────────────────────────────────────────────────────────────────────
-Prevention tips
-Settings of your tools that keep less around. kipple shows them and never
-changes them.
-
-Keep fewer old packages with paccache
-paccache removes cached packages except the newest versions of each.
-  sudo paccache -rk3
-
-
-
-
-
-
-
-
-
-
-
-
-
-
- enter finish · j k scroll · tab skip · esc back · q quit, saving nothing
+╭ Welcome to kipple ─ step 4 of 4 ─ scan finished ─────────────────────────────╮
+│ Prevention tips                                                              │
+│ Settings of your tools that keep less around. kipple shows them and never    │
+│ changes them.                                                                │
+│                                                                              │
+│ Keep fewer old packages with paccache                                        │
+│ paccache removes cached packages except the newest versions of each.         │
+│   sudo paccache -rk3                                                         │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ enter finish · j k scroll · tab skip · esc back · q quit, saving nothing     │
+╰──────────────────────────────────────────────────────────────────────────────╯

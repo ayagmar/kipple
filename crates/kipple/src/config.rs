@@ -27,7 +27,7 @@ use kipple_platform::{
 pub use self::edit::{Edit, write};
 pub use self::keys::KeysConfig;
 pub(crate) use self::parse::position;
-pub use self::ui::UiConfig;
+pub use self::ui::{DetailPlace, UiConfig};
 use crate::human::escaped;
 use crate::setup::Builtin;
 

@@ -18,7 +18,7 @@ use crate::tui::app::{App, Line, Node, ProjectId, Row, Shelf};
 
 /// The size column, wide enough for `>= 1023.9 GiB`.
 const SIZE: u16 = 13;
-/// The size bar column from [`WIDE`] columns: a space, then the bar.
+/// The size bar column, when there are bars: a space, then the bar.
 const BAR: u16 = 7;
 /// The state column, wide enough for its longest text: the gaps hint
 /// ` so this report is partial`. The longest row state is ` unknown: what is lost +3`.
@@ -52,13 +52,13 @@ pub(super) struct Tree<'a> {
 }
 
 impl<'a> Tree<'a> {
-    /// `lines` of `app`, with bars when the screen is `wide`.
-    pub(super) fn new(app: &App, lines: &'a [Line], wide: bool) -> Self {
+    /// `lines` of `app`, with size bars when `bars`.
+    pub(super) fn new(app: &App, lines: &'a [Line], bars: bool) -> Self {
         Self {
             at: app.cursor_index(lines),
             lines,
             clashing: app.clashing(),
-            scale: wide.then(|| scale(app, lines)),
+            scale: bars.then(|| scale(app, lines)),
         }
     }
 
@@ -99,11 +99,51 @@ pub(super) fn render(
             Style::new()
         };
         let paint = |text: Text<'static>| if focused { look.cursor(text) } else { text };
-        frame.render_widget(Paragraph::new(paint(cells.label)).style(base), label);
+        let text = clip(look, cells.label, label.width);
+        frame.render_widget(Paragraph::new(paint(text)).style(base), label);
         frame.render_widget(Paragraph::new(cells.size).style(base).right_aligned(), size);
         frame.render_widget(Paragraph::new(paint(cells.bar)).style(base), bars);
         frame.render_widget(Paragraph::new(paint(cells.state)).style(base), state);
     }
+}
+
+/// `line` cut to `width` columns, ending in an ellipsis when it was cut, so a cut
+/// label never reads as a whole word.
+fn clip(look: Look<'_>, line: Text<'static>, width: u16) -> Text<'static> {
+    let width = usize::from(width);
+    if line.width() <= width {
+        return line;
+    }
+    let ellipsis = look.glyphs.ellipsis("");
+    let mut room = width.saturating_sub(super::cols(&ellipsis));
+    let mut spans = Vec::new();
+    for span in line.spans {
+        let mut kept = String::new();
+        let mut cut = false;
+        for c in span.content.chars() {
+            let wide = super::cols(c.encode_utf8(&mut [0; 4]));
+            if wide > room {
+                cut = c != ' ';
+                room = 0;
+                break;
+            }
+            room -= wide;
+            kept.push(c);
+        }
+        if room == 0 {
+            // Words, like a rule's title, are cut where a word ends; a path where it
+            // must.
+            if let Some(space) = kept.trim_end().rfind(' ').filter(|_| cut) {
+                kept.truncate(space);
+            }
+            spans.push(Span::styled(kept.trim_end().to_owned(), span.style));
+            break;
+        }
+        spans.push(Span::styled(kept, span.style));
+    }
+    let style = spans.last().map_or_else(Style::new, |span| span.style);
+    spans.push(Span::styled(ellipsis, style));
+    Text::from(spans).style(line.style)
 }
 
 /// The largest size among the measured findings in `lines`: what a full bar stands for.

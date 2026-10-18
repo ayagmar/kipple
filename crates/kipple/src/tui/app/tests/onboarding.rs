@@ -145,7 +145,8 @@ fn screen(onboarding: &Onboarding, app: &App, width: u16, height: u16) -> String
         text.push_str(line.trim_end());
         text.push('\n');
     }
-    text
+    // Paths shown from `~` are written with `/`, so a snapshot reads the same on Windows.
+    text.replace(std::path::MAIN_SEPARATOR, "/")
 }
 
 fn drawn(onboarding: &Onboarding, app: &App, width: u16, height: u16) -> Buffer {
@@ -430,6 +431,7 @@ fn step_1_at_160_by_48_shows_each_level_with_its_numbers() {
 fn steps_2_to_4_at_80_by_24() {
     // Fixed paths, so the snapshot doesn't hold the temp dir.
     let mut app = home();
+    app.home = Some(PathBuf::from("/home/ada"));
     app.roots = vec![
         PathBuf::from("/home/ada/projects"),
         PathBuf::from("/home/ada/code"),
@@ -469,7 +471,8 @@ fn step_4_shows_each_line_of_a_snippet_on_its_own_line() {
     let text = screen(&first, &app, 80, 24);
     assert!(!text.contains("\\n"), "{text}");
     for line in ["[Journal]", "SystemMaxUse=200M"] {
-        assert!(text.lines().any(|l| l.trim() == line), "{line}: {text}");
+        let inside = |l: &str| l.trim_matches(|c| c == '│' || c == ' ').to_owned();
+        assert!(text.lines().any(|l| inside(l) == line), "{line}: {text}");
     }
 }
 
@@ -670,6 +673,7 @@ fn quitting_with_a_checked_suggestion_writes_nothing() {
 #[test]
 fn step_2_with_suggestions_at_80_by_24() {
     let mut app = home();
+    app.home = Some(PathBuf::from("/home/ada"));
     app.roots = vec![PathBuf::from("/home/ada/projects")];
     let mut first = Onboarding::new(&app);
     app.start_search();
@@ -684,12 +688,16 @@ fn step_2_with_suggestions_at_80_by_24() {
     ];
     suggest(&mut app, &mut first, &paths, false);
     answer(&mut first, &[Key::Down, Key::Down, Key::Char(' ')]);
-    insta::assert_snapshot!(screen(&first, &app, 80, 24));
+    let shown = screen(&first, &app, 80, 24);
+    // The roots and the suggestions read from `~` (F1).
+    assert!(!shown.contains("/home/ada"), "{shown}");
+    insta::assert_snapshot!(shown);
 }
 
 #[test]
 fn step_2_with_suggestions_at_160_by_48() {
     let mut app = home();
+    app.home = Some(PathBuf::from("/home/ada"));
     app.roots = vec![PathBuf::from("/home/ada/projects")];
     let mut first = Onboarding::new(&app);
     app.start_search();

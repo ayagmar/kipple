@@ -1,7 +1,7 @@
 //! The symbols the screen draws with, apart from its colours: Unicode, or ASCII only
 //! under `--ascii`.
 
-use ratatui::symbols::border;
+use ratatui::symbols::{border, line};
 
 /// Which symbols to draw with.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -24,13 +24,36 @@ const ASCII_BORDER: border::Set<'static> = border::Set {
     horizontal_bottom: "-",
 };
 
+const ASCII_LINES: line::Set<'static> = line::Set {
+    vertical: "|",
+    horizontal: "-",
+    top_right: "+",
+    top_left: "+",
+    bottom_right: "+",
+    bottom_left: "+",
+    vertical_left: "+",
+    vertical_right: "+",
+    horizontal_down: "+",
+    horizontal_up: "+",
+    cross: "+",
+};
+
 impl Glyphs {
-    /// The lines of a border.
+    /// The lines of a border, with round corners.
     #[must_use]
     pub const fn border(self) -> border::Set<'static> {
         match self {
-            Self::Unicode => border::PLAIN,
+            Self::Unicode => border::ROUNDED,
             Self::Ascii => ASCII_BORDER,
+        }
+    }
+
+    /// The lines inside a border, with the joins where they meet it and each other.
+    #[must_use]
+    pub const fn lines(self) -> line::Set<'static> {
+        match self {
+            Self::Unicode => line::ROUNDED,
+            Self::Ascii => ASCII_LINES,
         }
     }
 

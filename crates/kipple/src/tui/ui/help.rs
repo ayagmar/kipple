@@ -28,10 +28,13 @@ pub(super) fn render(app: &App, look: Look<'_>, frame: &mut Frame<'_>) {
         "This version only finds and explains: selecting removes nothing.",
         look.style(Role::Muted),
     ));
+    // Narrow, it takes the whole screen, frame and all, so nothing shows beside it.
     let area = frame.area();
-    // Full width when narrow, so nothing shows beside it.
-    let width = if area.width < WIDE { area.width } else { 72 };
-    let height = area.height.saturating_sub(2).min(22);
+    let (width, height) = if area.width < WIDE {
+        (area.width, area.height)
+    } else {
+        (72, area.height.saturating_sub(2).min(22))
+    };
     let popup = Rect::new(
         area.x + (area.width - width) / 2,
         area.y + (area.height - height) / 2,
@@ -41,6 +44,7 @@ pub(super) fn render(app: &App, look: Look<'_>, frame: &mut Frame<'_>) {
     // Clear wipes the cells' styles too, so the popup paints its own text role.
     let block = Block::bordered()
         .border_set(look.glyphs.border())
+        .border_style(look.style(Role::Border))
         .style(look.style(Role::Text))
         .title(" Keys ");
     frame.render_widget(Clear, popup);

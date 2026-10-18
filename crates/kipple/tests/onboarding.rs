@@ -257,9 +257,11 @@ fn on_demo_home_the_header_names_the_project_root_at_80_by_24() {
     let header: String = (0..80)
         .map(|x| buffer.cell((x, 0)).map_or(" ", |cell| cell.symbol()))
         .collect();
-    // However the temp dir is spelled on this system, the root ends in `projects`.
-    assert!(header.trim_end().ends_with("projects"), "{header}");
-    assert!(header.contains("[Balanced]"), "{header}");
+    // The title line sits in the frame's top edge. However the temp dir is spelled on
+    // this system, the root ends in `projects`.
+    let title = header.trim_end_matches(['-', '+', ' ']);
+    assert!(title.ends_with("projects"), "{header}");
+    assert!(title.starts_with("+ kipple - Balanced - "), "{header}");
 }
 
 /// A test terminal that also keeps what the home screen writes besides its frames.

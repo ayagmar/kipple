@@ -3,6 +3,7 @@
 //! events built here, so no file system or clock is read. Keeping and settings, which
 //! write a config file in a temp dir, are in `settings`; the first run is in `onboarding`.
 
+mod dashboard;
 mod detail;
 mod keys;
 mod onboarding;
@@ -675,7 +676,8 @@ fn colour() -> Look<'static> {
     look(true, false)
 }
 
-/// `app` drawn on a `width` by `height` terminal, as text.
+/// `app` drawn on a `width` by `height` terminal, as text. Paths shown from `~` are
+/// written with `/`, so a snapshot reads the same on Windows.
 fn screen(app: &App, look: Look<'_>, width: u16, height: u16) -> String {
     let buffer = draw(app, look, width, height);
     let mut text = String::new();
@@ -686,7 +688,7 @@ fn screen(app: &App, look: Look<'_>, width: u16, height: u16) -> String {
         text.push_str(line.trim_end());
         text.push('\n');
     }
-    text
+    text.replace(MAIN_SEPARATOR, "/")
 }
 
 /// `buffer` as text with its style runs: each run of cells drawn in something other
@@ -720,7 +722,7 @@ fn styled(buffer: &ratatui::buffer::Buffer) -> String {
         text.push_str(line.trim_end());
         text.push('\n');
     }
-    text
+    text.replace(MAIN_SEPARATOR, "/")
 }
 
 /// A cell's style as `fg=Green,bg=…,bold,reversed`, leaving out the terminal's own
@@ -819,7 +821,7 @@ fn a_finding_holding_a_mount_shows_its_size_as_a_lower_bound_and_names_the_mount
     let shown = screen(&app, colour(), 160, 48);
 
     assert_eq!(app.row(FindingId(1)).unwrap().shelf(), Shelf::Protected);
-    assert!(shown.contains("Size              >= 512.0 MiB"), "{shown}");
+    assert!(shown.contains("Size          >= 512.0 MiB"), "{shown}");
     for label in ["Git ", "Last change "] {
         let line = shown.lines().find(|line| line.contains(label)).unwrap();
         assert!(

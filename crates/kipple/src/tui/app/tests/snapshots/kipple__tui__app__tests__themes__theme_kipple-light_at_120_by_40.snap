@@ -1,44 +1,45 @@
 ---
 source: crates/kipple/src/tui/app/tests/themes.rs
+assertion_line: 41
 expression: "styled(&draw(&app, look(&theme), 120, 40))"
 ---
-«fg=#15171C,bold|kipple»«fg=#15171C|  »«fg=#6B655C|Careful»«fg=#15171C| · »«fg=#8F531A,bold|[Balanced]»«fg=#15171C| · »«fg=#6B655C|Thorough»«fg=#15171C| · scanning… · no project roots                                                  »
-«fg=#15171C,bg=#E6DCCB|  ▾ »«fg=#2E7D32,bg=#E6DCCB,bold|Safe to clean (2»«fg=#15171C,bg=#E6DCCB|    514.0 MiB       »«fg=#6B655C,bg=#E6DCCB| passes every check»«fg=#15171C,bg=#E6DCCB|       »«fg=#B8AFA2|│»«fg=#2E7D32,bold|Safe to clean»«fg=#15171C|                                        »
-«fg=#15171C|    ▾ Dev (2)           514.0 MiB                                 »«fg=#B8AFA2|│»«fg=#15171C|2 findings, 514.0 MiB                                »
-«fg=#15171C|      api/target»«fg=#6B655C|  Ca»«fg=#15171C|    512.0 MiB»«fg=#2E7D32| ███▍   »«fg=#15171C|                         »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|      tool/__pycache      2.0 MiB»«fg=#2E7D32|        »«fg=#15171C|                         »«fg=#B8AFA2|│»«fg=#15171C|Passes every check at this level: kipple recognised  »
-«fg=#15171C|  ▾ »«fg=#7A6000,bold|Review (1)»«fg=#15171C|          300.0 MiB       »«fg=#6B655C| loses more, or recent»«fg=#15171C|    »«fg=#B8AFA2|│»«fg=#15171C|it, knows how it comes back, nothing inside is       »
-«fg=#15171C|    ▾ Dev (1)           300.0 MiB                                 »«fg=#B8AFA2|│»«fg=#15171C|tracked by git, no running program shows it in use,  »
-«fg=#15171C|      web/node_modul    300.0 MiB»«fg=#7A6000| ██     recent»«fg=#15171C|                   »«fg=#B8AFA2|│»«fg=#15171C|and it hasn't changed recently. c selects all of it. »
-«fg=#15171C|  ▾ »«fg=#2F5E8C,bold|Protected (2)»«fg=#15171C|      1020.0 MiB       »«fg=#6B655C| not eligible»«fg=#15171C|             »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|    ▾ Dev (1)           120.0 MiB                                 »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|      bunapp/node_mo    120.0 MiB»«fg=#2F5E8C| ▊      layout not recognised +1»«fg=#15171C| »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|    ▾ System (1)        900.0 MiB                                 »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|      pacman/pkg»«fg=#6B655C|  pa»«fg=#15171C|    900.0 MiB»«fg=#2F5E8C| ██████ advice only»«fg=#15171C|              »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|                                                                  »«fg=#B8AFA2|│»«fg=#15171C|                                                     »
-«fg=#15171C|found 1.7 GiB · eligible 814.0 MiB · selected 0 (0 B) · frees 0 B                                                       »
-«fg=#6B655C|j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit»«fg=#15171C|                                                »
+«fg=#B8AFA2|╭»«fg=#15171C| »«fg=#15171C,bold|kipple»«fg=#B8AFA2| ─ »«fg=#8F531A,bold|Balanced»«fg=#B8AFA2| ─ »«fg=#6B655C|scanning…»«fg=#B8AFA2| ─ »«fg=#15171C|no project roots »«fg=#B8AFA2|─────────────┬───────────────────────────────┬──────────────────────╮»
+«fg=#B8AFA2|│»«fg=#15171C| »«fg=#2E7D32,bold|SAFE»«fg=#15171C| 514.0 MiB · 2            »«fg=#B8AFA2|│»«fg=#15171C| »«fg=#7A6000,bold|REVIEW»«fg=#15171C| 300.0 MiB · 1          »«fg=#B8AFA2|│»«fg=#15171C| »«fg=#2F5E8C,bold|PROTECTED»«fg=#15171C| 1020.0 MiB · 2      »«fg=#B8AFA2|│»«fg=#15171C| found 1.7 GiB        »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C| »«fg=#2E7D32|████████▏                    »«fg=#15171C| »«fg=#B8AFA2|│»«fg=#15171C| »«fg=#7A6000|████▋                        »«fg=#15171C| »«fg=#B8AFA2|│»«fg=#15171C| »«fg=#2F5E8C|████████████████▏            »«fg=#15171C| »«fg=#B8AFA2|│»«fg=#15171C| eligible 814.0 MiB   »«fg=#B8AFA2|│»
+«fg=#B8AFA2|├───────────────────────────────┴───────────────────────────────┴────────┬──────────────────────┴──────────────────────┤»
+«fg=#B8AFA2|│»«fg=#15171C| »«fg=#15171C,bg=#E6DCCB|  ▾ »«fg=#2E7D32,bg=#E6DCCB,bold|Safe to clean (2)»«fg=#15171C,bg=#E6DCCB|       514.0 MiB       »«fg=#6B655C,bg=#E6DCCB| passes every check»«fg=#15171C,bg=#E6DCCB|       »«fg=#15171C| »«fg=#B8AFA2|│»«fg=#15171C| »«fg=#2E7D32,bold|Safe to clean»«fg=#15171C|                               »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|     ▾ Dev (2)               514.0 MiB                                  »«fg=#B8AFA2|│»«fg=#15171C| 2 findings, 514.0 MiB                       »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|       api/target»«fg=#6B655C|  Cargo…»«fg=#15171C|    512.0 MiB»«fg=#2E7D32| ███▍   »«fg=#15171C|                          »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|       tool/__pycache__»«fg=#6B655C|…»«fg=#15171C|       2.0 MiB»«fg=#2E7D32|        »«fg=#15171C|                          »«fg=#B8AFA2|│»«fg=#15171C| Passes every check at this level: kipple    »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|   ▾ »«fg=#7A6000,bold|Review (1)»«fg=#15171C|              300.0 MiB       »«fg=#6B655C| loses more, or recent»«fg=#15171C|     »«fg=#B8AFA2|│»«fg=#15171C| recognised it, knows how it comes back,     »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|     ▾ Dev (1)               300.0 MiB                                  »«fg=#B8AFA2|│»«fg=#15171C| nothing inside is tracked by git, no        »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|       web/node_modules»«fg=#6B655C|…»«fg=#15171C|     300.0 MiB»«fg=#7A6000| ██     recent»«fg=#15171C|                    »«fg=#B8AFA2|│»«fg=#15171C| running program shows it in use, and it     »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|   ▾ »«fg=#2F5E8C,bold|Protected (2)»«fg=#15171C|          1020.0 MiB       »«fg=#6B655C| not eligible»«fg=#15171C|              »«fg=#B8AFA2|│»«fg=#15171C| hasn't changed recently. c selects all of   »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|     ▾ Dev (1)               120.0 MiB                                  »«fg=#B8AFA2|│»«fg=#15171C| it.                                         »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|   …                         120.0 MiB»«fg=#2F5E8C| ▊      layout not recognised +1»«fg=#15171C|  »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|     ▾ System (1)            900.0 MiB                                  »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|       pacman/pkg»«fg=#6B655C|…»«fg=#15171C|           900.0 MiB»«fg=#2F5E8C| ██████ advice only»«fg=#15171C|               »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|│»«fg=#15171C|                                                                        »«fg=#B8AFA2|│»«fg=#15171C|                                             »«fg=#B8AFA2|│»
+«fg=#B8AFA2|├────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────┤»
+«fg=#B8AFA2|│»«fg=#15171C| »«fg=#6B655C|j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit»«fg=#15171C|                selected 0 · 0 B · frees 0 B »«fg=#B8AFA2|│»
+«fg=#B8AFA2|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»

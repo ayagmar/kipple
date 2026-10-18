@@ -56,7 +56,7 @@ impl Order {
         }
     }
 
-    /// How the header names it: nothing for size, the default.
+    /// How the title line names it: nothing for size, the default.
     pub(crate) const fn title(self) -> Option<&'static str> {
         match self {
             Self::Size => None,

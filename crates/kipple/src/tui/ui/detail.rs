@@ -1,43 +1,38 @@
 //! The detail pane: what the focused line is, why it is in its bucket, and what removing
-//! it would cost.
+//! it would cost, as a list of facts under aligned labels.
 
 use kipple_core::{Lens, Level, Verdict};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
 use ratatui::text::{Line as Text, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::Paragraph;
 
-use super::layout::{Areas, layout};
+use super::layout::{Screen, layout};
 use super::tree::sum;
 use super::wrap::wrap;
 use super::{Look, shelf_title, tint, title_case};
-use crate::human::{self, bytes, escaped};
+use crate::human::{self, bytes, escaped, homed};
 use crate::theme::{Glyphs, Role, Theme};
 use crate::tui::app::{App, Node, ProjectId, Row, Shelf};
 
-/// The detail pane's border: on its left beside the tree, on top below it.
-fn detail_block(look: Look<'_>, wide: bool) -> Block<'static> {
-    Block::new()
-        .borders(if wide { Borders::LEFT } else { Borders::TOP })
-        .border_set(look.glyphs.border())
-        .border_style(look.style(Role::Border))
-}
+/// The labels' column: as wide as the longest, `Why it's here`, and a space.
+const LABEL: usize = 14;
 
-/// The detail pane for `focus`, from the line `App::detail_first` says. When more
-/// follows than fits, its last line says so.
+/// A line of the pane and where its wrapped rows start.
+type Entry = (Text<'static>, usize);
+
+/// The detail pane for `focus` in `area`, from the line `App::detail_first` says. When
+/// more follows than fits, its last line says so.
 pub(super) fn render(
     app: &App,
     look: Look<'_>,
     focus: Option<Node>,
-    areas: &Areas,
+    area: Rect,
     frame: &mut Frame<'_>,
 ) {
-    let block = detail_block(look, areas.wide);
-    let inner = block.inner(areas.detail);
-    frame.render_widget(block, areas.detail);
-    let rows = focus.map_or_else(Vec::new, |node| wrap(detail(app, look, node), inner.width));
-    let height = usize::from(inner.height);
+    let rows = focus.map_or_else(Vec::new, |node| wrap(detail(app, look, node), area.width));
+    let height = usize::from(area.height);
     let scrolled = focus.map_or(0, |node| app.detail_first(node));
     let first = scrolled.min(rows.len().saturating_sub(height));
     let more = rows.len() > first + height;
@@ -53,25 +48,31 @@ pub(super) fn render(
             look.style(Role::Muted),
         ));
     }
-    frame.render_widget(Paragraph::new(shown), inner);
+    frame.render_widget(Paragraph::new(shown), area);
 }
 
 /// The last line the detail pane for `node` can scroll to on `app`'s screen: none
-/// when it all fits.
+/// when it all fits or there is no pane.
 pub(crate) fn detail_end(app: &App, node: Node) -> usize {
-    let areas = layout(Rect::new(0, 0, app.width, app.height));
+    let areas = layout(
+        Rect::new(0, 0, app.width, app.height),
+        &app.config.ui,
+        Screen::Home,
+    );
+    let Some(area) = areas.detail else {
+        return 0;
+    };
     // Styles don't change where a line wraps, and both glyph sets draw symbols of the
     // same width, so any look wraps the same.
     let look = Look {
         theme: &Theme::default(),
         glyphs: Glyphs::Ascii,
     };
-    let inner = detail_block(look, areas.wide).inner(areas.detail);
-    let rows = wrap(detail(app, look, node), inner.width).len();
-    rows.saturating_sub(usize::from(inner.height))
+    let rows = wrap(detail(app, look, node), area.width).len();
+    rows.saturating_sub(usize::from(area.height))
 }
 
-fn detail(app: &App, look: Look<'_>, node: Node) -> Vec<Text<'static>> {
+fn detail(app: &App, look: Look<'_>, node: Node) -> Vec<Entry> {
     match node {
         Node::Finding(id) => app
             .row(id)
@@ -80,13 +81,14 @@ fn detail(app: &App, look: Look<'_>, node: Node) -> Vec<Text<'static>> {
         Node::Shelf(shelf) | Node::Group(shelf, _) => shelf_detail(app, look, node, shelf),
         Node::Gaps => vec![
             heading(look, "Not covered"),
-            Text::from(
+            plain(Text::from(
                 "The scan couldn't read everything, so this report is partial. An empty bucket doesn't mean there is nothing to clean.",
-            ),
+            )),
         ],
         Node::Gap(index) => app.gaps.get(index).map_or_else(Vec::new, |gap| {
             vec![
                 heading(look, "Not covered"),
+                blank(),
                 labelled(look, "Integration", gap.integration.clone()),
                 labelled(look, "What happened", escaped(&gap.message)),
             ]
@@ -94,41 +96,58 @@ fn detail(app: &App, look: Look<'_>, node: Node) -> Vec<Text<'static>> {
         Node::Notice(index) => app.notices.get(index).map_or_else(Vec::new, |notice| {
             vec![
                 heading(look, "Note"),
-                Text::from(escaped(notice)),
-                Text::styled(
+                plain(Text::from(escaped(notice))),
+                plain(Text::styled(
                     "It doesn't make the scan partial: it says how far the check for running programs went.",
                     look.style(Role::Muted),
-                ),
+                )),
             ]
         }),
     }
 }
 
-fn heading(look: Look<'_>, text: &str) -> Text<'static> {
-    Text::styled(text.to_owned(), look.style(Role::Title))
+const fn plain(line: Text<'static>) -> Entry {
+    (line, 0)
 }
 
-fn labelled(look: Look<'_>, label: &str, text: String) -> Text<'static> {
-    Text::from(vec![
-        Span::styled(format!("{label:<17} "), look.style(Role::Label)),
+fn blank() -> Entry {
+    plain(Text::from(""))
+}
+
+fn heading(look: Look<'_>, text: &str) -> Entry {
+    plain(Text::styled(text.to_owned(), look.style(Role::Title)))
+}
+
+/// `text` under `label`, its wrapped rows under its first.
+fn labelled(look: Look<'_>, label: &str, text: String) -> Entry {
+    let line = Text::from(vec![
+        Span::styled(format!("{label:<LABEL$}"), look.style(Role::Label)),
         Span::raw(text),
-    ])
+    ]);
+    (line, LABEL)
 }
 
-fn finding_detail(app: &App, look: Look<'_>, row: &Row) -> Vec<Text<'static>> {
+/// A path as the screen shows it: from `~` below home.
+fn shown(app: &App, path: &std::path::Path) -> String {
+    escaped(&homed(path, app.home.as_deref()))
+}
+
+fn finding_detail(app: &App, look: Look<'_>, row: &Row) -> Vec<Entry> {
     let finding = &row.finding;
     let text = app.catalog.rules.get(&finding.rule);
-    let facts = human::facts(finding, &app.policy);
+    let level = app.policy.level_of(&finding.rule);
+    let mut facts = human::facts(finding, &app.policy);
     let mut lines = vec![
-        Text::from(vec![
+        heading(look, &escaped(&row.spot.name)),
+        plain(Text::from(vec![
             Span::styled(
                 app.catalog.title(&finding.rule).to_owned(),
-                look.style(Role::Title),
+                look.style(Role::Muted),
             ),
             Span::raw(look.glyphs.dot()),
-            verdict_span(look, row, app.policy.level_of(&row.finding.rule)),
-        ]),
-        Text::raw(escaped(&finding.path.display().to_string())),
+            verdict_span(look, row, level),
+        ])),
+        blank(),
     ];
     if let Some(text) = text {
         let what = if text.description.is_empty() {
@@ -139,35 +158,50 @@ fn finding_detail(app: &App, look: Look<'_>, row: &Row) -> Vec<Text<'static>> {
         lines.push(labelled(look, "What it is", escaped(what)));
         lines.push(labelled(look, "Why it's here", escaped(&text.why)));
     }
-    let level = app.policy.level_of(&row.finding.rule);
     lines.push(labelled(look, why_label(row.shelf()), why(row, level)));
-    if let Some(text) = text {
-        lines.push(labelled(look, "What you lose", escaped(&text.loss)));
+    let mut take = |label: &str| {
+        let at = facts.iter().position(|(name, _)| *name == label)?;
+        Some(facts.remove(at).1)
+    };
+    // The loss in the rule's own words, which say more than the verified one.
+    let verified = take("You lose");
+    if let Some(lose) = text.map(|text| escaped(&text.loss)).or(verified) {
+        lines.push(labelled(look, "You lose", lose));
     }
-    // How it comes back first, as the spec orders the pane. The verified loss is said
-    // in the rule's own words above.
-    let (back, rest): (Vec<_>, Vec<_>) = facts
-        .into_iter()
-        .filter(|(label, _)| *label != "You lose")
-        .partition(|(label, _)| *label == "Comes back");
-    for (_, value) in back {
-        lines.push(labelled(look, "How it comes back", value));
+    let kept = take("Kept");
+    for label in [
+        "Comes back",
+        "Restore cost",
+        "Proposes",
+        "In use",
+        "Git",
+        "Last change",
+    ] {
+        if let Some(value) = take(label) {
+            lines.push(labelled(look, label, value));
+        }
     }
-    for (label, value) in rest {
+    // Any other fact, so none is ever left out.
+    for (label, value) in facts {
         lines.push(labelled(look, label, value));
     }
     if let Some(size) = &row.size {
         lines.push(labelled(look, "Size", human::size(Some(size))));
     }
+    lines.push(labelled(look, "Path", shown(app, &finding.path)));
     lines.push(labelled(look, "Rule", finding.rule.0.clone()));
+    if let Some(kept) = kept {
+        lines.push(labelled(look, "Kept note", kept));
+    }
     for advice in app.advice.get(&finding.integration).into_iter().flatten() {
         lines.push(labelled(look, "Advice", escaped(&advice.title)));
+        let indent = " ".repeat(LABEL);
         lines.extend(
             advice
                 .snippets
                 .iter()
                 .flat_map(|s| human::snippet_lines(s))
-                .map(|line| Text::raw(format!("  {line}"))),
+                .map(|line| (Text::raw(format!("{indent}{line}")), LABEL)),
         );
     }
     lines
@@ -175,13 +209,13 @@ fn finding_detail(app: &App, look: Look<'_>, row: &Row) -> Vec<Text<'static>> {
 
 /// A project's line: its path, then its findings in each bucket with their totals,
 /// as the filter and lens show them.
-fn project_detail(app: &App, look: Look<'_>, id: ProjectId) -> Vec<Text<'static>> {
+fn project_detail(app: &App, look: Look<'_>, id: ProjectId) -> Vec<Entry> {
     let Some(project) = app.project(id) else {
         return Vec::new();
     };
     let mut lines = vec![
         heading(look, &format!("Project {}", escaped(&project.name))),
-        Text::raw(escaped(&project.path.display().to_string())),
+        plain(Text::raw(shown(app, &project.path))),
     ];
     for shelf in [
         Shelf::Safe,
@@ -198,8 +232,8 @@ fn project_detail(app: &App, look: Look<'_>, id: ProjectId) -> Vec<Text<'static>
         }
         rows.sort_by(|a, b| a.spot.inside.cmp(&b.spot.inside));
         let total: u64 = rows.iter().map(|row| row.bytes()).sum();
-        lines.push(Text::from(""));
-        lines.push(Text::styled(
+        lines.push(blank());
+        lines.push(plain(Text::styled(
             format!(
                 "{}: {}, {}",
                 shelf_title(shelf),
@@ -207,13 +241,13 @@ fn project_detail(app: &App, look: Look<'_>, id: ProjectId) -> Vec<Text<'static>
                 bytes(total)
             ),
             look.style(tint(shelf)).add_modifier(Modifier::BOLD),
-        ));
+        )));
         lines.extend(rows.iter().map(|row| {
-            Text::raw(format!(
+            plain(Text::raw(format!(
                 "  {}  {}",
                 escaped(&row.spot.inside),
                 human::size(row.size.as_ref())
-            ))
+            )))
         }));
     }
     lines
@@ -238,8 +272,8 @@ fn verdict_span(look: Look<'_>, row: &Row, level: Level) -> Span<'static> {
 
 const fn why_label(shelf: Shelf) -> &'static str {
     match shelf {
-        Shelf::Safe => "Why it's safe",
-        Shelf::Review => "Why review it",
+        Shelf::Safe => "Why safe",
+        Shelf::Review => "Why review",
         Shelf::Protected => "Why it's held",
         Shelf::Measuring => "Status",
     }
@@ -256,7 +290,7 @@ fn why(row: &Row, level: Level) -> String {
     }
 }
 
-fn shelf_detail(app: &App, look: Look<'_>, node: Node, shelf: Shelf) -> Vec<Text<'static>> {
+fn shelf_detail(app: &App, look: Look<'_>, node: Node, shelf: Shelf) -> Vec<Entry> {
     let (count, total) = sum(app, node);
     let about = match shelf {
         Shelf::Safe => {
@@ -273,12 +307,16 @@ fn shelf_detail(app: &App, look: Look<'_>, node: Node, shelf: Shelf) -> Vec<Text
         }
     };
     vec![
-        Text::styled(
+        plain(Text::styled(
             shelf_title(shelf),
             look.style(tint(shelf)).add_modifier(Modifier::BOLD),
-        ),
-        Text::raw(format!("{}, {}", human::findings(count), bytes(total))),
-        Text::from(""),
-        Text::raw(about),
+        )),
+        plain(Text::raw(format!(
+            "{}, {}",
+            human::findings(count),
+            bytes(total)
+        ))),
+        blank(),
+        plain(Text::raw(about)),
     ]
 }

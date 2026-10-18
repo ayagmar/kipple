@@ -1,29 +1,29 @@
 ---
 source: crates/kipple/src/tui/app/tests/onboarding.rs
-assertion_line: 408
+assertion_line: 447
 expression: "screen(&first, &app, 80, 24)"
 ---
- Welcome to kipple · step 3 of 4 · scan finished
-────────────────────────────────────────────────────────────────────────────────
-Delete or move to Trash by default?
-This version only stores the answer: nothing is removed yet.
-
-  Delete  frees the space at once
-> Trash   can be put back, but frees nothing until the Trash is emptied
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
- enter choose · tab skip · esc back · q quit, saving nothing
+╭ Welcome to kipple ─ step 3 of 4 ─ scan finished ─────────────────────────────╮
+│ Delete or move to Trash by default?                                          │
+│ This version only stores the answer: nothing is removed yet.                 │
+│                                                                              │
+│   Delete  frees the space at once                                            │
+│ > Trash   can be put back, but frees nothing until the Trash is emptied      │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ enter choose · tab skip · esc back · q quit, saving nothing                  │
+╰──────────────────────────────────────────────────────────────────────────────╯

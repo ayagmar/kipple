@@ -1,52 +1,53 @@
 ---
 source: crates/kipple/src/tui/app/tests/tree.rs
+assertion_line: 594
 expression: shown
 ---
-kipple  Careful · [Balanced] · Thorough · scanned in 1.2 s · ~/projects
-  ▾ Safe to clean (4)                           1.5 GiB        passes every check       │Project api
-    ▾ Dev (3)                                 662.0 MiB                                 │/home/ada/projects/api
-      ▾ api (2)                               612.0 MiB                                 │
-        target  Cargo build output            512.0 MiB ███▍                            │Safe to clean: 2 findings, 612.0 MiB
-        node_modules  Node dependencies       100.0 MiB ▋                               │  node_modules  100.0 MiB
-      web/target  Cargo build output           50.0 MiB ▎                               │  target  512.0 MiB
-    ▾ System (1)                              900.0 MiB                                 │
-      pacman/pkg  pacman package cache        900.0 MiB ██████                          │Review: 2 findings, 66.0 MiB
-  ▾ Review (3)                                366.0 MiB        loses more, or recent    │  cli/target  64.0 MiB
-    ▾ Dev (3)                                 366.0 MiB                                 │  tool/__pycache__  2.0 MiB
-      web/node_modules  Node dependencies     300.0 MiB ██     recent                   │
-      ▾ api (2)                                66.0 MiB                                 │Protected: 2 findings, 128.0 MiB
-        cli/target  Cargo build output         64.0 MiB ▍      costly to restore        │  docs/node_modules  120.0 MiB
-        tool/__pycache__  Python bytecode       2.0 MiB        recent                   │  old/__pycache__  8.0 MiB
-  ▾ Protected (2)                             128.0 MiB        not eligible             │
-    ▾ Dev (2)                                 128.0 MiB                                 │
-      ▾ api (2)                               128.0 MiB                                 │
-        docs/node_modules  Node dependenci    120.0 MiB ▊      layout not recognised +1 │
-        old/__pycache__  Python bytecode c      8.0 MiB        layout not recognised +1 │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-found 2.0 GiB · eligible 1.8 GiB · selected 0 (0 B) · frees 0 B
-j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit
+╭ kipple ─ Balanced ─ scanned in 1.2 s ─ ~/projects ───────────────────────────────────────┬────────────────────────────────────────────┬──────────────────────╮
+│ SAFE 1.5 GiB · 4                           │ REVIEW 366.0 MiB · 3                        │ PROTECTED 128.0 MiB · 2                    │ found 2.0 GiB        │
+│ ███████████████████████████████▉           │ ███████▋                                    │ ██▌                                        │ eligible 1.8 GiB     │
+├────────────────────────────────────────────┴──────────────────────────────────────────┬──┴────────────────────────────────────────────┴──────────────────────┤
+│   ▾ Safe to clean (4)                        1.5 GiB        passes every check        │ Project api                                                          │
+│     ▾ Dev (3)                              662.0 MiB                                  │ ~/projects/api                                                       │
+│       ▾ api (2)                            612.0 MiB                                  │                                                                      │
+│         target  Cargo build output         512.0 MiB ███▍                             │ Safe to clean: 2 findings, 612.0 MiB                                 │
+│         node_modules  Node dependencies    100.0 MiB ▋                                │   node_modules  100.0 MiB                                            │
+│       web/target  Cargo build output        50.0 MiB ▎                                │   target  512.0 MiB                                                  │
+│     ▾ System (1)                           900.0 MiB                                  │                                                                      │
+│       pacman/pkg  pacman package cache     900.0 MiB ██████                           │ Review: 2 findings, 66.0 MiB                                         │
+│   ▾ Review (3)                             366.0 MiB        loses more, or recent     │   cli/target  64.0 MiB                                               │
+│     ▾ Dev (3)                              366.0 MiB                                  │   tool/__pycache__  2.0 MiB                                          │
+│       web/node_modules  Node…              300.0 MiB ██     recent                    │                                                                      │
+│       ▾ api (2)                             66.0 MiB                                  │ Protected: 2 findings, 128.0 MiB                                     │
+│         cli/target  Cargo build output      64.0 MiB ▍      costly to restore         │   docs/node_modules  120.0 MiB                                       │
+│         tool/__pycache__  Python…            2.0 MiB        recent                    │   old/__pycache__  8.0 MiB                                           │
+│   ▾ Protected (2)                          128.0 MiB        not eligible              │                                                                      │
+│     ▾ Dev (2)                              128.0 MiB                                  │                                                                      │
+│       ▾ api (2)                            128.0 MiB                                  │                                                                      │
+│         docs/node_modules  Node…           120.0 MiB ▊      layout not recognised +1  │                                                                      │
+│         old/__pycache__  Python…             8.0 MiB        layout not recognised +1  │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+├───────────────────────────────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────┤
+│ j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit                                                        selected 0 · 0 B · frees 0 B │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

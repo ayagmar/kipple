@@ -10,6 +10,7 @@ mod keybar;
 mod layout;
 pub(crate) mod onboarding;
 pub(crate) mod settings;
+mod summary;
 mod tree;
 mod wrap;
 
@@ -19,6 +20,7 @@ use ratatui::text::{Line as Text, Span};
 
 pub(crate) use self::detail::detail_end;
 pub(crate) use self::layout::list_rows;
+use self::layout::{Screen, Totals};
 pub(crate) use self::tree::{offset, slashed, tail};
 use super::app::{App, Mode, Shelf};
 use crate::theme::{Look, Role};
@@ -70,18 +72,44 @@ const fn bar_tint(shelf: Shelf) -> Role {
 /// Draws `app` into `frame`.
 pub(crate) fn render(app: &App, look: Look<'_>, frame: &mut Frame<'_>) {
     look.fill(frame);
-    let areas = layout::layout(frame.area());
-    let lines = app.lines();
-    let tree = tree::Tree::new(app, &lines, areas.wide);
-    frame.render_widget(frame::header(app, look, areas.header.width), areas.header);
-    frame.render_widget(keybar::footer(app, look), areas.footer);
-    if app.mode == Mode::Settings {
+    let screen = if app.mode == Mode::Settings {
+        Screen::Panel
+    } else {
+        Screen::Home
+    };
+    let areas = layout::layout(frame.area(), &app.config.ui, screen);
+    frame::outline(look, areas.outer, &areas.rules, frame);
+    keybar::render(
+        app,
+        look,
+        areas.keybar,
+        areas.totals == Totals::KeyBar,
+        frame,
+    );
+    let width = areas.outer.width.saturating_sub(4);
+    let title = frame::header(app, look, width, areas.totals == Totals::Title);
+    if screen == Screen::Panel {
         settings::render(app, look, areas.body, frame);
+        frame::title(look, title, areas.outer, frame);
         return;
     }
+    summary::render(app, look, &areas, frame);
+    let lines = app.lines();
+    let tree = tree::Tree::new(app, &lines, areas.bars);
     tree::render(app, look, &tree, areas.list, frame);
-    let focus = tree.focus();
-    detail::render(app, look, focus, &areas, frame);
+    if let Some(detail) = areas.detail {
+        if let Some(x) = areas.divider {
+            frame::vertical(
+                look,
+                x,
+                areas.body.y,
+                areas.body.bottom(),
+                frame.buffer_mut(),
+            );
+        }
+        detail::render(app, look, tree.focus(), detail, frame);
+    }
+    frame::title(look, title, areas.outer, frame);
     if app.mode == Mode::Help {
         help::render(app, look, frame);
     }

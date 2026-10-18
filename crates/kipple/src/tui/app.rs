@@ -440,7 +440,7 @@ impl App {
             .unwrap_or_else(|| self.hint.min(lines.len().saturating_sub(1)))
     }
 
-    /// The four totals of the footer.
+    /// The four totals: in the band, the title line or the key bar.
     pub(crate) fn totals(&self) -> Totals {
         let mut totals = Totals::default();
         for row in &self.rows {
@@ -715,7 +715,7 @@ impl App {
     }
 
     fn page(&self) -> isize {
-        let rows = super::ui::list_rows(self.width, self.height);
+        let rows = super::ui::list_rows(self.width, self.height, &self.config.ui);
         isize::try_from(rows.saturating_sub(1).max(1)).unwrap_or(1)
     }
 
@@ -943,7 +943,7 @@ impl App {
             self.cursor = lines.get(at).map(|line| line.node);
         }
         self.hint = at;
-        let rows = super::ui::list_rows(self.width, self.height);
+        let rows = super::ui::list_rows(self.width, self.height, &self.config.ui);
         self.scroll = super::ui::offset(self.scroll, at, rows, lines.len());
     }
 

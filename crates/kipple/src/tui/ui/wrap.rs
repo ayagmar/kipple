@@ -7,14 +7,17 @@ use super::cols;
 
 /// `lines` broken into rows of at most `width` columns: between words where it can, a
 /// word longer than a row wherever it must. A break swallows the space it falls on.
-pub(super) fn wrap(lines: Vec<Text<'static>>, width: u16) -> Vec<Text<'static>> {
+/// Each line's rows after its first start `hang` columns in, under its value, unless
+/// that leaves less than half the row.
+pub(super) fn wrap(lines: Vec<(Text<'static>, usize)>, width: u16) -> Vec<Text<'static>> {
     let width = usize::from(width);
     if width == 0 {
         return Vec::new();
     }
     let mut rows = Vec::new();
-    for line in lines {
-        let mut filling = Filling::new(line.style, width);
+    for (line, hang) in lines {
+        let hang = if hang * 2 <= width { hang } else { 0 };
+        let mut filling = Filling::new(line.style, width, hang);
         for (word, space) in words(&line) {
             filling.word(&word);
             filling.space(&space);
@@ -57,26 +60,32 @@ fn char_cols(c: char) -> usize {
 struct Filling {
     width: usize,
     style: Style,
+    /// Where the rows after the first start.
+    hang: usize,
     rows: Vec<Text<'static>>,
     spans: Vec<Span<'static>>,
     cols: usize,
+    /// Where this row's text starts: 0 on the first row, `hang` after.
+    start: usize,
 }
 
 impl Filling {
-    const fn new(style: Style, width: usize) -> Self {
+    const fn new(style: Style, width: usize, hang: usize) -> Self {
         Self {
             width,
             style,
+            hang,
             rows: Vec::new(),
             spans: Vec::new(),
             cols: 0,
+            start: 0,
         }
     }
 
     /// Adds `word` on this row, or on the next when it fits there whole.
     fn word(&mut self, word: &[Cell]) {
         let wide: usize = word.iter().map(|&(c, _)| char_cols(c)).sum();
-        if self.cols + wide > self.width && wide <= self.width {
+        if self.cols + wide > self.width && wide <= self.width - self.hang {
             self.next_row();
         }
         for &(c, style) in word {
@@ -106,20 +115,26 @@ impl Filling {
         }
     }
 
-    /// Ends the row so far, unless nothing is on it yet.
+    /// Ends the row so far, unless nothing is on it yet, and starts the next one at
+    /// the hang.
     fn next_row(&mut self) {
-        if self.cols == 0 {
+        if self.cols == self.start {
             return;
         }
-        self.cols = 0;
         let spans = std::mem::take(&mut self.spans);
         self.rows.push(Text::from(spans).style(self.style));
+        self.start = self.hang;
+        self.cols = self.hang;
+        if self.hang > 0 {
+            self.spans.push(Span::raw(" ".repeat(self.hang)));
+        }
     }
 
     /// The rows, at least one: an empty line stays a row, and a break on the last
     /// space doesn't add one.
     fn finish(mut self) -> Vec<Text<'static>> {
         self.next_row();
+        self.spans.clear();
         if self.rows.is_empty() {
             self.rows.push(Text::default().style(self.style));
         }

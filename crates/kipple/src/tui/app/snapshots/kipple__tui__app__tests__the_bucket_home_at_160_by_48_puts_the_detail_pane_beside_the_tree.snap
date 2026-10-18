@@ -1,52 +1,53 @@
 ---
 source: crates/kipple/src/tui/app/tests.rs
+assertion_line: 842
 expression: "screen(&app, colour(), 160, 48)"
 ---
-kipple  Careful · [Balanced] · Thorough · scanned in 1.2 s · ~/projects
-  ▾ Safe to clean (2)                         514.0 MiB        passes every check       │Cargo build output · Safe to clean at Balanced
-    ▾ Dev (2)                                 514.0 MiB                                 │/home/ada/projects/api/target
-●     api/target  Cargo build output          512.0 MiB ███▍                            │What it is        Cargo build output
-      tool/__pycache__  Python bytecode ca      2.0 MiB                                 │Why it's here     Cargo writes compiled crates here when you build.
-  ▾ Review (1)                                300.0 MiB        loses more, or recent    │Why it's safe     passes every check at Balanced: recognised, comes
-    ▾ Dev (1)                                 300.0 MiB                                 │back, untracked, no running program shows it in use, not recent
-      web/node_modules  Node dependencies     300.0 MiB ██     recent                   │What you lose     The next build compiles everything again.
-  ▾ Protected (2)                            1020.0 MiB        not eligible             │How it comes back the next build makes it again, without the network
-    ▾ Dev (1)                                 120.0 MiB                                 │Restore cost      not estimated
-      bunapp/node_modules  Node dependenci    120.0 MiB ▊      layout not recognised +1 │Proposes          remove (delete or trash)
-    ▾ System (1)                              900.0 MiB                                 │Git               no repository holds it or lives inside it, so git
-      pacman/pkg  pacman package cache        900.0 MiB ██████ advice only              │tracks nothing inside
-                                                                                        │In use            no running program shows it in use
-                                                                                        │Last change       41 days ago
-                                                                                        │Size              512.0 MiB
-                                                                                        │Rule              builtin.cargo.target
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-                                                                                        │
-found 1.7 GiB · eligible 814.0 MiB · selected 1 (512.0 MiB) · frees 512.0 MiB
-j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit
+╭ kipple ─ Balanced ─ scanned in 1.2 s ─ ~/projects ───────────────────────────────────────┬────────────────────────────────────────────┬──────────────────────╮
+│ SAFE 514.0 MiB · 2                         │ REVIEW 300.0 MiB · 1                        │ PROTECTED 1020.0 MiB · 2                   │ found 1.7 GiB        │
+│ ███████████▊                               │ ███████                                     │ ███████████████████████▎                   │ eligible 814.0 MiB   │
+├────────────────────────────────────────────┴──────────────────────────────────────────┬──┴────────────────────────────────────────────┴──────────────────────┤
+│   ▾ Safe to clean (2)                      514.0 MiB        passes every check        │ api/target                                                           │
+│     ▾ Dev (2)                              514.0 MiB                                  │ Cargo build output · Safe to clean at Balanced                       │
+│ ●     api/target  Cargo build output       512.0 MiB ███▍                             │                                                                      │
+│       tool/__pycache__  Python…              2.0 MiB                                  │ What it is    Cargo build output                                     │
+│   ▾ Review (1)                             300.0 MiB        loses more, or recent     │ Why it's here Cargo writes compiled crates here when you build.      │
+│     ▾ Dev (1)                              300.0 MiB                                  │ Why safe      passes every check at Balanced: recognised, comes      │
+│       web/node_modules  Node…              300.0 MiB ██     recent                    │               back, untracked, no running program shows it in use,   │
+│   ▾ Protected (2)                         1020.0 MiB        not eligible              │               not recent                                             │
+│     ▾ Dev (1)                              120.0 MiB                                  │ You lose      The next build compiles everything again.              │
+│       bunapp/node_modules  Node…           120.0 MiB ▊      layout not recognised +1  │ Comes back    the next build makes it again, without the network     │
+│     ▾ System (1)                           900.0 MiB                                  │ Restore cost  not estimated                                          │
+│       pacman/pkg  pacman package cache     900.0 MiB ██████ advice only               │ Proposes      remove (delete or trash)                               │
+│                                                                                       │ In use        no running program shows it in use                     │
+│                                                                                       │ Git           no repository holds it or lives inside it, so git      │
+│                                                                                       │               tracks nothing inside                                  │
+│                                                                                       │ Last change   41 days ago                                            │
+│                                                                                       │ Size          512.0 MiB                                              │
+│                                                                                       │ Path          ~/projects/api/target                                  │
+│                                                                                       │ Rule          builtin.cargo.target                                   │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+│                                                                                       │                                                                      │
+├───────────────────────────────────────────────────────────────────────────────────────┴──────────────────────────────────────────────────────────────────────┤
+│ j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit                                          ● selected 1 · 512.0 MiB · frees 512.0 MiB │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

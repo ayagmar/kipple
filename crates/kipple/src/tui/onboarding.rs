@@ -12,7 +12,7 @@ use super::app::{App, Key};
 use super::keymap::{Action, Keymap, Mode};
 use super::settings::Found;
 use crate::config::{Edit, Loaded, Source, is_config_path, same_config_path, within_config_path};
-use crate::human::escaped;
+use crate::human::{escaped, homed};
 
 /// Whether the first run is due: no config file at the default location, in a known
 /// config directory. A file named by `--config` or `KIPPLE_CONFIG` never starts it.
@@ -420,7 +420,7 @@ fn step_through<T: Copy + PartialEq>(all: &[T], at: T, by: isize) -> T {
 pub(crate) fn finish(app: &mut App, edits: Vec<Edit>) {
     let file = app.file.as_ref().map_or_else(
         || "the config file".to_owned(),
-        |file| escaped(&file.display().to_string()),
+        |file| escaped(&homed(file, app.home.as_deref())),
     );
     let done = format!(
         "Your answers are saved in {file}. {} changes them.",
