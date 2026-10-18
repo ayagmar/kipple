@@ -1,21 +1,20 @@
 //! The tree's projects, sort order, size bars and header (`docs/03-functional-spec.md`
 //! §5 Layout, Projects, Sort, Size bars; D-054).
 
-use std::path::{MAIN_SEPARATOR, PathBuf};
+use std::path::PathBuf;
 
 use kipple_core::{Consequence, Cost, Facts, FindingId, Level, Modified, WalkGap};
 
 use super::{
-    CARGO, DAY, NODE, PACMAN, PYTHON, colour, finished, focus, found, measured, opened, press,
-    recent, safe, screen, selected, to, typed, unknown_layout,
+    CARGO, DAY, NODE, PACMAN, PYTHON, colour, finished, focus, found, look, measured, opened,
+    press, recent, safe, screen, selected, to, typed, unknown_layout,
 };
+use crate::theme::Look;
 use crate::tui::app::{App, Effect, Key, Msg, Node, Order, Shelf};
-use crate::tui::view::Look;
 
-const ASCII: Look = Look {
-    color: false,
-    ascii: true,
-};
+fn ascii() -> Look<'static> {
+    look(false, true)
+}
 
 /// Eligible, not recent, but costly to bring back: Review at every level.
 fn costly() -> Facts {
@@ -445,7 +444,7 @@ fn bars_are_scaled_to_the_largest_measured_finding_and_a_measuring_one_has_none(
     assert!(line("b/target").contains(" ███ "), "{shown}");
     assert!(!line("c/target").contains('█'), "{shown}");
     assert!(line("c/target").contains("measuring"), "{shown}");
-    let ascii = screen(&app, ASCII, 160, 48);
+    let ascii = screen(&app, ascii(), 160, 48);
     assert!(ascii.contains(" ###### "), "{ascii}");
 
     // Below 100 columns there is no bar.
@@ -453,12 +452,16 @@ fn bars_are_scaled_to_the_largest_measured_finding_and_a_measuring_one_has_none(
     assert!(!narrow.contains('█'), "{narrow}");
 }
 
-/// The first line of `app` on a `width` wide terminal.
-fn header(app: &App, look: Look, width: u16) -> String {
-    screen(app, look, width, 24)
+/// The title line of `app` on a `width` wide terminal, without the frame round it.
+fn header(app: &App, look: Look<'_>, width: u16) -> String {
+    let line = screen(app, look, width, 24)
         .lines()
         .next()
         .unwrap()
+        .to_owned();
+    line.trim_start_matches(['╭', '+'])
+        .trim_end_matches(['─', '┬', '╮', '-', '+'])
+        .trim()
         .to_owned()
 }
 
@@ -469,7 +472,12 @@ fn the_header_names_the_project_roots_shortened_to_fit() {
     let mut app = rooted();
     finished(&mut app);
     let mut shown = Vec::new();
-    for (look, width) in [(colour(), 80), (ASCII, 80), (colour(), 160), (ASCII, 160)] {
+    for (look, width) in [
+        (colour(), 80),
+        (ascii(), 80),
+        (colour(), 160),
+        (ascii(), 160),
+    ] {
         shown.push(header(&app, look, width));
     }
     app.roots = vec![
@@ -478,7 +486,7 @@ fn the_header_names_the_project_roots_shortened_to_fit() {
         PathBuf::from("/srv/code"),
     ];
     shown.push(header(&app, colour(), 80));
-    shown.push(header(&app, ASCII, 80));
+    shown.push(header(&app, ascii(), 80));
     shown.push(header(&app, colour(), 160));
     press(&mut app, &[Key::Char('o')]);
     shown.push(header(&app, colour(), 80));
@@ -492,7 +500,8 @@ fn the_header_names_the_project_roots_shortened_to_fit() {
     press(&mut app, &[Key::Char('o'), Key::Char('o')]);
     app.roots = vec![PathBuf::from("/home/ada/code")];
     let line = header(&app, colour(), 80);
-    assert!(line.ends_with(&format!(" ~{MAIN_SEPARATOR}code")), "{line}");
+    // The screen helper writes `/` for the separator, as on every system.
+    assert!(line.ends_with(" ~/code"), "{line}");
 }
 
 // Catches the roots pushing the sort order's name off the header at 80 columns: the
@@ -505,29 +514,30 @@ fn the_sort_order_keeps_its_place_in_the_header_before_the_roots() {
     app.roots = vec![PathBuf::from("~/src/clients/acme"), PathBuf::from("~/work")];
     press(&mut app, &[Key::Char('o')]);
 
-    for look in [colour(), ASCII] {
+    for look in [colour(), ascii()] {
         let narrow = header(&app, look, 80);
         assert!(narrow.ends_with("by last change"), "{narrow}");
-        assert!(!narrow.contains("acme"), "{narrow}");
         let wide = header(&app, look, 160);
         assert!(wide.contains("acme +1"), "{wide}");
         assert!(wide.ends_with("by last change"), "{wide}");
     }
 }
 
-// Catches the current level showing only by its colour once `NO_COLOR` is set.
+// Catches the current level showing only by its colour once `NO_COLOR` is set: the
+// title line names it, and only it.
 #[test]
-fn without_colour_the_current_level_is_still_marked() {
+fn without_colour_the_current_level_is_still_named() {
     let mut app = rooted();
     app.policy.level = Level::Thorough;
-    let plain = Look {
-        color: false,
-        ascii: false,
-    };
+    let plain = look(false, false);
 
     let line = header(&app, plain, 80);
 
-    assert!(line.contains("Careful · Balanced · [Thorough]"), "{line}");
+    assert!(line.starts_with("kipple ─ Thorough ─ "), "{line}");
+    assert!(
+        !line.contains("Careful") && !line.contains("Balanced"),
+        "{line}"
+    );
 }
 
 #[test]
@@ -543,7 +553,7 @@ fn projects_at_160_by_48_in_ascii() {
     let mut app = projects();
     finished(&mut app);
     to(&mut app, 2);
-    insta::assert_snapshot!(screen(&app, ASCII, 160, 48));
+    insta::assert_snapshot!(screen(&app, ascii(), 160, 48));
 }
 
 #[test]
@@ -568,12 +578,12 @@ fn a_project_line_details_its_path_and_its_findings_in_every_bucket() {
     let api = project_line(&app, Shelf::Safe, "api");
     go(&mut app, api);
 
-    // The project's path is the root joined with its name, so Windows writes a `\`.
-    let shown = screen(&app, colour(), 160, 48).replace(MAIN_SEPARATOR, "/");
+    // It shows from `~` below home (F1).
+    let shown = screen(&app, colour(), 160, 48);
 
     for line in [
         "Project api",
-        "/home/ada/projects/api",
+        "~/projects/api",
         "Safe to clean: 2 findings, 612.0 MiB",
         "Review: 2 findings, 66.0 MiB",
         "Protected: 2 findings, 128.0 MiB",

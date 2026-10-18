@@ -15,6 +15,7 @@ use serde::Serialize;
 use crate::human::escaped;
 use crate::json::{LensOut, RULES, VERSION};
 use crate::setup::Builtin;
+use crate::theme::{Ink, Role};
 
 /// `kipple rules --json`.
 #[derive(Debug, Serialize, JsonSchema)]
@@ -288,14 +289,14 @@ fn capabilities(descriptors: &[IntegrationDescriptor]) -> Capabilities {
 ///
 /// # Errors
 /// When writing to `out` fails.
-pub fn write_human(out: &mut dyn Write, rules: &RulesOut) -> io::Result<()> {
+pub fn write_human(out: &mut dyn Write, rules: &RulesOut, ink: &Ink) -> io::Result<()> {
     writeln!(out, "kipple {} rules on {}", rules.kipple, rules.platform)?;
-    writeln!(out, "\nIntegrations")?;
+    writeln!(out, "\n{}", ink.paint(Role::Title, "Integrations"))?;
     for i in &rules.integrations {
         let here = if i.supported {
             "runs here"
         } else {
-            "not on this OS"
+            &ink.paint(Role::Muted, "not on this OS")
         };
         let line = format!(
             "{:<12} {:<7} {:<22} {here}",
@@ -305,20 +306,16 @@ pub fn write_human(out: &mut dyn Write, rules: &RulesOut) -> io::Result<()> {
         );
         writeln!(out, "  {}", line.trim_end())?;
     }
-    writeln!(out, "\nRules (all report only in this version)")?;
+    let heading = ink.paint(Role::Title, "Rules (all report only in this version)");
+    writeln!(out, "\n{heading}")?;
     for r in &rules.rules {
         let here = if r.supported {
-            ""
+            String::new()
         } else {
-            "  (not on this OS)"
+            ink.paint(Role::Muted, "  (not on this OS)")
         };
-        writeln!(
-            out,
-            "  {:<28} {:<19} {}{here}",
-            r.id,
-            r.category,
-            escaped(&r.title)
-        )?;
+        let category = ink.paint(Role::Muted, &format!("{:<19}", r.category));
+        writeln!(out, "  {:<28} {category} {}{here}", r.id, escaped(&r.title))?;
     }
     writeln!(
         out,

@@ -1,0 +1,200 @@
+---
+source: crates/kipple/src/tui/app/tests/onboarding.rs
+assertion_line: 510
+expression: "shown.join(\"\\n\")"
+---
+«fg=DarkGray|╭» «bold|Welcome to kipple»«fg=DarkGray| ─ »step 1 of 4«fg=DarkGray| ─ scan finished» «fg=DarkGray|─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮»
+«fg=DarkGray|│» «bold|How careful should kipple be?»                                                                                                                                «fg=DarkGray|│»
+«fg=DarkGray|│» «fg=DarkGray|Each level shows what it would offer on this machine. It changes nothing.»                                                                                    «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»   Careful                                                                                                                                                    «fg=DarkGray|│»
+«fg=DarkGray|│» «fg=DarkGray|    Safe: build output and regenerated caches; recent: 14 days»                                                                                               «fg=DarkGray|│»
+«fg=DarkGray|│»     514.0 MiB safe to clean, 300.0 MiB to review                                                                                                             «fg=DarkGray|│»
+«fg=DarkGray|│» «reversed|> Balanced (the default)»                                                                                                                                     «fg=DarkGray|│»
+«fg=DarkGray|│» «fg=DarkGray|    Safe: rebuilt, reinstalled, re-downloaded; recent: 7 days»                                                                                                «fg=DarkGray|│»
+«fg=DarkGray|│»     514.0 MiB safe to clean, 300.0 MiB to review                                                                                                             «fg=DarkGray|│»
+«fg=DarkGray|│»   Thorough                                                                                                                                                   «fg=DarkGray|│»
+«fg=DarkGray|│» «fg=DarkGray|    Safe: Balanced plus what costs a rollback; recent: 2 days»                                                                                                «fg=DarkGray|│»
+«fg=DarkGray|│»     814.0 MiB safe to clean, 0 B to review                                                                                                                   «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│» «fg=DarkGray|The scan has finished: these are the totals.»                                                                                                                 «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤»
+«fg=DarkGray|│» «bold|enter»«fg=DarkGray| choose · »«bold|tab»«fg=DarkGray| skip · »«bold|q»«fg=DarkGray| quit, saving nothing»                                                                                                             «fg=DarkGray|│»
+«fg=DarkGray|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»
+
+«fg=DarkGray|╭» «bold|Welcome to kipple»«fg=DarkGray| ─ »step 2 of 4«fg=DarkGray| ─ scan finished» «fg=DarkGray|─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮»
+«fg=DarkGray|│» «bold|Where are your projects?»                                                                                                                                     «fg=DarkGray|│»
+«fg=DarkGray|│» «fg=DarkGray|kipple looks for build output and dependencies below these folders.»                                                                                          «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»   [x] /home/ada/projects                                                                                                                                     «fg=DarkGray|│»
+«fg=DarkGray|│» «reversed|> + add another»                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|Suggested: projects found elsewhere in your home folder»                                                                                                      «fg=DarkGray|│»
+«fg=DarkGray|│»   [ ] /home/ada/notes (1 project: app)                                                                                                                       «fg=DarkGray|│»
+«fg=DarkGray|│» «fg=DarkGray|stopped early: the list may be incomplete»                                                                                                                    «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤»
+«fg=DarkGray|│» «bold|enter»«fg=DarkGray| choose · »«bold|space»«fg=DarkGray| check · »«bold|tab»«fg=DarkGray| skip · »«bold|esc»«fg=DarkGray| back · »«bold|q»«fg=DarkGray| quit, saving nothing»                                                                                    «fg=DarkGray|│»
+«fg=DarkGray|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»
+
+«fg=DarkGray|╭» «bold|Welcome to kipple»«fg=DarkGray| ─ »step 2 of 4«fg=DarkGray| ─ scan finished» «fg=DarkGray|─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮»
+«fg=DarkGray|│» «bold|Where are your projects?»                                                                                                                                     «fg=DarkGray|│»
+«fg=DarkGray|│» «fg=DarkGray|kipple looks for build output and dependencies below these folders.»                                                                                          «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»   [x] /home/ada/projects                                                                                                                                     «fg=DarkGray|│»
+«fg=DarkGray|│» «reversed|> + _»                                                                                                                                                        «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|Suggested: projects found elsewhere in your home folder»                                                                                                      «fg=DarkGray|│»
+«fg=DarkGray|│»   [ ] /home/ada/notes (1 project: app)                                                                                                                       «fg=DarkGray|│»
+«fg=DarkGray|│» «fg=DarkGray|stopped early: the list may be incomplete»                                                                                                                    «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤»
+«fg=DarkGray|│» «fg=DarkGray|type a path, enter adds it, esc cancels»                                                                                                                      «fg=DarkGray|│»
+«fg=DarkGray|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»
+
+«fg=DarkGray|╭» «bold|Welcome to kipple»«fg=DarkGray| ─ »step 2 of 4«fg=DarkGray| ─ scan finished» «fg=DarkGray|─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮»
+«fg=DarkGray|│» «bold|Where are your projects?»                                                                                                                                     «fg=DarkGray|│»
+«fg=DarkGray|│» «fg=DarkGray|kipple looks for build output and dependencies below these folders.»                                                                                          «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»   [x] /home/ada/projects                                                                                                                                     «fg=DarkGray|│»
+«fg=DarkGray|│» «reversed|> + add another»                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|Suggested: projects found elsewhere in your home folder»                                                                                                      «fg=DarkGray|│»
+«fg=DarkGray|│»   [ ] /home/ada/notes (1 project: app)                                                                                                                       «fg=DarkGray|│»
+«fg=DarkGray|│» «fg=DarkGray|stopped early: the list may be incomplete»                                                                                                                    «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤»
+«fg=DarkGray|│» «bold|enter»«fg=DarkGray| choose · »«bold|space»«fg=DarkGray| check · »«bold|tab»«fg=DarkGray| skip · »«bold|esc»«fg=DarkGray| back · »«bold|q»«fg=DarkGray| quit, saving nothing»                                                                                    «fg=DarkGray|│»
+«fg=DarkGray|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»

@@ -11,9 +11,11 @@ use kipple_core::{
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
 
-use super::{PACMAN, colour, home};
+use super::{PACMAN, colour, home, probe, styled};
 use crate::config::{self, Catalog, Config, Edit, Loaded, Location, Settings, Source};
+use crate::theme::Look;
 use crate::tui::app::{App, Effect, Key, Msg, Saved};
 use crate::tui::onboarding::{self, Onboarding, Outcome, Step};
 use crate::tui::settings::Found;
@@ -134,11 +136,7 @@ fn finished(outcome: Outcome) -> Vec<Edit> {
 }
 
 fn screen(onboarding: &Onboarding, app: &App, width: u16, height: u16) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    terminal
-        .draw(|frame| onboarding::render(onboarding, app, colour(), frame))
-        .unwrap();
-    let buffer = terminal.backend().buffer();
+    let buffer = drawn(onboarding, app, width, height);
     let mut text = String::new();
     for y in 0..height {
         let line: String = (0..width)
@@ -147,7 +145,20 @@ fn screen(onboarding: &Onboarding, app: &App, width: u16, height: u16) -> String
         text.push_str(line.trim_end());
         text.push('\n');
     }
-    text
+    // Paths shown from `~` are written with `/`, so a snapshot reads the same on Windows.
+    text.replace(std::path::MAIN_SEPARATOR, "/")
+}
+
+fn drawn(onboarding: &Onboarding, app: &App, width: u16, height: u16) -> Buffer {
+    drawn_in(colour(), onboarding, app, (width, height))
+}
+
+fn drawn_in(look: Look<'_>, onboarding: &Onboarding, app: &App, size: (u16, u16)) -> Buffer {
+    let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
+    terminal
+        .draw(|frame| crate::tui::ui::onboarding::render(onboarding, app, look, frame))
+        .unwrap();
+    terminal.backend().buffer().clone()
 }
 
 fn report_with_advice() -> ScanReport {
@@ -420,6 +431,7 @@ fn step_1_at_160_by_48_shows_each_level_with_its_numbers() {
 fn steps_2_to_4_at_80_by_24() {
     // Fixed paths, so the snapshot doesn't hold the temp dir.
     let mut app = home();
+    app.home = Some(PathBuf::from("/home/ada"));
     app.roots = vec![
         PathBuf::from("/home/ada/projects"),
         PathBuf::from("/home/ada/code"),
@@ -435,6 +447,69 @@ fn steps_2_to_4_at_80_by_24() {
     insta::assert_snapshot!("step_3_at_80_by_24", screen(&first, &app, 80, 24));
     answer(&mut first, &[Key::Enter]);
     insta::assert_snapshot!("step_4_at_80_by_24", screen(&first, &app, 80, 24));
+}
+
+// Catches a snippet that spans lines drawn as one line with a literal `\n` (F2).
+#[test]
+fn step_4_shows_each_line_of_a_snippet_on_its_own_line() {
+    let mut app = home();
+    let mut report = report_with_advice();
+    if let Some(advice) = report
+        .integrations
+        .first_mut()
+        .and_then(|integration| integration.advice.first_mut())
+    {
+        advice.snippets = vec!["[Journal]\nSystemMaxUse=200M".to_owned()];
+    }
+    app.update(Msg::Finished {
+        report: Box::new(report),
+        elapsed: std::time::Duration::from_secs(1),
+    });
+    let mut first = Onboarding::new(&app);
+    answer(&mut first, &[Key::Tab, Key::Tab, Key::Tab]);
+
+    let text = screen(&first, &app, 80, 24);
+    assert!(!text.contains("\\n"), "{text}");
+    for line in ["[Journal]", "SystemMaxUse=200M"] {
+        let inside = |l: &str| l.trim_matches(|c| c == '│' || c == ' ').to_owned();
+        assert!(text.lines().any(|l| inside(l) == line), "{line}: {text}");
+    }
+}
+
+/// The step drawn in the probe theme, as styled text, after checking that every cell has
+/// some role's colour: one drawn in the terminal's own is out of every theme's reach.
+fn in_roles(onboarding: &Onboarding, app: &App) -> String {
+    let buffer = drawn_in(probe(), onboarding, app, (160, 48));
+    for cell in &buffer.content {
+        assert_ne!(cell.fg, ratatui::style::Color::Reset, "{cell:?}");
+    }
+    styled(&buffer)
+}
+
+// Catches a colour or a modifier in the first run's steps changing while their drawing
+// code moves: the text snapshots see only the characters.
+#[test]
+fn steps_1_to_4_at_160_by_48_in_colour() {
+    let mut app = home();
+    app.roots = vec![PathBuf::from("/home/ada/projects")];
+    app.update(Msg::Finished {
+        report: Box::new(report_with_advice()),
+        elapsed: std::time::Duration::from_secs(1),
+    });
+    let mut first = Onboarding::new(&app);
+    app.start_search();
+    let paths = [PathBuf::from("/home/ada/notes")];
+    suggest(&mut app, &mut first, &paths, false);
+    let mut shown = vec![styled(&drawn(&first, &app, 160, 48))];
+    let mut probed = vec![in_roles(&first, &app)];
+    for keys in [&[Key::Enter, Key::Down][..], &[Key::Enter], &[Key::Enter]] {
+        answer(&mut first, keys);
+        shown.push(styled(&drawn(&first, &app, 160, 48)));
+        probed.push(in_roles(&first, &app));
+    }
+    insta::assert_snapshot!(shown.join("\n"));
+    // Catches a step asking for the wrong role, which the default theme can't show.
+    insta::assert_snapshot!("steps_1_to_4_in_their_roles", probed.join("\n"));
 }
 
 // Catches step 4 left blank when no tool kipple found has a retention setting.
@@ -598,6 +673,7 @@ fn quitting_with_a_checked_suggestion_writes_nothing() {
 #[test]
 fn step_2_with_suggestions_at_80_by_24() {
     let mut app = home();
+    app.home = Some(PathBuf::from("/home/ada"));
     app.roots = vec![PathBuf::from("/home/ada/projects")];
     let mut first = Onboarding::new(&app);
     app.start_search();
@@ -612,12 +688,16 @@ fn step_2_with_suggestions_at_80_by_24() {
     ];
     suggest(&mut app, &mut first, &paths, false);
     answer(&mut first, &[Key::Down, Key::Down, Key::Char(' ')]);
-    insta::assert_snapshot!(screen(&first, &app, 80, 24));
+    let shown = screen(&first, &app, 80, 24);
+    // The roots and the suggestions read from `~` (F1).
+    assert!(!shown.contains("/home/ada"), "{shown}");
+    insta::assert_snapshot!(shown);
 }
 
 #[test]
 fn step_2_with_suggestions_at_160_by_48() {
     let mut app = home();
+    app.home = Some(PathBuf::from("/home/ada"));
     app.roots = vec![PathBuf::from("/home/ada/projects")];
     let mut first = Onboarding::new(&app);
     app.start_search();

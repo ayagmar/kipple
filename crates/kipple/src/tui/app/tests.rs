@@ -3,12 +3,16 @@
 //! events built here, so no file system or clock is read. Keeping and settings, which
 //! write a config file in a temp dir, are in `settings`; the first run is in `onboarding`.
 
+mod dashboard;
 mod detail;
+mod keys;
 mod onboarding;
 mod settings;
+mod themes;
 mod tree;
 
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use kipple_core::{
@@ -19,10 +23,11 @@ use kipple_core::{
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier};
 
 use super::{App, Catalog, Key, Msg, Node, Shelf};
-use crate::tui::view::{self, Look};
+use crate::theme::{Glyphs, Look, Role, Theme};
+use crate::tui::ui;
 
 const DAY: Duration = Duration::from_hours(24);
 const MIB: u64 = 1024 * 1024;
@@ -226,7 +231,11 @@ fn selected(app: &App) -> Vec<u64> {
 
 /// A home with one finding in each bucket, as `demo-home` has them.
 fn home() -> App {
-    let mut app = App::new(catalog(), 160, 48);
+    with_findings(App::new(catalog(), 160, 48))
+}
+
+/// `app` with the findings of [`home`].
+fn with_findings(mut app: App) -> App {
     found(
         &mut app,
         1,
@@ -330,7 +339,7 @@ fn s_toggles_an_eligible_finding_and_refuses_a_protected_one_with_its_reason() {
 
     assert!(app.selected.is_empty(), "a Protected finding was selected");
     let notice = app.notice.as_deref().unwrap();
-    assert!(notice.contains("unknown: layout"), "{notice}");
+    assert!(notice.contains("layout not recognised"), "{notice}");
 }
 
 // Catches the home screen judging with the default policy instead of the configured one,
@@ -401,12 +410,40 @@ fn the_cursor_stays_on_its_finding_while_sizes_stream_in_and_reorder_the_tree() 
     assert!(focus(&app).is_some());
 }
 
+/// The findings `query` leaves shown, typed after `/` and cleared again with `esc`.
+fn filtered(app: &mut App, query: &str) -> Vec<u64> {
+    press(app, &[Key::Char('/')]);
+    typed(app, query);
+    let shown = findings(app);
+    press(app, &[Key::Esc]);
+    shown
+}
+
+// Catches the filter matching letters scattered across the title and the whole path, so
+// `/target` found `tool/.venv` (F3); terms that must be typed in the path's order; and a
+// term matching the home directory's own name, which every path below home shares.
 #[test]
-fn the_fuzzy_filter_keeps_findings_whose_name_or_path_match_in_order_and_esc_clears_it() {
+fn every_filter_term_must_appear_whole_in_the_path_as_shown_or_the_title() {
+    let mut app = App::new(catalog(), 160, 48);
+    app.home = Some(PathBuf::from("/home/ada"));
+    let mut app = with_findings(app);
+
+    assert_eq!(filtered(&mut app, "web node"), [2]);
+    assert_eq!(filtered(&mut app, "node web"), [2], "terms in any order");
+    assert_eq!(filtered(&mut app, "webnm"), Vec::<u64>::new(), "no fuzzy");
+    assert_eq!(filtered(&mut app, "/target"), [1]);
+    assert_eq!(filtered(&mut app, "ada"), Vec::<u64>::new(), "home is ~");
+    assert_eq!(filtered(&mut app, "~/projects/tool"), [4]);
+    assert_eq!(filtered(&mut app, "BYTECODE tool"), [4], "title and path");
+    assert_eq!(filtered(&mut app, "  "), [1, 4, 2, 3, 5]);
+}
+
+#[test]
+fn enter_keeps_the_filter_and_esc_clears_it() {
     let mut app = home();
 
     press(&mut app, &[Key::Char('/')]);
-    typed(&mut app, "webnm");
+    typed(&mut app, "web");
     assert_eq!(findings(&app), [2]);
     // q while typing is text, not quit.
     typed(&mut app, "q");
@@ -416,6 +453,40 @@ fn the_fuzzy_filter_keeps_findings_whose_name_or_path_match_in_order_and_esc_cle
 
     press(&mut app, &[Key::Esc]);
     assert_eq!(findings(&app), [1, 4, 2, 3, 5]);
+}
+
+// Catches `esc` leaving the cursor on whatever line took its place while typing (F5),
+// instead of on the line where `/` was pressed.
+#[test]
+fn esc_in_the_filter_puts_the_cursor_back_where_slash_was_pressed() {
+    let mut app = home();
+    to(&mut app, 4);
+
+    press(&mut app, &[Key::Char('/')]);
+    typed(&mut app, "web");
+    press(&mut app, &[Key::Esc]);
+
+    assert_eq!(focus(&app), Some(Node::Finding(FindingId(4))));
+}
+
+// Catches a line the filter hides handing the cursor to the line that takes its place
+// (F5), a bucket heading, instead of the nearest finding before it, else after it.
+#[test]
+fn a_line_the_filter_hides_moves_the_cursor_to_the_nearest_finding() {
+    let mut app = home();
+    to(&mut app, 4);
+    press(&mut app, &[Key::Char('/')]);
+    typed(&mut app, "target");
+    assert_eq!(focus(&app), Some(Node::Finding(FindingId(1))), "before");
+    press(&mut app, &[Key::Enter]);
+    assert_eq!(focus(&app), Some(Node::Finding(FindingId(1))), "enter");
+    press(&mut app, &[Key::Esc]);
+    assert_eq!(focus(&app), Some(Node::Finding(FindingId(1))), "cleared");
+
+    // Nothing is shown before the first finding.
+    press(&mut app, &[Key::Char('/')]);
+    typed(&mut app, "bunapp");
+    assert_eq!(focus(&app), Some(Node::Finding(FindingId(3))), "after");
 }
 
 // Catches the filter matching the native path, so on Windows `rust-app/target`, as the
@@ -578,15 +649,36 @@ fn q_and_ctrl_c_quit_and_any_key_closes_help() {
     assert!(typing.quit);
 }
 
-const fn colour() -> Look {
+/// The default theme, or `mono` without colour, with Unicode or ASCII symbols.
+fn look(colour: bool, ascii: bool) -> Look<'static> {
+    static KIPPLE: LazyLock<Theme> = LazyLock::new(|| Theme::builtin("kipple").unwrap());
+    static MONO: LazyLock<Theme> = LazyLock::new(|| Theme::builtin("mono").unwrap());
     Look {
-        color: true,
-        ascii: false,
+        theme: if colour { &KIPPLE } else { &MONO },
+        glyphs: if ascii {
+            Glyphs::Ascii
+        } else {
+            Glyphs::Unicode
+        },
     }
 }
 
-/// `app` drawn on a `width` by `height` terminal, as text.
-fn screen(app: &App, look: Look, width: u16, height: u16) -> String {
+/// The probe theme, which draws each role in its own colour, with Unicode symbols.
+fn probe() -> Look<'static> {
+    static PROBE: LazyLock<Theme> = LazyLock::new(Theme::probe);
+    Look {
+        theme: &PROBE,
+        glyphs: Glyphs::Unicode,
+    }
+}
+
+fn colour() -> Look<'static> {
+    look(true, false)
+}
+
+/// `app` drawn on a `width` by `height` terminal, as text. Paths shown from `~` are
+/// written with `/`, so a snapshot reads the same on Windows.
+fn screen(app: &App, look: Look<'_>, width: u16, height: u16) -> String {
     let buffer = draw(app, look, width, height);
     let mut text = String::new();
     for y in 0..height {
@@ -596,14 +688,73 @@ fn screen(app: &App, look: Look, width: u16, height: u16) -> String {
         text.push_str(line.trim_end());
         text.push('\n');
     }
-    text
+    text.replace(MAIN_SEPARATOR, "/")
 }
 
-fn draw(app: &App, look: Look, width: u16, height: u16) -> ratatui::buffer::Buffer {
+/// `buffer` as text with its style runs: each run of cells drawn in something other
+/// than the terminal's own style reads `«fg=green,bold|text»`, so a snapshot of it
+/// catches a colour or a modifier that moves.
+fn styled(buffer: &ratatui::buffer::Buffer) -> String {
+    let area = buffer.area;
+    let mut text = String::new();
+    for y in area.top()..area.bottom() {
+        let mut runs: Vec<(String, String)> = Vec::new();
+        for x in area.left()..area.right() {
+            let Some(cell) = buffer.cell((x, y)) else {
+                continue;
+            };
+            let style = style_name(cell.fg, cell.bg, cell.modifier);
+            match runs.last_mut() {
+                Some((last, run)) if *last == style => run.push_str(cell.symbol()),
+                _ => runs.push((style, cell.symbol().to_owned())),
+            }
+        }
+        let line: String = runs
+            .into_iter()
+            .map(|(style, run)| {
+                if style.is_empty() {
+                    run
+                } else {
+                    format!("«{style}|{run}»")
+                }
+            })
+            .collect();
+        text.push_str(line.trim_end());
+        text.push('\n');
+    }
+    text.replace(MAIN_SEPARATOR, "/")
+}
+
+/// A cell's style as `fg=Green,bg=…,bold,reversed`, leaving out the terminal's own
+/// colours: empty when it has none.
+fn style_name(fg: Color, bg: Color, modifier: Modifier) -> String {
+    let mut parts = Vec::new();
+    for (name, colour) in [("fg", fg), ("bg", bg)] {
+        if colour == Color::Reset {
+            continue;
+        }
+        // The probe theme's colours, by the role they stand for; the text role every cell
+        // starts from is left out, so the other roles read.
+        let probed = if let Color::Indexed(index) = colour {
+            Role::ALL.get(usize::from(index)).copied()
+        } else {
+            None
+        };
+        match probed {
+            Some(Role::Text) => {}
+            Some(role) => parts.push(format!("{name}={}", role.name())),
+            None => parts.push(format!("{name}={colour}")),
+        }
+    }
+    for (name, _) in modifier.iter_names() {
+        parts.push(name.to_lowercase());
+    }
+    parts.join(",")
+}
+
+fn draw(app: &App, look: Look<'_>, width: u16, height: u16) -> ratatui::buffer::Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    terminal
-        .draw(|frame| view::render(app, look, frame))
-        .unwrap();
+    terminal.draw(|frame| ui::render(app, look, frame)).unwrap();
     terminal.backend().buffer().clone()
 }
 
@@ -670,7 +821,7 @@ fn a_finding_holding_a_mount_shows_its_size_as_a_lower_bound_and_names_the_mount
     let shown = screen(&app, colour(), 160, 48);
 
     assert_eq!(app.row(FindingId(1)).unwrap().shelf(), Shelf::Protected);
-    assert!(shown.contains("Size              >= 512.0 MiB"), "{shown}");
+    assert!(shown.contains("Size          >= 512.0 MiB"), "{shown}");
     for label in ["Git ", "Last change "] {
         let line = shown.lines().find(|line| line.contains(label)).unwrap();
         assert!(
@@ -692,6 +843,48 @@ fn the_bucket_home_at_160_by_48_puts_the_detail_pane_beside_the_tree() {
     insta::assert_snapshot!(screen(&app, colour(), 160, 48));
 }
 
+// Catches a colour or a modifier on the home screen changing while its drawing code
+// moves: the text snapshots above see only the characters.
+#[test]
+fn the_bucket_home_at_160_by_48_in_colour() {
+    let app = sized(160, 48);
+    insta::assert_snapshot!(styled(&draw(&app, colour(), 160, 48)));
+}
+
+// Catches a part of the screen drawn in the terminal's own colours, which no theme can
+// reach: under the probe every cell has some role's colour.
+#[test]
+fn every_cell_of_the_home_screen_and_its_help_is_drawn_in_a_role() {
+    let mut app = sized(160, 48);
+    for keys in [&[][..], &[Key::Char('?')], &[Key::Esc, Key::Char(',')]] {
+        press(&mut app, keys);
+        let buffer = draw(&app, probe(), 160, 48);
+        for cell in &buffer.content {
+            assert_ne!(cell.fg, Color::Reset, "{keys:?} {cell:?}");
+        }
+    }
+}
+
+// Catches a part of the screen asking for the wrong role, which the default theme can't
+// show because several roles share a colour there: muted text drawn as a border, a bar
+// as its bucket's name, the cursor no longer winning over a span's own style.
+#[test]
+fn the_bucket_home_and_its_help_draw_each_part_in_its_role() {
+    let mut app = sized(160, 48);
+    let home = styled(&draw(&app, probe(), 160, 48));
+    press(&mut app, &[Key::Char('?')]);
+    let help = styled(&draw(&app, probe(), 160, 48));
+    insta::assert_snapshot!(format!("{home}\n{help}"));
+}
+
+// The same for the help over it.
+#[test]
+fn help_at_160_by_48_in_colour() {
+    let mut app = sized(160, 48);
+    press(&mut app, &[Key::Char('?')]);
+    insta::assert_snapshot!(styled(&draw(&app, colour(), 160, 48)));
+}
+
 #[test]
 fn help_at_80_by_24_in_ascii() {
     let mut app = home();
@@ -701,10 +894,7 @@ fn help_at_80_by_24_in_ascii() {
         height: 24,
     });
     press(&mut app, &[Key::Char('?')]);
-    let look = Look {
-        color: false,
-        ascii: true,
-    };
+    let look = look(false, true);
     insta::assert_snapshot!(screen(&app, look, 80, 24));
 }
 
@@ -713,10 +903,7 @@ fn no_color_draws_every_cell_in_the_terminals_own_colours_and_ascii_only_ascii()
     for (width, height) in [(80, 24), (160, 48)] {
         let mut app = sized(width, height);
         press(&mut app, &[Key::Char('?')]);
-        let plain = Look {
-            color: false,
-            ascii: true,
-        };
+        let plain = look(false, true);
         let buffer = draw(&app, plain, width, height);
 
         for cell in &buffer.content {

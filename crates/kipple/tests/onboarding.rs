@@ -43,7 +43,9 @@ use std::time::{Duration, SystemTime};
 use clap::Parser as _;
 use kipple::config::{self, Settings};
 use kipple::setup::Builtin;
-use kipple::tui::{self, Input, Key, Keys, LevelTotals, Look, first_run_due, level_totals};
+use kipple::theme::{Catalog, Colours, Glyphs};
+use kipple::tui::Appearance;
+use kipple::tui::{self, Input, Key, Keys, LevelTotals, first_run_due, level_totals};
 use kipple::{Cli, USAGE};
 use kipple_core::{CancelToken, Finding, Level, ScanRequest, event_channel};
 use kipple_platform::Environment;
@@ -138,7 +140,7 @@ fn json_totals(env: &Environment, dir: &Path, level: Level) -> LevelTotals {
         "--json",
     ]);
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = kipple::run(&cli, env, &mut out, &mut err);
+    let code = kipple::run(&cli, env, false, &mut out, &mut err);
     assert_eq!(code, ExitCode::SUCCESS, "{}", String::from_utf8_lossy(&err));
     let report: Value = serde_json::from_slice(&out).unwrap();
     let mut totals = LevelTotals::default();
@@ -239,17 +241,15 @@ fn on_demo_home_the_header_names_the_project_root_at_80_by_24() {
         written: Vec::new(),
     })
     .unwrap();
-    let look = Look {
-        color: false,
-        ascii: true,
-    };
+    let appearance =
+        Appearance::new(Catalog::builtin(), "kipple", Colours::Off, Glyphs::Ascii).unwrap();
 
     tui::run(
         &mut terminal,
         &mut Quit { asked: false },
         &env,
         &settings,
-        look,
+        appearance,
     )
     .unwrap();
 
@@ -257,9 +257,11 @@ fn on_demo_home_the_header_names_the_project_root_at_80_by_24() {
     let header: String = (0..80)
         .map(|x| buffer.cell((x, 0)).map_or(" ", |cell| cell.symbol()))
         .collect();
-    // However the temp dir is spelled on this system, the root ends in `projects`.
-    assert!(header.trim_end().ends_with("projects"), "{header}");
-    assert!(header.contains("[Balanced]"), "{header}");
+    // The title line sits in the frame's top edge. However the temp dir is spelled on
+    // this system, the root ends in `projects`.
+    let title = header.trim_end_matches(['-', '+', ' ']);
+    assert!(title.ends_with("projects"), "{header}");
+    assert!(title.starts_with("+ kipple - Balanced - "), "{header}");
 }
 
 /// A test terminal that also keeps what the home screen writes besides its frames.
@@ -384,17 +386,15 @@ fn y_on_demo_home_writes_the_focused_path_to_the_terminal_as_osc_52() {
     keys.extend([Key::Enter, Key::Char('g')]);
     keys.extend([Key::Char('j'); 2]);
     keys.push(Key::Char('y'));
-    let look = Look {
-        color: false,
-        ascii: true,
-    };
+    let appearance =
+        Appearance::new(Catalog::builtin(), "kipple", Colours::Off, Glyphs::Ascii).unwrap();
 
     tui::run(
         &mut terminal,
         &mut AfterScan { keys },
         &env,
         &settings,
-        look,
+        appearance,
     )
     .unwrap();
 

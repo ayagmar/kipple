@@ -1,0 +1,27 @@
+# kipple's brand palette for light terminals, in 24-bit colour; a terminal
+# with fewer colours gets the nearest it has. Amber is kept for what you keep.
+version = 1
+
+[roles]
+text = { fg = "#15171C" }
+muted = { fg = "#6B655C" }
+accent = { fg = "#8F531A" }
+border = { fg = "#B8AFA2" }
+title = { fg = "#15171C", bold = true }
+label = { fg = "#15171C", bold = true }
+cursor = { bg = "#E6DCCB" }
+selected = { fg = "#8F531A" }
+safe = { fg = "#2E7D32" }
+review = { fg = "#7A6000" }
+protected = { fg = "#2F5E8C" }
+warning = { fg = "#7A6000" }
+error = { fg = "#B3261E" }
+"bar.safe" = { fg = "#2E7D32" }
+"bar.review" = { fg = "#7A6000" }
+"bar.protected" = { fg = "#2F5E8C" }
+"bar.track" = { bg = "#EEE7DB" }
+key = { fg = "#15171C", bold = true }
+"key.label" = { fg = "#6B655C" }
+"level.current" = { fg = "#8F531A", bold = true }
+"level.other" = { fg = "#6B655C" }
+kept = { fg = "#F2A23A", bold = true }

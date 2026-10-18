@@ -32,7 +32,7 @@ pub(super) fn parse(text: &str, catalog: &Catalog) -> Result<Config, ParseError>
 }
 
 /// The line and column, from 1, of byte `offset` in `text`.
-fn position(text: &str, offset: usize) -> (usize, usize) {
+pub(crate) fn position(text: &str, offset: usize) -> (usize, usize) {
     let before = text.get(..offset).unwrap_or(text);
     let line = before.matches('\n').count() + 1;
     let start = before.rfind('\n').map_or(0, |newline| newline + 1);
@@ -45,7 +45,7 @@ type At<'a> = &'a dyn Fn(Option<Range<usize>>, String) -> ParseError;
 /// A string from the file, with where it is.
 type Spanned = (String, Option<Range<usize>>);
 
-struct Reader<'a> {
+pub(super) struct Reader<'a> {
     catalog: &'a Catalog,
     at: At<'a>,
 }
@@ -53,7 +53,9 @@ struct Reader<'a> {
 impl Reader<'_> {
     fn config(&self, root: &dyn TableLike) -> Result<Config, ParseError> {
         let mut config = Config::default();
-        let known = ["care", "clean", "scan", "exclude", "keep", "rules"];
+        let known = [
+            "care", "clean", "scan", "exclude", "keep", "rules", "ui", "keys",
+        ];
         for (name, key, item) in entries(root) {
             if !known.contains(&name) && !LATER.contains(&name) {
                 return Err(self.unknown(name, key));
@@ -66,6 +68,8 @@ impl Reader<'_> {
                 "exclude" => self.exclude(table, &mut config)?,
                 "keep" => self.keep(table, &mut config)?,
                 "rules" => self.rules(table, &mut config)?,
+                "ui" => config.ui = self.ui(table)?,
+                "keys" => config.keys = self.keys(table)?,
                 _ => return Err(self.unknown(name, key)),
             }
         }
@@ -283,7 +287,7 @@ impl Reader<'_> {
             .ok_or_else(|| (self.at)(item.span(), format!("{name}: expected a table")))
     }
 
-    fn only(
+    pub(super) fn only(
         &self,
         table: &str,
         entries_of: &dyn TableLike,
@@ -295,17 +299,22 @@ impl Reader<'_> {
         }
     }
 
+    /// An error at `span`.
+    pub(super) fn error_at(&self, span: Option<Range<usize>>, message: String) -> ParseError {
+        (self.at)(span, message)
+    }
+
     fn unknown(&self, name: &str, key: &Key) -> ParseError {
         (self.at)(key.span(), format!("unknown key {name}"))
     }
 
-    fn bad(&self, item: &Item, key: &str, wanted: &str) -> ParseError {
+    pub(super) fn bad(&self, item: &Item, key: &str, wanted: &str) -> ParseError {
         (self.at)(item.span(), format!("{key}: expected {wanted}"))
     }
 }
 
 /// Each entry of `table` with its key, in file order.
-fn entries(table: &dyn TableLike) -> impl Iterator<Item = (&str, &Key, &Item)> {
+pub(super) fn entries(table: &dyn TableLike) -> impl Iterator<Item = (&str, &Key, &Item)> {
     table.iter().filter_map(move |(name, _)| {
         table
             .get_key_value(name)

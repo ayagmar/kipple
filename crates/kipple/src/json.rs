@@ -653,6 +653,7 @@ pub fn schemas() -> Vec<(&'static str, schemars::Schema)> {
             "support-matrix",
             schemars::schema_for!(crate::support::SupportMatrixOut),
         ),
+        ("theme", crate::theme::schema()),
     ]
 }
 

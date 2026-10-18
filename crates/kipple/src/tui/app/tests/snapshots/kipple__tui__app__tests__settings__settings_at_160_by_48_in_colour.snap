@@ -1,0 +1,53 @@
+---
+source: crates/kipple/src/tui/app/tests/settings.rs
+assertion_line: 563
+expression: "styled(&draw(&app, colour(), 160, 48))"
+---
+«fg=DarkGray|╭» «bold|kipple»«fg=DarkGray| ─ »«fg=Cyan,bold|Balanced»«fg=DarkGray| ─ scanning… ─ »~/projects +1 «fg=DarkGray|───────────────────────────────────────────────────────────────────────────────────────────────────────────────╮»
+«fg=DarkGray|│» «bold|Settings»                                                                                                                                                     «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|Config file       »«fg=DarkGray|~/.config/kipple/config.toml»                                                                                                               «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|                  »                                                                                                                                           «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|Level             »«fg=DarkGray| Careful  »«fg=Cyan,bold|[Balanced] »«fg=DarkGray| Thorough  »                                                                                                           «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|                  »«fg=DarkGray|Safe: rebuilt, reinstalled, re-downloaded; recent: 7 days»                                                                                  «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|Theme             »kipple«fg=DarkGray|  1 of 5, built-in»                                                                                                                   «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|Project roots     »~/projects                                                                                                                                 «fg=DarkGray|│»
+«fg=DarkGray|│» «bold,reversed|                  »«reversed|~/work»                                                                                                                                     «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|                  »+ add another                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|Suggested roots   »~/Documents (4 projects: thesis, uni/compilers, uni/os, …)                                                                                 «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|                  »~/notes (1 project: notes)                                                                                                                 «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|                  »«fg=DarkGray|stopped early: the list may be incomplete»                                                                                                  «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|Default method    »trash«fg=DarkGray|  stored only: nothing is removed yet»                                                                                                 «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|Kept              »~/projects/api/target«fg=DarkGray|  benchmark baseline»                                                                                                  «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|Rules turned off  »pacman package cache«fg=DarkGray|  builtin.pacman.cache»                                                                                                 «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
+«fg=DarkGray|├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤»
+«fg=DarkGray|│» found 1.7 GiB · eligible 814.0 MiB · selected 0 · 0 B · frees 0 B                                                                                            «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|j/k»«fg=DarkGray| move  »«bold|h/l»«fg=DarkGray| change  »«bold|enter»«fg=DarkGray| change or add  »«bold|d»«fg=DarkGray| remove  »«bold|esc»«fg=DarkGray| back»                                                                                                «fg=DarkGray|│»
+«fg=DarkGray|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»

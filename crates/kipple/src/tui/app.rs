@@ -20,7 +20,9 @@ pub(crate) use self::keep::{Effect, Saved};
 use self::tree::Spot;
 pub(crate) use self::tree::{Order, ProjectId};
 use super::filter;
-use super::settings::{Action, Found, Panel, Search};
+use super::keymap::{self, Action, Keymap};
+use super::settings::{Found, Outcome, Panel, Search};
+use super::themes::Picker;
 use crate::config::Config;
 use crate::json::{OmissionOut, SizeOut};
 use crate::setup::Builtin;
@@ -162,8 +164,8 @@ pub(crate) struct Row {
     pub(crate) size: Option<SizeOut>,
     /// Its project, if any, and its label.
     pub(crate) spot: Spot,
-    /// Its rule's title and its path, lowercased, for the filter.
-    haystack: String,
+    /// What the filter searches.
+    haystack: filter::Haystack,
 }
 
 impl Row {
@@ -281,6 +283,8 @@ pub(crate) struct App {
     /// The note being typed for `p`.
     pub(crate) note: String,
     pub(crate) panel: Panel,
+    /// The themes to draw with, and the one settings previews.
+    pub(crate) themes: Picker,
     /// The search for roots to suggest, once onboarding or settings asked for it.
     pub(crate) search: Search,
     /// What the loop is asked to do next.
@@ -290,6 +294,9 @@ pub(crate) struct App {
     cursor: Option<Node>,
     /// Where the cursor was, for when its line goes away.
     hint: usize,
+    /// The line the cursor was on when the filter, help, settings or a note opened, to
+    /// go back to when it closes.
+    anchor: Option<Node>,
     pub(crate) scroll: usize,
     /// The line the detail pane was scrolled on and the first line it shows there. Any
     /// other line's detail starts at the top, and so does this one's once the cursor moves.
@@ -327,11 +334,13 @@ impl App {
             notice: None,
             note: String::new(),
             panel: Panel::default(),
+            themes: Picker::default(),
             search: Search::default(),
             effect: None,
             pending: None,
             cursor: None,
             hint: 0,
+            anchor: None,
             scroll: 0,
             detail_scroll: None,
             width,
@@ -351,7 +360,10 @@ impl App {
             }
             Msg::Scan(event) => self.scan_event(*event),
             Msg::Finished { report, elapsed } => self.finished(*report, elapsed),
-            Msg::Saved(saved) => self.saved(*saved),
+            Msg::Saved(saved) => {
+                self.saved(*saved);
+                self.settle();
+            }
             Msg::NotSaved(error) => self.not_saved(&error),
             Msg::Suggested(found) => self.suggested(*found),
         }
@@ -369,11 +381,17 @@ impl App {
     /// The tree as it is shown now: filtered, grouped and sorted, without what is
     /// collapsed.
     pub(crate) fn lines(&self) -> Vec<Line> {
+        self.tree(false)
+    }
+
+    /// The tree's lines: as shown, or `whole`, with every finding, unfiltered and
+    /// unfolded.
+    fn tree(&self, whole: bool) -> Vec<Line> {
         let mut groups: BTreeMap<(Node, Node), Vec<&Row>> = BTreeMap::new();
         for top in Self::tops() {
             groups.entry((top, top)).or_default();
         }
-        for row in self.rows.iter().filter(|row| self.shown(row)) {
+        for row in self.rows.iter().filter(|row| whole || self.shown(row)) {
             groups.entry(Self::place(row)).or_default().push(row);
         }
         let mut lines = Vec::new();
@@ -386,18 +404,18 @@ impl App {
                 });
                 last_top = Some(top);
             }
-            if group == top || self.is_collapsed(top) {
+            if group == top || (!whole && self.is_collapsed(top)) {
                 continue;
             }
             lines.push(Line {
                 node: group,
                 depth: 1,
             });
-            if self.is_collapsed(group) {
+            if !whole && self.is_collapsed(group) {
                 continue;
             }
             if let Node::Group(shelf, lens) = group {
-                lines.extend(self.group_lines((shelf, lens), rows));
+                lines.extend(self.group_lines((shelf, lens), rows, whole));
             }
         }
         self.gap_lines(&mut lines);
@@ -422,7 +440,7 @@ impl App {
             .unwrap_or_else(|| self.hint.min(lines.len().saturating_sub(1)))
     }
 
-    /// The four totals of the footer.
+    /// The four totals: in the band, the title line or the key bar.
     pub(crate) fn totals(&self) -> Totals {
         let mut totals = Totals::default();
         for row in &self.rows {
@@ -521,7 +539,11 @@ impl App {
             .get(&finding.integration)
             .copied()
             .unwrap_or(Lens::System);
-        let haystack = filter::haystack(self.catalog.title(&finding.rule), &finding.path);
+        let haystack = filter::Haystack::new(
+            self.catalog.title(&finding.rule),
+            &finding.path,
+            self.home.as_deref(),
+        );
         let spot = self.spot(&finding.path);
         self.by_id.insert(finding.id, self.rows.len());
         self.rows.push(Row {
@@ -554,6 +576,7 @@ impl App {
             return;
         }
         let before = self.cursor;
+        let was = self.mode;
         match self.mode {
             Mode::Help => self.mode = Mode::Browse,
             Mode::Filter => self.filter_key(key),
@@ -567,6 +590,7 @@ impl App {
                 self.browse_key(key);
             }
         }
+        self.follow(was, key);
         self.settle();
         // Before the first key the cursor has no line yet, and nothing has scrolled.
         if before.is_some() && self.cursor != before {
@@ -579,10 +603,14 @@ impl App {
         let action = panel.key(key, self);
         self.panel = panel;
         match action {
-            Action::Nothing => {}
-            Action::Close => self.mode = Mode::Browse,
-            Action::Save { edits, done } => self.save(edits, done),
-            Action::Say(text) => self.notice = Some(text),
+            Outcome::Nothing => {}
+            Outcome::Close => {
+                self.themes.revert();
+                self.mode = Mode::Browse;
+            }
+            Outcome::Preview(by) => self.themes.step(by),
+            Outcome::Save { edits, done } => self.save(edits, done),
+            Outcome::Say(text) => self.notice = Some(text),
         }
     }
 
@@ -597,47 +625,74 @@ impl App {
                 self.filter.clear();
                 self.mode = Mode::Browse;
             }
-            Key::Up => self.step(-1),
-            Key::Down => self.step(1),
-            Key::Left
+            Key::Up
+            | Key::Down
+            | Key::Left
             | Key::Right
             | Key::Home
             | Key::End
             | Key::PageUp
             | Key::PageDown
             | Key::Tab
-            | Key::Interrupt => {}
+            | Key::Interrupt => match self.keymap().action(keymap::Mode::FilterNav, key) {
+                Some(Action::MoveDown) => self.step(1),
+                Some(Action::MoveUp) => self.step(-1),
+                Some(_) | None => {}
+            },
         }
     }
 
     fn browse_key(&mut self, key: Key) {
-        match key {
-            Key::Char('q') => self.quit = true,
-            Key::Char('j') | Key::Down => self.step(1),
-            Key::Char('k') | Key::Up => self.step(-1),
-            Key::PageDown => self.step(self.page()),
-            Key::PageUp => self.step(-self.page()),
-            Key::Char('g') | Key::Home => self.jump(0),
-            Key::Char('G') | Key::End => self.jump(usize::MAX),
-            Key::Char('h') | Key::Left => self.collapse(),
-            Key::Char('l') | Key::Right => self.expand(),
-            Key::Char('/') => self.mode = Mode::Filter,
-            Key::Char('?') => self.mode = Mode::Help,
-            Key::Char('s') => self.toggle(),
-            Key::Char('a') => self.add_group(),
-            Key::Char('c') => self.add_safe(),
-            Key::Char('p') => self.keep_finding(),
-            Key::Char('P') => self.keep_rule(),
-            Key::Char('o') => self.sort(),
-            Key::Char('J') => self.scroll_detail(1),
-            Key::Char('K') => self.scroll_detail(-1),
-            Key::Char('y') => self.copy_path(),
-            Key::Char(',') => self.open_settings(),
-            Key::Enter => self.review(),
-            Key::Tab => self.next_lens(),
-            Key::Esc => self.filter.clear(),
-            Key::Char(_) | Key::Backspace | Key::Interrupt => {}
+        if key == Key::Esc {
+            self.filter.clear();
+            return;
         }
+        let Some(action) = self.keymap().action(keymap::Mode::Browse, key) else {
+            return;
+        };
+        match action {
+            Action::Quit => self.quit = true,
+            Action::MoveDown => self.step(1),
+            Action::MoveUp => self.step(-1),
+            Action::PageDown => self.step(self.page()),
+            Action::PageUp => self.step(-self.page()),
+            Action::First => self.jump(0),
+            Action::Last => self.jump(usize::MAX),
+            Action::Fold => self.collapse(),
+            Action::Unfold => self.expand(),
+            Action::Filter => self.mode = Mode::Filter,
+            Action::Help => self.mode = Mode::Help,
+            Action::Select => self.toggle(),
+            Action::SelectGroup => self.add_group(),
+            Action::SelectSafe => self.add_safe(),
+            Action::Keep => self.keep_finding(),
+            Action::KeepRule => self.keep_rule(),
+            Action::Sort => self.sort(),
+            Action::DetailDown => self.scroll_detail(1),
+            Action::DetailUp => self.scroll_detail(-1),
+            Action::Copy => self.copy_path(),
+            Action::Settings => self.open_settings(),
+            Action::Review => self.review(),
+            Action::Lens => self.next_lens(),
+            Action::ChangeBack
+            | Action::Change
+            | Action::Choose
+            | Action::Remove
+            | Action::Check
+            | Action::Skip => {}
+        }
+    }
+
+    /// The keymap the config gives.
+    pub(crate) const fn keymap(&self) -> &Keymap {
+        self.config.keys.keymap()
+    }
+
+    /// How settings are opened, to name in a message: `Settings (,)`.
+    pub(crate) fn settings_hint(&self) -> String {
+        self.keymap()
+            .first(keymap::Mode::Browse, Action::Settings)
+            .map_or_else(|| "Settings".to_owned(), |key| format!("Settings ({key})"))
     }
 
     /// The focused line's node.
@@ -660,7 +715,7 @@ impl App {
     }
 
     fn page(&self) -> isize {
-        let rows = super::view::list_rows(self.width, self.height);
+        let rows = super::ui::list_rows(self.width, self.height, &self.config.ui);
         isize::try_from(rows.saturating_sub(1).max(1)).unwrap_or(1)
     }
 
@@ -690,8 +745,13 @@ impl App {
 
     fn toggle(&mut self) {
         let Some(Node::Finding(id)) = self.focus() else {
-            self.notice =
-                Some("Move to a finding to select it, or press a to add a group.".to_owned());
+            let group = self
+                .keymap()
+                .first(keymap::Mode::Browse, Action::SelectGroup);
+            self.notice = Some(group.map_or_else(
+                || "Move to a finding to select it.".to_owned(),
+                |key| format!("Move to a finding to select it, or press {key} to add a group."),
+            ));
             return;
         };
         let Some(row) = self.row(id) else {
@@ -795,7 +855,7 @@ impl App {
         let Some(node) = self.focus() else {
             return;
         };
-        let end = super::view::detail_end(self, node);
+        let end = super::ui::detail_end(self, node);
         let first = self.detail_first(node).saturating_add_signed(by).min(end);
         self.detail_scroll = Some((node, first));
     }
@@ -848,14 +908,64 @@ impl App {
         };
     }
 
-    /// Keeps the cursor on a line that exists and in view.
+    /// Remembers the cursor's line when the filter, help, settings or a note opens, and
+    /// puts the cursor back on it when that closes, except that `enter` in the filter
+    /// keeps the line the cursor is on.
+    fn follow(&mut self, was: Mode, key: Key) {
+        match (was, self.mode) {
+            (Mode::Browse, Mode::Browse) => {}
+            (Mode::Browse, _) => self.anchor = self.focus(),
+            (Mode::Filter, Mode::Browse) if key == Key::Enter => self.anchor = None,
+            (_, Mode::Browse) => {
+                if let Some(anchor) = self.anchor.take() {
+                    self.cursor = Some(anchor);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Keeps the cursor on a line that exists and in view. When its line is no longer
+    /// shown, it moves to the nearest finding shown before it in the whole tree, else
+    /// after it, never to a heading it wasn't on; with no finding shown, it stays on that
+    /// line to come back to it, and the screen shows the line where it was.
     fn settle(&mut self) {
         let lines = self.lines();
+        if let Some(gone) = self
+            .cursor
+            .filter(|&node| !lines.iter().any(|line| line.node == node))
+            && let Some(near) = self.nearest(gone, &lines)
+        {
+            self.cursor = Some(near);
+        }
         let at = self.cursor_index(&lines);
-        self.cursor = lines.get(at).map(|line| line.node);
+        if self.cursor.is_none() {
+            self.cursor = lines.get(at).map(|line| line.node);
+        }
         self.hint = at;
-        let rows = super::view::list_rows(self.width, self.height);
-        self.scroll = super::view::offset(self.scroll, at, rows, lines.len());
+        let rows = super::ui::list_rows(self.width, self.height, &self.config.ui);
+        self.scroll = super::ui::offset(self.scroll, at, rows, lines.len());
+    }
+
+    /// The finding shown in `lines` that comes nearest before `gone` in the whole tree,
+    /// else nearest after it. A line the whole tree no longer has (a project left with
+    /// one finding there) is looked for from where the cursor was shown.
+    fn nearest(&self, gone: Node, lines: &[Line]) -> Option<Node> {
+        let finding = |node: &Node| matches!(node, Node::Finding(_));
+        let shown: BTreeSet<Node> = lines.iter().map(|line| line.node).filter(finding).collect();
+        let whole: Vec<Node> = self.tree(true).iter().map(|line| line.node).collect();
+        let here: Vec<Node> = lines.iter().map(|line| line.node).collect();
+        let (order, at) = whole
+            .iter()
+            .position(|&node| node == gone)
+            .map_or_else(|| (&here, self.hint.min(here.len())), |at| (&whole, at));
+        let (before, after) = order.split_at(at);
+        before
+            .iter()
+            .rev()
+            .chain(after)
+            .find(|node| shown.contains(node))
+            .copied()
     }
 }
 

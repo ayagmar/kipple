@@ -24,7 +24,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use kipple::config::{self, Settings};
 use kipple::setup::Builtin;
-use kipple::tui::{self, Input, Key, Keys, Look};
+use kipple::theme::{self, Catalog, Colours, Depth, Glyphs};
+use kipple::tui::{self, Input, Key, Keys};
 use kipple_platform::Environment;
 use ratatui::Terminal;
 use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
@@ -169,16 +170,18 @@ fn scan(tree: &Path, env: &Environment, file: &Path, keys: usize) -> Result<Meas
         inbox,
         delivered: Vec::new(),
     };
-    let look = Look {
-        color: true,
-        ascii: false,
-    };
+    let appearance = tui::Appearance::new(
+        Catalog::builtin(),
+        theme::DEFAULT,
+        Colours::On(Depth::TrueColor),
+        Glyphs::Unicode,
+    )?;
     let builtin = Builtin::load().map_err(anyhow::Error::msg)?;
     let catalog = config::catalog(&builtin);
     let settings = Settings::load(env, Some(file), &[tree.to_owned()], &catalog)
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     let started = Instant::now();
-    let scanned = tui::run(&mut terminal, &mut pressed, env, &settings, look)?;
+    let scanned = tui::run(&mut terminal, &mut pressed, env, &settings, appearance)?;
     drop(stop);
     typist
         .join()

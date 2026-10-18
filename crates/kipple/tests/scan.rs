@@ -76,7 +76,7 @@ fn demo() -> (tempfile::TempDir, Environment) {
 fn kipple(env: &Environment, args: &[&str]) -> (ExitCode, String, String) {
     let cli = Cli::parse_from(std::iter::once("kipple").chain(args.iter().copied()));
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = kipple::run(&cli, env, &mut out, &mut err);
+    let code = kipple::run(&cli, env, false, &mut out, &mut err);
     let text = |bytes| String::from_utf8(bytes).unwrap();
     (code, text(out), text(err))
 }
@@ -100,7 +100,7 @@ fn a_closed_stdout_cancels_the_event_stream_and_exits_130_saying_nothing_more() 
     let cli = Cli::parse_from(["kipple", "scan", "--events", "jsonl"]);
     let mut stderr = Vec::new();
 
-    let code = kipple::run(&cli, &env, &mut ClosedPipe, &mut stderr);
+    let code = kipple::run(&cli, &env, false, &mut ClosedPipe, &mut stderr);
 
     assert_eq!(code, ExitCode::from(CANCELLED));
     assert_eq!(String::from_utf8(stderr).unwrap(), "");
@@ -258,6 +258,54 @@ fn explain_says_an_unknown_restore_cost_is_not_estimated_and_the_json_keeps_unkn
         })
         .unwrap();
     assert_eq!(finding["consequence"]["cost"], "unknown");
+}
+
+// Catches a hold shown to people as its JSON name (`unknown-layout`) or as a terse code
+// that reads like an error (F4), and the wording leaking into the JSON contract.
+#[test]
+fn holds_read_as_words_in_the_report_and_as_sentences_in_explain_and_json_keeps_names() {
+    let (temp, env) = demo();
+    let bunapp = temp.path().join("home/projects/bunapp/node_modules");
+
+    let (_, human, _) = kipple(&env, &["scan"]);
+    let (_, out, _) = kipple(&env, &["explain", bunapp.to_str().unwrap()]);
+    let (_, json, _) = kipple(&env, &["scan", "--json"]);
+
+    let line = human
+        .lines()
+        .find(|line| line.contains("bunapp"))
+        .unwrap_or_else(|| panic!("no bunapp in {human}"));
+    // Windows also can't tell whether it is in use (D-050).
+    assert!(
+        line.contains("(layout not recognised, unknown loss"),
+        "{line}"
+    );
+    assert!(
+        out.contains(
+            "kipple doesn't recognise what is inside, so it can't tell what is safe to remove."
+        ),
+        "{out}"
+    );
+    let report: Value = serde_json::from_str(&json).unwrap();
+    let finding = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|finding| {
+            Path::new(
+                finding
+                    .pointer("/path/display")
+                    .and_then(Value::as_str)
+                    .unwrap(),
+            )
+            .ends_with("bunapp/node_modules")
+        })
+        .unwrap();
+    let reasons = finding["verdict"]["reasons"].as_array().unwrap();
+    assert_eq!(
+        reasons.get(..2).unwrap(),
+        ["unknown-layout", "unknown-consequence"]
+    );
 }
 
 /// The paths of the findings in a `--json` report.

@@ -11,7 +11,7 @@ use kipple_core::{FindingId, Lineage, Policy, SymbolicRoot};
 
 use super::{App, Found, Key, Mode, Node, Progress, Row, Search, Shelf};
 use crate::config::{self, Config, Edit, Settings};
-use crate::human::{escaped, findings};
+use crate::human::{escaped, findings, homed};
 use crate::tui::settings;
 
 /// What the home screen asks of the loop.
@@ -126,7 +126,10 @@ impl App {
             .as_ref()
             .map_or_else(Lineage::default, |facts| facts.lineage.clone());
         if self.policy.kept(&row.finding.path, &lineage).is_some() {
-            self.notice = Some("Already kept. Settings (,) lists what is kept.".to_owned());
+            self.notice = Some(format!(
+                "Already kept. {} lists what is kept.",
+                self.settings_hint()
+            ));
             return;
         }
         self.note.clear();
@@ -168,8 +171,9 @@ impl App {
         let note = Some(self.note.trim().to_owned()).filter(|note| !note.is_empty());
         let left = self.unselect(|row| row.finding.id == id);
         let mut done = format!(
-            "Kept {}. Settings (,) undoes it.",
-            escaped(&path.display().to_string())
+            "Kept {}. {} undoes it.",
+            escaped(&homed(&path, self.home.as_deref())),
+            self.settings_hint()
         );
         if left > 0 {
             done.push_str(" It left the selection.");
@@ -192,8 +196,10 @@ impl App {
             return;
         }
         let left = self.unselect(|row| row.finding.rule == rule);
-        let mut done =
-            format!("Turned off {title} ({rule}): its findings are kept. Settings (,) undoes it.");
+        let mut done = format!(
+            "Turned off {title} ({rule}): its findings are kept. {} undoes it.",
+            self.settings_hint()
+        );
         if left > 0 {
             write!(done, " {} left the selection.", findings(left)).ok();
         }
@@ -215,7 +221,13 @@ impl App {
     pub(super) fn saved(&mut self, saved: Saved) {
         let done = self.pending.take().unwrap_or_default();
         let rescan = saved.roots != self.roots;
+        let theme = (saved.config.ui.theme != self.config.ui.theme)
+            .then(|| saved.config.ui.theme.clone())
+            .flatten();
         self.configure(saved);
+        if let Some(theme) = theme {
+            self.themes.adopt(&theme);
+        }
         if let Search::Done(found) = &mut self.search {
             found.drop_roots(&self.roots, self.home.as_deref());
         }
@@ -258,6 +270,7 @@ impl App {
         self.progress = Progress::Scanning;
         self.cursor = None;
         self.hint = 0;
+        self.anchor = None;
         self.scroll = 0;
         // A finding's number only holds within one scan, so the line scrolled on is gone.
         self.detail_scroll = None;

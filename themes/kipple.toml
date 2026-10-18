@@ -1,0 +1,27 @@
+# kipple's default theme. ANSI colour names, so it reads on dark and light
+# terminals alike. A role left out is drawn in the terminal's own style.
+version = 1
+
+[roles]
+text = {}
+muted = { fg = "bright-black" }
+accent = { fg = "cyan" }
+border = { fg = "bright-black" }
+title = { bold = true }
+label = { bold = true }
+cursor = { reversed = true }
+selected = { fg = "cyan" }
+safe = { fg = "green" }
+review = { fg = "yellow" }
+protected = { fg = "blue" }
+warning = { fg = "yellow" }
+error = { fg = "red" }
+"bar.safe" = { fg = "green" }
+"bar.review" = { fg = "yellow" }
+"bar.protected" = { fg = "blue" }
+"bar.track" = {}
+key = { bold = true }
+"key.label" = { fg = "bright-black" }
+"level.current" = { fg = "cyan", bold = true }
+"level.other" = { fg = "bright-black" }
+kept = { fg = "#F2A23A" }

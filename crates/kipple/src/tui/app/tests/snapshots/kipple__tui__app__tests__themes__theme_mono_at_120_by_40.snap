@@ -1,0 +1,45 @@
+---
+source: crates/kipple/src/tui/app/tests/themes.rs
+assertion_line: 41
+expression: "styled(&draw(&app, look(&theme), 120, 40))"
+---
+╭ «bold|kipple» ─ «bold|Balanced» ─ scanning… ─ no project roots ──────────────────────┬─────────────────────────────────────────────╮
+│ «bold|SAFE» 514.0 MiB · 2   │ «bold|REVIEW» 300.0 MiB · 1 │ «bold|PROTECTED» 1020.0 MiB · 2 │ found 1.7 GiB                               │
+│ █████▌               │ ███▎                 │ ███████████              │ eligible 814.0 MiB                          │
+├──────────────────────┴──────────────────────┴──────────────────────────┼─────────────────────────────────────────────┤
+│ «reversed|  ▾ »«bold,reversed|Safe to clean (2)»«reversed|        514.0 MiB passes every check             » │ «bold|Safe to clean»                               │
+│     ▾ Dev (2)                514.0 MiB                                 │ 2 findings, 514.0 MiB                       │
+│       api/target  Cargo…     512.0 MiB ███▍                            │                                             │
+│       tool/__pycache__         2.0 MiB                                 │ Passes every check at this level: kipple    │
+│   ▾ «bold|Review (1)»               300.0 MiB loses more, or recent           │ recognised it, knows how it comes back,     │
+│     ▾ Dev (1)                300.0 MiB                                 │ nothing inside is tracked by git, no        │
+│       web/node_modules       300.0 MiB ██     recent                   │ running program shows it in use, and it     │
+│   ▾ «bold|Protected (2)»           1020.0 MiB not eligible                    │ hasn't changed recently. c selects all of   │
+│     ▾ Dev (1)                120.0 MiB                                 │ it.                                         │
+│       bunapp/node_modules    120.0 MiB ▊      layout not recognised +1 │                                             │
+│     ▾ System (1)             900.0 MiB                                 │                                             │
+│       pacman/pkg  pacman…    900.0 MiB ██████ advice only              │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+│                                                                        │                                             │
+├────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────┤
+│ «bold|j/k» move  «bold|/» filter  «bold|s» select  «bold|c» safe  «bold|p» keep  «bold|,» settings  «bold|?» help  «bold|q» quit                selected 0 · 0 B · frees 0 B │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

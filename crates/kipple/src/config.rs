@@ -6,7 +6,9 @@
 //! scan exit with code 2.
 
 mod edit;
+mod keys;
 mod parse;
+mod ui;
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -23,6 +25,9 @@ use kipple_platform::{
 };
 
 pub use self::edit::{Edit, write};
+pub use self::keys::KeysConfig;
+pub(crate) use self::parse::position;
+pub use self::ui::{DetailPlace, UiConfig};
 use crate::human::escaped;
 use crate::setup::Builtin;
 
@@ -80,6 +85,10 @@ pub struct Config {
     pub keep: Vec<(String, Option<String>)>,
     /// `rules.<id>`.
     pub rules: Vec<(RuleId, RuleSettings)>,
+    /// `[ui]`.
+    pub ui: UiConfig,
+    /// `[keys]`.
+    pub keys: KeysConfig,
 }
 
 /// A config that loaded: where it is, whether a file was there, and what it says.
@@ -429,7 +438,7 @@ pub fn write_path(out: &mut dyn Write, location: &Location) -> io::Result<()> {
 }
 
 /// `kipple config show`: where the config is and, when it loaded, every setting it gives
-/// with the defaults filled in.
+/// with the defaults filled in, and the `[keys]` entries that change a default.
 ///
 /// # Errors
 /// When writing to `out` fails.
@@ -487,5 +496,7 @@ pub fn write_show(
         }
         writeln!(out, "{:<22}{}", format!("rules.{rule}"), parts.join(", "))?;
     }
+    config.ui.write_show(out)?;
+    config.keys.write_show(out)?;
     out.flush()
 }

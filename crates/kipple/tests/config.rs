@@ -38,8 +38,9 @@ use std::process::ExitCode;
 use std::time::SystemTime;
 
 use clap::Parser as _;
-use kipple::config::{self, Edit, Location, Source};
+use kipple::config::{self, DetailPlace, Edit, Location, Source};
 use kipple::setup::Builtin;
+use kipple::theme::Glyphs;
 use kipple::{Cli, USAGE};
 use kipple_core::{Level, Roots, RuleId, SymbolicRoot};
 use kipple_platform::Environment;
@@ -123,7 +124,7 @@ impl Demo {
 fn kipple(env: &Environment, args: &[&str]) -> (ExitCode, String, String) {
     let cli = Cli::parse_from(std::iter::once("kipple").chain(args.iter().copied()));
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = kipple::run(&cli, env, &mut out, &mut err);
+    let code = kipple::run(&cli, env, false, &mut out, &mut err);
     let text = |bytes| String::from_utf8(bytes).unwrap();
     (code, text(out), text(err))
 }
@@ -223,6 +224,11 @@ fn every_config_kipple_cant_use_exits_2_with_the_reason_and_where_it_is() {
         ),
         ("colour = true", "line 1, column 1: unknown key colour"),
         (
+            "[ui]\ncolour = true",
+            "line 2, column 1: unknown key ui.colour",
+        ),
+        ("ui = 1", "ui: expected a table"),
+        (
             "[review]\nconfirm_by_typing_above = \"5 GB\"",
             "review is not supported yet",
         ),
@@ -270,6 +276,54 @@ fn every_config_kipple_cant_use_exits_2_with_the_reason_and_where_it_is() {
         (
             "[keep]\npaths = [{ note = \"x\" }]",
             "keep.paths: each table needs a path",
+        ),
+    ];
+    for (text, expected) in cases {
+        let file = demo.config("bad.toml", text);
+
+        let (code, _, err) = kipple(&env, &["--config", file.to_str().unwrap(), "scan"]);
+
+        assert_eq!(code, ExitCode::from(USAGE), "{text}");
+        assert!(err.contains(expected), "{text}: {err}");
+        assert!(err.contains("from --config"), "{err}");
+    }
+}
+
+// Catches a `[keys]` table that can't be used being ignored or blamed on the wrong place:
+// an unknown action or key, esc, one key taken twice where both are read, and an action
+// that needs a key left with none (03 §6 Keys).
+#[test]
+fn a_keys_table_kipple_cant_use_exits_2_with_the_reason_and_where_it_is() {
+    let demo = Demo::new(&[], "");
+    let env = demo.env(&[]);
+    let cases = [
+        (
+            "[keys]\nzap = [\"x\"]",
+            "line 2, column 1: unknown key keys.zap",
+        ),
+        (
+            "[keys]\nselect = \"x\"",
+            "line 2, column 10: keys.select: expected a list of keys",
+        ),
+        (
+            "[keys]\nselect = [\"ctrl-s\"]",
+            "line 2, column 11: keys.select: expected one character, space, enter",
+        ),
+        (
+            "[keys]\nquit = [\"esc\"]",
+            "line 2, column 9: keys.quit: esc always goes back or closes",
+        ),
+        (
+            "[keys]\nselect = [\"x\"]\nkeep = [\"y\", \"x\"]",
+            "line 3, column 14: keys.keep: \"x\" is bound to select as well in the tree",
+        ),
+        (
+            "[keys]\nselect = []",
+            "line 2, column 1: keys.select: select needs a key",
+        ),
+        (
+            "[keys]\nkeep = [\"j\", \"down\"]",
+            "line 2, column 1: keys.keep: this leaves move-down with no key in the tree",
         ),
     ];
     for (text, expected) in cases {
@@ -567,7 +621,7 @@ fn a_kept_finding_is_protected_as_kept_in_the_report_the_json_the_events_and_exp
         &["--config", flag, "explain", target.to_str().unwrap()],
     );
     assert!(
-        explained.contains("Protected at the balanced level: kept"),
+        explained.contains("Protected at the balanced level: You chose to keep it."),
         "{explained}"
     );
     assert!(explained.contains("benchmark baseline"), "{explained}");
@@ -914,6 +968,88 @@ fn an_edit_keeps_comments_and_every_other_key_and_survives_an_editors_change() {
     assert_eq!(undone.rules.len(), 0);
 }
 
+/// A wrong `[ui]` value silently ignored would draw a screen the user didn't ask for.
+#[test]
+fn every_ui_value_kipple_cant_use_is_an_error_where_it_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("config.toml");
+    let cases = [
+        // A theme is a file name, so a name that can't be one is refused here; whether
+        // the theme exists is only asked by what draws.
+        (
+            "[ui]\ntheme = \"../dusk\"",
+            "line 2, column 9: ui.theme: expected a theme name",
+        ),
+        ("[ui]\ntheme = \"Dusk\"", "ui.theme: expected a theme name"),
+        (
+            "[ui]\ndetail = \"left\"",
+            "ui.detail: expected auto, right, bottom or off",
+        ),
+        ("[ui]\nbars = \"no\"", "ui.bars: expected true or false"),
+        ("[ui]\nsummary = 0", "ui.summary: expected true or false"),
+        (
+            "[ui]\nglyphs = \"emoji\"",
+            "ui.glyphs: expected unicode or ascii",
+        ),
+    ];
+    for (text, expected) in cases {
+        fs::write(&file, text).unwrap();
+
+        let error = config::load(&location(&file), &catalog()).unwrap_err();
+
+        assert!(error.to_string().contains(expected), "{text}: {error}");
+    }
+}
+
+/// `[ui]` read into the wrong option, or defaults that don't draw the dashboard, would
+/// change the home screen behind the user's back. A theme that doesn't exist must not
+/// make the config unusable: only what draws looks it up.
+#[test]
+fn the_ui_options_read_as_written_and_default_to_the_dashboard() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("config.toml");
+    fs::write(&file, "[care]\nlevel = \"careful\"\n").unwrap();
+    let defaults = config::load(&location(&file), &catalog())
+        .unwrap()
+        .config
+        .ui;
+    assert_eq!(defaults, config::UiConfig::default());
+    assert_eq!(
+        (
+            defaults.theme,
+            defaults.summary,
+            defaults.detail,
+            defaults.bars
+        ),
+        (None, true, DetailPlace::Auto, true)
+    );
+    assert_eq!(defaults.glyphs, Glyphs::Unicode);
+
+    fs::write(
+        &file,
+        "[ui]\ntheme = \"no-such-theme-2\"\nsummary = false\ndetail = \"off\"\nbars = false\nglyphs = \"ascii\"\n",
+    )
+    .unwrap();
+    let ui = config::load(&location(&file), &catalog())
+        .unwrap()
+        .config
+        .ui;
+
+    assert_eq!(ui.theme.as_deref(), Some("no-such-theme-2"));
+    assert_eq!(
+        (ui.summary, ui.detail, ui.bars, ui.glyphs),
+        (false, DetailPlace::Off, false, Glyphs::Ascii)
+    );
+    let demo = Demo::new(&[], "");
+    let named = demo.config("ui.toml", "[ui]\ntheme = \"no-such-theme\"\n");
+    let (code, out, err) = kipple(
+        &demo.env(&[]),
+        &["--config", named.to_str().unwrap(), "scan", "--json"],
+    );
+    assert_eq!(code, ExitCode::SUCCESS, "{err}");
+    assert!(serde_json::from_str::<Value>(&out).is_ok());
+}
+
 /// The example in 03 §6 held keys that exit 2, so a user copying it got an unusable config.
 #[test]
 fn the_example_config_in_the_spec_loads() {
@@ -1037,4 +1173,74 @@ fn a_path_that_isnt_utf8_is_refused_with_a_message() {
 
     assert!(refused.unwrap_err().message.contains("isn't valid UTF-8"));
     assert!(fs::symlink_metadata(&file).is_err());
+}
+
+// Catches a config writing terminal escapes through kipple's own messages: a key name is
+// copied into the error and a kept path into a warning, and TOML decodes `\u001b`.
+#[test]
+fn config_errors_and_warnings_never_write_a_control_character_to_the_terminal() {
+    let demo = Demo::new(&[], "");
+    let scanned = |file: &Path, want: ExitCode| {
+        let args = ["--config", file.to_str().unwrap(), "scan", "--json"];
+        let (code, _, err) = kipple(&demo.env(&[]), &args);
+        assert_eq!(code, want, "{err}");
+        assert!(!err.chars().any(|c| c.is_control() && c != '\n'), "{err:?}");
+        err
+    };
+    let bad = demo.config("bad.toml", "\"\\u001b[2J\" = 1\n");
+    let failed = scanned(&bad, ExitCode::from(USAGE));
+    assert!(failed.contains("unknown key \\u{1b}[2J"), "{failed}");
+
+    let kept = demo.config("kept.toml", "[keep]\npaths = [\"~/\\u001b[2J\"]\n");
+    let warned = scanned(&kept, ExitCode::SUCCESS);
+    assert!(
+        warned.contains("warning: keep.paths: ~/\\u{1b}[2J"),
+        "{warned}"
+    );
+}
+
+// Catches `config show` leaving out the home screen's settings: `[ui]` with its defaults
+// filled in, and each `[keys]` entry that changes a default, so a user can check what
+// applies; and a `,` key (the default for settings) printed so it reads like a separator.
+#[test]
+fn config_show_prints_the_ui_settings_and_the_keys_that_differ_from_the_defaults() {
+    let demo = Demo::new(&[], "");
+    let env = demo.env(&[]);
+    let show = |file: &Path| {
+        let (code, shown, err) = kipple(
+            &env,
+            &["--config", file.to_str().unwrap(), "config", "show"],
+        );
+        assert_eq!(code, ExitCode::SUCCESS, "{err}");
+        shown
+    };
+    let plain = show(&demo.config("plain.toml", ""));
+    for line in [
+        "ui.theme              kipple (default)",
+        "ui.summary            true",
+        "ui.detail             auto",
+        "ui.bars               true",
+        "ui.glyphs             unicode",
+    ] {
+        assert!(plain.lines().any(|l| l == line), "{line}:\n{plain}");
+    }
+    assert!(!plain.contains("keys."), "{plain}");
+
+    let text = "[ui]\ntheme = \"dusk\"\ndetail = \"off\"\nglyphs = \"ascii\"\n\
+                [keys]\nselect = [\"x\", \"space\"]\nsettings = [\",\", \"S\"]\nmove-down = [\"j\", \"down\"]\ncopy = []\n";
+    let custom = show(&demo.config("custom.toml", text));
+    for line in [
+        "ui.theme              dusk",
+        "ui.detail             off",
+        "ui.glyphs             ascii",
+        "keys.select           [\"x\", \"space\"]",
+        "keys.settings         [\",\", \"S\"]",
+        "keys.copy             none",
+    ] {
+        assert!(custom.lines().any(|l| l == line), "{line}:\n{custom}");
+    }
+    assert!(
+        !custom.contains("keys.move-down"),
+        "same as the default:\n{custom}"
+    );
 }

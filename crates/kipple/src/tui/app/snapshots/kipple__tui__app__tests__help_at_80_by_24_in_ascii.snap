@@ -1,13 +1,13 @@
 ---
 source: crates/kipple/src/tui/app/tests.rs
+assertion_line: 897
 expression: "screen(&app, look, 80, 24)"
 ---
-kipple  Careful - [Balanced] - Thorough - scanned in 1.2 s - no project roots
 + Keys ------------------------------------------------------------------------+
 |j k  dn up move                                                               |
 |h l  lt rt fold and unfold a group or project                                 |
 |g G        first and last line                                                |
-|/          filter by name or path; enter keeps it, esc clears it              |
+|/          filter by words of the path or rule; enter keeps it, esc clears it |
 |tab        show one lens: Agents, Dev, System, then all                       |
 |s          select or unselect the finding                                     |
 |a          add the group's or project's Safe and Review findings              |
@@ -24,5 +24,6 @@ kipple  Careful - [Balanced] - Thorough - scanned in 1.2 s - no project roots
 |                                                                              |
 |This version only finds and explains: selecting removes nothing.              |
 |                                                                              |
+|                                                                              |
+|                                                                              |
 +------------------------------------------------------------------------------+
-j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit

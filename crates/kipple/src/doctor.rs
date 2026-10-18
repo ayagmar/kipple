@@ -20,6 +20,7 @@ use crate::config::{self, ConfigError, Settings, Source};
 use crate::human::escaped;
 use crate::json::{DOCTOR, LensOut, PathOut, VERSION};
 use crate::setup::Builtin;
+use crate::theme::{Catalog, Ink, Origin, Role};
 
 /// Everything `doctor` found.
 #[derive(Debug)]
@@ -150,28 +151,85 @@ fn integration_roots(builtin: &Builtin) -> Vec<IntegrationRoots> {
         .collect()
 }
 
+/// A section's heading, after a blank line.
+fn heading(out: &mut dyn Write, ink: &Ink, title: &str) -> io::Result<()> {
+    writeln!(out, "\n{}", ink.paint(Role::Title, title))
+}
+
+/// What `doctor` says about themes. Only its human report reads them: `--json` never
+/// reads a theme file.
+#[derive(Debug)]
+pub(crate) struct ThemeCheck {
+    /// The theme drawn: `--theme`, else `ui.theme`, else `kipple`.
+    pub(crate) active: String,
+    /// The user theme directory, or why it is unknown.
+    pub(crate) dir: Result<PathBuf, String>,
+    /// Every theme.
+    pub(crate) catalog: Catalog,
+}
+
+/// Writes the themes section: where user themes go, the theme drawn, and every theme
+/// that can't be used, with why, like a config problem.
+///
+/// # Errors
+/// When writing to `out` fails.
+pub(crate) fn write_themes(out: &mut dyn Write, ink: &Ink, check: &ThemeCheck) -> io::Result<()> {
+    heading(out, ink, "Themes")?;
+    let dir = match &check.dir {
+        Ok(dir) => dir.display().to_string(),
+        Err(why) => why.clone(),
+    };
+    writeln!(out, "  {:<13}{}", "directory", escaped(&dir))?;
+    if let Some(problem) = &check.catalog.problem {
+        let line = ink.paint(Role::Error, &escaped(problem));
+        writeln!(out, "  {:<13}{line}", "directory")?;
+    }
+    let active = match check
+        .catalog
+        .find(&check.active)
+        .map(|e| (&e.theme, &e.origin))
+    {
+        Some((Ok(_), Origin::Builtin)) => format!("{} (built-in)", check.active),
+        Some((Ok(_), Origin::File(_))) => check.active.clone(),
+        Some((Err(_), _)) => ink.paint(Role::Error, &format!("{}: can't be used", check.active)),
+        None => ink.paint(
+            Role::Error,
+            &format!("{}: there is no such theme", check.active),
+        ),
+    };
+    // A theme's name is lowercase letters, digits and `-`: nothing to escape.
+    writeln!(out, "  {:<13}{active}", "theme")?;
+    for entry in &check.catalog.entries {
+        if let Err(error) = &entry.theme {
+            let line = ink.paint(Role::Error, &escaped(&format!("{}: {error}", entry.name)));
+            writeln!(out, "  {:<13}{line}", "problem")?;
+        }
+    }
+    out.flush()
+}
+
 impl Report {
     /// Writes the report for people. Fails as soon as `out` does.
     ///
     /// # Errors
     /// When writing to `out` fails, for example because it was closed.
-    pub fn write_to(&self, out: &mut dyn Write) -> io::Result<()> {
+    pub fn write_to(&self, out: &mut dyn Write, ink: &Ink) -> io::Result<()> {
         writeln!(
             out,
             "kipple {} doctor (read-only)",
             env!("CARGO_PKG_VERSION")
         )?;
-        self.write_dirs(out)?;
-        self.write_roots(out)?;
-        self.write_integrations(out)?;
-        self.write_tools(out)?;
-        self.write_processes(out)?;
-        self.write_notes(out)?;
+        self.write_dirs(out, ink)?;
+        self.write_roots(out, ink)?;
+        self.write_integrations(out, ink)?;
+        self.write_tools(out, ink)?;
+        self.write_processes(out, ink)?;
+        self.write_notes(out, ink)?;
         out.flush()
     }
 
-    fn write_dirs(&self, out: &mut dyn Write) -> io::Result<()> {
-        writeln!(out, "\nkipple's directories")?;
+    fn write_dirs(&self, out: &mut dyn Write, ink: &Ink) -> io::Result<()> {
+        heading(out, ink, "kipple's directories")?;
         for (name, dir) in [
             ("config", &self.dirs.config),
             ("data", &self.dirs.data),
@@ -195,17 +253,18 @@ impl Report {
             writeln!(out, "  {:<13}{source}", "config from")?;
         }
         if let Some(error) = &self.config.error {
-            let line = format!("can't be used: {error}");
-            writeln!(out, "  {:<13}{}", "config", escaped(&line))?;
+            let line = ink.paint(Role::Error, &escaped(&format!("can't be used: {error}")));
+            writeln!(out, "  {:<13}{line}", "config")?;
         }
         for warning in &self.config.warnings {
-            writeln!(out, "  {:<13}{}", "warning", escaped(warning))?;
+            let line = ink.paint(Role::Warning, &escaped(warning));
+            writeln!(out, "  {:<13}{line}", "warning")?;
         }
         Ok(())
     }
 
-    fn write_roots(&self, out: &mut dyn Write) -> io::Result<()> {
-        writeln!(out, "\nRoots")?;
+    fn write_roots(&self, out: &mut dyn Write, ink: &Ink) -> io::Result<()> {
+        heading(out, ink, "Roots")?;
         for check in &self.roots {
             let line = match &check.status {
                 Err(unresolved) => format!("unknown: {unresolved}"),
@@ -221,8 +280,8 @@ impl Report {
         Ok(())
     }
 
-    fn write_integrations(&self, out: &mut dyn Write) -> io::Result<()> {
-        writeln!(out, "\nIntegrations")?;
+    fn write_integrations(&self, out: &mut dyn Write, ink: &Ink) -> io::Result<()> {
+        heading(out, ink, "Integrations")?;
         for integration in &self.integrations {
             let line = if integration.supported {
                 let roots: Vec<&str> = integration.roots.iter().map(|r| r.name()).collect();
@@ -235,8 +294,8 @@ impl Report {
         Ok(())
     }
 
-    fn write_tools(&self, out: &mut dyn Write) -> io::Result<()> {
-        writeln!(out, "\nNative tools")?;
+    fn write_tools(&self, out: &mut dyn Write, ink: &Ink) -> io::Result<()> {
+        heading(out, ink, "Native tools")?;
         for (tool, status) in &self.tools {
             let line = match status {
                 ToolStatus::NotFound => "not found on PATH".to_owned(),
@@ -254,8 +313,8 @@ impl Report {
         Ok(())
     }
 
-    fn write_processes(&self, out: &mut dyn Write) -> io::Result<()> {
-        writeln!(out, "\nRunning programs")?;
+    fn write_processes(&self, out: &mut dyn Write, ink: &Ink) -> io::Result<()> {
+        heading(out, ink, "Running programs")?;
         let snapshot = match &self.processes {
             Ok(snapshot) => snapshot,
             Err(error) => {
@@ -304,8 +363,8 @@ impl Report {
         )
     }
 
-    fn write_notes(&self, out: &mut dyn Write) -> io::Result<()> {
-        writeln!(out, "\nNotes")?;
+    fn write_notes(&self, out: &mut dyn Write, ink: &Ink) -> io::Result<()> {
+        heading(out, ink, "Notes")?;
         writeln!(
             out,
             "  kipple can't see the options other programs were started with, so a location \

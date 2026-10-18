@@ -1,0 +1,200 @@
+---
+source: crates/kipple/src/tui/app/tests/onboarding.rs
+assertion_line: 512
+expression: "probed.join(\"\\n\")"
+---
+«fg=border|╭» «fg=title|Welcome to kipple»«fg=border| ─ »step 1 of 4«fg=border| ─ »«fg=muted|scan finished» «fg=border|─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮»
+«fg=border|│» «fg=title|How careful should kipple be?»                                                                                                                                «fg=border|│»
+«fg=border|│» «fg=muted|Each level shows what it would offer on this machine. It changes nothing.»                                                                                    «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»   Careful                                                                                                                                                    «fg=border|│»
+«fg=border|│» «fg=muted|    Safe: build output and regenerated caches; recent: 14 days»                                                                                               «fg=border|│»
+«fg=border|│»     514.0 MiB safe to clean, 300.0 MiB to review                                                                                                             «fg=border|│»
+«fg=border|│» «bg=cursor|> Balanced (the default)»                                                                                                                                     «fg=border|│»
+«fg=border|│» «fg=muted|    Safe: rebuilt, reinstalled, re-downloaded; recent: 7 days»                                                                                                «fg=border|│»
+«fg=border|│»     514.0 MiB safe to clean, 300.0 MiB to review                                                                                                             «fg=border|│»
+«fg=border|│»   Thorough                                                                                                                                                   «fg=border|│»
+«fg=border|│» «fg=muted|    Safe: Balanced plus what costs a rollback; recent: 2 days»                                                                                                «fg=border|│»
+«fg=border|│»     814.0 MiB safe to clean, 0 B to review                                                                                                                   «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│» «fg=muted|The scan has finished: these are the totals.»                                                                                                                 «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤»
+«fg=border|│» «fg=key|enter»«fg=key.label| choose · »«fg=key|tab»«fg=key.label| skip · »«fg=key|q»«fg=key.label| quit, saving nothing»                                                                                                             «fg=border|│»
+«fg=border|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»
+
+«fg=border|╭» «fg=title|Welcome to kipple»«fg=border| ─ »step 2 of 4«fg=border| ─ »«fg=muted|scan finished» «fg=border|─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮»
+«fg=border|│» «fg=title|Where are your projects?»                                                                                                                                     «fg=border|│»
+«fg=border|│» «fg=muted|kipple looks for build output and dependencies below these folders.»                                                                                          «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»   [x] /home/ada/projects                                                                                                                                     «fg=border|│»
+«fg=border|│» «bg=cursor|> + add another»                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│» «fg=title|Suggested: projects found elsewhere in your home folder»                                                                                                      «fg=border|│»
+«fg=border|│»   [ ] /home/ada/notes (1 project: app)                                                                                                                       «fg=border|│»
+«fg=border|│» «fg=muted|stopped early: the list may be incomplete»                                                                                                                    «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤»
+«fg=border|│» «fg=key|enter»«fg=key.label| choose · »«fg=key|space»«fg=key.label| check · »«fg=key|tab»«fg=key.label| skip · »«fg=key|esc»«fg=key.label| back · »«fg=key|q»«fg=key.label| quit, saving nothing»                                                                                    «fg=border|│»
+«fg=border|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»
+
+«fg=border|╭» «fg=title|Welcome to kipple»«fg=border| ─ »step 2 of 4«fg=border| ─ »«fg=muted|scan finished» «fg=border|─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮»
+«fg=border|│» «fg=title|Where are your projects?»                                                                                                                                     «fg=border|│»
+«fg=border|│» «fg=muted|kipple looks for build output and dependencies below these folders.»                                                                                          «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»   [x] /home/ada/projects                                                                                                                                     «fg=border|│»
+«fg=border|│» «bg=cursor|> + _»                                                                                                                                                        «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│» «fg=title|Suggested: projects found elsewhere in your home folder»                                                                                                      «fg=border|│»
+«fg=border|│»   [ ] /home/ada/notes (1 project: app)                                                                                                                       «fg=border|│»
+«fg=border|│» «fg=muted|stopped early: the list may be incomplete»                                                                                                                    «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤»
+«fg=border|│» «fg=key.label|type a path, enter adds it, esc cancels»                                                                                                                      «fg=border|│»
+«fg=border|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»
+
+«fg=border|╭» «fg=title|Welcome to kipple»«fg=border| ─ »step 2 of 4«fg=border| ─ »«fg=muted|scan finished» «fg=border|─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮»
+«fg=border|│» «fg=title|Where are your projects?»                                                                                                                                     «fg=border|│»
+«fg=border|│» «fg=muted|kipple looks for build output and dependencies below these folders.»                                                                                          «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»   [x] /home/ada/projects                                                                                                                                     «fg=border|│»
+«fg=border|│» «bg=cursor|> + add another»                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│» «fg=title|Suggested: projects found elsewhere in your home folder»                                                                                                      «fg=border|│»
+«fg=border|│»   [ ] /home/ada/notes (1 project: app)                                                                                                                       «fg=border|│»
+«fg=border|│» «fg=muted|stopped early: the list may be incomplete»                                                                                                                    «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|│»                                                                                                                                                              «fg=border|│»
+«fg=border|├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤»
+«fg=border|│» «fg=key|enter»«fg=key.label| choose · »«fg=key|space»«fg=key.label| check · »«fg=key|tab»«fg=key.label| skip · »«fg=key|esc»«fg=key.label| back · »«fg=key|q»«fg=key.label| quit, saving nothing»                                                                                    «fg=border|│»
+«fg=border|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»

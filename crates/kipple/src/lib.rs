@@ -15,6 +15,7 @@ pub mod rules;
 mod scan;
 pub mod setup;
 pub mod support;
+pub mod theme;
 pub mod tui;
 
 use std::collections::HashMap;
@@ -29,6 +30,7 @@ use kipple_platform::Environment;
 use crate::config::{ConfigError, Settings};
 use crate::json::{EventBody, ScanOut};
 use crate::setup::Builtin;
+use crate::theme::{ColorChoice, Colours, Glyphs, Ink, Theme, Themes};
 
 /// Command-line arguments for `kipple`.
 #[derive(Debug, Parser)]
@@ -43,12 +45,54 @@ pub struct Cli {
     /// Read the config from this file instead of `KIPPLE_CONFIG` or the default location.
     #[arg(long, global = true, value_name = "FILE")]
     pub config: Option<PathBuf>,
+    /// Draw with this theme instead of the config's `ui.theme`: a built-in or one of
+    /// yours (`kipple theme list`).
+    #[arg(long, global = true, value_name = "NAME", value_parser = theme_name)]
+    pub theme: Option<String>,
+    /// When to use colour. `auto`: when the output is a terminal and `NO_COLOR` isn't set.
+    #[arg(long, global = true, value_enum, value_name = "WHEN")]
+    pub color: Option<ColorArg>,
+    /// The same as `--color never`.
+    #[arg(long, global = true, conflicts_with = "color")]
+    pub no_color: bool,
     /// The home screen's options.
     #[command(flatten)]
     pub home: HomeArgs,
     /// What to do. Without one, the home screen.
     #[command(subcommand)]
     pub command: Option<Command>,
+}
+
+impl Cli {
+    /// What `--color` and `--no-color` say.
+    #[must_use]
+    pub const fn colour_choice(&self) -> ColorChoice {
+        match (self.no_color, self.color) {
+            (true, _) | (false, Some(ColorArg::Never)) => ColorChoice::Never,
+            (false, Some(ColorArg::Always)) => ColorChoice::Always,
+            (false, Some(ColorArg::Auto) | None) => ColorChoice::Auto,
+        }
+    }
+}
+
+/// `--color`.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum ColorArg {
+    /// When the output is a terminal and `NO_COLOR` isn't set.
+    Auto,
+    /// Always, even when piped or under `NO_COLOR`.
+    Always,
+    /// Never.
+    Never,
+}
+
+/// `--theme NAME`, checked as a name: lowercase letters, digits and `-`.
+fn theme_name(name: &str) -> Result<String, String> {
+    if theme::valid_name(name) {
+        Ok(name.to_owned())
+    } else {
+        Err("a theme name is lowercase letters, digits and -".to_owned())
+    }
 }
 
 /// Options of the home screen.
@@ -87,6 +131,28 @@ pub enum Command {
         #[command(subcommand)]
         action: ConfigAction,
     },
+    /// List the themes, print one as a theme file, or show where your own themes go.
+    Theme {
+        /// What to do.
+        #[command(subcommand)]
+        action: ThemeAction,
+    },
+}
+
+/// `kipple theme` actions.
+#[derive(Debug, Clone, Subcommand)]
+pub enum ThemeAction {
+    /// List the built-in themes and yours, with where each comes from.
+    List,
+    /// Print a theme as a complete theme file, with what it extends written out, to start
+    /// your own from.
+    Show {
+        /// The theme's name.
+        #[arg(value_parser = theme_name)]
+        name: String,
+    },
+    /// Print the directory your own themes go in, one `NAME.toml` each.
+    Path,
 }
 
 /// `kipple config` actions.
@@ -151,18 +217,19 @@ pub const CANCELLED: u8 = 130;
 /// §4).
 pub const USAGE: u8 = 2;
 
-/// Runs `cli`, writing data to `stdout` and diagnostics to `stderr`.
+/// Runs `cli`, writing data to `stdout` and diagnostics to `stderr`. Human output is in
+/// colour when `--color` says so, or by default when `stdout` is a `terminal`.
 pub fn run(
     cli: &Cli,
     env: &Environment,
+    terminal: bool,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> ExitCode {
     // Clap can't exempt the global `--config` from a conflict with the commands, so the
     // home screen's own option is refused here.
     if cli.command.is_some() && cli.home.ascii {
-        let message = "kipple: --ascii is for the home screen, not a command";
-        writeln!(stderr, "{message}").ok();
+        say(stderr, "--ascii is for the home screen, not a command");
         return ExitCode::from(USAGE);
     }
     let builtin = match Builtin::load() {
@@ -173,6 +240,8 @@ pub fn run(
         builtin: &builtin,
         env,
         config: cli.config.as_deref(),
+        theme: cli.theme.as_deref(),
+        colours: Colours::detect(cli.colour_choice(), env, terminal),
     };
     match &cli.command {
         None => summary(&host, stdout, stderr),
@@ -182,26 +251,32 @@ pub fn run(
             let written = if *json {
                 write_json(stdout, &rules)
             } else {
-                rules::write_human(stdout, &rules)
+                rules::write_human(stdout, &rules, &host.ink(stderr))
             };
             exit_code(written, stderr)
         }
         Some(Command::Explain { target }) => explain(&host, target, stdout, stderr),
         Some(Command::Config { action }) => config_command(&host, *action, stdout, stderr),
+        Some(Command::Theme { action }) => theme_command(&host, action, stdout, stderr),
         Some(Command::Doctor { json }) => {
             let report = doctor::gather(env, host.config, &builtin);
             let written = if *json {
                 write_json(stdout, &report.to_json())
             } else {
-                report.write_to(stdout)
+                let ink = host.ink(stderr);
+                report
+                    .write_to(stdout, &ink)
+                    .and_then(|()| doctor::write_themes(stdout, &ink, &host.theme_check()))
             };
             exit_code(written, stderr)
         }
     }
 }
 
-/// Opens the home screen in this terminal (`docs/03-functional-spec.md` §2 J1). Colour
-/// follows `NO_COLOR`. It needs a config that can be used.
+/// Opens the home screen in this terminal (`docs/03-functional-spec.md` §2 J1).
+///
+/// It needs a config that can be used, and a theme that can: `--theme`, else the
+/// config's `ui.theme`, else `kipple`. Colour follows `--color`, then `NO_COLOR`.
 pub fn home(cli: &Cli, env: &Environment, stderr: &mut dyn Write) -> ExitCode {
     let builtin = match Builtin::load() {
         Ok(builtin) => builtin,
@@ -211,31 +286,95 @@ pub fn home(cli: &Cli, env: &Environment, stderr: &mut dyn Write) -> ExitCode {
         builtin: &builtin,
         env,
         config: cli.config.as_deref(),
+        theme: cli.theme.as_deref(),
+        colours: Colours::detect(cli.colour_choice(), env, true),
     };
     let settings = match host.settings(&[], stderr) {
         Ok(settings) => settings,
         Err(code) => return code,
     };
-    let look = tui::Look {
-        color: env.get("NO_COLOR").is_none(),
-        ascii: cli.home.ascii,
+    let glyphs = if cli.home.ascii {
+        Glyphs::Ascii
+    } else {
+        settings.loaded.config.ui.glyphs
     };
-    match tui::open(env, &settings, look) {
+    let active = host.theme_name(Some(&settings.loaded.config));
+    let catalog = Themes::new(env).catalog();
+    let appearance = match tui::Appearance::new(catalog, &active, host.colours, glyphs) {
+        Ok(appearance) => appearance,
+        Err(error) => {
+            say(stderr, &format!("theme {active}: {error}"));
+            return ExitCode::from(USAGE);
+        }
+    };
+    match tui::open(env, &settings, appearance) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => fail(stderr, &format!("the home screen failed: {error}")),
     }
 }
 
-/// What every command runs with: the built-in rules, the environment snapshot and the
-/// config file `--config` names, if any.
+/// What every command runs with: the built-in rules, the environment snapshot, the
+/// config file `--config` names, if any, and how human output is drawn.
 #[derive(Debug, Clone, Copy)]
 struct Host<'a> {
     builtin: &'a Builtin,
     env: &'a Environment,
     config: Option<&'a Path>,
+    /// `--theme`.
+    theme: Option<&'a str>,
+    /// Whether human output is in colour, and in how many.
+    colours: Colours,
 }
 
 impl Host<'_> {
+    /// The theme to draw: `--theme`, else `ui.theme` of `config`, else `kipple`.
+    fn theme_name(&self, config: Option<&config::Config>) -> String {
+        self.theme
+            .map(str::to_owned)
+            .or_else(|| config.and_then(|config| config.ui.theme.clone()))
+            .unwrap_or_else(|| theme::DEFAULT.to_owned())
+    }
+
+    /// The config as far as it can be read, for its theme only: a config that can't be
+    /// used is the business of the commands that need one.
+    fn config_for_theme(&self) -> Option<config::Config> {
+        let roots = kipple_platform::resolve_roots(self.env, &[]);
+        let location = config::locate(self.env, self.config, &roots);
+        config::load(&location, &config::catalog(self.builtin))
+            .ok()
+            .map(|loaded| loaded.config)
+    }
+
+    /// How human output paints its roles. Without colour it reads no theme at all. A
+    /// theme that can't be used is warned about once, and `kipple` is used instead.
+    fn ink(&self, stderr: &mut dyn Write) -> Ink {
+        if self.colours == Colours::Off {
+            return Ink::plain();
+        }
+        let name = self.theme_name(self.config_for_theme().as_ref());
+        let theme = Themes::new(self.env)
+            .resolve(&name)
+            .unwrap_or_else(|error| {
+                let using = theme::DEFAULT;
+                say(
+                    stderr,
+                    &format!("warning: theme {name}: {error}; using {using}"),
+                );
+                Theme::builtin(using).unwrap_or_default()
+            });
+        Ink::new(theme.drawn(self.colours))
+    }
+
+    /// What `doctor` says about themes: the one drawn and every one that can't be used.
+    fn theme_check(&self) -> doctor::ThemeCheck {
+        let themes = Themes::new(self.env);
+        doctor::ThemeCheck {
+            active: self.theme_name(self.config_for_theme().as_ref()),
+            dir: themes.dir().map(Path::to_owned).map_err(str::to_owned),
+            catalog: themes.catalog(),
+        }
+    }
+
     /// The config and roots a scan runs with, the project roots `given` on the command
     /// line, if any. A config that can't be used is reported on `stderr` with exit code
     /// 2; each kept or excluded path that is missing is warned about.
@@ -244,7 +383,7 @@ impl Host<'_> {
         match Settings::load(self.env, self.config, given, &catalog) {
             Ok(settings) => {
                 for warning in &settings.warnings {
-                    writeln!(stderr, "kipple: warning: {warning}").ok();
+                    say(stderr, &format!("warning: {warning}"));
                 }
                 Ok(settings)
             }
@@ -259,7 +398,7 @@ impl Host<'_> {
 
 /// Reports a config that can't be used: exit code 2.
 fn config_failed(stderr: &mut dyn Write, error: &ConfigError) -> ExitCode {
-    writeln!(stderr, "kipple: {error}").ok();
+    say(stderr, &error.to_string());
     ExitCode::from(USAGE)
 }
 
@@ -275,7 +414,7 @@ fn summary(host: &Host<'_>, stdout: &mut dyn Write, stderr: &mut dyn Write) -> E
     };
     let (report, _) = scan::run(&engine, &settings, None, &mut |_| Ok(()));
     let out = ScanOut::new(&report, &host.builtin.lenses(), &settings.policy);
-    exit_code(scan::write_summary(stdout, &out), stderr)
+    exit_code(scan::write_summary(stdout, &out, &host.ink(stderr)), stderr)
 }
 
 fn scan(
@@ -321,7 +460,7 @@ fn scan(
             scan::write_record(stdout, seq, completed)
         }
         None if args.json => write_json(stdout, &out),
-        None => scan::write_human(stdout, &out),
+        None => scan::write_human(stdout, &out, &host.ink(stderr)),
     });
     match exit_code(written, stderr) {
         code if code == ExitCode::SUCCESS && report.outcome == ScanOutcome::Cancelled => {
@@ -339,13 +478,16 @@ fn explain(
 ) -> ExitCode {
     let builtin = host.builtin;
     if let Some((pack, rule)) = explain::find_rule(builtin, target) {
+        let ink = host.ink(stderr);
         let written =
-            explain::write_rule(stdout, builtin, pack, rule).and_then(|()| stdout.flush());
+            explain::write_rule(stdout, &ink, builtin, pack, rule).and_then(|()| stdout.flush());
         return exit_code(written, stderr);
     }
     if target.starts_with("builtin.") {
-        let message = format!("kipple: there is no rule {target}; `kipple rules` lists them");
-        writeln!(stderr, "{message}").ok();
+        say(
+            stderr,
+            &format!("there is no rule {target}; `kipple rules` lists them"),
+        );
         return ExitCode::from(USAGE);
     }
     let settings = match host.settings(&[], stderr) {
@@ -358,8 +500,13 @@ fn explain(
     };
     let (report, _) = scan::run(&engine, &settings, None, &mut |_| Ok(()));
     let path = PathBuf::from(target);
-    let written = explain::write_path(stdout, builtin, &path, &report, &settings.policy)
-        .and_then(|()| stdout.flush());
+    let ink = host.ink(stderr);
+    let judged = explain::Judged {
+        report: &report,
+        policy: &settings.policy,
+    };
+    let written =
+        explain::write_path(stdout, &ink, builtin, &path, judged).and_then(|()| stdout.flush());
     exit_code(written, stderr)
 }
 
@@ -385,6 +532,50 @@ fn config_command(
     }
 }
 
+/// `kipple theme list|show|path`. `path` reads no theme; `show` exits 2 when the theme
+/// can't be used.
+fn theme_command(
+    host: &Host<'_>,
+    action: &ThemeAction,
+    stdout: &mut dyn Write,
+    stderr: &mut dyn Write,
+) -> ExitCode {
+    let themes = Themes::new(host.env);
+    let written = match action {
+        ThemeAction::Path => match themes.dir() {
+            Ok(dir) => writeln!(stdout, "{}", human::escaped(&dir.display().to_string()))
+                .and_then(|()| stdout.flush()),
+            Err(why) => {
+                say(stderr, why);
+                return ExitCode::from(USAGE);
+            }
+        },
+        ThemeAction::List => {
+            let catalog = themes.catalog();
+            if let (Some(problem), Ok(dir)) = (&catalog.problem, themes.dir()) {
+                say(stderr, &format!("warning: {} {problem}", dir.display()));
+            }
+            theme::write_list(stdout, &catalog)
+        }
+        ThemeAction::Show { name } => match themes.resolve(name) {
+            Ok(theme) => {
+                let comment = format!(
+                    "The theme {name}, with what it extends written out. Save it as\n\
+                     NAME.toml in `kipple theme path` and change what you like."
+                );
+                stdout
+                    .write_all(theme.to_toml(&comment).as_bytes())
+                    .and_then(|()| stdout.flush())
+            }
+            Err(error) => {
+                say(stderr, &format!("theme {name}: {error}"));
+                return ExitCode::from(USAGE);
+            }
+        },
+    };
+    exit_code(written, stderr)
+}
+
 /// `roots`, each made absolute against the current directory.
 fn absolute(roots: &[PathBuf]) -> io::Result<Vec<PathBuf>> {
     roots.iter().map(std::path::absolute).collect()
@@ -399,8 +590,14 @@ fn write_json(out: &mut dyn Write, value: &impl serde::Serialize) -> io::Result<
 
 /// Reports an internal failure, which is a bug in kipple or its environment.
 fn fail(stderr: &mut dyn Write, message: &str) -> ExitCode {
-    writeln!(stderr, "kipple: {message}").ok();
+    say(stderr, message);
     ExitCode::FAILURE
+}
+
+/// Writes one diagnostic line on `stderr`, escaped: config and theme errors, warnings and
+/// OS messages carry names and paths from files, which may hold control characters.
+fn say(stderr: &mut dyn Write, message: &str) {
+    writeln!(stderr, "kipple: {}", human::escaped(message)).ok();
 }
 
 /// The exit code for a command whose output was written, or failed to be. A closed stdout
@@ -411,7 +608,7 @@ pub fn exit_code(written: io::Result<()>, stderr: &mut dyn Write) -> ExitCode {
         Err(error) if error.kind() == io::ErrorKind::BrokenPipe => ExitCode::from(CANCELLED),
         Err(error) => {
             // Nothing else can be reported if stderr fails too.
-            writeln!(stderr, "kipple: could not write the output: {error}").ok();
+            say(stderr, &format!("could not write the output: {error}"));
             ExitCode::FAILURE
         }
     }

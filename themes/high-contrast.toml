@@ -1,0 +1,27 @@
+# Bright ANSI colours and bold, with no dimmed text: for low vision or a
+# washed-out screen. Headings and keys are underlined too.
+version = 1
+
+[roles]
+text = {}
+muted = {}
+accent = { fg = "bright-cyan", bold = true }
+border = {}
+title = { bold = true, underline = true }
+label = { bold = true }
+cursor = { reversed = true, bold = true }
+selected = { fg = "bright-cyan", bold = true }
+safe = { fg = "bright-green", bold = true }
+review = { fg = "bright-yellow", bold = true }
+protected = { fg = "bright-blue", bold = true }
+warning = { fg = "bright-yellow", bold = true }
+error = { fg = "bright-red", bold = true }
+"bar.safe" = { fg = "bright-green" }
+"bar.review" = { fg = "bright-yellow" }
+"bar.protected" = { fg = "bright-blue" }
+"bar.track" = {}
+key = { bold = true, underline = true }
+"key.label" = {}
+"level.current" = { fg = "bright-cyan", bold = true, underline = true }
+"level.other" = {}
+kept = { fg = "#F2A23A", bold = true }

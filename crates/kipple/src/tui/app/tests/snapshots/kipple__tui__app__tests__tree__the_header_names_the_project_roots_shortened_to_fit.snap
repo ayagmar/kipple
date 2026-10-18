@@ -1,14 +1,15 @@
 ---
 source: crates/kipple/src/tui/app/tests/tree.rs
+assertion_line: 497
 expression: "shown.join(\"\\n\")"
 ---
-kipple  Careful · [Balanced] · Thorough · scanned in 1.2 s · ~/projects
-kipple  Careful - [Balanced] - Thorough - scanned in 1.2 s - ~/projects
-kipple  Careful · [Balanced] · Thorough · scanned in 1.2 s · ~/projects
-kipple  Careful - [Balanced] - Thorough - scanned in 1.2 s - ~/projects
-kipple  Careful · [Balanced] · Thorough · scanned in 1.2 s · …rojects/current +2
-kipple  Careful - [Balanced] - Thorough - scanned in 1.2 s - ...jects/current +2
-kipple  Careful · [Balanced] · Thorough · scanned in 1.2 s · ~/src/clients/acme/projects/current +2
-kipple  Careful · [Balanced] · Thorough · scanned in 1.2 s · by last change
-kipple  Careful · [Balanced] · Thorough · scanned in 1.2 s · ~/src/clients/acme/projects/current +2 · by last change
-kipple  Careful · [Balanced] · Thorough · scanned in 1.2 s · by last change
+kipple ─ Balanced ─ scanned in 1.2 s ─ ~/projects
+kipple - Balanced - scanned in 1.2 s - ~/projects
+kipple ─ Balanced ─ scanned in 1.2 s ─ ~/projects
+kipple - Balanced - scanned in 1.2 s - ~/projects
+kipple ─ Balanced ─ scanned in 1.2 s ─ …c/clients/acme/projects/current +2
+kipple - Balanced - scanned in 1.2 s - ...clients/acme/projects/current +2
+kipple ─ Balanced ─ scanned in 1.2 s ─ ~/src/clients/acme/projects/current +2
+kipple ─ Balanced ─ scanned in 1.2 s ─ …ojects/current +2 ─ by last change
+kipple ─ Balanced ─ scanned in 1.2 s ─ ~/src/clients/acme/projects/current +2 ─ by last change
+kipple ─ Balanced ─ scanned in 1.2 s ─ no project roots ─ by last change

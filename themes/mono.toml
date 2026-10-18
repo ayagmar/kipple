@@ -1,0 +1,27 @@
+# No colour at all: what NO_COLOR selects. Every state still says itself in
+# words; bold and reverse mark headings, keys and the cursor.
+version = 1
+
+[roles]
+text = {}
+muted = {}
+accent = {}
+border = {}
+title = { bold = true }
+label = { bold = true }
+cursor = { reversed = true }
+selected = {}
+safe = {}
+review = {}
+protected = {}
+warning = {}
+error = {}
+"bar.safe" = {}
+"bar.review" = {}
+"bar.protected" = {}
+"bar.track" = {}
+key = { bold = true }
+"key.label" = {}
+"level.current" = { bold = true }
+"level.other" = {}
+kept = {}

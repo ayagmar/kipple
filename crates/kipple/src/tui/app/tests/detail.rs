@@ -3,27 +3,37 @@
 
 use std::path::PathBuf;
 
-use kipple_core::FindingId;
+use kipple_core::{Advice, FindingId, IntegrationReport, ScanOutcome, ScanReport};
 
 use super::{
-    CARGO, colour, focus, found, measured, press, recent, safe, screen, sized, to, unknown_layout,
+    CARGO, PACMAN, colour, focus, found, home, measured, press, recent, safe, screen, sized, to,
+    unknown_layout,
 };
 use crate::tui::app::{App, Effect, Key, Msg, Node, Saved, Shelf};
 
 /// The detail pane's lines on an 80×24 screen, where it sits below the tree: between
-/// its top border and the two footer lines.
+/// the rule above it and the key bar's, inside the frame.
 fn pane(app: &App) -> Vec<String> {
     let shown = screen(app, colour(), 80, 24);
     let lines: Vec<&str> = shown.lines().collect();
-    let top = lines
-        .iter()
-        .position(|line| line.starts_with('─'))
-        .unwrap_or_else(|| panic!("no detail pane in {shown}"));
+    let rules: Vec<usize> = (0..lines.len())
+        .filter(|&at| lines.get(at).is_some_and(|line| line.starts_with('├')))
+        .collect();
+    let (Some(&top), Some(&bottom)) = (rules.get(1), rules.get(2)) else {
+        panic!("no detail pane in {shown}");
+    };
     lines
-        .get(top + 1..lines.len() - 2)
+        .get(top + 1..bottom)
         .unwrap_or_default()
         .iter()
-        .map(|&line| line.to_owned())
+        .map(|&line| {
+            let inside = line.trim_start_matches('│').trim_end_matches('│');
+            inside
+                .strip_prefix(' ')
+                .unwrap_or(inside)
+                .trim_end()
+                .to_owned()
+        })
         .collect()
 }
 
@@ -255,4 +265,68 @@ fn y_refuses_a_path_that_isnt_utf8_with_a_message() {
         "{:?}",
         app.notice
     );
+}
+
+/// The detail pane's lines at 160×48, where it sits right of the tree.
+fn beside(app: &App) -> Vec<String> {
+    screen(app, colour(), 160, 48)
+        .lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.split('│').collect();
+            // The frame's two sides and the line between the tree and the pane.
+            (parts.len() == 4).then(|| parts.get(2).map(|pane| (*pane).to_owned()))?
+        })
+        .collect()
+}
+
+// Catches a hold shown in the detail pane as a terse code (`unknown: layout`) instead of
+// the sentence that says what it means (F4).
+#[test]
+fn the_detail_pane_says_why_a_finding_is_held_in_sentences() {
+    let mut app = home();
+    to(&mut app, 3);
+
+    let words = beside(&app).join(" ");
+    let words: Vec<&str> = words.split_whitespace().collect();
+
+    let held = "kipple doesn't recognise what is inside, so it can't tell what is safe to \
+                remove. kipple can't tell what removing it would lose or how it would come \
+                back.";
+    assert!(words.join(" ").contains(held), "{words:?}");
+}
+
+// Catches a snippet that spans lines drawn as one line with a literal `\n` (F2).
+#[test]
+fn the_detail_pane_shows_each_line_of_an_advice_snippet_on_its_own_line() {
+    let mut app = home();
+    let report = ScanReport {
+        outcome: ScanOutcome::Completed,
+        integrations: vec![IntegrationReport {
+            id: PACMAN,
+            omissions: Vec::new(),
+            advice: vec![Advice {
+                title: "Keep less in the journal".to_owned(),
+                text: "journald keeps logs up to a size.".to_owned(),
+                snippets: vec!["[Journal]\nSystemMaxUse=200M".to_owned()],
+                references: Vec::new(),
+            }],
+        }],
+        findings: Vec::new(),
+        unchecked_system: 0,
+        by_command_line: 0,
+    };
+    app.update(Msg::Finished {
+        report: Box::new(report),
+        elapsed: std::time::Duration::from_secs(1),
+    });
+    to(&mut app, 5);
+
+    let pane = beside(&app);
+    assert!(!pane.iter().any(|line| line.contains("\\n")), "{pane:?}");
+    for wanted in ["[Journal]", "SystemMaxUse=200M"] {
+        assert!(
+            pane.iter().any(|line| line.trim() == wanted),
+            "{wanted}: {pane:?}"
+        );
+    }
 }

@@ -15,13 +15,35 @@ Commands:
   explain  Explain a rule, or what kipple found at a path and why. A path runs a scan
   doctor   Show where kipple looks, what it can read and which tools it found. Read-only
   config   Show where the config file is, or what it says
+  theme    List the themes, print one as a theme file, or show where your own themes go
   help     Print this message or the help of the given subcommand(s)
 
 Options:
-      --config <FILE>  Read the config from this file instead of `KIPPLE_CONFIG` or the default location
-      --ascii          Draw the home screen with ASCII characters only
-  -h, --help           Print help
-  -V, --version        Print version
+      --config <FILE>
+          Read the config from this file instead of `KIPPLE_CONFIG` or the default location
+
+      --theme <NAME>
+          Draw with this theme instead of the config's `ui.theme`: a built-in or one of yours (`kipple theme list`)
+
+      --color <WHEN>
+          When to use colour. `auto`: when the output is a terminal and `NO_COLOR` isn't set
+
+          Possible values:
+          - auto:   When the output is a terminal and `NO_COLOR` isn't set
+          - always: Always, even when piped or under `NO_COLOR`
+          - never:  Never
+
+      --no-color
+          The same as `--color never`
+
+      --ascii
+          Draw the home screen with ASCII characters only
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 
 Without a command, kipple opens the home screen in a terminal, or prints a summary when its output isn't a terminal. Read-only: nothing is changed.
 ```
@@ -54,6 +76,17 @@ Options:
       --root <PATH>
           Scan this project root instead of the defaults. Repeat for several
 
+      --theme <NAME>
+          Draw with this theme instead of the config's `ui.theme`: a built-in or one of yours (`kipple theme list`)
+
+      --color <WHEN>
+          When to use colour. `auto`: when the output is a terminal and `NO_COLOR` isn't set
+
+          Possible values:
+          - auto:   When the output is a terminal and `NO_COLOR` isn't set
+          - always: Always, even when piped or under `NO_COLOR`
+          - never:  Never
+
       --json
           Print one JSON envelope when the scan finishes
 
@@ -62,6 +95,9 @@ Options:
 
           Possible values:
           - jsonl: One JSON object per line
+
+      --no-color
+          The same as `--color never`
 
   -h, --help
           Print help (see a summary with '-h')
@@ -75,9 +111,28 @@ List the integrations and rules, and which of them run on this OS
 Usage: kipple rules [OPTIONS]
 
 Options:
-      --config <FILE>  Read the config from this file instead of `KIPPLE_CONFIG` or the default location
-      --json           Print one JSON envelope, with the capability catalog rules may use
-  -h, --help           Print help
+      --config <FILE>
+          Read the config from this file instead of `KIPPLE_CONFIG` or the default location
+
+      --json
+          Print one JSON envelope, with the capability catalog rules may use
+
+      --theme <NAME>
+          Draw with this theme instead of the config's `ui.theme`: a built-in or one of yours (`kipple theme list`)
+
+      --color <WHEN>
+          When to use colour. `auto`: when the output is a terminal and `NO_COLOR` isn't set
+
+          Possible values:
+          - auto:   When the output is a terminal and `NO_COLOR` isn't set
+          - always: Always, even when piped or under `NO_COLOR`
+          - never:  Never
+
+      --no-color
+          The same as `--color never`
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 ## `kipple explain --help`
@@ -88,11 +143,29 @@ Explain a rule, or what kipple found at a path and why. A path runs a scan
 Usage: kipple explain [OPTIONS] <TARGET>
 
 Arguments:
-  <TARGET>  A rule ID such as `builtin.cargo.target`, or a path
+  <TARGET>
+          A rule ID such as `builtin.cargo.target`, or a path
 
 Options:
-      --config <FILE>  Read the config from this file instead of `KIPPLE_CONFIG` or the default location
-  -h, --help           Print help
+      --config <FILE>
+          Read the config from this file instead of `KIPPLE_CONFIG` or the default location
+
+      --theme <NAME>
+          Draw with this theme instead of the config's `ui.theme`: a built-in or one of yours (`kipple theme list`)
+
+      --color <WHEN>
+          When to use colour. `auto`: when the output is a terminal and `NO_COLOR` isn't set
+
+          Possible values:
+          - auto:   When the output is a terminal and `NO_COLOR` isn't set
+          - always: Always, even when piped or under `NO_COLOR`
+          - never:  Never
+
+      --no-color
+          The same as `--color never`
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 ## `kipple doctor --help`
@@ -103,9 +176,28 @@ Show where kipple looks, what it can read and which tools it found. Read-only
 Usage: kipple doctor [OPTIONS]
 
 Options:
-      --config <FILE>  Read the config from this file instead of `KIPPLE_CONFIG` or the default location
-      --json           Print one JSON envelope
-  -h, --help           Print help
+      --config <FILE>
+          Read the config from this file instead of `KIPPLE_CONFIG` or the default location
+
+      --json
+          Print one JSON envelope
+
+      --theme <NAME>
+          Draw with this theme instead of the config's `ui.theme`: a built-in or one of yours (`kipple theme list`)
+
+      --color <WHEN>
+          When to use colour. `auto`: when the output is a terminal and `NO_COLOR` isn't set
+
+          Possible values:
+          - auto:   When the output is a terminal and `NO_COLOR` isn't set
+          - always: Always, even when piped or under `NO_COLOR`
+          - never:  Never
+
+      --no-color
+          The same as `--color never`
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
 
 ## `kipple config --help`
@@ -121,6 +213,58 @@ Commands:
   help  Print this message or the help of the given subcommand(s)
 
 Options:
-      --config <FILE>  Read the config from this file instead of `KIPPLE_CONFIG` or the default location
-  -h, --help           Print help
+      --config <FILE>
+          Read the config from this file instead of `KIPPLE_CONFIG` or the default location
+
+      --theme <NAME>
+          Draw with this theme instead of the config's `ui.theme`: a built-in or one of yours (`kipple theme list`)
+
+      --color <WHEN>
+          When to use colour. `auto`: when the output is a terminal and `NO_COLOR` isn't set
+
+          Possible values:
+          - auto:   When the output is a terminal and `NO_COLOR` isn't set
+          - always: Always, even when piped or under `NO_COLOR`
+          - never:  Never
+
+      --no-color
+          The same as `--color never`
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## `kipple theme --help`
+
+```text
+List the themes, print one as a theme file, or show where your own themes go
+
+Usage: kipple theme [OPTIONS] <COMMAND>
+
+Commands:
+  list  List the built-in themes and yours, with where each comes from
+  show  Print a theme as a complete theme file, with what it extends written out, to start your own from
+  path  Print the directory your own themes go in, one `NAME.toml` each
+  help  Print this message or the help of the given subcommand(s)
+
+Options:
+      --config <FILE>
+          Read the config from this file instead of `KIPPLE_CONFIG` or the default location
+
+      --theme <NAME>
+          Draw with this theme instead of the config's `ui.theme`: a built-in or one of yours (`kipple theme list`)
+
+      --color <WHEN>
+          When to use colour. `auto`: when the output is a terminal and `NO_COLOR` isn't set
+
+          Possible values:
+          - auto:   When the output is a terminal and `NO_COLOR` isn't set
+          - always: Always, even when piped or under `NO_COLOR`
+          - never:  Never
+
+      --no-color
+          The same as `--color never`
+
+  -h, --help
+          Print help (see a summary with '-h')
 ```
