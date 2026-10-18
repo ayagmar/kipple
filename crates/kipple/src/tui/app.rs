@@ -290,6 +290,9 @@ pub(crate) struct App {
     cursor: Option<Node>,
     /// Where the cursor was, for when its line goes away.
     hint: usize,
+    /// The line the cursor was on when the filter, help, settings or a note opened, to
+    /// go back to when it closes.
+    anchor: Option<Node>,
     pub(crate) scroll: usize,
     /// The line the detail pane was scrolled on and the first line it shows there. Any
     /// other line's detail starts at the top, and so does this one's once the cursor moves.
@@ -332,6 +335,7 @@ impl App {
             pending: None,
             cursor: None,
             hint: 0,
+            anchor: None,
             scroll: 0,
             detail_scroll: None,
             width,
@@ -351,7 +355,10 @@ impl App {
             }
             Msg::Scan(event) => self.scan_event(*event),
             Msg::Finished { report, elapsed } => self.finished(*report, elapsed),
-            Msg::Saved(saved) => self.saved(*saved),
+            Msg::Saved(saved) => {
+                self.saved(*saved);
+                self.settle();
+            }
             Msg::NotSaved(error) => self.not_saved(&error),
             Msg::Suggested(found) => self.suggested(*found),
         }
@@ -369,11 +376,17 @@ impl App {
     /// The tree as it is shown now: filtered, grouped and sorted, without what is
     /// collapsed.
     pub(crate) fn lines(&self) -> Vec<Line> {
+        self.tree(false)
+    }
+
+    /// The tree's lines: as shown, or `whole`, with every finding, unfiltered and
+    /// unfolded.
+    fn tree(&self, whole: bool) -> Vec<Line> {
         let mut groups: BTreeMap<(Node, Node), Vec<&Row>> = BTreeMap::new();
         for top in Self::tops() {
             groups.entry((top, top)).or_default();
         }
-        for row in self.rows.iter().filter(|row| self.shown(row)) {
+        for row in self.rows.iter().filter(|row| whole || self.shown(row)) {
             groups.entry(Self::place(row)).or_default().push(row);
         }
         let mut lines = Vec::new();
@@ -386,18 +399,18 @@ impl App {
                 });
                 last_top = Some(top);
             }
-            if group == top || self.is_collapsed(top) {
+            if group == top || (!whole && self.is_collapsed(top)) {
                 continue;
             }
             lines.push(Line {
                 node: group,
                 depth: 1,
             });
-            if self.is_collapsed(group) {
+            if !whole && self.is_collapsed(group) {
                 continue;
             }
             if let Node::Group(shelf, lens) = group {
-                lines.extend(self.group_lines((shelf, lens), rows));
+                lines.extend(self.group_lines((shelf, lens), rows, whole));
             }
         }
         self.gap_lines(&mut lines);
@@ -558,6 +571,7 @@ impl App {
             return;
         }
         let before = self.cursor;
+        let was = self.mode;
         match self.mode {
             Mode::Help => self.mode = Mode::Browse,
             Mode::Filter => self.filter_key(key),
@@ -571,6 +585,7 @@ impl App {
                 self.browse_key(key);
             }
         }
+        self.follow(was, key);
         self.settle();
         // Before the first key the cursor has no line yet, and nothing has scrolled.
         if before.is_some() && self.cursor != before {
@@ -852,14 +867,64 @@ impl App {
         };
     }
 
-    /// Keeps the cursor on a line that exists and in view.
+    /// Remembers the cursor's line when the filter, help, settings or a note opens, and
+    /// puts the cursor back on it when that closes, except that `enter` in the filter
+    /// keeps the line the cursor is on.
+    fn follow(&mut self, was: Mode, key: Key) {
+        match (was, self.mode) {
+            (Mode::Browse, Mode::Browse) => {}
+            (Mode::Browse, _) => self.anchor = self.focus(),
+            (Mode::Filter, Mode::Browse) if key == Key::Enter => self.anchor = None,
+            (_, Mode::Browse) => {
+                if let Some(anchor) = self.anchor.take() {
+                    self.cursor = Some(anchor);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Keeps the cursor on a line that exists and in view. When its line is no longer
+    /// shown, it moves to the nearest finding shown before it in the whole tree, else
+    /// after it, never to a heading it wasn't on; with no finding shown, it stays on that
+    /// line to come back to it, and the screen shows the line where it was.
     fn settle(&mut self) {
         let lines = self.lines();
+        if let Some(gone) = self
+            .cursor
+            .filter(|&node| !lines.iter().any(|line| line.node == node))
+            && let Some(near) = self.nearest(gone, &lines)
+        {
+            self.cursor = Some(near);
+        }
         let at = self.cursor_index(&lines);
-        self.cursor = lines.get(at).map(|line| line.node);
+        if self.cursor.is_none() {
+            self.cursor = lines.get(at).map(|line| line.node);
+        }
         self.hint = at;
         let rows = super::view::list_rows(self.width, self.height);
         self.scroll = super::view::offset(self.scroll, at, rows, lines.len());
+    }
+
+    /// The finding shown in `lines` that comes nearest before `gone` in the whole tree,
+    /// else nearest after it. A line the whole tree no longer has (a project left with
+    /// one finding there) is looked for from where the cursor was shown.
+    fn nearest(&self, gone: Node, lines: &[Line]) -> Option<Node> {
+        let finding = |node: &Node| matches!(node, Node::Finding(_));
+        let shown: BTreeSet<Node> = lines.iter().map(|line| line.node).filter(finding).collect();
+        let whole: Vec<Node> = self.tree(true).iter().map(|line| line.node).collect();
+        let here: Vec<Node> = lines.iter().map(|line| line.node).collect();
+        let (order, at) = whole
+            .iter()
+            .position(|&node| node == gone)
+            .map_or_else(|| (&here, self.hint.min(here.len())), |at| (&whole, at));
+        let (before, after) = order.split_at(at);
+        before
+            .iter()
+            .rev()
+            .chain(after)
+            .find(|node| shown.contains(node))
+            .copied()
     }
 }
 

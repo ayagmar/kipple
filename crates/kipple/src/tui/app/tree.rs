@@ -131,8 +131,14 @@ struct Entry<'a> {
 }
 
 impl App {
-    /// The lines of the group `(bucket, lens)` holding `rows`, sorted, below its heading.
-    pub(super) fn group_lines(&self, group: (Shelf, Lens), rows: Vec<&Row>) -> Vec<Line> {
+    /// The lines of the group `(bucket, lens)` holding `rows`, sorted, below its heading;
+    /// `whole` unfolds every project.
+    pub(super) fn group_lines(
+        &self,
+        group: (Shelf, Lens),
+        rows: Vec<&Row>,
+        whole: bool,
+    ) -> Vec<Line> {
         let mut projects: BTreeMap<ProjectId, Vec<&Row>> = BTreeMap::new();
         let mut entries = Vec::new();
         for row in rows {
@@ -155,7 +161,7 @@ impl App {
                 node: entry.node,
                 depth: 2,
             });
-            if self.is_collapsed(entry.node) {
+            if !whole && self.is_collapsed(entry.node) {
                 continue;
             }
             entry

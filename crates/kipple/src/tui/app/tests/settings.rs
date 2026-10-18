@@ -13,10 +13,11 @@ use kipple_core::{
 use ratatui::style::Color;
 
 use super::{
-    CARGO, DAY, NODE, colour, draw, found, home, measured, press, safe, screen, selected, to, typed,
+    CARGO, DAY, NODE, colour, draw, focus, found, home, measured, press, safe, screen, selected,
+    to, typed,
 };
 use crate::config::{self, Catalog, Config, Loaded, Location, Settings, Source};
-use crate::tui::app::{App, Effect, Key, Mode, Msg, Saved, Shelf};
+use crate::tui::app::{App, Effect, Key, Mode, Msg, Node, Saved, Shelf};
 use crate::tui::settings::{Found, Search};
 use crate::tui::view::Look;
 
@@ -435,6 +436,29 @@ fn the_default_method_is_stored() {
 }
 
 // Catches esc in the note prompt keeping the finding anyway.
+// Catches a kept finding that moves into a folded bucket leaving the cursor on the line
+// that takes its place, a bucket heading, instead of the nearest finding before it (F5).
+#[test]
+fn a_finding_kept_into_a_folded_bucket_leaves_the_cursor_on_the_finding_before_it() {
+    let disk = Disk::new();
+    let mut app = screen_on(&disk, Config::default());
+    let protected = Some(Node::Shelf(Shelf::Protected));
+    for _ in 0..app.lines().len() {
+        if focus(&app) != protected {
+            press(&mut app, &[Key::Down]);
+        }
+    }
+    assert_eq!(focus(&app), protected);
+    press(&mut app, &[Key::Char('h'), Key::Char('g')]);
+    to(&mut app, 2);
+
+    press(&mut app, &[Key::Char('p'), Key::Enter]);
+    assert_eq!(disk.run(&mut app), []);
+
+    assert_eq!(shelf(&app, 2), Shelf::Protected);
+    assert_eq!(focus(&app), Some(Node::Finding(kipple_core::FindingId(1))));
+}
+
 #[test]
 fn esc_at_the_note_keeps_nothing_and_writes_nothing() {
     let disk = Disk::new();
@@ -529,7 +553,7 @@ fn a_leaves_recent_findings_out() {
     let review = app
         .lines()
         .iter()
-        .position(|line| line.node == super::Node::Shelf(Shelf::Review))
+        .position(|line| line.node == Node::Shelf(Shelf::Review))
         .unwrap();
     press(&mut app, &vec![Key::Down; review]);
     press(&mut app, &[Key::Char('a')]);

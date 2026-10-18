@@ -258,6 +258,7 @@ impl App {
         self.progress = Progress::Scanning;
         self.cursor = None;
         self.hint = 0;
+        self.anchor = None;
         self.scroll = 0;
         // A finding's number only holds within one scan, so the line scrolled on is gone.
         self.detail_scroll = None;

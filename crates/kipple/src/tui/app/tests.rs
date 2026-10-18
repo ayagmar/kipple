@@ -450,6 +450,40 @@ fn enter_keeps_the_filter_and_esc_clears_it() {
     assert_eq!(findings(&app), [1, 4, 2, 3, 5]);
 }
 
+// Catches `esc` leaving the cursor on whatever line took its place while typing (F5),
+// instead of on the line where `/` was pressed.
+#[test]
+fn esc_in_the_filter_puts_the_cursor_back_where_slash_was_pressed() {
+    let mut app = home();
+    to(&mut app, 4);
+
+    press(&mut app, &[Key::Char('/')]);
+    typed(&mut app, "web");
+    press(&mut app, &[Key::Esc]);
+
+    assert_eq!(focus(&app), Some(Node::Finding(FindingId(4))));
+}
+
+// Catches a line the filter hides handing the cursor to the line that takes its place
+// (F5), a bucket heading, instead of the nearest finding before it, else after it.
+#[test]
+fn a_line_the_filter_hides_moves_the_cursor_to_the_nearest_finding() {
+    let mut app = home();
+    to(&mut app, 4);
+    press(&mut app, &[Key::Char('/')]);
+    typed(&mut app, "target");
+    assert_eq!(focus(&app), Some(Node::Finding(FindingId(1))), "before");
+    press(&mut app, &[Key::Enter]);
+    assert_eq!(focus(&app), Some(Node::Finding(FindingId(1))), "enter");
+    press(&mut app, &[Key::Esc]);
+    assert_eq!(focus(&app), Some(Node::Finding(FindingId(1))), "cleared");
+
+    // Nothing is shown before the first finding.
+    press(&mut app, &[Key::Char('/')]);
+    typed(&mut app, "bunapp");
+    assert_eq!(focus(&app), Some(Node::Finding(FindingId(3))), "after");
+}
+
 // Catches the filter matching the native path, so on Windows `rust-app/target`, as the
 // tree writes paths, matches nothing; and a query typed with `\\` there missing too.
 #[test]
