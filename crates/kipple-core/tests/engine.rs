@@ -16,10 +16,11 @@ use kipple_core::{
     Consequence, Cost, DirEntryMeta, Engine, EngineError, EntryKind, EntryMeta, EventRx, Evidence,
     Facts, FileIdentity, FindingSink, FsProbe, Hold, Integration, IntegrationDescriptor,
     IntegrationError, IntegrationId, Inventory, Lens, Level, Measurement, Method, Modified, Name,
-    Omission, Operation, Platform, Ports, ProbeError, ProcessOutcome, ProcessProbe, ProcessRecord,
-    ProcessSnapshot, Recovery, ResolvedRoot, RootLink, RootSource, Roots, Rule, RuleId, RuleText,
-    ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Selector, Sizer, SpaceEstimate,
-    SymbolicRoot, Tracked, UnresolvedRoot, Verdict, classify, event_channel,
+    Observer, Omission, Operation, Platform, Policy, Ports, ProbeError, ProcessOutcome,
+    ProcessProbe, ProcessRecord, ProcessSnapshot, Recovery, ResolvedRoot, RootLink, RootSource,
+    Roots, Rule, RuleId, RuleText, ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest,
+    Selector, Sizer, SpaceEstimate, SymbolicRoot, Tracked, UnresolvedRoot, Verdict, WalkGap,
+    event_channel,
 };
 
 /// Ten times the 100 ms cancellation budget: long enough not to flake on a loaded CI
@@ -159,7 +160,6 @@ const fn measured(size: SpaceEstimate) -> Measurement {
         size,
         modified: Some(NOW),
         repository: None,
-        skipped_mount: false,
     }
 }
 
@@ -191,6 +191,7 @@ const fn no_processes() -> FakeProcesses {
     FakeProcesses(Ok(ProcessSnapshot {
         processes: Vec::new(),
         inventory: Inventory::Complete,
+        observer: Observer::PLAIN,
     }))
 }
 
@@ -305,7 +306,11 @@ impl Integration for Emitter {
 fn found() -> ScanRequest {
     let mut roots = Roots::default();
     insert(&mut roots, SymbolicRoot::XdgCache, FOUND);
-    ScanRequest { roots, lens: None }
+    ScanRequest {
+        roots,
+        lens: None,
+        exclude: Vec::new(),
+    }
 }
 
 #[expect(
@@ -567,7 +572,14 @@ fn roots_that_cannot_be_read_are_omissions_and_are_never_handed_to_the_integrati
     )
     .unwrap();
 
-    let report = run(&engine, &ScanRequest { roots, lens: None });
+    let report = run(
+        &engine,
+        &ScanRequest {
+            roots,
+            lens: None,
+            exclude: Vec::new(),
+        },
+    );
 
     assert_eq!(*seen.lock().unwrap(), [PathBuf::from("/home")]);
     let omissions = &report.integrations[0].omissions;
@@ -624,7 +636,14 @@ fn an_integration_can_neither_probe_nor_report_anything_outside_its_roots() {
     )
     .unwrap();
 
-    let report = run(&engine, &ScanRequest { roots, lens: None });
+    let report = run(
+        &engine,
+        &ScanRequest {
+            roots,
+            lens: None,
+            exclude: Vec::new(),
+        },
+    );
 
     assert_eq!(
         *probes.lock().unwrap(),
@@ -757,7 +776,14 @@ fn a_root_resolved_through_a_link_is_read_only_while_it_leads_to_the_same_direct
     )
     .unwrap();
 
-    let report = run(&engine, &ScanRequest { roots, lens: None });
+    let report = run(
+        &engine,
+        &ScanRequest {
+            roots,
+            lens: None,
+            exclude: Vec::new(),
+        },
+    );
 
     assert_eq!(*seen.lock().unwrap(), [PathBuf::from("/same")]);
     assert!(matches!(
@@ -861,7 +887,14 @@ fn project_artifacts_are_found_in_one_walk_that_never_looks_inside_one_or_goes_t
     ];
     let engine = Engine::new(ports(fs, FakeSizer::default()), integrations, rules).unwrap();
 
-    let report = run(&engine, &ScanRequest { roots, lens: None });
+    let report = run(
+        &engine,
+        &ScanRequest {
+            roots,
+            lens: None,
+            exclude: Vec::new(),
+        },
+    );
 
     let found: Vec<_> = report
         .findings
@@ -1021,25 +1054,34 @@ fn a_git_directory_in_or_above_a_finding_leaves_what_it_tracks_unknown() {
 
 #[test]
 fn a_program_running_from_a_finding_marks_it_in_use_and_any_unidentified_one_unknown() {
-    let identified = |pid, path: &str| ProcessRecord {
-        pid,
-        outcome: ProcessOutcome::Identified {
+    let identified = |pid, path: &str| {
+        let outcome = ProcessOutcome::Identified {
             path: PathBuf::from(path),
             identity: FileIdentity {
                 volume: 1,
                 file: u64::from(pid),
             },
             deleted: false,
-        },
+        };
+        // Everything else it could show is read too, since the proposer declares no
+        // narrower evidence: it was started by its own path.
+        ProcessRecord {
+            cwd: Ok(PathBuf::from("/")),
+            argv: Ok(vec![path.into()]),
+            env_paths: Ok(Vec::new()),
+            mapped_files: Ok(Vec::new()),
+            ..ProcessRecord::new(pid, outcome)
+        }
     };
-    let denied = ProcessRecord {
-        pid: 1,
-        outcome: ProcessOutcome::Denied(Arc::new(io::ErrorKind::PermissionDenied.into())),
-    };
+    let denied = ProcessRecord::new(
+        1,
+        ProcessOutcome::Denied(Arc::new(io::ErrorKind::PermissionDenied.into())),
+    );
     let snapshot = |processes, inventory| {
         FakeProcesses(Ok(ProcessSnapshot {
             processes,
             inventory,
+            observer: Observer::PLAIN,
         }))
     };
     let activity = |processes: FakeProcesses| {
@@ -1103,7 +1145,6 @@ fn only_a_complete_measurement_dates_a_finding_and_a_future_time_counts_as_now()
                 },
                 modified: Some(at),
                 repository: None,
-                skipped_mount: false,
             }),
             ..FakeSizer::default()
         };
@@ -1120,7 +1161,10 @@ fn only_a_complete_measurement_dates_a_finding_and_a_future_time_counts_as_now()
             .map(|facts| facts.modified)
     };
     let day = Duration::from_hours(24);
-    let incomplete = Completeness::Incomplete { unreadable: 1 };
+    let incomplete = Completeness::Incomplete {
+        unreadable: 1,
+        skipped_mounts: 0,
+    };
 
     assert_eq!(
         modified(Completeness::Complete, NOW - 3 * day),
@@ -1130,7 +1174,10 @@ fn only_a_complete_measurement_dates_a_finding_and_a_future_time_counts_as_now()
         modified(Completeness::Complete, NOW + day),
         Some(Modified::Ago(Duration::ZERO))
     );
-    assert_eq!(modified(incomplete, NOW - 3 * day), Some(Modified::Unknown));
+    assert_eq!(
+        modified(incomplete, NOW - 3 * day),
+        Some(Modified::Unknown(WalkGap::Unread))
+    );
 }
 
 #[test]
@@ -1157,7 +1204,10 @@ fn a_checkout_inside_a_finding_holds_it_and_an_incomplete_walk_cant_rule_one_out
         ..measured(SIZE)
     };
     let unreadable = measured(SpaceEstimate {
-        completeness: Completeness::Incomplete { unreadable: 1 },
+        completeness: Completeness::Incomplete {
+            unreadable: 1,
+            skipped_mounts: 0,
+        },
         ..SIZE
     });
 
@@ -1174,7 +1224,10 @@ fn a_checkout_inside_a_finding_holds_it_and_an_incomplete_walk_cant_rule_one_out
         tracked(unreadable_after_checkout),
         Some(Tracked::HoldsRepository { .. })
     ));
-    assert!(matches!(tracked(unreadable), Some(Tracked::Unwalked)));
+    assert!(matches!(
+        tracked(unreadable),
+        Some(Tracked::Unwalked(WalkGap::Unread))
+    ));
     assert!(matches!(
         tracked(measured(SIZE)),
         Some(Tracked::NoRepository)
@@ -1186,8 +1239,49 @@ fn a_mount_the_walk_skipped_inside_a_finding_holds_it_for_git_and_last_change() 
     // A bind mount or btrfs subvolume below the finding could hold a checkout or recent
     // files the walk never saw.
     let sizer = FakeSizer {
+        measurement: Some(measured(SpaceEstimate {
+            completeness: Completeness::Incomplete {
+                unreadable: 0,
+                skipped_mounts: 1,
+            },
+            ..SIZE
+        })),
+        ..FakeSizer::default()
+    };
+    let fs = FakeFs {
+        no_git: true,
+        ..FakeFs::default()
+    };
+    let proposer = Proposer {
+        paths: &["/found/target"],
+    };
+
+    let facts = facts(ports(fs, sizer), proposer)
+        .remove(Path::new("/found/target"))
+        .unwrap();
+
+    // The reason names the mount, not an unreadable entry.
+    assert!(matches!(
+        facts.tracked,
+        Tracked::Unwalked(WalkGap::OtherFileSystem)
+    ));
+    assert_eq!(facts.modified, Modified::Unknown(WalkGap::OtherFileSystem));
+    let rule = RuleId("test.found".to_owned());
+    let at = Path::new("/found/target");
+    let Verdict::Protected(holds) = Policy::at(Level::Balanced).verdict(&rule, at, &facts) else {
+        panic!("a finding with a skipped mount is never Safe or Review");
+    };
+    assert!(holds.contains(&Hold::UnknownGit));
+    assert!(holds.contains(&Hold::UnknownModified));
+}
+
+#[test]
+fn a_complete_walk_with_an_entry_without_a_time_leaves_only_the_last_change_unknown() {
+    // Every entry was read, so git is settled; only the time is missing, and the
+    // reason says so instead of claiming something couldn't be read.
+    let sizer = FakeSizer {
         measurement: Some(Measurement {
-            skipped_mount: true,
+            modified: None,
             ..measured(SIZE)
         }),
         ..FakeSizer::default()
@@ -1204,11 +1298,6 @@ fn a_mount_the_walk_skipped_inside_a_finding_holds_it_for_git_and_last_change() 
         .remove(Path::new("/found/target"))
         .unwrap();
 
-    assert!(matches!(facts.tracked, Tracked::Unwalked));
-    assert_eq!(facts.modified, Modified::Unknown);
-    let Verdict::Protected(holds) = classify(&facts, Level::Balanced) else {
-        panic!("a finding with a skipped mount is never Safe or Review");
-    };
-    assert!(holds.contains(&Hold::UnknownGit));
-    assert!(holds.contains(&Hold::UnknownModified));
+    assert!(matches!(facts.tracked, Tracked::NoRepository));
+    assert_eq!(facts.modified, Modified::Unknown(WalkGap::Untimed));
 }

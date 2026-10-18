@@ -12,7 +12,7 @@ fn main() -> ExitCode {
     let env = Environment::from_vars(std::env::vars_os());
     // Only a terminal gets the home screen; anything else gets the printed summary.
     if cli.command.is_none() && io::stdout().is_terminal() {
-        return kipple::home(&cli.home, &env, &mut io::stderr().lock());
+        return kipple::home(&cli, &env, &mut io::stderr().lock());
     }
     kipple::run(
         &cli,

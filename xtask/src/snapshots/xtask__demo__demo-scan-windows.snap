@@ -5,6 +5,10 @@ expression: "serde_json::to_string_pretty(&report)?"
 {
   "findings": [
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "build-artifact",
       "consequence": {
         "cost": "unknown",
@@ -25,6 +29,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "cargo",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/clients/acme/api/target"
       },
@@ -41,6 +46,10 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "build-artifact",
       "consequence": {
         "cost": "unknown",
@@ -61,6 +70,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "cargo",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/rust-app/target"
       },
@@ -77,6 +87,11 @@ expression: "serde_json::to_string_pretty(&report)?"
       }
     },
     {
+      "activity": {
+        "message": "this OS doesn't show which paths running programs use, beyond their executable",
+        "reason": "unsupported",
+        "state": "unknown"
+      },
       "category": "dependency-install",
       "consequence": null,
       "evidence": [
@@ -90,6 +105,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "node",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/bunapp/node_modules"
       },
@@ -104,11 +120,17 @@ expression: "serde_json::to_string_pretty(&report)?"
         "bucket": "protected",
         "reasons": [
           "unknown-layout",
-          "unknown-consequence"
+          "unknown-consequence",
+          "unknown-activity"
         ]
       }
     },
     {
+      "activity": {
+        "message": "this OS doesn't show which paths running programs use, beyond their executable",
+        "reason": "unsupported",
+        "state": "unknown"
+      },
       "category": "dependency-install",
       "consequence": {
         "cost": "unknown",
@@ -129,6 +151,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "node",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/dash/node_modules"
       },
@@ -140,11 +163,18 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unique_reclaim": "[redacted]"
       },
       "verdict": {
-        "bucket": "safe",
-        "reasons": []
+        "bucket": "protected",
+        "reasons": [
+          "unknown-activity"
+        ]
       }
     },
     {
+      "activity": {
+        "message": "this OS doesn't show which paths running programs use, beyond their executable",
+        "reason": "unsupported",
+        "state": "unknown"
+      },
       "category": "dependency-install",
       "consequence": {
         "cost": "unknown",
@@ -165,6 +195,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "node",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/web/node_modules"
       },
@@ -176,13 +207,18 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unique_reclaim": "[redacted]"
       },
       "verdict": {
-        "bucket": "review",
+        "bucket": "protected",
         "reasons": [
-          "recent"
+          "unknown-activity"
         ]
       }
     },
     {
+      "activity": {
+        "message": "this OS doesn't show which paths running programs use, beyond their executable",
+        "reason": "unsupported",
+        "state": "unknown"
+      },
       "category": "cache",
       "consequence": {
         "cost": "low",
@@ -199,6 +235,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "python",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/tool/pkg/__pycache__"
       },
@@ -210,11 +247,18 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unique_reclaim": "[redacted]"
       },
       "verdict": {
-        "bucket": "safe",
-        "reasons": []
+        "bucket": "protected",
+        "reasons": [
+          "unknown-activity"
+        ]
       }
     },
     {
+      "activity": {
+        "message": "this OS doesn't show which paths running programs use, beyond their executable",
+        "reason": "unsupported",
+        "state": "unknown"
+      },
       "category": "dependency-install",
       "consequence": {
         "cost": "unknown",
@@ -235,6 +279,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "python",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/tool/.venv"
       },
@@ -246,11 +291,18 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unique_reclaim": "[redacted]"
       },
       "verdict": {
-        "bucket": "safe",
-        "reasons": []
+        "bucket": "protected",
+        "reasons": [
+          "unknown-activity"
+        ]
       }
     },
     {
+      "activity": {
+        "message": "this OS doesn't show which paths running programs use, beyond their executable",
+        "reason": "unsupported",
+        "state": "unknown"
+      },
       "category": "dependency-install",
       "consequence": {
         "cost": "unknown",
@@ -271,6 +323,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       ],
       "integration": "python",
       "lens": "dev",
+      "level": "balanced",
       "path": {
         "display": "<demo>/home/projects/uvproj/.venv"
       },
@@ -282,8 +335,10 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unique_reclaim": "[redacted]"
       },
       "verdict": {
-        "bucket": "safe",
-        "reasons": []
+        "bucket": "protected",
+        "reasons": [
+          "unknown-activity"
+        ]
       }
     }
   ],
@@ -329,5 +384,6 @@ expression: "serde_json::to_string_pretty(&report)?"
   "level": "balanced",
   "outcome": "completed",
   "platform": "windows",
-  "schema": "kipple.scan/v1"
+  "schema": "kipple.scan/v1",
+  "unchecked_system_processes": 0
 }

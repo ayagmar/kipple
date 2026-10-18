@@ -23,6 +23,7 @@ schemars.workspace = true
 semver.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+toml_edit.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
@@ -30,6 +31,14 @@ tempfile.workspace = true
 
 [[test]]
 name = "scan"
+required-features = ["test-roots"]
+
+[[test]]
+name = "config"
+required-features = ["test-roots"]
+
+[[test]]
+name = "onboarding"
 required-features = ["test-roots"]
 
 [lints]

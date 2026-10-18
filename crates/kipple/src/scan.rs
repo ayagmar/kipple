@@ -1,39 +1,39 @@
 //! `kipple scan` (`docs/03-functional-spec.md` §3 and §4): human output, one `--json`
 //! envelope, or the `--events jsonl` stream. Read-only.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::thread;
 
 use kipple_core::{
-    CancelToken, Engine, IntegrationId, Lens, ScanEvent, ScanReport, ScanRequest, Sequenced,
-    classify, event_channel,
+    CancelToken, Engine, FindingId, IntegrationId, Lens, Policy, RuleId, ScanEvent, ScanReport,
+    ScanRequest, Sequenced, event_channel,
 };
-use kipple_platform::{Environment, resolve_roots};
 
+use crate::config::Settings;
 use crate::human::{bytes, escaped, size};
 use crate::json::{
-    BucketOut, EVENT, EventBody, EventOut, FindingOut, LEVEL, LensOut, OmissionOut, PathOut,
-    ScanOut, SizeOut, VerdictOut,
+    BucketOut, EVENT, EventBody, EventOut, FindingOut, LensOut, OmissionOut, PathOut, ScanOut,
+    SizeOut, VerdictOut,
 };
 
 /// How many undelivered events the stream holds before the scan waits.
 const STREAM_CAPACITY: usize = 256;
 
-/// Runs a scan of `roots` (or the default project roots) over `engine`, passing each
-/// event to `on_event` as it arrives. When `on_event` fails, the scan is cancelled and
-/// its error returned with the partial report.
+/// Runs a scan of the roots of `settings` over `engine`, never entering a path the config
+/// excludes, passing each event to `on_event` as it arrives. When `on_event` fails, the
+/// scan is cancelled and its error returned with the partial report.
 pub(crate) fn run(
     engine: &Engine,
-    env: &Environment,
-    roots: &[PathBuf],
+    settings: &Settings,
     lens: Option<Lens>,
     on_event: &mut dyn FnMut(Sequenced) -> io::Result<()>,
 ) -> (ScanReport, io::Result<()>) {
     let request = ScanRequest {
-        roots: resolve_roots(env, roots),
+        roots: settings.roots.clone(),
         lens,
+        exclude: settings.policy.exclude.clone(),
     };
     let cancel = CancelToken::new();
     let (events, mut received) = event_channel(STREAM_CAPACITY, &cancel);
@@ -55,17 +55,29 @@ pub(crate) fn run(
             outcome: kipple_core::ScanOutcome::Cancelled,
             integrations: Vec::new(),
             findings: Vec::new(),
+            unchecked_system: 0,
+            by_command_line: 0,
         });
         (report, delivered)
     })
+}
+
+/// What the event stream needs to write each event: each finding's verdict comes from the
+/// policy, with the rule and path its `FindingAdded` record carried.
+#[derive(Debug)]
+pub(crate) struct Stream<'a> {
+    pub(crate) lenses: &'a BTreeMap<IntegrationId, Lens>,
+    pub(crate) policy: &'a Policy,
+    pub(crate) found: HashMap<FindingId, (RuleId, PathBuf)>,
 }
 
 /// Writes each event as one JSONL record.
 pub(crate) fn write_event(
     out: &mut dyn Write,
     sequenced: &Sequenced,
-    lenses: &BTreeMap<IntegrationId, Lens>,
+    stream: &mut Stream<'_>,
 ) -> io::Result<()> {
+    let lenses = stream.lenses;
     let lens = |id| lenses.get(&id).copied().unwrap_or(Lens::System);
     let event = match &sequenced.event {
         ScanEvent::ScanStarted { integrations } => EventBody::ScanStarted {
@@ -80,15 +92,30 @@ pub(crate) fn write_event(
             root: root.name(),
             path: PathOut::new(path),
         },
-        ScanEvent::FindingAdded { finding } => EventBody::FindingAdded {
-            id: finding.id.0,
-            finding: FindingOut::new(finding, lens(finding.integration)),
-        },
-        ScanEvent::FindingUpdated { id, size, facts } => EventBody::FindingUpdated {
-            id: id.0,
-            size: size.as_ref().map(SizeOut::from),
-            verdict: VerdictOut::from(&classify(facts, LEVEL)),
-        },
+        ScanEvent::FindingAdded { finding } => {
+            let place = (finding.rule.clone(), finding.path.clone());
+            stream.found.insert(finding.id, place);
+            EventBody::FindingAdded {
+                id: finding.id.0,
+                finding: Box::new(FindingOut::new(
+                    finding,
+                    lens(finding.integration),
+                    stream.policy,
+                )),
+            }
+        }
+        ScanEvent::FindingUpdated { id, size, facts } => {
+            // The engine adds every finding before it updates it.
+            let (rule, path) = stream.found.get(id).ok_or_else(|| {
+                io::Error::other(format!("finding {id} was updated before it was added"))
+            })?;
+            let verdict = VerdictOut::from(&stream.policy.verdict(rule, path, facts));
+            EventBody::FindingUpdated {
+                id: id.0,
+                size: size.as_ref().map(SizeOut::from),
+                verdict,
+            }
+        }
         ScanEvent::IntegrationCompleted {
             integration,
             omissions,
@@ -129,9 +156,15 @@ pub(crate) fn write_human(out: &mut dyn Write, report: &ScanOut) -> io::Result<(
                 .verdict
                 .as_ref()
                 .map_or("unsized", |v| bucket_word(v.bucket));
+            let reasons = finding
+                .verdict
+                .as_ref()
+                .filter(|verdict| !verdict.reasons.is_empty())
+                .map(|verdict| format!("  ({})", verdict.reasons.join(", ")))
+                .unwrap_or_default();
             writeln!(
                 out,
-                "  {:>12}  {bucket:<9}  {:<26}  {}",
+                "  {:>12}  {bucket:<9}  {:<26}  {}{reasons}",
                 size(finding.size.as_ref()),
                 finding.rule,
                 escaped(&finding.path.display)
@@ -140,6 +173,13 @@ pub(crate) fn write_human(out: &mut dyn Write, report: &ScanOut) -> io::Result<(
     }
     write_advice(out, report)?;
     write_omissions(out, report)?;
+    let notices = process_notices(report);
+    if !notices.is_empty() {
+        writeln!(out)?;
+    }
+    for notice in notices {
+        writeln!(out, "{notice}")?;
+    }
     let total: u64 = report
         .findings
         .iter()
@@ -196,6 +236,9 @@ pub(crate) fn write_summary(out: &mut dyn Write, report: &ScanOut) -> io::Result
             out,
             "Partial: {gaps} places couldn't be covered; `kipple scan` lists them."
         )?;
+    }
+    for notice in process_notices(report) {
+        writeln!(out, "{notice}")?;
     }
     writeln!(
         out,
@@ -256,4 +299,16 @@ fn write_omissions(out: &mut dyn Write, report: &ScanOut) -> io::Result<()> {
         writeln!(out, "  {integration}: {}", escaped(&omission.message))?;
     }
     Ok(())
+}
+
+/// The D-050 and D-052 notices about processes that couldn't be fully inspected.
+fn process_notices(report: &ScanOut) -> Vec<String> {
+    let by_command_line = report.by_command_line_processes.unwrap_or_default();
+    [
+        crate::human::unchecked_system(report.unchecked_system_processes),
+        crate::human::by_command_line(by_command_line),
+    ]
+    .into_iter()
+    .flatten()
+    .collect()
 }

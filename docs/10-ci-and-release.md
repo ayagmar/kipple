@@ -1,6 +1,6 @@
 # kipple — CI and Release Plan
 
-Status: the M0 parts are built: the `check` matrix and `deny` job in `ci.yml`, Dependabot, and the `xtask` commands `check`, `fix`, `check-arch` and `gen-docs`. M1 added the `native` matrix and `cargo xtask test-native`. Everything else is planned. Items marked **M-later** are out of scope for the first public release.
+Status: the M0 parts are built: the `check` matrix and `deny` job in `ci.yml`, Dependabot, and the `xtask` commands `check`, `fix`, `check-arch` and `gen-docs`. M1 added the `native` matrix and `cargo xtask test-native`; M2 the `tapes` job. Everything else is planned. Items marked **M-later** are out of scope for the first public release.
 
 ## 1. One gate, local and CI
 
@@ -24,15 +24,16 @@ concurrency:
   cancel-in-progress: true
 ```
 
-### `ci.yml` (push to any branch, pull requests)
+### `ci.yml` (push to any branch, pull requests, manual dispatch)
 
 | Job | Runner | What |
 | --- | --- | --- |
-| `check` | `ubuntu-latest`, `macos-latest`, `windows-latest` | `cargo xtask check --skip deny` natively, then `cargo xtask verify-demo` (from M1: the CLI's tests with the `test-roots` feature, and the built binary's `scan --json` on `demo-home` against that platform's snapshot). Platform tests that need only disposable temp roots run here: the walker, no-follow probes, root resolution from an injected environment and the runner, and from M3 the trash backend and confinement |
+| `check` | `ubuntu-latest`, `macos-latest`, `windows-latest` | `cargo xtask check --skip deny` natively, then `cargo xtask verify-demo` (from M1: the CLI's tests with the `test-roots` feature, and the built binary's `scan --json` on `demo-home` at each carefulness level against that platform's snapshots). Platform tests that need only disposable temp roots run here: the walker, no-follow probes, root resolution from an injected environment and the runner, and from M3 the trash backend and confinement |
 | `distro` | `ubuntu-latest` + containers | Builds the static musl binary once, then runs the discovery and platform smoke suite inside each distro container (see below) |
 | `native` | `ubuntu-latest`, `macos-latest`, `windows-latest` | `cargo xtask test-native` (the `native` nextest profile) on the disposable runner VM, with `KIPPLE_TEST_DISPOSABLE_HOST=1`. Exists from M1 (probes) and grows in M3 (executor, trash) |
 | `deny` | `ubuntu-latest` | `cargo deny check` (advisories, licenses, bans, sources) |
 | `msrv` | `ubuntu-latest` | `cargo check --workspace --locked` on `rust-version` from `Cargo.toml` (**M-later** if MSRV equals the pinned toolchain) |
+| `tapes` | `ubuntu-latest` | Renders the vhs tapes in `site/tapes/` (09 §7) on push to `main` and on manual dispatch (`gh workflow run ci.yml --ref main`, which runs every job), and uploads the GIF, WebM and text frames as the `tapes` artifact. It installs vhs with `go install` at its release commit and `ttyd` and `ffmpeg` from Ubuntu, builds kipple with `test-roots`, builds `demo-home` with `cargo xtask demo-home`, checks that the default config file is missing so the first-scan tape shows the onboarding, then runs `vhs validate` and each tape. Not a required check. The M6 `site` job takes it over |
 | `site` | `ubuntu-latest` | `cargo xtask site`: `npm ci`, `astro build`, link check, vhs tape render, Lighthouse CI (config in `site/lighthouserc.json`). Exists from M6; see the activation schedule |
 
 Linux distro smoke matrix (containers, run on the static `x86_64-unknown-linux-musl` binary):

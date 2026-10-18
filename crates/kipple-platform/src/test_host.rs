@@ -8,8 +8,8 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use kipple_core::{
-    Clock, Inventory, ProbeError, ProcessProbe, ProcessSnapshot, ResolvedRoot, RootSource, Roots,
-    SymbolicRoot, UnresolvedRoot,
+    Clock, Inventory, Observer, ProbeError, ProcessProbe, ProcessSnapshot, ResolvedRoot,
+    RootSource, Roots, SymbolicRoot, UnresolvedRoot,
 };
 
 use crate::environment::Environment;
@@ -68,7 +68,8 @@ impl Clock for FixedClock {
     }
 }
 
-/// A host that runs nothing: every process was listed, and none runs anything.
+/// A host that runs nothing: every process was listed, and none runs anything. What the
+/// OS could read of one is this OS's.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct NoProcesses;
 
@@ -77,6 +78,11 @@ impl ProcessProbe for NoProcesses {
         Ok(ProcessSnapshot {
             processes: Vec::new(),
             inventory: Inventory::Complete,
+            // What this OS reads of a process decides which layouts can ever be idle.
+            observer: Observer {
+                process_paths: crate::os::PROCESS_PATHS,
+                ..Observer::PLAIN
+            },
         })
     }
 }

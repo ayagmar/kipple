@@ -2,24 +2,28 @@
 //! read-only: integrations propose findings, the engine sizes them and reports.
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::io;
 use std::panic::{self, AssertUnwindSafe};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicU64;
+use std::sync::{Mutex, PoisonError};
 use std::thread;
 
+use crate::activity::{Processes, Scope, Subject};
 use crate::cancel::CancelToken;
 use crate::discovery::{WalkPlan, Walks};
 use crate::event::{EventTx, ScanEvent, Stopped};
-use crate::facts::{Processes, Repositories};
+use crate::facts::Repositories;
 use crate::integration::{
-    Advice, Evidence, FindingSink, Integration, IntegrationDescriptor, IntegrationError,
-    IntegrationId, ScanContext,
+    ActivityEvidence, Advice, Evidence, FindingSink, Integration, IntegrationDescriptor,
+    IntegrationError, IntegrationId, ScanContext,
 };
-use crate::policy::{Consequence, Facts, Level, Modified, Proposal, Tracked, Verdict, classify};
-use crate::probe::{Clock, EntryKind, EntryMeta, FsProbe, ProbeError, Sizer};
+use crate::policy::{
+    Consequence, Facts, HeldPath, Lineage, Modified, Policy, Proposal, Tracked, Verdict, WalkGap,
+};
+use crate::probe::{Clock, EntryKind, EntryMeta, FileIdentity, FsProbe, ProbeError, Sizer};
 use crate::process::ProcessProbe;
 use crate::root::{ResolvedRoot, Roots, SymbolicRoot, UnresolvedRoot};
 use crate::rule::{Category, Lens, Operation, Rule, RuleId};
@@ -53,15 +57,16 @@ pub struct Finding {
     /// What removing it would free, once sized.
     pub size: Option<SpaceEstimate>,
     /// What the host learned about it once it was measured, which its bucket is derived
-    /// from ([`classify`](crate::classify)).
+    /// from ([`Policy::verdict`]).
     pub facts: Option<Facts>,
 }
 
 impl Finding {
-    /// Its bucket at `level`, once measured.
+    /// Its bucket under `policy`, once measured.
     #[must_use]
-    pub fn verdict(&self, level: Level) -> Option<Verdict> {
-        self.facts.as_ref().map(|facts| classify(facts, level))
+    pub fn verdict(&self, policy: &Policy) -> Option<Verdict> {
+        let facts = self.facts.as_ref()?;
+        Some(policy.verdict(&self.rule, &self.path, facts))
     }
 }
 
@@ -128,6 +133,12 @@ pub enum Omission {
     /// whatever it found before is kept.
     #[error("the integration crashed")]
     Crashed,
+    /// The project walk didn't enter a directory `exclude.paths` names.
+    #[error("{} is excluded by config", path.display())]
+    Excluded {
+        /// The directory.
+        path: PathBuf,
+    },
 }
 
 /// Whether a scan ran to the end.
@@ -160,6 +171,14 @@ pub struct ScanReport {
     pub integrations: Vec<IntegrationReport>,
     /// Every finding, sorted by integration, then path.
     pub findings: Vec<Finding>,
+    /// How many processes of root, `SYSTEM` or root's rights couldn't be inspected and
+    /// weren't counted for findings in the home directory, which are otherwise idle
+    /// (D-050, D-052).
+    pub unchecked_system: usize,
+    /// How many of the current user's processes couldn't be inspected and were judged by
+    /// their command line alone for findings in the home directory that are otherwise
+    /// idle (D-052).
+    pub by_command_line: usize,
 }
 
 /// What to scan with.
@@ -169,6 +188,8 @@ pub struct ScanRequest {
     pub roots: Roots,
     /// Only the integrations of this lens, or all of them.
     pub lens: Option<Lens>,
+    /// The paths `exclude.paths` names: the project walk doesn't enter them.
+    pub exclude: Vec<HeldPath>,
 }
 
 /// Why an engine can't be built.
@@ -211,6 +232,7 @@ pub struct Engine {
 struct Registered {
     integration: Box<dyn Integration>,
     descriptor: IntegrationDescriptor,
+    evidence: ActivityEvidence,
     rules: Vec<Rule>,
 }
 
@@ -224,6 +246,8 @@ struct Shared<'a> {
     walks: &'a Walks,
     repositories: &'a Repositories,
     processes: &'a Processes,
+    identities: &'a Identities,
+    home: Option<FileIdentity>,
 }
 
 /// One integration's findings and report.
@@ -248,6 +272,7 @@ impl Engine {
             .into_iter()
             .map(|integration| Registered {
                 descriptor: integration.descriptor(),
+                evidence: integration.activity_evidence(),
                 integration,
                 rules: Vec::new(),
             })
@@ -293,12 +318,16 @@ impl Engine {
                 outcome: ScanOutcome::Cancelled,
                 integrations: Vec::new(),
                 findings: Vec::new(),
+                unchecked_system: 0,
+                by_command_line: 0,
             };
         }
         let next_id = AtomicU64::new(0);
-        let walks = Walks::default();
+        let walks = Walks::new(&req.exclude);
         let repositories = Repositories::default();
         let processes = Processes::default();
+        let identities = Identities::default();
+        let home = self.home(&req.roots);
         let shared = Shared {
             roots: &req.roots,
             events,
@@ -307,6 +336,8 @@ impl Engine {
             walks: &walks,
             repositories: &repositories,
             processes: &processes,
+            identities: &identities,
+            home,
         };
         let runs = self.run_all(&selected, shared);
         let outcome = if cancel.is_cancelled() {
@@ -315,7 +346,21 @@ impl Engine {
             ScanOutcome::Completed
         };
         events.deliver(ScanEvent::ScanCompleted { outcome }, cancel);
-        report(outcome, runs)
+        let mut report = report(outcome, runs);
+        report.unchecked_system = processes.left_out();
+        report.by_command_line = processes.by_command_line();
+        report
+    }
+
+    /// The identity of the home directory, unless it is unknown, `/`, or can't be read:
+    /// then nothing is in it.
+    fn home(&self, roots: &Roots) -> Option<FileIdentity> {
+        let home = roots.get(SymbolicRoot::Home)?.as_ref().ok()?;
+        let below_root = home
+            .path
+            .components()
+            .any(|c| matches!(c, std::path::Component::Normal(_)));
+        below_root.then(|| self.ports.fs.metadata(&home.path).ok()?.identity)?
     }
 
     fn run_all(&self, selected: &[&Registered], shared: Shared<'_>) -> Vec<IntegrationRun> {
@@ -377,21 +422,25 @@ impl Engine {
         }
         // A directory under two paths of a root is one gap, in path order.
         let mut unlisted = BTreeMap::new();
+        let mut excluded = BTreeSet::new();
         for walk in cx.walked.take().into_values() {
             for error in &walk.unreadable {
                 unlisted.insert(error.path().to_owned(), error.clone());
             }
+            excluded.extend(walk.excluded.iter().cloned());
         }
         omissions.extend(
             unlisted
                 .into_values()
                 .map(|error| Omission::Unlisted { error }),
         );
+        omissions.extend(excluded.into_iter().map(|path| Omission::Excluded { path }));
         let (mut found, advice) = (sink.found, sink.advice);
         found.sort_by(|a, b| a.finding.path.cmp(&b.finding.path));
         let owner = Owner {
             registered,
             advised: !advice.is_empty(),
+            roots: &opened,
         };
         let findings = self.measure_all(found, owner, shared, &mut omissions);
         finish(id, omissions, advice, findings, shared)
@@ -514,6 +563,7 @@ impl Engine {
     /// What the host knows about a finding once measured. One that couldn't be measured
     /// completely, or held a mount the walk didn't enter, has no known modification time,
     /// and can't rule out a checkout inside. A checkout the walk did meet holds it anyway.
+    /// A complete walk with an entry that reported no time leaves only the time unknown.
     fn facts(
         &self,
         found: &Found,
@@ -522,17 +572,15 @@ impl Engine {
         shared: Shared<'_>,
     ) -> Facts {
         let path = &found.finding.path;
-        let complete = measurement
-            .as_ref()
-            .is_some_and(|m| m.size.completeness == Completeness::Complete && !m.skipped_mount);
-        let modified = measurement
-            .as_ref()
-            .filter(|_| complete)
-            .and_then(|m| m.modified)
-            .map_or(Modified::Unknown, |at| {
+        let gap = measurement.as_ref().map_or(Some(WalkGap::Unread), walk_gap);
+        let modified = match (gap, measurement.as_ref().and_then(|m| m.modified)) {
+            (None, Some(at)) => {
                 let age = self.ports.clock.now().duration_since(at);
                 Modified::Ago(age.unwrap_or_default())
-            });
+            }
+            (None, None) => Modified::Unknown(WalkGap::Untimed),
+            (Some(gap), _) => Modified::Unknown(gap),
+        };
         let above = shared.repositories.tracked(self.ports.fs.as_ref(), path);
         let tracked = if matches!(above, Tracked::NoRepository) {
             match measurement {
@@ -540,41 +588,118 @@ impl Engine {
                     repository: Some(work_tree),
                     ..
                 }) => Tracked::HoldsRepository { work_tree },
-                Some(_) if complete => Tracked::NoRepository,
-                _ => Tracked::Unwalked,
+                _ => gap.map_or(Tracked::NoRepository, Tracked::Unwalked),
             }
         } else {
             above
         };
-        let processes = self.ports.processes.as_ref();
         let rule = owner.rule(&found.finding.rule);
         let layout_verified = found
             .finding
             .evidence
             .iter()
             .any(|evidence| matches!(evidence, Evidence::Signature(_)));
+        let lineage = shared.identities.lineage(self.ports.fs.as_ref(), path);
+        let scope = Scope {
+            fs: self.ports.fs.as_ref(),
+            identities: shared.identities,
+            home: shared.home,
+        };
+        let subject = Subject {
+            path,
+            lineage: &lineage,
+            evidence: owner.registered.evidence,
+            project: &owner.project(&found.finding),
+        };
+        let processes = self.ports.processes.as_ref();
         Facts {
             proposal: owner.proposal(rule),
             layout_verified,
             consequence: found.consequence,
             tracked,
-            activity: shared.processes.activity(processes, path),
+            activity: shared.processes.activity(processes, scope, subject),
             modified,
             recent_days: rule.and_then(|rule| rule.recent_days),
+            lineage,
         }
     }
 }
 
-/// The integration whose findings are measured, and whether it gave advice.
+/// What a measurement left unseen inside its finding, if anything.
+const fn walk_gap(measurement: &Measurement) -> Option<WalkGap> {
+    match measurement.size.completeness {
+        Completeness::Complete => None,
+        Completeness::Incomplete {
+            unreadable: 0,
+            skipped_mounts: 1..,
+        } => Some(WalkGap::OtherFileSystem),
+        Completeness::Incomplete { .. } | Completeness::Cancelled => Some(WalkGap::Unread),
+    }
+}
+
+/// The file identities read in one scan. Findings share most of their ancestors, so each
+/// directory is read once.
+#[derive(Debug, Default)]
+pub(crate) struct Identities(Mutex<HashMap<PathBuf, Option<FileIdentity>>>);
+
+impl Identities {
+    /// The identities of `item` and of every directory above it.
+    pub(crate) fn lineage(&self, fs: &dyn FsProbe, item: &Path) -> Lineage {
+        Lineage(item.ancestors().map(|dir| self.identity(fs, dir)).collect())
+    }
+
+    /// The identity of `path` itself, when it can be read.
+    pub(crate) fn identity(&self, fs: &dyn FsProbe, path: &Path) -> Option<FileIdentity> {
+        let known = self
+            .0
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(path)
+            .copied();
+        if let Some(identity) = known {
+            return identity;
+        }
+        let identity = fs.metadata(path).ok().and_then(|meta| meta.identity);
+        let mut cache = self.0.lock().unwrap_or_else(PoisonError::into_inner);
+        cache.insert(path.to_owned(), identity);
+        identity
+    }
+}
+
+/// The integration whose findings are measured, whether it gave advice, and the roots it
+/// read.
 #[derive(Debug, Clone, Copy)]
 struct Owner<'a> {
     registered: &'a Registered,
     advised: bool,
+    roots: &'a [ResolvedRoot],
 }
 
 impl<'a> Owner<'a> {
     fn rule(&self, id: &RuleId) -> Option<&'a Rule> {
         self.registered.rules.iter().find(|rule| &rule.id == id)
+    }
+
+    /// The directory of `finding`'s project: where the marker beside it sits, or, when no
+    /// marker names one, the whole root it was found under.
+    fn project(&self, finding: &Finding) -> PathBuf {
+        let path = &finding.path;
+        let marked = finding
+            .evidence
+            .iter()
+            .any(|evidence| matches!(evidence, Evidence::Marker(_)));
+        let root = self
+            .roots
+            .iter()
+            .map(|root| &root.path)
+            .filter(|root| path.starts_with(root))
+            .max_by_key(|root| root.components().count());
+        let project = if marked {
+            path.parent()
+        } else {
+            root.map(PathBuf::as_path)
+        };
+        project.or_else(|| path.parent()).unwrap_or(path).to_owned()
     }
 
     /// What `rule` proposes: a report rule of an integration that gave advice points to
@@ -648,5 +773,7 @@ fn report(outcome: ScanOutcome, runs: Vec<IntegrationRun>) -> ScanReport {
         outcome,
         integrations,
         findings,
+        unchecked_system: 0,
+        by_command_line: 0,
     }
 }

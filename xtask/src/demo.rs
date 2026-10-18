@@ -35,30 +35,55 @@ pub(crate) fn build(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// The cargo flags of the build whose roots can be redirected into `demo-home`.
+const FEATURES: [&str; 3] = ["--features", "test-roots", "--locked"];
+
 /// Lints and tests the `test-roots` build, then scans `demo-home` with the built binary
-/// and compares the result with the committed snapshot for this platform.
+/// at each carefulness level and compares each result with its committed snapshot for
+/// this platform.
 pub(crate) fn verify(root: &Path) -> Result<()> {
-    let features = ["--features", "test-roots", "--locked"];
     cmd::run(
         cmd::command("cargo", root)
             .args(["clippy", "-p", "kipple", "--all-targets"])
-            .args(features)
+            .args(FEATURES)
             .args(["--", "-D", "warnings"]),
     )?;
     cmd::run(
         cmd::command("cargo", root)
             .args(["nextest", "run", "-p", "kipple"])
-            .args(features),
+            .args(FEATURES),
     )?;
     let temp = tempfile::tempdir()?;
     let demo = temp.path().join("demo");
     build(&demo)?;
+    // Balanced is the default, so its scan names no config and reads the demo's own
+    // config directory, which has none. The other levels come from a config file in the
+    // run's temp dir: never the runner's.
+    snapshot(root, &demo, None, "demo-scan")?;
+    for level in ["careful", "thorough"] {
+        let config = temp.path().join(format!("{level}.toml"));
+        fs::write(&config, format!("[care]\nlevel = \"{level}\"\n"))?;
+        snapshot(root, &demo, Some(&config), &format!("demo-scan-{level}"))?;
+    }
+    Ok(())
+}
+
+/// Scans `demo` with the built binary, with `config` when given, and compares the
+/// result with the committed snapshot `name` for this platform.
+fn snapshot(root: &Path, demo: &Path, config: Option<&Path>, name: &str) -> Result<()> {
+    let mut command = cmd::command("cargo", root);
+    command
+        .args(["run", "--quiet", "-p", "kipple"])
+        .args(FEATURES)
+        .arg("--");
+    if let Some(config) = config {
+        command.arg("--config").arg(config);
+    }
     let output = cmd::stdout(
-        cmd::command("cargo", root)
-            .args(["run", "--quiet", "-p", "kipple"])
-            .args(features)
-            .args(["--", "scan", "--json"])
-            .env("KIPPLE_TEST_ROOTS", demo.join("roots.txt")),
+        command
+            .args(["scan", "--json"])
+            .env("KIPPLE_TEST_ROOTS", demo.join("roots.txt"))
+            .env_remove("KIPPLE_CONFIG"),
     )?;
     let mut report: Value = serde_json::from_slice(&output).context("the scan printed no JSON")?;
     let prefix = demo.display().to_string();
@@ -76,7 +101,7 @@ pub(crate) fn verify(root: &Path) -> Result<()> {
         .unwrap_or("unknown")
         .to_owned();
     insta::assert_snapshot!(
-        format!("demo-scan-{platform}"),
+        format!("{name}-{platform}"),
         serde_json::to_string_pretty(&report)?
     );
     Ok(())

@@ -18,6 +18,7 @@ site/
   src/content/docs/**           Starlight docs (hand-written + generated)
   src/generated/**              generated inputs, never edited by hand
   tapes/*.tape                  vhs demo sources
+  tapes/*.transcript.txt        a text transcript of each recording
   public/
 ```
 
@@ -44,7 +45,7 @@ Rule: newest stable release that is at least 7 days old on the decision date (20
 | `@astrojs/starlight` | 0.42.5 | 2026-10-01 | exactly 7 days old on 2026-10-08 |
 | `@astrojs/sitemap` | 3.7.4 | 2026-08-31 | |
 | `@lhci/cli` | 0.15.1 | 2025-06-25 | latest release; low churn, same version modmgr pins |
-| vhs (charmbracelet) | v0.12.1 | 2026-09-24 | repo active (last push 2026-10-01) |
+| vhs (charmbracelet) | v0.12.1 | 2026-09-24 | repo active (last push 2026-10-01); rechecked 2026-10-15, still the newest release, and in use by the `tapes` CI job (pin in `docs/decisions.md` §2) |
 
 Sources: npm registry `time` metadata and GitHub releases API, queried 2026-10-08. Font packages and `sharp` are chosen when the design direction is set.
 
@@ -119,10 +120,10 @@ Mechanism: a dev-only `xtask` binary in the workspace (`cargo xtask gen-docs`). 
 
 ## 7. Demo recordings
 
-- vhs tapes live in `site/tapes/`, one per flow: first scan, clean with review, restore, rule-pack install.
-- Tapes run against `demo-home` (built by `cargo xtask demo-home`) with `HOME` and the platform dirs pointed at a disposable copy. They never touch the CI runner's real home.
-- CI renders the tapes on the Linux runner and fails if a tape errors. Rendered GIF/WebM assets are build outputs, not committed, so they always match the current binary.
-- Every recording has a text transcript next to it for accessibility and search.
+- vhs tapes live in `site/tapes/`, one per flow: first scan and navigation (both exist), then clean with review, restore and rule-pack install. The first-scan tape runs with no config file, so it shows the onboarding; the navigation tape passes `--config` and starts on the home screen.
+- Tapes run a `test-roots` build of kipple against `demo-home` (built by `cargo xtask demo-home`) through `KIPPLE_TEST_ROOTS`, which fixes the clock and empties the process table (D-046, D-047), with `KIPPLE_CONFIG` unset and `HOME` and every `XDG_*` pointed at a disposable directory, so neither kipple nor vhs and its browser touch the CI runner's real home. The default config directory is then inside the demo and empty; the job checks that before recording.
+- CI renders the tapes on the Linux runner and fails if a tape errors or a screen it waits for never appears: the `tapes` job in `ci.yml` until the M6 `site` job takes them over (see [10-ci-and-release.md](10-ci-and-release.md) §2). Rendered GIF/WebM assets are build outputs, not committed, so they always match the current binary.
+- Every recording has a text transcript next to it for accessibility and search (`<flow>.transcript.txt`).
 
 ## 8. Hosting and deploy
 
