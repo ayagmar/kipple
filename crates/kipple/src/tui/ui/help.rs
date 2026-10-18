@@ -1,4 +1,4 @@
-//! The keys, over the home screen.
+//! The keys, over the home screen, as the keymap has them.
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -8,37 +8,18 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 use super::Look;
 use super::layout::WIDE;
 use crate::theme::Role;
+use crate::tui::app::App;
 
-pub(super) fn render(look: Look<'_>, frame: &mut Frame<'_>) {
-    let keys = [
-        ("j k  ↓ ↑", "move"),
-        ("h l  ← →", "fold and unfold a group or project"),
-        ("g G", "first and last line"),
-        (
-            "/",
-            "filter by words of the path or rule; enter keeps it, esc clears it",
-        ),
-        ("tab", "show one lens: Agents, Dev, System, then all"),
-        ("s", "select or unselect the finding"),
-        ("a", "add the group's or project's Safe and Review findings"),
-        ("c", "select the whole Safe bucket"),
-        ("p", "keep the finding for good, with an optional note"),
-        ("P", "keep every finding of its rule: turn the rule off"),
-        ("o", "sort by size, last change or name"),
-        ("J K", "scroll the detail pane"),
-        ("y", "send the path to the terminal clipboard"),
-        (",", "settings: level, project roots, method, what is kept"),
-        ("enter", "show what is selected"),
-        ("?", "this help"),
-        ("q", "quit"),
-    ];
-    let mut lines: Vec<Text<'static>> = keys
-        .iter()
-        .map(|(key, what)| {
-            let key = look.glyphs.keys(key);
+pub(super) fn render(app: &App, look: Look<'_>, frame: &mut Frame<'_>) {
+    let mut lines: Vec<Text<'static>> = app
+        .keymap()
+        .help()
+        .into_iter()
+        .map(|(keys, what)| {
+            let keys = look.glyphs.keys(&keys);
             Text::from(vec![
-                Span::styled(format!("{key:<10} "), look.style(Role::Key)),
-                Span::raw(*what),
+                Span::styled(format!("{keys:<10} "), look.style(Role::Key)),
+                Span::raw(what),
             ])
         })
         .collect();

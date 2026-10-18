@@ -20,7 +20,8 @@ pub(crate) use self::keep::{Effect, Saved};
 use self::tree::Spot;
 pub(crate) use self::tree::{Order, ProjectId};
 use super::filter;
-use super::settings::{Action, Found, Panel, Search};
+use super::keymap::{self, Action, Keymap};
+use super::settings::{Found, Outcome, Panel, Search};
 use crate::config::Config;
 use crate::json::{OmissionOut, SizeOut};
 use crate::setup::Builtin;
@@ -598,10 +599,10 @@ impl App {
         let action = panel.key(key, self);
         self.panel = panel;
         match action {
-            Action::Nothing => {}
-            Action::Close => self.mode = Mode::Browse,
-            Action::Save { edits, done } => self.save(edits, done),
-            Action::Say(text) => self.notice = Some(text),
+            Outcome::Nothing => {}
+            Outcome::Close => self.mode = Mode::Browse,
+            Outcome::Save { edits, done } => self.save(edits, done),
+            Outcome::Say(text) => self.notice = Some(text),
         }
     }
 
@@ -616,47 +617,74 @@ impl App {
                 self.filter.clear();
                 self.mode = Mode::Browse;
             }
-            Key::Up => self.step(-1),
-            Key::Down => self.step(1),
-            Key::Left
+            Key::Up
+            | Key::Down
+            | Key::Left
             | Key::Right
             | Key::Home
             | Key::End
             | Key::PageUp
             | Key::PageDown
             | Key::Tab
-            | Key::Interrupt => {}
+            | Key::Interrupt => match self.keymap().action(keymap::Mode::FilterNav, key) {
+                Some(Action::MoveDown) => self.step(1),
+                Some(Action::MoveUp) => self.step(-1),
+                Some(_) | None => {}
+            },
         }
     }
 
     fn browse_key(&mut self, key: Key) {
-        match key {
-            Key::Char('q') => self.quit = true,
-            Key::Char('j') | Key::Down => self.step(1),
-            Key::Char('k') | Key::Up => self.step(-1),
-            Key::PageDown => self.step(self.page()),
-            Key::PageUp => self.step(-self.page()),
-            Key::Char('g') | Key::Home => self.jump(0),
-            Key::Char('G') | Key::End => self.jump(usize::MAX),
-            Key::Char('h') | Key::Left => self.collapse(),
-            Key::Char('l') | Key::Right => self.expand(),
-            Key::Char('/') => self.mode = Mode::Filter,
-            Key::Char('?') => self.mode = Mode::Help,
-            Key::Char('s') => self.toggle(),
-            Key::Char('a') => self.add_group(),
-            Key::Char('c') => self.add_safe(),
-            Key::Char('p') => self.keep_finding(),
-            Key::Char('P') => self.keep_rule(),
-            Key::Char('o') => self.sort(),
-            Key::Char('J') => self.scroll_detail(1),
-            Key::Char('K') => self.scroll_detail(-1),
-            Key::Char('y') => self.copy_path(),
-            Key::Char(',') => self.open_settings(),
-            Key::Enter => self.review(),
-            Key::Tab => self.next_lens(),
-            Key::Esc => self.filter.clear(),
-            Key::Char(_) | Key::Backspace | Key::Interrupt => {}
+        if key == Key::Esc {
+            self.filter.clear();
+            return;
         }
+        let Some(action) = self.keymap().action(keymap::Mode::Browse, key) else {
+            return;
+        };
+        match action {
+            Action::Quit => self.quit = true,
+            Action::MoveDown => self.step(1),
+            Action::MoveUp => self.step(-1),
+            Action::PageDown => self.step(self.page()),
+            Action::PageUp => self.step(-self.page()),
+            Action::First => self.jump(0),
+            Action::Last => self.jump(usize::MAX),
+            Action::Fold => self.collapse(),
+            Action::Unfold => self.expand(),
+            Action::Filter => self.mode = Mode::Filter,
+            Action::Help => self.mode = Mode::Help,
+            Action::Select => self.toggle(),
+            Action::SelectGroup => self.add_group(),
+            Action::SelectSafe => self.add_safe(),
+            Action::Keep => self.keep_finding(),
+            Action::KeepRule => self.keep_rule(),
+            Action::Sort => self.sort(),
+            Action::DetailDown => self.scroll_detail(1),
+            Action::DetailUp => self.scroll_detail(-1),
+            Action::Copy => self.copy_path(),
+            Action::Settings => self.open_settings(),
+            Action::Review => self.review(),
+            Action::Lens => self.next_lens(),
+            Action::ChangeBack
+            | Action::Change
+            | Action::Choose
+            | Action::Remove
+            | Action::Check
+            | Action::Skip => {}
+        }
+    }
+
+    /// The keymap the config gives.
+    pub(crate) const fn keymap(&self) -> &Keymap {
+        self.config.keys.keymap()
+    }
+
+    /// How settings are opened, to name in a message: `Settings (,)`.
+    pub(crate) fn settings_hint(&self) -> String {
+        self.keymap()
+            .first(keymap::Mode::Browse, Action::Settings)
+            .map_or_else(|| "Settings".to_owned(), |key| format!("Settings ({key})"))
     }
 
     /// The focused line's node.
@@ -709,8 +737,13 @@ impl App {
 
     fn toggle(&mut self) {
         let Some(Node::Finding(id)) = self.focus() else {
-            self.notice =
-                Some("Move to a finding to select it, or press a to add a group.".to_owned());
+            let group = self
+                .keymap()
+                .first(keymap::Mode::Browse, Action::SelectGroup);
+            self.notice = Some(group.map_or_else(
+                || "Move to a finding to select it.".to_owned(),
+                |key| format!("Move to a finding to select it, or press {key} to add a group."),
+            ));
             return;
         };
         let Some(row) = self.row(id) else {

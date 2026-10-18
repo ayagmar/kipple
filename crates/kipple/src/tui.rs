@@ -8,6 +8,7 @@
 
 mod app;
 mod filter;
+pub(crate) mod keymap;
 mod onboarding;
 mod settings;
 mod ui;

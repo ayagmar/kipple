@@ -222,15 +222,10 @@ fn every_config_kipple_cant_use_exits_2_with_the_reason_and_where_it_is() {
             "line 2, column 1: unknown key care.speed",
         ),
         ("colour = true", "line 1, column 1: unknown key colour"),
-        // [ui] and [keys] exist but read nothing yet: no key in them is silently
-        // ignored.
+        // [ui] exists but reads nothing yet: no key in it is silently ignored.
         (
             "[ui]\ntheme = \"dusk\"",
             "line 2, column 1: unknown key ui.theme",
-        ),
-        (
-            "[keys]\nselect = [\"x\"]",
-            "line 2, column 1: unknown key keys.select",
         ),
         ("ui = 1", "ui: expected a table"),
         (
@@ -281,6 +276,54 @@ fn every_config_kipple_cant_use_exits_2_with_the_reason_and_where_it_is() {
         (
             "[keep]\npaths = [{ note = \"x\" }]",
             "keep.paths: each table needs a path",
+        ),
+    ];
+    for (text, expected) in cases {
+        let file = demo.config("bad.toml", text);
+
+        let (code, _, err) = kipple(&env, &["--config", file.to_str().unwrap(), "scan"]);
+
+        assert_eq!(code, ExitCode::from(USAGE), "{text}");
+        assert!(err.contains(expected), "{text}: {err}");
+        assert!(err.contains("from --config"), "{err}");
+    }
+}
+
+// Catches a `[keys]` table that can't be used being ignored or blamed on the wrong place:
+// an unknown action or key, esc, one key taken twice where both are read, and an action
+// that needs a key left with none (03 §6 Keys).
+#[test]
+fn a_keys_table_kipple_cant_use_exits_2_with_the_reason_and_where_it_is() {
+    let demo = Demo::new(&[], "");
+    let env = demo.env(&[]);
+    let cases = [
+        (
+            "[keys]\nzap = [\"x\"]",
+            "line 2, column 1: unknown key keys.zap",
+        ),
+        (
+            "[keys]\nselect = \"x\"",
+            "line 2, column 10: keys.select: expected a list of keys",
+        ),
+        (
+            "[keys]\nselect = [\"ctrl-s\"]",
+            "line 2, column 11: keys.select: expected one character, space, enter",
+        ),
+        (
+            "[keys]\nquit = [\"esc\"]",
+            "line 2, column 9: keys.quit: esc always goes back or closes",
+        ),
+        (
+            "[keys]\nselect = [\"x\"]\nkeep = [\"y\", \"x\"]",
+            "line 3, column 14: keys.keep: \"x\" is bound to select as well in the tree",
+        ),
+        (
+            "[keys]\nselect = []",
+            "line 2, column 1: keys.select: select needs a key",
+        ),
+        (
+            "[keys]\nkeep = [\"j\", \"down\"]",
+            "line 2, column 1: keys.keep: this leaves move-down with no key in the tree",
         ),
     ];
     for (text, expected) in cases {

@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use kipple_core::{Level, Method, RuleId, Suggestion};
 
 use super::app::{App, Key};
+use super::keymap::{Action, Mode};
 use super::ui::title_case;
 use crate::config::{Edit, same_config_path, within_config_path};
 use crate::human::escaped;
@@ -31,7 +32,7 @@ pub(crate) enum Item {
 
 /// What a key in the panel asks of the home screen.
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) enum Action {
+pub(crate) enum Outcome {
     Nothing,
     Close,
     /// Write these edits; once they are written, say `done`.
@@ -128,43 +129,65 @@ impl Panel {
     }
 
     /// Applies `key` to the panel over `app`'s settings.
-    pub(crate) fn key(&mut self, key: Key, app: &App) -> Action {
+    pub(crate) fn key(&mut self, key: Key, app: &App) -> Outcome {
         if self.typing.is_some() {
             return self.type_root(key, app);
         }
         let items = items(app);
         self.cursor = self.cursor.min(items.len().saturating_sub(1));
-        match key {
-            Key::Esc | Key::Char(',' | 'q') => Action::Close,
-            Key::Char('j') | Key::Down => self.step(1, items.len()),
-            Key::Char('k') | Key::Up => self.step(-1, items.len()),
-            Key::Char('g') | Key::Home => self.step(isize::MIN, items.len()),
-            Key::Char('G') | Key::End => self.step(isize::MAX, items.len()),
-            Key::Char('h') | Key::Left => self.change(app, &items, -1),
-            Key::Char('l' | ' ') | Key::Right | Key::Enter => self.change(app, &items, 1),
-            Key::Char('d' | 'x') | Key::Backspace => self.remove(app, &items),
-            Key::Char(_) | Key::PageUp | Key::PageDown | Key::Tab | Key::Interrupt => {
-                Action::Nothing
-            }
+        if key == Key::Esc {
+            return Outcome::Close;
+        }
+        let Some(action) = app.keymap().action(Mode::Settings, key) else {
+            return Outcome::Nothing;
+        };
+        match action {
+            Action::Settings | Action::Quit => Outcome::Close,
+            Action::MoveDown => self.step(1, items.len()),
+            Action::MoveUp => self.step(-1, items.len()),
+            Action::First => self.step(isize::MIN, items.len()),
+            Action::Last => self.step(isize::MAX, items.len()),
+            Action::ChangeBack => self.change(app, &items, -1),
+            Action::Change | Action::Choose => self.change(app, &items, 1),
+            Action::Remove => self.remove(app, &items),
+            Action::PageDown
+            | Action::PageUp
+            | Action::Fold
+            | Action::Unfold
+            | Action::Filter
+            | Action::Lens
+            | Action::Select
+            | Action::SelectGroup
+            | Action::SelectSafe
+            | Action::Keep
+            | Action::KeepRule
+            | Action::Sort
+            | Action::DetailDown
+            | Action::DetailUp
+            | Action::Copy
+            | Action::Review
+            | Action::Help
+            | Action::Check
+            | Action::Skip => Outcome::Nothing,
         }
     }
 
-    fn step(&mut self, by: isize, len: usize) -> Action {
+    fn step(&mut self, by: isize, len: usize) -> Outcome {
         let last = len.saturating_sub(1);
         self.cursor = self.cursor.saturating_add_signed(by).min(last);
-        Action::Nothing
+        Outcome::Nothing
     }
 
     /// Changes the focused value: the level and the method step through their values,
     /// and "add another" starts typing a root.
-    fn change(&mut self, app: &App, items: &[Item], by: isize) -> Action {
+    fn change(&mut self, app: &App, items: &[Item], by: isize) -> Outcome {
         match self.focus(items) {
             Some(Item::Level) => {
                 let level = step_level(app.policy.level, by);
                 if level == app.policy.level {
-                    return Action::Nothing;
+                    return Outcome::Nothing;
                 }
-                Action::Save {
+                Outcome::Save {
                     edits: vec![Edit::Level(level)],
                     done: format!("Level set to {}.", title_case(level.name())),
                 }
@@ -174,7 +197,7 @@ impl Panel {
                     Method::Delete => Method::Trash,
                     Method::Trash => Method::Delete,
                 };
-                Action::Save {
+                Outcome::Save {
                     edits: vec![Edit::Method(method)],
                     done: format!(
                         "Default method set to {}. It is only stored: nothing is removed yet.",
@@ -184,38 +207,42 @@ impl Panel {
             }
             Some(Item::AddRoot) => {
                 self.typing = Some(String::new());
-                Action::Nothing
+                Outcome::Nothing
             }
             Some(Item::Suggested(index)) if by > 0 => app
                 .search
                 .suggestions()
                 .get(index)
-                .map_or(Action::Nothing, |suggestion| {
+                .map_or(Outcome::Nothing, |suggestion| {
                     add_root(app, &suggestion.path)
                 }),
             Some(Item::Root(_) | Item::Kept(_) | Item::Disabled(_)) => {
-                Action::Say("d removes it.".to_owned())
+                let remove = app.keymap().first(Mode::Settings, Action::Remove);
+                Outcome::Say(remove.map_or_else(
+                    || "It can only be removed in the config file.".to_owned(),
+                    |key| format!("{key} removes it."),
+                ))
             }
-            Some(Item::Suggested(_)) | None => Action::Nothing,
+            Some(Item::Suggested(_)) | None => Outcome::Nothing,
         }
     }
 
     /// Removes the focused root, kept path or turned-off rule.
-    fn remove(&self, app: &App, items: &[Item]) -> Action {
+    fn remove(&self, app: &App, items: &[Item]) -> Outcome {
         match self.focus(items) {
             Some(Item::Root(index)) => {
                 let mut roots = app.roots.clone();
                 if index >= roots.len() {
-                    return Action::Nothing;
+                    return Outcome::Nothing;
                 }
                 let gone = roots.remove(index);
-                Action::Save {
+                Outcome::Save {
                     edits: vec![Edit::ProjectRoots(roots)],
                     done: format!("Removed {} from the project roots.", gone.display()),
                 }
             }
             Some(Item::Kept(index)) => unkeep(app, index),
-            Some(Item::Disabled(rule)) => Action::Save {
+            Some(Item::Disabled(rule)) => Outcome::Save {
                 done: format!("Turned {} back on.", app.catalog.title(&rule)),
                 edits: vec![Edit::RuleEnabled {
                     rule,
@@ -223,14 +250,14 @@ impl Panel {
                 }],
             },
             Some(Item::Level | Item::Method | Item::AddRoot | Item::Suggested(_)) | None => {
-                Action::Nothing
+                Outcome::Nothing
             }
         }
     }
 
-    fn type_root(&mut self, key: Key, app: &App) -> Action {
+    fn type_root(&mut self, key: Key, app: &App) -> Outcome {
         let Some(typed) = &mut self.typing else {
-            return Action::Nothing;
+            return Outcome::Nothing;
         };
         match key {
             Key::Char(c) => typed.push(c),
@@ -242,7 +269,7 @@ impl Panel {
                 let path = PathBuf::from(typed.trim());
                 self.typing = None;
                 if path.as_os_str().is_empty() {
-                    return Action::Nothing;
+                    return Outcome::Nothing;
                 }
                 return add_root(app, &path);
             }
@@ -257,27 +284,27 @@ impl Panel {
             | Key::Tab
             | Key::Interrupt => {}
         }
-        Action::Nothing
+        Outcome::Nothing
     }
 }
 
 /// Adds `path` to the project roots, typed or suggested, unless it is one already,
 /// however it is spelled.
-fn add_root(app: &App, path: &Path) -> Action {
+fn add_root(app: &App, path: &Path) -> Outcome {
     let home = app.home.as_deref();
     if app
         .roots
         .iter()
         .any(|root| same_config_path(root, path, home))
     {
-        return Action::Say(format!(
+        return Outcome::Say(format!(
             "{} is already a project root.",
             escaped(&path.display().to_string())
         ));
     }
     let mut roots = app.roots.clone();
     roots.push(path.to_owned());
-    Action::Save {
+    Outcome::Save {
         edits: vec![Edit::ProjectRoots(roots)],
         done: format!(
             "Added {} to the project roots.",
@@ -287,7 +314,7 @@ fn add_root(app: &App, path: &Path) -> Action {
 }
 
 /// Undoes the kept path at `index`, by the path it expands to.
-fn unkeep(app: &App, index: usize) -> Action {
+fn unkeep(app: &App, index: usize) -> Outcome {
     let written = app.config.keep.get(index).map(|(path, _)| path.clone());
     let expanded = app
         .policy
@@ -295,14 +322,14 @@ fn unkeep(app: &App, index: usize) -> Action {
         .get(index)
         .and_then(|held| held.forms.first());
     match (written, expanded) {
-        (Some(written), Some(path)) => Action::Save {
+        (Some(written), Some(path)) => Outcome::Save {
             edits: vec![Edit::Unkeep(path.clone())],
             done: format!("{written} is no longer kept."),
         },
-        (Some(written), None) => Action::Say(format!(
+        (Some(written), None) => Outcome::Say(format!(
             "{written} starts with ~ and the home directory is unknown, so it can only be removed in the config file."
         )),
-        (None, _) => Action::Nothing,
+        (None, _) => Outcome::Nothing,
     }
 }
 

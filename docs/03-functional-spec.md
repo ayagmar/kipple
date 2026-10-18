@@ -194,7 +194,7 @@ Status (M2, D-048, D-049): the home screen exists, removes nothing, and judges f
 - **Sort:** `o` cycles the order inside every group and project: size, largest first (the default); last change, oldest first; name. A project sorts by its total, its oldest finding or its name. The header names the order when it isn't size. The cursor stays on the same line when rows move.
 - **Size bars:** from 100 columns, each finding has a bar of fixed width beside its size, scaled to the largest measured finding shown. A finding still being measured has none, and headings have none. `--ascii` draws it with `#`.
 - **Detail pane:** what doesn't fit scrolls with `J`/`K`, and its last line says there is more. A restore cost kipple can't estimate reads "not estimated", which never changes the bucket. A project's line shows its path, its findings per bucket and their totals.
-- **Keys:** `j/k` or arrows, `h/l` to collapse and expand, `/` filter, `s` toggle, `a` add group, `c` add Safe bucket and review, `p`/`P` keep item/rule, `o` sort order, `y` copy the focused path, `J/K` scroll the detail pane, `enter` review, `?` help, `q` quit. Mouse optional. `y` sends the path to the terminal's clipboard with an OSC 52 escape, so it runs no program and works over SSH; a terminal that ignores OSC 52 copies nothing, and the message says the path was sent, not that it was copied.
+- **Keys:** `j/k` or arrows, `h/l` to collapse and expand, `/` filter, `s` toggle, `a` add group, `c` add Safe bucket and review, `p`/`P` keep item/rule, `o` sort order, `y` copy the focused path, `J/K` scroll the detail pane, `enter` review, `?` help, `q` quit. These are the defaults: `[keys]` (§6) rebinds any of them, and help, the key bars and the messages that name a key always show the keys as bound. `esc` always goes back or closes, Ctrl-C always quits, and typed text (the filter, a note, a root) is never rebound. Mouse optional. `y` sends the path to the terminal's clipboard with an OSC 52 escape, so it runs no program and works over SSH; a terminal that ignores OSC 52 copies nothing, and the message says the path was sent, not that it was copied.
 - **Filter:** the query splits on spaces, and every term must appear as typed, ignoring case, in the finding's path as the screen shows it (from `~` below home, with `/` between its parts on every system) or in its rule's title: `web node` finds `~/projects/web/node_modules`, `/target` finds `api/target` but not `tool/.venv`, and the home directory's name doesn't match the paths below it. `enter` keeps the filter and the cursor's line; `esc` clears it and puts the cursor back on the line where `/` was pressed. Closing help, settings or a note also puts the cursor back on its line. Whenever the cursor's line is no longer shown (filtered out, folded away, or gone), the cursor moves to the nearest finding shown before it in the whole tree, else after it, and never to a heading it wasn't on. A finding that changes bucket keeps the cursor.
 - **Streaming:** rows appear as they are found. Sizes animate in with no reflow jumps (stable sort and reserved columns).
 - **States:** `measuring`, each hold (`in use`, `layout not recognised`, `unknown loss`, `can't tell if in use`, `report only`, `advice only`, `kept`, …), each caution (`recent`, `loses more`, …) and later `needs grant`, each a text label plus restrained colour. Never colour alone. A hold has a short label of at most 22 columns for the tree, its notices and `scan`'s report, and a sentence for the detail pane and `kipple explain`, from one table (D-059); `--json` keeps the reason names (`unknown-layout`).
@@ -259,7 +259,39 @@ recent_days = 30
 
 [keep]                        # written by `p` in the TUI
 paths = [{ path = "~/projects/demo/target", note = "benchmark baseline" }]
+
+[keys]                        # replaces these actions' default keys
+select = ["s", "space"]
+quit = ["q", "Q"]
 ```
+
+### Keys
+
+`[keys]` rebinds the home screen's keys (D-056). Each entry names an action and lists the keys that replace its defaults. A key is one printable character, case counting (`S` is shift-s), or one of `space`, `enter`, `tab`, `backspace`, `up`, `down`, `left`, `right`, `home`, `end`, `pageup`, `pagedown`; there are no modifiers. A key an entry takes is also taken from the defaults of every other action read in the same place: `select = ["j"]` leaves `move-down` with `down` on the tree, and `j` still moves in settings and the first run. In the filter, keys that type always type, so only the other keys of `move-down` and `move-up` move the cursor there.
+
+| Action | Where | Default | What it does |
+| --- | --- | --- | --- |
+| `move-down`, `move-up` | everywhere | `j`, `down`; `k`, `up` | move; scroll the first run's tips |
+| `page-down`, `page-up` | tree | `pagedown`; `pageup` | move a page |
+| `first`, `last` | tree, settings | `g`, `home`; `G`, `end` | first and last line |
+| `fold`, `unfold` | tree | `h`, `left`; `l`, `right` | fold and unfold a group or project |
+| `filter` | tree | `/` | filter |
+| `lens` | tree | `tab` | show one lens |
+| `select`, `select-group`, `select-safe` | tree | `s`; `a`; `c` | select the finding, the group's or project's findings, the Safe bucket |
+| `keep`, `keep-rule` | tree | `p`; `P` | keep the finding, or its rule |
+| `sort` | tree | `o` | sort order |
+| `detail-down`, `detail-up` | tree | `J`; `K` | scroll the detail pane |
+| `copy` | tree | `y` | send the path to the clipboard |
+| `settings` | tree, settings | `,` | open and close settings |
+| `review` | tree | `enter` | show what is selected |
+| `help` | tree | `?` | help |
+| `quit` | tree, settings, first run | `q` | quit; close settings; quit the first run, saving nothing |
+| `change-back`, `change` | settings | `h`, `left`; `l`, `right`, `space` | the previous or next level or method, or type a root |
+| `choose` | settings, first run | `enter` | change or add; answer the step |
+| `remove` | settings | `d`, `x`, `backspace` | remove a root, a kept item, a rule turned off |
+| `check`, `skip` | first run | `space`; `tab` | check a root; skip the step |
+
+Exits 2 with the line and column: an unknown action or key name, two entries taking one key where both are read, `esc` in any entry (it always goes back or closes), and leaving `move-down`, `move-up`, `filter`, `select`, `settings`, `help`, `quit`, `change`, `choose` or `remove` with no key, by an empty list or by another entry taking its last key. Ctrl-C can't be named, so it always quits.
 
 ### Overrides: types, limits and precedence
 

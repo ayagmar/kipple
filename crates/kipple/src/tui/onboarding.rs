@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use kipple_core::{Finding, Level, Method, Policy, Suggestion, Verdict};
 
 use super::app::{App, Key};
+use super::keymap::{Action, Keymap, Mode};
 use super::settings::Found;
 use crate::config::{Edit, Loaded, Source, is_config_path, same_config_path, within_config_path};
 use crate::human::escaped;
@@ -146,6 +147,8 @@ pub(crate) struct Onboarding {
     chosen_level: Option<Level>,
     chosen_roots: Option<Vec<PathBuf>>,
     chosen_method: Option<Method>,
+    /// The keys, as the config had them when the first run opened.
+    pub(crate) keymap: Keymap,
 }
 
 impl Onboarding {
@@ -174,6 +177,7 @@ impl Onboarding {
             chosen_level: None,
             chosen_roots: None,
             chosen_method: None,
+            keymap: app.keymap().clone(),
         }
     }
 
@@ -189,8 +193,8 @@ impl Onboarding {
             .collect();
     }
 
-    /// Applies `key`: enter answers the step and goes on, tab skips it, esc goes back,
-    /// q quits.
+    /// Applies `key`: by default enter answers the step and goes on, tab skips it, q
+    /// quits; esc always goes back and Ctrl-C always quits.
     pub(crate) fn key(&mut self, key: Key) -> Outcome {
         self.notice = None;
         if self.typing.is_some() && key != Key::Interrupt {
@@ -198,44 +202,72 @@ impl Onboarding {
             return Outcome::Stay;
         }
         match key {
-            Key::Char('q') | Key::Interrupt => Outcome::Quit,
+            Key::Interrupt => return Outcome::Quit,
             Key::Esc => {
                 self.step = self.step.back();
-                Outcome::Stay
-            }
-            Key::Tab => {
-                self.answer(false);
-                self.advance()
-            }
-            Key::Enter if self.step == Step::Roots && self.on_add() => {
-                self.typing = Some(String::new());
-                Outcome::Stay
-            }
-            Key::Enter => {
-                self.answer(true);
-                self.advance()
-            }
-            Key::Char('j') | Key::Down => {
-                self.move_by(1);
-                Outcome::Stay
-            }
-            Key::Char('k') | Key::Up => {
-                self.move_by(-1);
-                Outcome::Stay
-            }
-            Key::Char(' ') if self.step == Step::Roots => {
-                self.toggle_root();
-                Outcome::Stay
+                return Outcome::Stay;
             }
             Key::Char(_)
+            | Key::Up
+            | Key::Down
             | Key::Left
             | Key::Right
             | Key::Home
             | Key::End
             | Key::PageUp
             | Key::PageDown
-            | Key::Backspace => Outcome::Stay,
+            | Key::Enter
+            | Key::Backspace
+            | Key::Tab => {}
         }
+        self.keymap
+            .action(Mode::Onboarding, key)
+            .map_or(Outcome::Stay, |action| self.act(action))
+    }
+
+    fn act(&mut self, action: Action) -> Outcome {
+        match action {
+            Action::Quit => return Outcome::Quit,
+            Action::Skip => {
+                self.answer(false);
+                return self.advance();
+            }
+            Action::Choose if self.step == Step::Roots && self.on_add() => {
+                self.typing = Some(String::new());
+            }
+            Action::Choose => {
+                self.answer(true);
+                return self.advance();
+            }
+            Action::MoveDown => self.move_by(1),
+            Action::MoveUp => self.move_by(-1),
+            Action::Check if self.step == Step::Roots => self.toggle_root(),
+            Action::Check
+            | Action::PageDown
+            | Action::PageUp
+            | Action::First
+            | Action::Last
+            | Action::Fold
+            | Action::Unfold
+            | Action::Filter
+            | Action::Lens
+            | Action::Select
+            | Action::SelectGroup
+            | Action::SelectSafe
+            | Action::Keep
+            | Action::KeepRule
+            | Action::Sort
+            | Action::DetailDown
+            | Action::DetailUp
+            | Action::Copy
+            | Action::Settings
+            | Action::Review
+            | Action::Help
+            | Action::ChangeBack
+            | Action::Change
+            | Action::Remove => {}
+        }
+        Outcome::Stay
     }
 
     /// Records the answer to this step, or that it was skipped.
@@ -390,6 +422,9 @@ pub(crate) fn finish(app: &mut App, edits: Vec<Edit>) {
         || "the config file".to_owned(),
         |file| escaped(&file.display().to_string()),
     );
-    let done = format!("Your answers are saved in {file}. Settings (,) changes them.");
+    let done = format!(
+        "Your answers are saved in {file}. {} changes them.",
+        app.settings_hint()
+    );
     app.save(edits, done);
 }

@@ -4,6 +4,7 @@
 //! write a config file in a temp dir, are in `settings`; the first run is in `onboarding`.
 
 mod detail;
+mod keys;
 mod onboarding;
 mod settings;
 mod tree;

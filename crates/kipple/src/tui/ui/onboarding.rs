@@ -1,8 +1,6 @@
 //! The first run's steps, each in the same frame: a title line, the question and its
 //! choices, and the keys.
 
-use std::fmt::Write as _;
-
 use kipple_core::{Level, Method, ScanOutcome};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
@@ -14,6 +12,7 @@ use super::{Look, level_about, title_case};
 use crate::human::{self, bytes, escaped};
 use crate::theme::Role;
 use crate::tui::app::{App, Progress};
+use crate::tui::keymap::{Action, Mode};
 use crate::tui::onboarding::{Onboarding, Step, level_totals};
 
 /// Draws the step `onboarding` is on, with `app`'s scan for the numbers and tips.
@@ -224,22 +223,32 @@ fn keys(onboarding: &Onboarding, look: Look<'_>) -> Paragraph<'static> {
     if onboarding.typing.is_some() {
         text.push_str("type a path, enter adds it, esc cancels");
     } else {
-        let enter = match onboarding.step {
-            Step::Tips => "enter finish",
-            Step::Level | Step::Roots | Step::Method => "enter choose",
+        let hint = |actions: &[Action], between: &str, what: &str| {
+            onboarding
+                .keymap
+                .hint(Mode::Onboarding, actions, between, what)
         };
-        text.push_str(enter);
+        let choose = match onboarding.step {
+            Step::Tips => "finish",
+            Step::Level | Step::Roots | Step::Method => "choose",
+        };
+        let mut hints = vec![hint(&[Action::Choose], "", choose)];
         if onboarding.step == Step::Roots {
-            write!(text, "{}space check", look.glyphs.dot()).ok();
+            hints.push(hint(&[Action::Check], "", "check"));
         }
         if onboarding.step == Step::Tips {
-            write!(text, "{}j k scroll", look.glyphs.dot()).ok();
+            hints.push(hint(&[Action::MoveDown, Action::MoveUp], " ", "scroll"));
         }
-        write!(text, "{}tab skip", look.glyphs.dot()).ok();
+        hints.push(hint(&[Action::Skip], "", "skip"));
         if onboarding.step != Step::Level {
-            write!(text, "{}esc back", look.glyphs.dot()).ok();
+            hints.push(Some("esc back".to_owned()));
         }
-        write!(text, "{}q quit, saving nothing", look.glyphs.dot()).ok();
+        hints.push(hint(&[Action::Quit], "", "quit, saving nothing"));
+        let hints: Vec<String> = hints.into_iter().flatten().collect();
+        text.push_str(&hints.join(look.glyphs.dot()));
     }
-    Paragraph::new(Line::styled(text, look.style(Role::KeyLabel)))
+    Paragraph::new(Line::styled(
+        look.glyphs.keys(&text),
+        look.style(Role::KeyLabel),
+    ))
 }

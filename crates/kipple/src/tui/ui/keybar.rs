@@ -55,11 +55,11 @@ pub(super) fn footer(app: &App, look: Look<'_>) -> Paragraph<'static> {
         ),
         (_, Some(notice), _) => Text::styled(notice.clone(), look.style(Role::Accent)),
         (Mode::Settings, None, None) => Text::styled(
-            "j/k move  h/l change  enter change or add  d remove  esc back",
+            look.glyphs.keys(&app.keymap().settings_bar()),
             look.style(Role::KeyLabel),
         ),
         (_, None, _) => Text::styled(
-            "j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit",
+            look.glyphs.keys(&app.keymap().browse_bar()),
             look.style(Role::KeyLabel),
         ),
     };

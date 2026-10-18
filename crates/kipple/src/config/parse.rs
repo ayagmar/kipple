@@ -299,6 +299,11 @@ impl Reader<'_> {
         }
     }
 
+    /// An error at `span`.
+    pub(super) fn error_at(&self, span: Option<Range<usize>>, message: String) -> ParseError {
+        (self.at)(span, message)
+    }
+
     fn unknown(&self, name: &str, key: &Key) -> ParseError {
         (self.at)(key.span(), format!("unknown key {name}"))
     }
@@ -309,7 +314,7 @@ impl Reader<'_> {
 }
 
 /// Each entry of `table` with its key, in file order.
-fn entries(table: &dyn TableLike) -> impl Iterator<Item = (&str, &Key, &Item)> {
+pub(super) fn entries(table: &dyn TableLike) -> impl Iterator<Item = (&str, &Key, &Item)> {
     table.iter().filter_map(move |(name, _)| {
         table
             .get_key_value(name)

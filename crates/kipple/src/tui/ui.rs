@@ -83,7 +83,7 @@ pub(crate) fn render(app: &App, look: Look<'_>, frame: &mut Frame<'_>) {
     let focus = tree.focus();
     detail::render(app, look, focus, &areas, frame);
     if app.mode == Mode::Help {
-        help::render(look, frame);
+        help::render(app, look, frame);
     }
 }
 

@@ -126,7 +126,10 @@ impl App {
             .as_ref()
             .map_or_else(Lineage::default, |facts| facts.lineage.clone());
         if self.policy.kept(&row.finding.path, &lineage).is_some() {
-            self.notice = Some("Already kept. Settings (,) lists what is kept.".to_owned());
+            self.notice = Some(format!(
+                "Already kept. {} lists what is kept.",
+                self.settings_hint()
+            ));
             return;
         }
         self.note.clear();
@@ -168,8 +171,9 @@ impl App {
         let note = Some(self.note.trim().to_owned()).filter(|note| !note.is_empty());
         let left = self.unselect(|row| row.finding.id == id);
         let mut done = format!(
-            "Kept {}. Settings (,) undoes it.",
-            escaped(&path.display().to_string())
+            "Kept {}. {} undoes it.",
+            escaped(&path.display().to_string()),
+            self.settings_hint()
         );
         if left > 0 {
             done.push_str(" It left the selection.");
@@ -192,8 +196,10 @@ impl App {
             return;
         }
         let left = self.unselect(|row| row.finding.rule == rule);
-        let mut done =
-            format!("Turned off {title} ({rule}): its findings are kept. Settings (,) undoes it.");
+        let mut done = format!(
+            "Turned off {title} ({rule}): its findings are kept. {} undoes it.",
+            self.settings_hint()
+        );
         if left > 0 {
             write!(done, " {} left the selection.", findings(left)).ok();
         }
