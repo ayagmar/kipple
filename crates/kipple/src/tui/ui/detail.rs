@@ -15,6 +15,7 @@ use super::{Look, shelf_title, tint, title_case};
 use crate::human::{self, bytes, escaped, homed};
 use crate::theme::{Glyphs, Role, Theme};
 use crate::tui::app::{App, Node, ProjectId, Row, Shelf};
+use crate::tui::keymap::{Action, Mode};
 
 /// The labels' column: as wide as the longest, `Why it's here`, and a space.
 const LABEL: usize = 14;
@@ -43,10 +44,15 @@ pub(super) fn render(
     };
     let mut shown: Vec<Text<'static>> = rows.into_iter().skip(first).take(take).collect();
     if more {
-        shown.push(Text::styled(
-            format!("{} J/K scroll", look.glyphs.ellipsis("more")),
-            look.style(Role::Muted),
-        ));
+        let said = look.glyphs.ellipsis("more");
+        let scroll = app.keymap().hint(
+            Mode::Browse,
+            &[Action::DetailDown, Action::DetailUp],
+            "/",
+            "scroll",
+        );
+        let text = scroll.map_or_else(|| said.clone(), |scroll| format!("{said} {scroll}"));
+        shown.push(Text::styled(text, look.style(Role::Muted)));
     }
     frame.render_widget(Paragraph::new(shown), area);
 }
@@ -292,18 +298,22 @@ fn why(row: &Row, level: Level) -> String {
 
 fn shelf_detail(app: &App, look: Look<'_>, node: Node, shelf: Shelf) -> Vec<Entry> {
     let (count, total) = sum(app, node);
+    let safe = app
+        .keymap()
+        .first(Mode::Browse, Action::SelectSafe)
+        .map_or_else(String::new, |key| format!(" {key} selects all of it."));
     let about = match shelf {
-        Shelf::Safe => {
-            "Passes every check at this level: kipple recognised it, knows how it comes back, nothing inside is tracked by git, no running program shows it in use, and it hasn't changed recently. c selects all of it."
-        }
+        Shelf::Safe => format!(
+            "Passes every check at this level: kipple recognised it, knows how it comes back, nothing inside is tracked by git, no running program shows it in use, and it hasn't changed recently.{safe}"
+        ),
         Shelf::Review => {
-            "Eligible, but it loses more than this level allows, costs a lot to bring back, or changed recently. Each row says which."
+            "Eligible, but it loses more than this level allows, costs a lot to bring back, or changed recently. Each row says which.".to_owned()
         }
         Shelf::Protected => {
-            "Not eligible: blocked, unknown, report only or advice only. Each row says why. kipple never selects these."
+            "Not eligible: blocked, unknown, report only or advice only. Each row says why. kipple never selects these.".to_owned()
         }
         Shelf::Measuring => {
-            "Still being measured and checked. Nothing counts as Safe until kipple knows."
+            "Still being measured and checked. Nothing counts as Safe until kipple knows.".to_owned()
         }
     };
     vec![

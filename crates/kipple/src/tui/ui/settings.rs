@@ -14,6 +14,7 @@ use super::{Look, level_about, title_case};
 use crate::human::{escaped, homed};
 use crate::theme::{Colours, Role};
 use crate::tui::app::App;
+use crate::tui::keymap::{Action, Mode};
 use crate::tui::settings::{self, Item, Search};
 
 /// The settings panel in place of the tree and the detail pane. Every line says its
@@ -134,7 +135,11 @@ fn settings_lists(app: &App, look: Look<'_>, panel: &mut PanelLines<'_>) {
         panel.push(Some(&Item::Kept(index)), label, value);
     }
     if app.config.keep.is_empty() {
-        let none = Span::styled("nothing yet: p keeps a finding", look.style(Role::Muted));
+        let none = app.keymap().first(Mode::Browse, Action::Keep).map_or_else(
+            || "nothing yet".to_owned(),
+            |key| format!("nothing yet: {key} keeps a finding"),
+        );
+        let none = Span::styled(none, look.style(Role::Muted));
         panel.push(None, "Kept", vec![none]);
     }
     let disabled = settings::disabled(app);
@@ -147,10 +152,14 @@ fn settings_lists(app: &App, look: Look<'_>, panel: &mut PanelLines<'_>) {
         panel.push(Some(&Item::Disabled(rule.clone())), label, value);
     }
     if disabled.is_empty() {
-        let none = Span::styled(
-            "none: P turns a finding's rule off",
-            look.style(Role::Muted),
-        );
+        let none = app
+            .keymap()
+            .first(Mode::Browse, Action::KeepRule)
+            .map_or_else(
+                || "none".to_owned(),
+                |key| format!("none: {key} turns a finding's rule off"),
+            );
+        let none = Span::styled(none, look.style(Role::Muted));
         panel.push(None, "Rules turned off", vec![none]);
     }
 }
@@ -165,7 +174,11 @@ fn theme_spans(app: &App, look: Look<'_>) -> Vec<Span<'static>> {
     let about = match &choice.drawn {
         Err(error) => format!("{at} of {count}, can't be used: {}", escaped(error)),
         Ok(_) if app.themes.previewing() => {
-            format!("previewing {at} of {count}: enter keeps it, esc goes back")
+            let keep = app
+                .keymap()
+                .first(Mode::Settings, Action::Choose)
+                .map_or_else(String::new, |key| format!("{key} keeps it, "));
+            format!("previewing {at} of {count}: {keep}esc goes back")
         }
         Ok(_) => format!("{at} of {count}, {}", escaped(&choice.origin.to_string())),
     };

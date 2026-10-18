@@ -137,3 +137,40 @@ fn one_key_can_do_one_thing_in_each_mode() {
         None
     );
 }
+
+// Catches copy that names a default key after it was rebound, or names a key an action
+// no longer has: the detail pane's scroll hint, the Safe bucket's "selects all of it"
+// and the settings lines that say how to keep.
+#[test]
+fn the_screens_words_name_the_keys_as_bound_or_none() {
+    let mut app = home_with(
+        "[keys]\ndetail-down = [\"n\"]\ndetail-up = [\"m\"]\nselect-safe = [\"x\"]\nkeep = [\"z\"]\nkeep-rule = []\n",
+    );
+    app.update(crate::tui::app::Msg::Resize {
+        width: 80,
+        height: 24,
+    });
+    let bucket = screen(&app, look(false, false), 80, 24);
+    assert!(bucket.contains("x selects all of it."), "{bucket}");
+    assert!(!bucket.contains("c selects"), "{bucket}");
+
+    to(&mut app, 1);
+    let finding = screen(&app, look(false, false), 80, 24);
+    assert!(finding.contains("n/m scroll"), "{finding}");
+    assert!(!finding.contains("J/K"), "{finding}");
+
+    press(&mut app, &[Key::Char(',')]);
+    let settings = screen(&app, look(false, false), 160, 48);
+    assert!(
+        settings.contains("nothing yet: z keeps a finding"),
+        "{settings}"
+    );
+    let off = settings
+        .lines()
+        .find(|line| line.contains("Rules turned off"))
+        .unwrap();
+    assert!(
+        off.trim_end_matches([' ', '│']).ends_with("none"),
+        "{settings}"
+    );
+}
