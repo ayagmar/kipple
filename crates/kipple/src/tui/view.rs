@@ -251,19 +251,21 @@ fn header(app: &App, look: Look, width: u16) -> Paragraph<'static> {
     spans.push(Span::raw(look.dot()));
     spans.push(Span::raw(state));
     spans.push(Span::raw(look.dot()));
-    // The roots get the rest of the line, less what the sort order needs.
+    // A sort order other than size changes how the list reads, and the header is the only
+    // lasting sign of it, so it comes first whenever it fits whole. The roots, fixed
+    // config also listed in settings, get what is left.
     let used: usize = spans.iter().map(Span::width).sum();
     let room = usize::from(width).saturating_sub(used);
-    let order = app.order.title();
+    let order = app.order.title().filter(|order| cols(order) <= room);
     let reserved = order.map_or(0, |order| cols(order) + cols(look.dot()));
-    let roots = roots(app, look, room.saturating_sub(reserved))
-        .or_else(|| roots(app, look, room))
-        .unwrap_or_default();
-    // The order only whole: `o` also says it in the footer.
-    let left = room.saturating_sub(cols(&roots));
-    spans.push(Span::raw(roots));
-    if let Some(order) = order.filter(|_| reserved <= left) {
-        spans.push(Span::raw(look.dot()));
+    let roots = roots(app, look, room.saturating_sub(reserved));
+    if let Some(roots) = &roots {
+        spans.push(Span::raw(roots.clone()));
+    }
+    if let Some(order) = order {
+        if roots.is_some() {
+            spans.push(Span::raw(look.dot()));
+        }
         spans.push(Span::raw(order));
     }
     if !app.gaps.is_empty() {

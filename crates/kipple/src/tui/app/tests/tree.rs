@@ -488,9 +488,31 @@ fn the_header_names_the_project_roots_shortened_to_fit() {
 
     insta::assert_snapshot!(shown.join("\n"));
 
+    // Back to size, which the header doesn't name.
+    press(&mut app, &[Key::Char('o'), Key::Char('o')]);
     app.roots = vec![PathBuf::from("/home/ada/code")];
     let line = header(&app, colour(), 80);
     assert!(line.ends_with(&format!(" ~{MAIN_SEPARATOR}code")), "{line}");
+}
+
+// Catches the roots pushing the sort order's name off the header at 80 columns: the
+// name is the only lasting sign that the list isn't by size, and settings lists the
+// roots anyway.
+#[test]
+fn the_sort_order_keeps_its_place_in_the_header_before_the_roots() {
+    let mut app = rooted();
+    finished(&mut app);
+    app.roots = vec![PathBuf::from("~/src/clients/acme"), PathBuf::from("~/work")];
+    press(&mut app, &[Key::Char('o')]);
+
+    for look in [colour(), ASCII] {
+        let narrow = header(&app, look, 80);
+        assert!(narrow.ends_with("by last change"), "{narrow}");
+        assert!(!narrow.contains("acme"), "{narrow}");
+        let wide = header(&app, look, 160);
+        assert!(wide.contains("acme +1"), "{wide}");
+        assert!(wide.ends_with("by last change"), "{wide}");
+    }
 }
 
 // Catches the current level showing only by its colour once `NO_COLOR` is set.

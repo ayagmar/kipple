@@ -2,7 +2,7 @@
 source: crates/kipple/src/tui/app/tests/tree.rs
 expression: "screen(&app, colour(), 80, 24)"
 ---
-kipple  Careful · [Balanced] · Thorough · scanned in 1.2 s · ~/projects
+kipple  Careful · [Balanced] · Thorough · scanned in 1.2 s · by last change
   ▾ Safe to clean (4)                          1.5 GiB passes every check
     ▾ Dev (3)                                662.0 MiB
       ▾ api (2)                              612.0 MiB
