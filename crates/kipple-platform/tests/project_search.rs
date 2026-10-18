@@ -296,3 +296,36 @@ fn an_unreadable_directory_is_skipped_and_counted() {
     assert_eq!(found.unreadable, 1);
     assert!(found.complete);
 }
+
+// Catches a home the search couldn't read at all being reported as searched in full, so
+// "no projects found" reads as an answer when nothing was looked at (04 §3).
+#[test]
+fn a_home_that_is_missing_or_not_a_directory_is_incomplete() {
+    let (temp, home) = home();
+    let file = project(temp.path(), "other").join("Cargo.toml");
+    for unread in [home.join("missing"), file] {
+        let found = search(&unread);
+        assert!(!found.complete, "{unread:?}: {found:?}");
+        assert_eq!(found.unreadable, 1);
+    }
+}
+
+// Catches a home whose listing fails being reported as searched in full.
+#[cfg(unix)]
+#[test]
+fn an_unreadable_home_is_incomplete() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let (_temp, home) = home();
+    project(&home, "Documents/app");
+    fs::set_permissions(&home, fs::Permissions::from_mode(0o000)).ok();
+    let readable = fs::read_dir(&home).is_ok();
+    let found = search(&home);
+    fs::set_permissions(&home, fs::Permissions::from_mode(0o755)).ok();
+    if readable {
+        // Running as root: permissions don't stop the read, so there is nothing to test.
+        return;
+    }
+    assert!(!found.complete, "{found:?}");
+    assert_eq!(found.unreadable, 1);
+    assert_eq!(found.projects, Vec::<PathBuf>::new());
+}

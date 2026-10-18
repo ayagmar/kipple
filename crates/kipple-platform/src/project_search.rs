@@ -58,7 +58,7 @@ pub struct ProjectsFound {
     /// Each directory holding `.git` or a marker, sorted.
     pub projects: Vec<PathBuf>,
     /// Whether it looked everywhere it may: `false` when a limit or a cancel stopped it,
-    /// so more projects may exist.
+    /// or home itself couldn't be read, so more projects may exist.
     pub complete: bool,
     /// How many directories it couldn't read, and so skipped.
     pub unreadable: usize,
@@ -78,18 +78,22 @@ pub fn search_projects(
     cancel: &CancelToken,
 ) -> ProjectsFound {
     let home = exact(search.home);
+    // A home that can't be read was never searched, so the list may be incomplete.
+    let unread = ProjectsFound {
+        complete: false,
+        unreadable: 1,
+        ..ProjectsFound::default()
+    };
+    let Ok(meta) = fs::symlink_metadata(&home) else {
+        return unread;
+    };
+    if !meta.is_dir() {
+        return unread;
+    }
     let mut found = ProjectsFound {
         complete: true,
         ..ProjectsFound::default()
     };
-    let Ok(meta) = fs::symlink_metadata(&home) else {
-        found.unreadable = 1;
-        return found;
-    };
-    if !meta.is_dir() {
-        found.unreadable = 1;
-        return found;
-    }
     let walk = Walk {
         search,
         device: os::device(&meta),
@@ -105,6 +109,9 @@ pub fn search_projects(
         read += 1;
         let Some(listing) = walk.list(&dir) else {
             found.unreadable += 1;
+            if depth == 0 {
+                found.complete = false;
+            }
             continue;
         };
         if depth > 0 && listing.project {
