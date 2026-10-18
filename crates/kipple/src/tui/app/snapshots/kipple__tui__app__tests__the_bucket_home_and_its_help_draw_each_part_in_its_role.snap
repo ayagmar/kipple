@@ -1,0 +1,101 @@
+---
+source: crates/kipple/src/tui/app/tests.rs
+expression: "format!(\"{home}\\n{help}\")"
+---
+«fg=title|kipple»  «fg=level.other|Careful» · «fg=level.current|[Balanced]» · «fg=level.other|Thorough» · scanned in 1.2 s · ~/projects
+  ▾ «fg=safe,bold|Safe to clean (2)»                         514.0 MiB       «fg=muted| passes every check»       «fg=border|│»«fg=title|Cargo build output» · «fg=safe,bold|Safe to clean at Balanced»
+    ▾ Dev (2)                                 514.0 MiB                                 «fg=border|│»/home/ada/projects/api/target
+«fg=selected,bg=cursor|● »«bg=cursor|    api/target»«fg=muted,bg=cursor|  Cargo build output»«bg=cursor|          512.0 MiB»«fg=bar.safe,bg=cursor| ███▍  »«fg=safe,bg=cursor| »«bg=cursor|                         »«fg=border|│»«fg=label|What it is        »Cargo build output
+      tool/__pycache__«fg=muted|  Python bytecode ca»      2.0 MiB«fg=bar.safe|       »«fg=safe| »                         «fg=border|│»«fg=label|Why it's here     »Cargo writes compiled crates here when you build.
+  ▾ «fg=review,bold|Review (1)»                                300.0 MiB       «fg=muted| loses more, or recent»    «fg=border|│»«fg=label|Why it's safe     »passes every check at Balanced: recognised, comes
+    ▾ Dev (1)                                 300.0 MiB                                 «fg=border|│»back, untracked, no running program shows it in use, not recent
+      web/node_modules«fg=muted|  Node dependencies»     300.0 MiB«fg=bar.review| ██    »«fg=review| recent»                   «fg=border|│»«fg=label|What you lose     »The next build compiles everything again.
+  ▾ «fg=protected,bold|Protected (2)»                            1020.0 MiB       «fg=muted| not eligible»             «fg=border|│»«fg=label|How it comes back »the next build makes it again, without the network
+    ▾ Dev (1)                                 120.0 MiB                                 «fg=border|│»«fg=label|Restore cost      »not estimated
+      bunapp/node_modules«fg=muted|  Node dependenci»    120.0 MiB«fg=bar.protected| ▊     »«fg=protected| layout not recognised +1» «fg=border|│»«fg=label|Proposes          »remove (delete or trash)
+    ▾ System (1)                              900.0 MiB                                 «fg=border|│»«fg=label|Git               »no repository holds it or lives inside it, so git
+      pacman/pkg«fg=muted|  pacman package cache»        900.0 MiB«fg=bar.protected| ██████»«fg=protected| advice only»              «fg=border|│»tracks nothing inside
+                                                                                        «fg=border|│»«fg=label|In use            »no running program shows it in use
+                                                                                        «fg=border|│»«fg=label|Last change       »41 days ago
+                                                                                        «fg=border|│»«fg=label|Size              »512.0 MiB
+                                                                                        «fg=border|│»«fg=label|Rule              »builtin.cargo.target
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+found 1.7 GiB · eligible 814.0 MiB · selected 1 (512.0 MiB) · frees 512.0 MiB
+«fg=key.label|j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit»
+
+«fg=title|kipple»  «fg=level.other|Careful» · «fg=level.current|[Balanced]» · «fg=level.other|Thorough» · scanned in 1.2 s · ~/projects
+  ▾ «fg=safe,bold|Safe to clean (2)»                         514.0 MiB       «fg=muted| passes every check»       «fg=border|│»«fg=title|Cargo build output» · «fg=safe,bold|Safe to clean at Balanced»
+    ▾ Dev (2)                                 514.0 MiB                                 «fg=border|│»/home/ada/projects/api/target
+«fg=selected,bg=cursor|● »«bg=cursor|    api/target»«fg=muted,bg=cursor|  Cargo build output»«bg=cursor|          512.0 MiB»«fg=bar.safe,bg=cursor| ███▍  »«fg=safe,bg=cursor| »«bg=cursor|                         »«fg=border|│»«fg=label|What it is        »Cargo build output
+      tool/__pycache__«fg=muted|  Python bytecode ca»      2.0 MiB«fg=bar.safe|       »«fg=safe| »                         «fg=border|│»«fg=label|Why it's here     »Cargo writes compiled crates here when you build.
+  ▾ «fg=review,bold|Review (1)»                                300.0 MiB       «fg=muted| loses more, or recent»    «fg=border|│»«fg=label|Why it's safe     »passes every check at Balanced: recognised, comes
+    ▾ Dev (1)                                 300.0 MiB                                 «fg=border|│»back, untracked, no running program shows it in use, not recent
+      web/node_modules«fg=muted|  Node dependencies»     300.0 MiB«fg=bar.review| ██    »«fg=review| recent»                   «fg=border|│»«fg=label|What you lose     »The next build compiles everything again.
+  ▾ «fg=protected,bold|Protected (2)»                            1020.0 MiB       «fg=muted| not eligible»             «fg=border|│»«fg=label|How it comes back »the next build makes it again, without the network
+    ▾ Dev (1)                                 120.0 MiB                                 «fg=border|│»«fg=label|Restore cost      »not estimated
+      bunapp/node_modules«fg=muted|  Node dependenci»    120.0 MiB«fg=bar.protected| ▊     »«fg=protected| layout not recognised +1» «fg=border|│»«fg=label|Proposes          »remove (delete or trash)
+    ▾ System (1)                              900.0 MiB                                 «fg=border|│»«fg=label|Git               »no repository holds it or lives inside it, so git
+      pacman/pkg«fg=muted|  pacman package cache»        900.0 MiB«fg=bar.protected| ██████»«fg=protected| advice only»              «fg=border|│»tracks nothing inside
+                                            ┌ Keys ────────────────────────────────────────────────────────────────┐g program shows it in use
+                                            │«fg=key|j k  ↓ ↑   »move                                                       │go
+                                            │«fg=key|h l  ← →   »fold and unfold a group or project                         │
+                                            │«fg=key|g G        »first and last line                                        │argo.target
+                                            │«fg=key|/          »filter by words of the path or rule; enter keeps it, esc   │
+                                            │clears it                                                             │
+                                            │«fg=key|tab        »show one lens: Agents, Dev, System, then all               │
+                                            │«fg=key|s          »select or unselect the finding                             │
+                                            │«fg=key|a          »add the group's or project's Safe and Review findings      │
+                                            │«fg=key|c          »select the whole Safe bucket                               │
+                                            │«fg=key|p          »keep the finding for good, with an optional note           │
+                                            │«fg=key|P          »keep every finding of its rule: turn the rule off          │
+                                            │«fg=key|o          »sort by size, last change or name                          │
+                                            │«fg=key|J K        »scroll the detail pane                                     │
+                                            │«fg=key|y          »send the path to the terminal clipboard                    │
+                                            │«fg=key|,          »settings: level, project roots, method, what is kept       │
+                                            │«fg=key|enter      »show what is selected                                      │
+                                            │«fg=key|?          »this help                                                  │
+                                            │«fg=key|q          »quit                                                       │
+                                            │                                                                      │
+                                            │«fg=muted|This version only finds and explains: selecting removes nothing.»      │
+                                            └──────────────────────────────────────────────────────────────────────┘
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+                                                                                        «fg=border|│»
+found 1.7 GiB · eligible 814.0 MiB · selected 1 (512.0 MiB) · frees 512.0 MiB
+«fg=key.label|j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit»

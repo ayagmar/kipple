@@ -43,7 +43,8 @@ use std::time::{Duration, SystemTime};
 use clap::Parser as _;
 use kipple::config::{self, Settings};
 use kipple::setup::Builtin;
-use kipple::tui::{self, Input, Key, Keys, LevelTotals, Look, first_run_due, level_totals};
+use kipple::theme::{Glyphs, Look, Theme};
+use kipple::tui::{self, Input, Key, Keys, LevelTotals, first_run_due, level_totals};
 use kipple::{Cli, USAGE};
 use kipple_core::{CancelToken, Finding, Level, ScanRequest, event_channel};
 use kipple_platform::Environment;
@@ -239,9 +240,10 @@ fn on_demo_home_the_header_names_the_project_root_at_80_by_24() {
         written: Vec::new(),
     })
     .unwrap();
+    let mono = Theme::builtin("mono").unwrap();
     let look = Look {
-        color: false,
-        ascii: true,
+        theme: &mono,
+        glyphs: Glyphs::Ascii,
     };
 
     tui::run(
@@ -384,9 +386,10 @@ fn y_on_demo_home_writes_the_focused_path_to_the_terminal_as_osc_52() {
     keys.extend([Key::Enter, Key::Char('g')]);
     keys.extend([Key::Char('j'); 2]);
     keys.push(Key::Char('y'));
+    let mono = Theme::builtin("mono").unwrap();
     let look = Look {
-        color: false,
-        ascii: true,
+        theme: &mono,
+        glyphs: Glyphs::Ascii,
     };
 
     tui::run(

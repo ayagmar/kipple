@@ -1,6 +1,7 @@
-//! The home screen's drawing: pure functions of the [`App`] state and the [`Look`] into a
-//! ratatui frame (`docs/03-functional-spec.md` §5), one module per part of the screen.
-//! A finding's state is always a word; colour only repeats it.
+//! The home screen's drawing: pure functions of the [`App`] state and the [`Look`] (a
+//! [`Theme`] and [`Glyphs`]) into a ratatui frame (`docs/03-functional-spec.md` §5), one
+//! module per part of the screen. Each asks the theme for a [`Role`] and never names a
+//! colour; a finding's state is always a word, and colour only repeats it.
 
 mod detail;
 mod frame;
@@ -14,114 +15,61 @@ mod wrap;
 
 use kipple_core::{Lens, Level};
 use ratatui::Frame;
-use ratatui::style::{Color, Style};
-use ratatui::symbols::border;
-use ratatui::text::Span;
+use ratatui::text::{Line as Text, Span};
 
 pub(crate) use self::detail::detail_end;
 pub(crate) use self::layout::list_rows;
 pub(crate) use self::tree::{offset, slashed, tail};
 use super::app::{App, Mode, Shelf};
+use crate::theme::{Look, Role};
 
-/// How the screen is drawn: with colour unless `NO_COLOR` is set, and with Unicode
-/// symbols unless `--ascii` is given.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Look {
-    /// Whether to use colour.
-    pub color: bool,
-    /// Whether to draw with ASCII only.
-    pub ascii: bool,
+impl Look<'_> {
+    /// Paints the whole screen in the text role, which every other role is patched
+    /// over.
+    fn fill(self, frame: &mut Frame<'_>) {
+        let area = frame.area();
+        frame.buffer_mut().set_style(area, self.style(Role::Text));
+    }
+
+    /// `line` as the cursor draws it: the cursor's style patched over each span's own.
+    fn cursor(self, line: Text<'static>) -> Text<'static> {
+        let cursor = self.style(Role::Cursor);
+        let style = line.style.patch(cursor);
+        let spans: Vec<Span<'static>> = line
+            .spans
+            .into_iter()
+            .map(|span| {
+                let patched = span.style.patch(cursor);
+                span.style(patched)
+            })
+            .collect();
+        Text::from(spans).style(style)
+    }
 }
 
-const ASCII_BORDER: border::Set<'static> = border::Set {
-    top_left: "+",
-    top_right: "+",
-    bottom_left: "+",
-    bottom_right: "+",
-    vertical_left: "|",
-    vertical_right: "|",
-    horizontal_top: "-",
-    horizontal_bottom: "-",
-};
-
-impl Look {
-    pub(crate) const fn border(self) -> border::Set<'static> {
-        if self.ascii {
-            ASCII_BORDER
-        } else {
-            border::PLAIN
-        }
+/// The role of a bucket's name and state.
+const fn tint(shelf: Shelf) -> Role {
+    match shelf {
+        Shelf::Safe => Role::Safe,
+        Shelf::Review => Role::Review,
+        Shelf::Protected => Role::Protected,
+        Shelf::Measuring => Role::Muted,
     }
+}
 
-    pub(crate) const fn dot(self) -> &'static str {
-        if self.ascii { " - " } else { " · " }
-    }
-
-    const fn fold(self, collapsed: bool) -> &'static str {
-        match (self.ascii, collapsed) {
-            (false, false) => "▾ ",
-            (false, true) => "▸ ",
-            (true, false) => "v ",
-            (true, true) => "> ",
-        }
-    }
-
-    pub(crate) fn ellipsis(self, text: &str) -> String {
-        format!("{text}{}", if self.ascii { "..." } else { "…" })
-    }
-
-    /// A bar `eighths` eighths of a cell long, padded to `cells` cells.
-    fn bar(self, eighths: u64, cells: usize) -> String {
-        const PARTS: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
-        let full = usize::try_from(eighths / 8).unwrap_or(cells).min(cells);
-        let part = usize::try_from(eighths % 8).unwrap_or(0);
-        let mut bar = if self.ascii {
-            // Whole cells only, rounded to the nearest.
-            "#".repeat((full + usize::from(part >= 4)).min(cells))
-        } else {
-            let mut bar = "█".repeat(full);
-            if full < cells {
-                bar.push_str(PARTS.get(part).copied().unwrap_or(""));
-            }
-            bar
-        };
-        let drawn = bar.chars().count();
-        bar.push_str(&" ".repeat(cells.saturating_sub(drawn)));
-        bar
-    }
-
-    const fn mark(self) -> &'static str {
-        if self.ascii { "*" } else { "●" }
-    }
-
-    const fn fg(self, color: Color) -> Style {
-        if self.color {
-            Style::new().fg(color)
-        } else {
-            Style::new()
-        }
-    }
-
-    const fn tint(self, which: Shelf) -> Style {
-        self.fg(match which {
-            Shelf::Safe => Color::Green,
-            Shelf::Review => Color::Yellow,
-            Shelf::Protected => Color::Blue,
-            Shelf::Measuring => Color::DarkGray,
-        })
-    }
-
-    pub(crate) const fn dim(self) -> Style {
-        if self.color {
-            Style::new().fg(Color::DarkGray)
-        } else {
-            Style::new()
-        }
+/// The role of a finding's size bar in `shelf`.
+const fn bar_tint(shelf: Shelf) -> Role {
+    match shelf {
+        Shelf::Safe => Role::BarSafe,
+        Shelf::Review => Role::BarReview,
+        Shelf::Protected => Role::BarProtected,
+        Shelf::Measuring => Role::BarTrack,
     }
 }
 
 /// Draws `app` into `frame`.
-pub(crate) fn render(app: &App, look: Look, frame: &mut Frame<'_>) {
+pub(crate) fn render(app: &App, look: Look<'_>, frame: &mut Frame<'_>) {
+    look.fill(frame);
     let areas = layout::layout(frame.area());
     let lines = app.lines();
     let tree = tree::Tree::new(app, &lines, areas.wide);

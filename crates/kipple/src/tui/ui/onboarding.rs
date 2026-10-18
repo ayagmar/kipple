@@ -6,24 +6,25 @@ use std::fmt::Write as _;
 use kipple_core::{Level, Method, ScanOutcome};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
-use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 use super::settings::{describe, search_notes};
 use super::{Look, level_about, title_case};
 use crate::human::{self, bytes, escaped};
+use crate::theme::Role;
 use crate::tui::app::{App, Progress};
 use crate::tui::onboarding::{Onboarding, Step, level_totals};
 
 /// Draws the step `onboarding` is on, with `app`'s scan for the numbers and tips.
-pub(crate) fn render(onboarding: &Onboarding, app: &App, look: Look, frame: &mut Frame<'_>) {
+pub(crate) fn render(onboarding: &Onboarding, app: &App, look: Look<'_>, frame: &mut Frame<'_>) {
     let [header, body, footer] = Layout::vertical([
         Constraint::Length(1),
         Constraint::Fill(1),
         Constraint::Length(1),
     ])
     .areas(frame.area());
+    look.fill(frame);
     frame.render_widget(head(onboarding, app, look), header);
     let lines = match onboarding.step {
         Step::Level => level_lines(onboarding, app, look),
@@ -38,8 +39,8 @@ pub(crate) fn render(onboarding: &Onboarding, app: &App, look: Look, frame: &mut
     };
     let block = Block::new()
         .borders(Borders::TOP)
-        .border_set(look.border())
-        .border_style(look.dim());
+        .border_set(look.glyphs.border())
+        .border_style(look.style(Role::Border));
     let paragraph = Paragraph::new(lines)
         .block(block)
         .wrap(Wrap { trim: false })
@@ -48,49 +49,41 @@ pub(crate) fn render(onboarding: &Onboarding, app: &App, look: Look, frame: &mut
     frame.render_widget(keys(onboarding, look), footer);
 }
 
-fn head(onboarding: &Onboarding, app: &App, look: Look) -> Paragraph<'static> {
+fn head(onboarding: &Onboarding, app: &App, look: Look<'_>) -> Paragraph<'static> {
     let state = match app.progress {
-        Progress::Scanning => look.ellipsis("scanning"),
+        Progress::Scanning => look.glyphs.ellipsis("scanning"),
         Progress::Done { outcome, .. } if outcome != ScanOutcome::Completed => {
             "scan stopped early".to_owned()
         }
         Progress::Done { .. } => "scan finished".to_owned(),
     };
     Paragraph::new(Line::from(vec![
-        Span::styled(" Welcome to kipple", bold()),
+        Span::styled(" Welcome to kipple", look.style(Role::Title)),
         Span::raw(format!(
             "{}step {} of 4{}",
-            look.dot(),
+            look.glyphs.dot(),
             onboarding.step.number(),
-            look.dot()
+            look.glyphs.dot()
         )),
-        Span::styled(state, look.dim()),
+        Span::styled(state, look.style(Role::Muted)),
     ]))
 }
 
-const fn bold() -> Style {
-    Style::new().add_modifier(Modifier::BOLD)
-}
-
-fn question(text: &str, about: &str, look: Look) -> Vec<Line<'static>> {
+fn question(text: &str, about: &str, look: Look<'_>) -> Vec<Line<'static>> {
     vec![
-        Line::styled(text.to_owned(), bold()),
-        Line::styled(about.to_owned(), look.dim()),
+        Line::styled(text.to_owned(), look.style(Role::Title)),
+        Line::styled(about.to_owned(), look.style(Role::Muted)),
         Line::from(""),
     ]
 }
 
-/// A choice line: a marker and reversed when the cursor is on it.
-fn choice(focused: bool, text: &str) -> Line<'static> {
+/// A choice line: a marker, and the cursor's style when the cursor is on it.
+fn choice(look: Look<'_>, focused: bool, text: &str) -> Line<'static> {
     let line = Line::from(format!("{}{text}", if focused { "> " } else { "  " }));
-    if focused {
-        line.style(Style::new().add_modifier(Modifier::REVERSED))
-    } else {
-        line
-    }
+    if focused { look.cursor(line) } else { line }
 }
 
-fn level_lines(onboarding: &Onboarding, app: &App, look: Look) -> Vec<Line<'static>> {
+fn level_lines(onboarding: &Onboarding, app: &App, look: Look<'_>) -> Vec<Line<'static>> {
     let mut lines = question(
         "How careful should kipple be?",
         "Each level shows what it would offer on this machine. It changes nothing.",
@@ -103,10 +96,10 @@ fn level_lines(onboarding: &Onboarding, app: &App, look: Look) -> Vec<Line<'stat
         if level == Level::Balanced {
             name.push_str(" (the default)");
         }
-        lines.push(choice(level == onboarding.level, &name));
+        lines.push(choice(look, level == onboarding.level, &name));
         lines.push(Line::styled(
             format!("    {}", level_about(level)),
-            look.dim(),
+            look.style(Role::Muted),
         ));
         lines.push(Line::from(format!(
             "    {} safe to clean, {} to review",
@@ -119,11 +112,11 @@ fn level_lines(onboarding: &Onboarding, app: &App, look: Look) -> Vec<Line<'stat
         Progress::Scanning => "The numbers grow while the scan runs.",
         Progress::Done { .. } => "The scan has finished: these are the totals.",
     };
-    lines.push(Line::styled(note, look.dim()));
+    lines.push(Line::styled(note, look.style(Role::Muted)));
     lines
 }
 
-fn root_lines(onboarding: &Onboarding, app: &App, look: Look) -> Vec<Line<'static>> {
+fn root_lines(onboarding: &Onboarding, app: &App, look: Look<'_>) -> Vec<Line<'static>> {
     let mut lines = question(
         "Where are your projects?",
         "kipple looks for build output and dependencies below these folders.",
@@ -132,13 +125,14 @@ fn root_lines(onboarding: &Onboarding, app: &App, look: Look) -> Vec<Line<'stati
     if onboarding.roots.is_empty() {
         lines.push(Line::styled(
             "None of the usual project folders exist (~/projects, ~/code, ~/src and others).",
-            look.dim(),
+            look.style(Role::Muted),
         ));
     }
     for (index, root) in onboarding.roots.iter().enumerate() {
         let mark = if root.checked { "[x]" } else { "[ ]" };
         let path = escaped(&root.path.display().to_string());
         lines.push(choice(
+            look,
             index == onboarding.root_cursor,
             &format!("{mark} {path}"),
         ));
@@ -147,7 +141,7 @@ fn root_lines(onboarding: &Onboarding, app: &App, look: Look) -> Vec<Line<'stati
         || "+ add another".to_owned(),
         |typed| format!("+ {}_", escaped(typed)),
     );
-    lines.push(choice(onboarding.on_add(), &add));
+    lines.push(choice(look, onboarding.on_add(), &add));
     suggestion_lines(onboarding, app, look, &mut lines);
     if let Some(notice) = &onboarding.notice {
         lines.push(Line::from(""));
@@ -157,7 +151,7 @@ fn root_lines(onboarding: &Onboarding, app: &App, look: Look) -> Vec<Line<'stati
 }
 
 /// The roots kipple suggests, below "add another", with what the search says.
-fn suggestion_lines(onboarding: &Onboarding, app: &App, look: Look, lines: &mut Vec<Line<'_>>) {
+fn suggestion_lines(onboarding: &Onboarding, app: &App, look: Look<'_>, lines: &mut Vec<Line<'_>>) {
     let notes = search_notes(&app.search, look);
     if onboarding.offers.is_empty() && notes.is_empty() {
         return;
@@ -165,18 +159,22 @@ fn suggestion_lines(onboarding: &Onboarding, app: &App, look: Look, lines: &mut 
     lines.push(Line::from(""));
     lines.push(Line::styled(
         "Suggested: projects found elsewhere in your home folder",
-        bold(),
+        look.style(Role::Title),
     ));
     let first = onboarding.roots.len() + 1;
     for (index, offer) in onboarding.offers.iter().enumerate() {
         let mark = if offer.checked { "[x]" } else { "[ ]" };
         let text = format!("{mark} {}", describe(&offer.suggestion, look));
-        lines.push(choice(onboarding.root_cursor == first + index, &text));
+        lines.push(choice(look, onboarding.root_cursor == first + index, &text));
     }
-    lines.extend(notes.into_iter().map(|note| Line::styled(note, look.dim())));
+    lines.extend(
+        notes
+            .into_iter()
+            .map(|note| Line::styled(note, look.style(Role::Muted))),
+    );
 }
 
-fn method_lines(onboarding: &Onboarding, look: Look) -> Vec<Line<'static>> {
+fn method_lines(onboarding: &Onboarding, look: Look<'_>) -> Vec<Line<'static>> {
     let mut lines = question(
         "Delete or move to Trash by default?",
         "This version only stores the answer: nothing is removed yet.",
@@ -188,6 +186,7 @@ fn method_lines(onboarding: &Onboarding, look: Look) -> Vec<Line<'static>> {
             Method::Trash => "can be put back, but frees nothing until the Trash is emptied",
         };
         lines.push(choice(
+            look,
             method == onboarding.method,
             &format!("{:<8}{about}", title_case(method.name())),
         ));
@@ -195,7 +194,7 @@ fn method_lines(onboarding: &Onboarding, look: Look) -> Vec<Line<'static>> {
     lines
 }
 
-fn tip_lines(app: &App, look: Look) -> Vec<Line<'static>> {
+fn tip_lines(app: &App, look: Look<'_>) -> Vec<Line<'static>> {
     let mut lines = question(
         "Prevention tips",
         "Settings of your tools that keep less around. kipple shows them and never changes them.",
@@ -210,17 +209,17 @@ fn tip_lines(app: &App, look: Look) -> Vec<Line<'static>> {
         lines.push(Line::from(none));
     }
     for tip in tips {
-        lines.push(Line::styled(escaped(&tip.title), bold()));
+        lines.push(Line::styled(escaped(&tip.title), look.style(Role::Title)));
         lines.push(Line::from(escaped(&tip.text)));
         for line in tip.snippets.iter().flat_map(|s| human::snippet_lines(s)) {
-            lines.push(Line::styled(format!("  {line}"), look.dim()));
+            lines.push(Line::styled(format!("  {line}"), look.style(Role::Muted)));
         }
         lines.push(Line::from(""));
     }
     lines
 }
 
-fn keys(onboarding: &Onboarding, look: Look) -> Paragraph<'static> {
+fn keys(onboarding: &Onboarding, look: Look<'_>) -> Paragraph<'static> {
     let mut text = String::from(" ");
     if onboarding.typing.is_some() {
         text.push_str("type a path, enter adds it, esc cancels");
@@ -231,16 +230,16 @@ fn keys(onboarding: &Onboarding, look: Look) -> Paragraph<'static> {
         };
         text.push_str(enter);
         if onboarding.step == Step::Roots {
-            write!(text, "{}space check", look.dot()).ok();
+            write!(text, "{}space check", look.glyphs.dot()).ok();
         }
         if onboarding.step == Step::Tips {
-            write!(text, "{}j k scroll", look.dot()).ok();
+            write!(text, "{}j k scroll", look.glyphs.dot()).ok();
         }
-        write!(text, "{}tab skip", look.dot()).ok();
+        write!(text, "{}tab skip", look.glyphs.dot()).ok();
         if onboarding.step != Step::Level {
-            write!(text, "{}esc back", look.dot()).ok();
+            write!(text, "{}esc back", look.glyphs.dot()).ok();
         }
-        write!(text, "{}q quit, saving nothing", look.dot()).ok();
+        write!(text, "{}q quit, saving nothing", look.glyphs.dot()).ok();
     }
-    Paragraph::new(Line::styled(text, look.dim()))
+    Paragraph::new(Line::styled(text, look.style(Role::KeyLabel)))
 }

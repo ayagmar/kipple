@@ -13,8 +13,9 @@ use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 
-use super::{PACMAN, colour, home, styled};
+use super::{PACMAN, colour, home, probe, styled};
 use crate::config::{self, Catalog, Config, Edit, Loaded, Location, Settings, Source};
+use crate::theme::Look;
 use crate::tui::app::{App, Effect, Key, Msg, Saved};
 use crate::tui::onboarding::{self, Onboarding, Outcome, Step};
 use crate::tui::settings::Found;
@@ -148,9 +149,13 @@ fn screen(onboarding: &Onboarding, app: &App, width: u16, height: u16) -> String
 }
 
 fn drawn(onboarding: &Onboarding, app: &App, width: u16, height: u16) -> Buffer {
-    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    drawn_in(colour(), onboarding, app, (width, height))
+}
+
+fn drawn_in(look: Look<'_>, onboarding: &Onboarding, app: &App, size: (u16, u16)) -> Buffer {
+    let mut terminal = Terminal::new(TestBackend::new(size.0, size.1)).unwrap();
     terminal
-        .draw(|frame| crate::tui::ui::onboarding::render(onboarding, app, colour(), frame))
+        .draw(|frame| crate::tui::ui::onboarding::render(onboarding, app, look, frame))
         .unwrap();
     terminal.backend().buffer().clone()
 }
@@ -468,6 +473,16 @@ fn step_4_shows_each_line_of_a_snippet_on_its_own_line() {
     }
 }
 
+/// The step drawn in the probe theme, as styled text, after checking that every cell has
+/// some role's colour: one drawn in the terminal's own is out of every theme's reach.
+fn in_roles(onboarding: &Onboarding, app: &App) -> String {
+    let buffer = drawn_in(probe(), onboarding, app, (160, 48));
+    for cell in &buffer.content {
+        assert_ne!(cell.fg, ratatui::style::Color::Reset, "{cell:?}");
+    }
+    styled(&buffer)
+}
+
 // Catches a colour or a modifier in the first run's steps changing while their drawing
 // code moves: the text snapshots see only the characters.
 #[test]
@@ -483,11 +498,15 @@ fn steps_1_to_4_at_160_by_48_in_colour() {
     let paths = [PathBuf::from("/home/ada/notes")];
     suggest(&mut app, &mut first, &paths, false);
     let mut shown = vec![styled(&drawn(&first, &app, 160, 48))];
+    let mut probed = vec![in_roles(&first, &app)];
     for keys in [&[Key::Enter, Key::Down][..], &[Key::Enter], &[Key::Enter]] {
         answer(&mut first, keys);
         shown.push(styled(&drawn(&first, &app, 160, 48)));
+        probed.push(in_roles(&first, &app));
     }
     insta::assert_snapshot!(shown.join("\n"));
+    // Catches a step asking for the wrong role, which the default theme can't show.
+    insta::assert_snapshot!("steps_1_to_4_in_their_roles", probed.join("\n"));
 }
 
 // Catches step 4 left blank when no tool kipple found has a retention setting.

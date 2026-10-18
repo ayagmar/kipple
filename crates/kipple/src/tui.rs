@@ -34,9 +34,9 @@ use self::app::{App, Catalog, Effect, Msg, Saved};
 pub use self::onboarding::{LevelTotals, due as first_run_due, level_totals};
 use self::onboarding::{Onboarding, Outcome};
 use self::settings::Found;
-pub use self::ui::Look;
 use crate::config::{self, Edit, Loaded, Settings};
 use crate::setup::Builtin;
+use crate::theme::Look;
 
 /// How long the loop waits for a key while the scan streams: one frame at 60 Hz.
 const FRAME: Duration = Duration::from_millis(16);
@@ -86,7 +86,7 @@ pub fn run<B: Backend + io::Write>(
     keys: &mut dyn Keys,
     env: &Environment,
     settings: &Settings,
-    look: Look,
+    look: Look<'_>,
 ) -> io::Result<Option<Duration>>
 where
     B::Error: Send + Sync + 'static,
@@ -105,7 +105,7 @@ where
 struct Start<'a> {
     env: &'a Environment,
     settings: &'a Settings,
-    look: Look,
+    look: Look<'a>,
     first: bool,
 }
 
@@ -168,7 +168,7 @@ where
 /// Opens the home screen in this terminal and restores the terminal however it ends:
 /// on quit, on error, and on panic (ratatui's panic hook). Without a config file at the
 /// default location, the first run's questions come first (J0).
-pub(crate) fn open(env: &Environment, settings: &Settings, look: Look) -> io::Result<()> {
+pub(crate) fn open(env: &Environment, settings: &Settings, look: Look<'_>) -> io::Result<()> {
     let first = onboarding::due(&settings.loaded);
     // Before `try_init`: it enables raw mode first, and that stays on if entering the
     // alternate screen then fails.
@@ -237,7 +237,7 @@ struct Scan<'scope> {
 /// One home screen session: the state, the scan feeding it and the terminal drawing it.
 struct Screen<'s, 'scope, 'env, B: Backend> {
     terminal: &'s mut Terminal<B>,
-    look: Look,
+    look: Look<'env>,
     app: &'s mut App,
     /// The first run's questions, until they are answered.
     onboarding: Option<Onboarding>,

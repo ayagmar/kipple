@@ -9,6 +9,7 @@ mod settings;
 mod tree;
 
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::Duration;
 
 use kipple_core::{
@@ -22,7 +23,8 @@ use ratatui::backend::TestBackend;
 use ratatui::style::{Color, Modifier};
 
 use super::{App, Catalog, Key, Msg, Node, Shelf};
-use crate::tui::ui::{self, Look};
+use crate::theme::{Glyphs, Look, Role, Theme};
+use crate::tui::ui;
 
 const DAY: Duration = Duration::from_hours(24);
 const MIB: u64 = 1024 * 1024;
@@ -644,15 +646,35 @@ fn q_and_ctrl_c_quit_and_any_key_closes_help() {
     assert!(typing.quit);
 }
 
-const fn colour() -> Look {
+/// The default theme, or `mono` without colour, with Unicode or ASCII symbols.
+fn look(colour: bool, ascii: bool) -> Look<'static> {
+    static KIPPLE: LazyLock<Theme> = LazyLock::new(|| Theme::builtin("kipple").unwrap());
+    static MONO: LazyLock<Theme> = LazyLock::new(|| Theme::builtin("mono").unwrap());
     Look {
-        color: true,
-        ascii: false,
+        theme: if colour { &KIPPLE } else { &MONO },
+        glyphs: if ascii {
+            Glyphs::Ascii
+        } else {
+            Glyphs::Unicode
+        },
     }
 }
 
+/// The probe theme, which draws each role in its own colour, with Unicode symbols.
+fn probe() -> Look<'static> {
+    static PROBE: LazyLock<Theme> = LazyLock::new(Theme::probe);
+    Look {
+        theme: &PROBE,
+        glyphs: Glyphs::Unicode,
+    }
+}
+
+fn colour() -> Look<'static> {
+    look(true, false)
+}
+
 /// `app` drawn on a `width` by `height` terminal, as text.
-fn screen(app: &App, look: Look, width: u16, height: u16) -> String {
+fn screen(app: &App, look: Look<'_>, width: u16, height: u16) -> String {
     let buffer = draw(app, look, width, height);
     let mut text = String::new();
     for y in 0..height {
@@ -704,8 +726,20 @@ fn styled(buffer: &ratatui::buffer::Buffer) -> String {
 fn style_name(fg: Color, bg: Color, modifier: Modifier) -> String {
     let mut parts = Vec::new();
     for (name, colour) in [("fg", fg), ("bg", bg)] {
-        if colour != Color::Reset {
-            parts.push(format!("{name}={colour}"));
+        if colour == Color::Reset {
+            continue;
+        }
+        // The probe theme's colours, by the role they stand for; the text role every cell
+        // starts from is left out, so the other roles read.
+        let probed = if let Color::Indexed(index) = colour {
+            Role::ALL.get(usize::from(index)).copied()
+        } else {
+            None
+        };
+        match probed {
+            Some(Role::Text) => {}
+            Some(role) => parts.push(format!("{name}={}", role.name())),
+            None => parts.push(format!("{name}={colour}")),
         }
     }
     for (name, _) in modifier.iter_names() {
@@ -714,7 +748,7 @@ fn style_name(fg: Color, bg: Color, modifier: Modifier) -> String {
     parts.join(",")
 }
 
-fn draw(app: &App, look: Look, width: u16, height: u16) -> ratatui::buffer::Buffer {
+fn draw(app: &App, look: Look<'_>, width: u16, height: u16) -> ratatui::buffer::Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal.draw(|frame| ui::render(app, look, frame)).unwrap();
     terminal.backend().buffer().clone()
@@ -813,6 +847,32 @@ fn the_bucket_home_at_160_by_48_in_colour() {
     insta::assert_snapshot!(styled(&draw(&app, colour(), 160, 48)));
 }
 
+// Catches a part of the screen drawn in the terminal's own colours, which no theme can
+// reach: under the probe every cell has some role's colour.
+#[test]
+fn every_cell_of_the_home_screen_and_its_help_is_drawn_in_a_role() {
+    let mut app = sized(160, 48);
+    for keys in [&[][..], &[Key::Char('?')], &[Key::Esc, Key::Char(',')]] {
+        press(&mut app, keys);
+        let buffer = draw(&app, probe(), 160, 48);
+        for cell in &buffer.content {
+            assert_ne!(cell.fg, Color::Reset, "{keys:?} {cell:?}");
+        }
+    }
+}
+
+// Catches a part of the screen asking for the wrong role, which the default theme can't
+// show because several roles share a colour there: muted text drawn as a border, a bar
+// as its bucket's name, the cursor no longer winning over a span's own style.
+#[test]
+fn the_bucket_home_and_its_help_draw_each_part_in_its_role() {
+    let mut app = sized(160, 48);
+    let home = styled(&draw(&app, probe(), 160, 48));
+    press(&mut app, &[Key::Char('?')]);
+    let help = styled(&draw(&app, probe(), 160, 48));
+    insta::assert_snapshot!(format!("{home}\n{help}"));
+}
+
 // The same for the help over it.
 #[test]
 fn help_at_160_by_48_in_colour() {
@@ -830,10 +890,7 @@ fn help_at_80_by_24_in_ascii() {
         height: 24,
     });
     press(&mut app, &[Key::Char('?')]);
-    let look = Look {
-        color: false,
-        ascii: true,
-    };
+    let look = look(false, true);
     insta::assert_snapshot!(screen(&app, look, 80, 24));
 }
 
@@ -842,10 +899,7 @@ fn no_color_draws_every_cell_in_the_terminals_own_colours_and_ascii_only_ascii()
     for (width, height) in [(80, 24), (160, 48)] {
         let mut app = sized(width, height);
         press(&mut app, &[Key::Char('?')]);
-        let plain = Look {
-            color: false,
-            ascii: true,
-        };
+        let plain = look(false, true);
         let buffer = draw(&app, plain, width, height);
 
         for cell in &buffer.content {

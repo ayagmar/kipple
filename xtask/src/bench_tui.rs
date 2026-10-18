@@ -24,7 +24,8 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use kipple::config::{self, Settings};
 use kipple::setup::Builtin;
-use kipple::tui::{self, Input, Key, Keys, Look};
+use kipple::theme::{Glyphs, Look, Theme};
+use kipple::tui::{self, Input, Key, Keys};
 use kipple_platform::Environment;
 use ratatui::Terminal;
 use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
@@ -169,9 +170,10 @@ fn scan(tree: &Path, env: &Environment, file: &Path, keys: usize) -> Result<Meas
         inbox,
         delivered: Vec::new(),
     };
+    let theme = Theme::builtin("kipple")?;
     let look = Look {
-        color: true,
-        ascii: false,
+        theme: &theme,
+        glyphs: Glyphs::Unicode,
     };
     let builtin = Builtin::load().map_err(anyhow::Error::msg)?;
     let catalog = config::catalog(&builtin);

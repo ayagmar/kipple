@@ -32,7 +32,7 @@ pub(super) fn parse(text: &str, catalog: &Catalog) -> Result<Config, ParseError>
 }
 
 /// The line and column, from 1, of byte `offset` in `text`.
-fn position(text: &str, offset: usize) -> (usize, usize) {
+pub(crate) fn position(text: &str, offset: usize) -> (usize, usize) {
     let before = text.get(..offset).unwrap_or(text);
     let line = before.matches('\n').count() + 1;
     let start = before.rfind('\n').map_or(0, |newline| newline + 1);

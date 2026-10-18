@@ -13,13 +13,12 @@ use kipple_core::{
 use ratatui::style::Color;
 
 use super::{
-    CARGO, DAY, NODE, colour, draw, focus, found, home, measured, press, safe, screen, selected,
-    styled, to, typed,
+    CARGO, DAY, NODE, colour, draw, focus, found, home, look, measured, press, probe, safe, screen,
+    selected, styled, to, typed,
 };
 use crate::config::{self, Catalog, Config, Loaded, Location, Settings, Source};
 use crate::tui::app::{App, Effect, Key, Mode, Msg, Node, Saved, Shelf};
 use crate::tui::settings::{Found, Search};
-use crate::tui::ui::Look;
 
 const CARGO_RULE: &str = "builtin.cargo.target";
 const NODE_RULE: &str = "builtin.node.node-modules";
@@ -545,6 +544,14 @@ fn settings_at_160_by_48() {
     insta::assert_snapshot!(screen(&app, colour(), 160, 48));
 }
 
+// Catches a settings line asking for the wrong role, or the cursor's style not
+// winning over a label's own.
+#[test]
+fn settings_draw_each_part_in_its_role() {
+    let app = configured(160, 48);
+    insta::assert_snapshot!(styled(&draw(&app, probe(), 160, 48)));
+}
+
 // Catches a colour or a modifier in settings changing while its drawing code moves.
 #[test]
 fn settings_at_160_by_48_in_colour() {
@@ -577,10 +584,7 @@ fn a_leaves_recent_findings_out() {
 fn settings_under_no_color_and_ascii_use_only_ascii_and_the_terminals_colours() {
     for (width, height) in [(80, 24), (160, 48)] {
         let app = configured(width, height);
-        let plain = Look {
-            color: false,
-            ascii: true,
-        };
+        let plain = look(false, true);
         let buffer = draw(&app, plain, width, height);
 
         for cell in &buffer.content {

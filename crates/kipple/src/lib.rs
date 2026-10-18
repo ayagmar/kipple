@@ -15,6 +15,7 @@ pub mod rules;
 mod scan;
 pub mod setup;
 pub mod support;
+pub mod theme;
 pub mod tui;
 
 use std::collections::HashMap;
@@ -29,6 +30,7 @@ use kipple_platform::Environment;
 use crate::config::{ConfigError, Settings};
 use crate::json::{EventBody, ScanOut};
 use crate::setup::Builtin;
+use crate::theme::{Glyphs, Look, Theme};
 
 /// Command-line arguments for `kipple`.
 #[derive(Debug, Parser)]
@@ -216,9 +218,23 @@ pub fn home(cli: &Cli, env: &Environment, stderr: &mut dyn Write) -> ExitCode {
         Ok(settings) => settings,
         Err(code) => return code,
     };
-    let look = tui::Look {
-        color: env.get("NO_COLOR").is_none(),
-        ascii: cli.home.ascii,
+    let name = if env.get("NO_COLOR").is_none() {
+        "kipple"
+    } else {
+        "mono"
+    };
+    let theme = match Theme::builtin(name) {
+        Ok(theme) => theme,
+        Err(error) => return fail(stderr, &format!("theme {name}: {error}")),
+    };
+    let glyphs = if cli.home.ascii {
+        Glyphs::Ascii
+    } else {
+        Glyphs::Unicode
+    };
+    let look = Look {
+        theme: &theme,
+        glyphs,
     };
     match tui::open(env, &settings, look) {
         Ok(()) => ExitCode::SUCCESS,

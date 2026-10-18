@@ -2,14 +2,14 @@
 
 use ratatui::Frame;
 use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use super::Look;
 use super::layout::WIDE;
+use crate::theme::Role;
 
-pub(super) fn render(look: Look, frame: &mut Frame<'_>) {
+pub(super) fn render(look: Look<'_>, frame: &mut Frame<'_>) {
     let keys = [
         ("j k  ↓ ↑", "move"),
         ("h l  ← →", "fold and unfold a group or project"),
@@ -35,19 +35,9 @@ pub(super) fn render(look: Look, frame: &mut Frame<'_>) {
     let mut lines: Vec<Text<'static>> = keys
         .iter()
         .map(|(key, what)| {
-            let key = if look.ascii {
-                key.replace('↓', "dn")
-                    .replace('↑', "up")
-                    .replace('←', "lt")
-                    .replace('→', "rt")
-            } else {
-                (*key).to_owned()
-            };
+            let key = look.glyphs.keys(key);
             Text::from(vec![
-                Span::styled(
-                    format!("{key:<10} "),
-                    Style::new().add_modifier(Modifier::BOLD),
-                ),
+                Span::styled(format!("{key:<10} "), look.style(Role::Key)),
                 Span::raw(*what),
             ])
         })
@@ -55,7 +45,7 @@ pub(super) fn render(look: Look, frame: &mut Frame<'_>) {
     lines.push(Text::from(""));
     lines.push(Text::styled(
         "This version only finds and explains: selecting removes nothing.",
-        look.dim(),
+        look.style(Role::Muted),
     ));
     let area = frame.area();
     // Full width when narrow, so nothing shows beside it.
@@ -67,7 +57,11 @@ pub(super) fn render(look: Look, frame: &mut Frame<'_>) {
         width,
         height,
     );
-    let block = Block::bordered().border_set(look.border()).title(" Keys ");
+    // Clear wipes the cells' styles too, so the popup paints its own text role.
+    let block = Block::bordered()
+        .border_set(look.glyphs.border())
+        .style(look.style(Role::Text))
+        .title(" Keys ");
     frame.render_widget(Clear, popup);
     frame.render_widget(
         Paragraph::new(lines)

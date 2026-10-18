@@ -7,12 +7,13 @@ use std::path::Path;
 use kipple_core::Verdict;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout as Split, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::Paragraph;
 
-use super::{Look, lens_title, shelf_title};
+use super::{Look, bar_tint, lens_title, shelf_title, tint};
 use crate::human::{self, bytes, escaped};
+use crate::theme::Role;
 use crate::tui::app::{App, Line, Node, ProjectId, Row, Shelf};
 
 /// The size column, wide enough for `>= 1023.9 GiB`.
@@ -67,7 +68,13 @@ impl<'a> Tree<'a> {
     }
 }
 
-pub(super) fn render(app: &App, look: Look, tree: &Tree<'_>, area: Rect, frame: &mut Frame<'_>) {
+pub(super) fn render(
+    app: &App,
+    look: Look<'_>,
+    tree: &Tree<'_>,
+    area: Rect,
+    frame: &mut Frame<'_>,
+) {
     let (lines, at) = (tree.lines, tree.at);
     let rows = usize::from(area.height);
     let first = offset(app.scroll, at, rows, lines.len());
@@ -84,15 +91,18 @@ pub(super) fn render(app: &App, look: Look, tree: &Tree<'_>, area: Rect, frame: 
         ])
         .areas(row);
         let cells = cells(app, look, tree, *line);
-        let base = if index == at {
-            Style::new().add_modifier(Modifier::REVERSED)
+        let focused = index == at;
+        // The cursor's style fills the whole row and wins over each span's own.
+        let base = if focused {
+            look.style(Role::Cursor)
         } else {
             Style::new()
         };
-        frame.render_widget(Paragraph::new(cells.label).style(base), label);
+        let paint = |text: Text<'static>| if focused { look.cursor(text) } else { text };
+        frame.render_widget(Paragraph::new(paint(cells.label)).style(base), label);
         frame.render_widget(Paragraph::new(cells.size).style(base).right_aligned(), size);
-        frame.render_widget(Paragraph::new(cells.bar).style(base), bars);
-        frame.render_widget(Paragraph::new(cells.state).style(base), state);
+        frame.render_widget(Paragraph::new(paint(cells.bar)).style(base), bars);
+        frame.render_widget(Paragraph::new(paint(cells.state)).style(base), state);
     }
 }
 
@@ -127,15 +137,18 @@ struct Cells {
     state: Text<'static>,
 }
 
-fn cells(app: &App, look: Look, tree: &Tree<'_>, line: Line) -> Cells {
+fn cells(app: &App, look: Look<'_>, tree: &Tree<'_>, line: Line) -> Cells {
     let indent = "  ".repeat(usize::from(line.depth));
-    let fold = |node| look.fold(app.is_collapsed(node));
+    let fold = |node| look.glyphs.fold(app.is_collapsed(node));
     match line.node {
         Node::Finding(id) => app.row(id).map_or_else(empty_cells, |row| {
             let label = finding_label(app, tree, row, line.depth);
             let mut cells = finding_cells(app, look, row, &format!("{indent}{label}"));
             if let Some(scale) = tree.scale.filter(|_| measured(row)) {
-                cells.bar = Text::styled(bar(look, row.bytes(), scale), look.tint(row.shelf()));
+                cells.bar = Text::styled(
+                    bar(look, row.bytes(), scale),
+                    look.style(bar_tint(row.shelf())),
+                );
             }
             cells
         }),
@@ -146,12 +159,12 @@ fn cells(app: &App, look: Look, tree: &Tree<'_>, line: Line) -> Cells {
                     Span::raw(format!("  {indent}{}", fold(line.node))),
                     Span::styled(
                         format!("{} ({count})", shelf_title(shelf)),
-                        look.tint(shelf).add_modifier(Modifier::BOLD),
+                        look.style(tint(shelf)).add_modifier(Modifier::BOLD),
                     ),
                 ]),
                 size: bytes(total),
                 bar: Text::from(""),
-                state: Text::styled(format!(" {}", shelf_hint(shelf)), look.dim()),
+                state: Text::styled(format!(" {}", shelf_hint(shelf)), look.style(Role::Muted)),
             }
         }
         Node::Group(_, lens) => {
@@ -166,17 +179,17 @@ fn cells(app: &App, look: Look, tree: &Tree<'_>, line: Line) -> Cells {
                 Span::raw(format!("  {indent}{}", fold(line.node))),
                 Span::styled(
                     format!("Not covered ({})", app.gaps.len()),
-                    look.fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    look.style(Role::Warning).add_modifier(Modifier::BOLD),
                 ),
             ]),
             size: String::new(),
             bar: Text::from(""),
-            state: Text::styled(" so this report is partial", look.dim()),
+            state: Text::styled(" so this report is partial", look.style(Role::Muted)),
         },
         Node::Notice(index) => Cells {
             label: Text::from(vec![
                 Span::raw(format!("  {indent}")),
-                Span::styled("Note: ", Style::new().add_modifier(Modifier::BOLD)),
+                Span::styled("Note: ", look.style(Role::Label)),
                 Span::raw(
                     app.notices
                         .get(index)
@@ -244,19 +257,23 @@ fn finding_label(app: &App, tree: &Tree<'_>, row: &Row, depth: u8) -> String {
 }
 
 /// A bar for `bytes` out of `scale`, in `look`'s symbols, as wide as the column.
-fn bar(look: Look, bytes: u64, scale: u64) -> String {
+fn bar(look: Look<'_>, bytes: u64, scale: u64) -> String {
     let cells = usize::from(BAR - 1);
     let eighths = u128::from(bytes) * (cells as u128 * 8) / u128::from(scale.max(1));
     format!(
         " {}",
-        look.bar(u64::try_from(eighths).unwrap_or(u64::MAX), cells)
+        look.glyphs
+            .bar(u64::try_from(eighths).unwrap_or(u64::MAX), cells)
     )
 }
 
-fn finding_cells(app: &App, look: Look, row: &Row, label: &str) -> Cells {
+fn finding_cells(app: &App, look: Look<'_>, row: &Row, label: &str) -> Cells {
     let selected = app.selected.contains(&row.finding.id);
     let mark = if selected {
-        Span::styled(format!("{} ", look.mark()), look.fg(Color::Cyan))
+        Span::styled(
+            format!("{} ", look.glyphs.mark()),
+            look.style(Role::Selected),
+        )
     } else {
         Span::raw("  ")
     };
@@ -266,7 +283,7 @@ fn finding_cells(app: &App, look: Look, row: &Row, label: &str) -> Cells {
             Span::raw(escaped(label)),
             Span::styled(
                 format!("  {}", app.catalog.title(&row.finding.rule)),
-                look.dim(),
+                look.style(Role::Muted),
             ),
         ]),
         size: row
@@ -274,7 +291,7 @@ fn finding_cells(app: &App, look: Look, row: &Row, label: &str) -> Cells {
             .as_ref()
             .map_or_else(String::new, |size| human::size(Some(size))),
         bar: Text::from(""),
-        state: Text::styled(format!(" {}", state(row)), look.tint(row.shelf())),
+        state: Text::styled(format!(" {}", state(row)), look.style(tint(row.shelf()))),
     }
 }
 
