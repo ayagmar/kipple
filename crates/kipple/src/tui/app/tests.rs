@@ -22,7 +22,7 @@ use ratatui::backend::TestBackend;
 use ratatui::style::{Color, Modifier};
 
 use super::{App, Catalog, Key, Msg, Node, Shelf};
-use crate::tui::view::{self, Look};
+use crate::tui::ui::{self, Look};
 
 const DAY: Duration = Duration::from_hours(24);
 const MIB: u64 = 1024 * 1024;
@@ -716,9 +716,7 @@ fn style_name(fg: Color, bg: Color, modifier: Modifier) -> String {
 
 fn draw(app: &App, look: Look, width: u16, height: u16) -> ratatui::buffer::Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    terminal
-        .draw(|frame| view::render(app, look, frame))
-        .unwrap();
+    terminal.draw(|frame| ui::render(app, look, frame)).unwrap();
     terminal.backend().buffer().clone()
 }
 

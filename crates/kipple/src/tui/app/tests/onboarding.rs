@@ -150,7 +150,7 @@ fn screen(onboarding: &Onboarding, app: &App, width: u16, height: u16) -> String
 fn drawn(onboarding: &Onboarding, app: &App, width: u16, height: u16) -> Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal
-        .draw(|frame| onboarding::render(onboarding, app, colour(), frame))
+        .draw(|frame| crate::tui::ui::onboarding::render(onboarding, app, colour(), frame))
         .unwrap();
     terminal.backend().buffer().clone()
 }

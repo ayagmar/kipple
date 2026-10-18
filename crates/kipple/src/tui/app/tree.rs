@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use kipple_core::{Lens, Modified};
 
-use super::super::view;
+use super::super::ui;
 use super::{App, Line, Node, Row, Shelf};
 
 /// A project, by the order it was first seen in this session.
@@ -235,7 +235,7 @@ impl App {
         let outside = || Spot {
             project: None,
             inside: String::new(),
-            name: view::tail(path),
+            name: ui::tail(path),
         };
         let Some((root, rest)) = self
             .scanned_roots
@@ -254,7 +254,7 @@ impl App {
             return outside();
         }
         let name = first.as_os_str().to_string_lossy().into_owned();
-        let inside = view::slashed(inside);
+        let inside = ui::slashed(inside);
         let label = format!("{name}/{inside}");
         let project = root.join(first);
         let id = self.intern(project, name);

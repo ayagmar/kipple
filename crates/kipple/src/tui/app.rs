@@ -679,7 +679,7 @@ impl App {
     }
 
     fn page(&self) -> isize {
-        let rows = super::view::list_rows(self.width, self.height);
+        let rows = super::ui::list_rows(self.width, self.height);
         isize::try_from(rows.saturating_sub(1).max(1)).unwrap_or(1)
     }
 
@@ -814,7 +814,7 @@ impl App {
         let Some(node) = self.focus() else {
             return;
         };
-        let end = super::view::detail_end(self, node);
+        let end = super::ui::detail_end(self, node);
         let first = self.detail_first(node).saturating_add_signed(by).min(end);
         self.detail_scroll = Some((node, first));
     }
@@ -902,8 +902,8 @@ impl App {
             self.cursor = lines.get(at).map(|line| line.node);
         }
         self.hint = at;
-        let rows = super::view::list_rows(self.width, self.height);
-        self.scroll = super::view::offset(self.scroll, at, rows, lines.len());
+        let rows = super::ui::list_rows(self.width, self.height);
+        self.scroll = super::ui::offset(self.scroll, at, rows, lines.len());
     }
 
     /// The finding shown in `lines` that comes nearest before `gone` in the whole tree,

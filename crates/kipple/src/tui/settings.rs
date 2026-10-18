@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use kipple_core::{Level, Method, RuleId, Suggestion};
 
 use super::app::{App, Key};
-use super::view::{Look, title_case};
+use super::ui::title_case;
 use crate::config::{Edit, same_config_path, within_config_path};
 use crate::human::escaped;
 
@@ -82,62 +82,6 @@ impl Found {
                 .any(|root| within_config_path(&suggestion.path, root, home))
         });
     }
-}
-
-/// A suggestion as a line: its path, how many projects it holds and the first names.
-pub(crate) fn describe(suggestion: &Suggestion, look: Look) -> String {
-    const SHOWN: usize = 3;
-    let names: Vec<String> = suggestion
-        .projects
-        .iter()
-        .take(SHOWN)
-        .map(|project| {
-            // A project suggested as itself is named by its last component.
-            let name = match project.strip_prefix(&suggestion.path) {
-                Ok(inside) if !inside.as_os_str().is_empty() => inside,
-                Ok(_) | Err(_) => project.file_name().map_or(project.as_path(), Path::new),
-            };
-            escaped(&name.display().to_string())
-        })
-        .collect();
-    let count = suggestion.projects.len();
-    let more = if count > SHOWN {
-        look.ellipsis(", ")
-    } else {
-        String::new()
-    };
-    let projects = if count == 1 { "project" } else { "projects" };
-    format!(
-        "{} ({count} {projects}: {}{more})",
-        escaped(&suggestion.path.display().to_string()),
-        names.join(", ")
-    )
-}
-
-/// What to say about the search beside its suggestions: that it runs, that it stopped
-/// early, what it couldn't read, or that it found nothing.
-pub(crate) fn search_notes(search: &Search, look: Look) -> Vec<String> {
-    let found = match search {
-        Search::NotStarted => return Vec::new(),
-        Search::Running => return vec![look.ellipsis("looking for projects")],
-        Search::Done(found) => found,
-    };
-    let mut notes = Vec::new();
-    if found.suggestions.is_empty() {
-        notes.push("no projects found outside these folders".to_owned());
-    }
-    if !found.complete {
-        notes.push("stopped early: the list may be incomplete".to_owned());
-    }
-    if found.unreadable > 0 {
-        let folders = if found.unreadable == 1 {
-            "folder"
-        } else {
-            "folders"
-        };
-        notes.push(format!("{} {folders} couldn't be read", found.unreadable));
-    }
-    notes
 }
 
 /// Where the cursor is in the panel, and the root being typed, if any.

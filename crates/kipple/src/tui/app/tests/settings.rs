@@ -19,7 +19,7 @@ use super::{
 use crate::config::{self, Catalog, Config, Loaded, Location, Settings, Source};
 use crate::tui::app::{App, Effect, Key, Mode, Msg, Node, Saved, Shelf};
 use crate::tui::settings::{Found, Search};
-use crate::tui::view::Look;
+use crate::tui::ui::Look;
 
 const CARGO_RULE: &str = "builtin.cargo.target";
 const NODE_RULE: &str = "builtin.node.node-modules";

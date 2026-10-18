@@ -10,7 +10,7 @@ use super::{
     recent, safe, screen, selected, to, typed, unknown_layout,
 };
 use crate::tui::app::{App, Effect, Key, Msg, Node, Order, Shelf};
-use crate::tui::view::Look;
+use crate::tui::ui::Look;
 
 const ASCII: Look = Look {
     color: false,

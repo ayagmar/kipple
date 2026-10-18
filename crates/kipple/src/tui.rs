@@ -2,7 +2,7 @@
 //! arguments in a terminal, after the first run's questions (J0) when there is no config
 //! file yet.
 //!
-//! A state machine (`app`) and a pure renderer (`view`), driven by one loop that
+//! A state machine (`app`) and pure drawing (`ui`), driven by one loop that
 //! reads keys and scan events and draws at most once a frame. It is read-only: selecting
 //! marks findings and nothing else.
 
@@ -10,7 +10,7 @@ mod app;
 mod filter;
 mod onboarding;
 mod settings;
-mod view;
+mod ui;
 
 use std::ffi::OsString;
 use std::io;
@@ -34,7 +34,7 @@ use self::app::{App, Catalog, Effect, Msg, Saved};
 pub use self::onboarding::{LevelTotals, due as first_run_due, level_totals};
 use self::onboarding::{Onboarding, Outcome};
 use self::settings::Found;
-pub use self::view::Look;
+pub use self::ui::Look;
 use crate::config::{self, Edit, Loaded, Settings};
 use crate::setup::Builtin;
 
@@ -436,8 +436,8 @@ where
         let (app, look, onboarding) = (&*self.app, self.look, self.onboarding.as_ref());
         self.terminal
             .draw(|frame| match onboarding {
-                Some(onboarding) => onboarding::render(onboarding, app, look, frame),
-                None => view::render(app, look, frame),
+                Some(onboarding) => ui::onboarding::render(onboarding, app, look, frame),
+                None => ui::render(app, look, frame),
             })
             .map(|_| ())
             .map_err(io::Error::other)
