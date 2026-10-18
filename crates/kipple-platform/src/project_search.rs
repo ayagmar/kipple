@@ -8,7 +8,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
-use kipple_core::{CancelToken, Clock, HeldPath, is_within};
+use kipple_core::{CancelToken, Clock, FileIdentity, HeldPath, is_within};
 
 use crate::fs_probe::exact;
 use crate::os;
@@ -44,7 +44,8 @@ pub struct ProjectSearch<'a> {
     /// `project-artifact` rules.
     pub markers: &'a [OsString],
     /// Directories never entered, with everything inside them: every form of the existing
-    /// project roots, and kipple's own directories.
+    /// project roots, and kipple's own directories. Compared by path and by identity, so a
+    /// root given by its physical path is skipped when home is reached through a link.
     pub skip: &'a [PathBuf],
     /// The config's `exclude.paths`, compared by path and by identity.
     pub exclude: &'a [HeldPath],
@@ -98,6 +99,7 @@ pub fn search_projects(
         search,
         device: os::device(&meta),
         deadline: clock.now().checked_add(search.limits.time),
+        held: held(search),
     };
     let mut queue = VecDeque::from([(home, 0)]);
     let mut read = 0;
@@ -139,6 +141,19 @@ struct Walk<'a> {
     device: Option<u64>,
     /// When the time limit runs out; `None` when it is too far to represent.
     deadline: Option<SystemTime>,
+    /// The identities of the directories skipped and excluded, as far as they could be
+    /// read.
+    held: Vec<FileIdentity>,
+}
+
+/// The identities of `search.skip`, read now, and those `search.exclude` carries.
+fn held(search: &ProjectSearch<'_>) -> Vec<FileIdentity> {
+    let skipped = search.skip.iter().filter_map(|skip| {
+        let meta = fs::symlink_metadata(skip).ok()?;
+        os::identity(skip, &meta)
+    });
+    let excluded = search.exclude.iter().filter_map(|held| held.lineage.own());
+    skipped.chain(excluded).collect()
 }
 
 impl Walk<'_> {
@@ -179,26 +194,20 @@ impl Walk<'_> {
             && !os::hidden(meta)
             && os::device(meta) == self.device
             && !self.search.skip.iter().any(|skip| is_within(path, skip))
-            && !self.excluded(path, meta)
+            && !self
+                .search
+                .exclude
+                .iter()
+                .any(|excluded| excluded.covers(path))
+            && !self.held_by_identity(path, meta)
     }
 
-    /// Whether `path` is an excluded path or inside one, by its path or its identity, as
-    /// the project walk compares them.
-    fn excluded(&self, path: &Path, meta: &fs::Metadata) -> bool {
-        let exclude = self.search.exclude;
-        if exclude.iter().any(|excluded| excluded.covers(path)) {
-            return true;
-        }
-        let mut identities = exclude
-            .iter()
-            .filter_map(|held| held.lineage.own())
-            .peekable();
-        if identities.peek().is_none() {
+    /// Whether `path` is a skipped or excluded directory by its identity, as the project
+    /// walk compares excluded paths: reached by another path, it is still the same one.
+    fn held_by_identity(&self, path: &Path, meta: &fs::Metadata) -> bool {
+        if self.held.is_empty() {
             return false;
         }
-        let Some(own) = os::identity(path, meta) else {
-            return false;
-        };
-        identities.any(|identity| identity == own)
+        os::identity(path, meta).is_some_and(|own| self.held.contains(&own))
     }
 }

@@ -184,6 +184,27 @@ fn an_existing_root_is_not_entered() {
     assert_eq!(names(&home, &found), ["Documents/app"]);
 }
 
+// Catches the search walking into a root it was given by its physical path when home is
+// reached through a link (`/home` -> `/var/home`): compared as paths, `~/projects` and
+// the root don't match, so its projects would be suggested again.
+#[test]
+fn an_existing_root_is_not_entered_when_home_is_reached_through_a_link() {
+    let (temp, home) = home();
+    project(&home, "projects/api");
+    project(&home, "Documents/app");
+    // The link is above home, as `/home` is; a link at home itself is resolved before.
+    let linked = temp.path().join("linked");
+    symlink_dir(temp.path(), &linked);
+    let linked = linked.join("home");
+    let skip = [home.join("projects")];
+    let options = Options {
+        skip: &skip,
+        ..Options::default()
+    };
+    let found = search_with(&linked, &options, &SystemClock);
+    assert_eq!(names(&linked, &found), ["Documents/app"]);
+}
+
 // Catches an excluded path being read by the search when the scan never reads it.
 #[test]
 fn an_excluded_path_is_not_entered() {
