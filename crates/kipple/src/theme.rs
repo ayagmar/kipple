@@ -27,8 +27,9 @@ pub use self::colour::{ColorChoice, Colours, Depth};
 pub use self::glyphs::Glyphs;
 pub use self::ink::Ink;
 pub use self::role::Role;
-pub use self::schema::schema;
-pub use self::source::{Catalog, Entry, Origin, Themes, write_list};
+pub(crate) use self::schema::schema;
+pub(crate) use self::source::write_list;
+pub use self::source::{Catalog, Entry, Origin, Themes};
 
 /// The theme drawn when neither `--theme` nor the config names one.
 pub const DEFAULT: &str = "kipple";
@@ -54,7 +55,7 @@ const BUILTIN: [(&str, &str); 5] = [
 /// Whether `name` can name a theme: lowercase ASCII letters, digits and `-`, as a file
 /// name on every system.
 #[must_use]
-pub fn valid_name(name: &str) -> bool {
+pub(crate) fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && name
             .bytes()
@@ -144,17 +145,17 @@ fn builtin_text(name: &str) -> Option<&'static str> {
 /// How the screen is drawn: the theme gives each role its style, the glyphs its
 /// symbols.
 #[derive(Debug, Clone, Copy)]
-pub struct Look<'a> {
+pub(crate) struct Look<'a> {
     /// The styles.
-    pub theme: &'a Theme,
+    pub(crate) theme: &'a Theme,
     /// The symbols.
-    pub glyphs: Glyphs,
+    pub(crate) glyphs: Glyphs,
 }
 
 impl Look<'_> {
     /// How `role` is drawn.
     #[must_use]
-    pub fn style(self, role: Role) -> Style {
+    pub(crate) fn style(self, role: Role) -> Style {
         self.theme.style(role)
     }
 }

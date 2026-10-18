@@ -8,7 +8,7 @@ use super::parse::{ANSI, MODIFIERS};
 
 /// The JSON schema of a theme file, version 1.
 #[must_use]
-pub fn schema() -> schemars::Schema {
+pub(crate) fn schema() -> schemars::Schema {
     let names: Vec<&str> = ANSI
         .iter()
         .map(|(name, _)| *name)

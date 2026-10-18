@@ -159,13 +159,13 @@ fn heading(out: &mut dyn Write, ink: &Ink, title: &str) -> io::Result<()> {
 /// What `doctor` says about themes. Only its human report reads them: `--json` never
 /// reads a theme file.
 #[derive(Debug)]
-pub struct ThemeCheck {
+pub(crate) struct ThemeCheck {
     /// The theme drawn: `--theme`, else `ui.theme`, else `kipple`.
-    pub active: String,
+    pub(crate) active: String,
     /// The user theme directory, or why it is unknown.
-    pub dir: Result<PathBuf, String>,
+    pub(crate) dir: Result<PathBuf, String>,
     /// Every theme.
-    pub catalog: Catalog,
+    pub(crate) catalog: Catalog,
 }
 
 /// Writes the themes section: where user themes go, the theme drawn, and every theme
@@ -173,7 +173,7 @@ pub struct ThemeCheck {
 ///
 /// # Errors
 /// When writing to `out` fails.
-pub fn write_themes(out: &mut dyn Write, ink: &Ink, check: &ThemeCheck) -> io::Result<()> {
+pub(crate) fn write_themes(out: &mut dyn Write, ink: &Ink, check: &ThemeCheck) -> io::Result<()> {
     heading(out, ink, "Themes")?;
     let dir = match &check.dir {
         Ok(dir) => dir.display().to_string(),

@@ -82,7 +82,7 @@ impl Catalog {
 ///
 /// # Errors
 /// When writing to `out` fails.
-pub fn write_list(out: &mut dyn Write, catalog: &Catalog) -> io::Result<()> {
+pub(crate) fn write_list(out: &mut dyn Write, catalog: &Catalog) -> io::Result<()> {
     for entry in &catalog.entries {
         let about = match (&entry.theme, &entry.origin) {
             (Err(error), _) => format!("can't be used: {error}"),

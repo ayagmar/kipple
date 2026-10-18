@@ -11,7 +11,7 @@ use super::{Role, Theme};
 impl Theme {
     /// This theme as a theme file, with every role, headed by `comment`.
     #[must_use]
-    pub fn to_toml(&self, comment: &str) -> String {
+    pub(crate) fn to_toml(&self, comment: &str) -> String {
         let mut text = String::new();
         for line in comment.lines() {
             writeln!(text, "# {line}").ok();
