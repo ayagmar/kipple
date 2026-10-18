@@ -291,8 +291,9 @@ pub(crate) struct App {
     /// Where the cursor was, for when its line goes away.
     hint: usize,
     pub(crate) scroll: usize,
-    /// The first line the detail pane shows, back at the top when the cursor moves.
-    pub(crate) detail_scroll: usize,
+    /// The line the detail pane was scrolled on and the first line it shows there. Any
+    /// other line's detail starts at the top, and so does this one's once the cursor moves.
+    detail_scroll: Option<(Node, usize)>,
     pub(crate) width: u16,
     pub(crate) height: u16,
     pub(crate) quit: bool,
@@ -332,7 +333,7 @@ impl App {
             cursor: None,
             hint: 0,
             scroll: 0,
-            detail_scroll: 0,
+            detail_scroll: None,
             width,
             height,
             quit: false,
@@ -569,7 +570,7 @@ impl App {
         self.settle();
         // Before the first key the cursor has no line yet, and nothing has scrolled.
         if before.is_some() && self.cursor != before {
-            self.detail_scroll = 0;
+            self.detail_scroll = None;
         }
     }
 
@@ -795,7 +796,16 @@ impl App {
             return;
         };
         let end = super::view::detail_end(self, node);
-        self.detail_scroll = self.detail_scroll.saturating_add_signed(by).min(end);
+        let first = self.detail_first(node).saturating_add_signed(by).min(end);
+        self.detail_scroll = Some((node, first));
+    }
+
+    /// The first line of `node`'s detail the pane shows.
+    pub(crate) fn detail_first(&self, node: Node) -> usize {
+        match self.detail_scroll {
+            Some((scrolled, first)) if scrolled == node => first,
+            Some(_) | None => 0,
+        }
     }
 
     /// `y`: asks the loop to send the focused finding's or project's path to the

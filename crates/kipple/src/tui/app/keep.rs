@@ -259,6 +259,8 @@ impl App {
         self.cursor = None;
         self.hint = 0;
         self.scroll = 0;
+        // A finding's number only holds within one scan, so the line scrolled on is gone.
+        self.detail_scroll = None;
         self.effect = Some(Effect::Rescan);
         let mut notice = format!("{done} Scanning again");
         if cleared > 0 {

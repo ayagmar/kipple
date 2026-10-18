@@ -697,7 +697,7 @@ fn detail_block(look: Look, wide: bool) -> Block<'static> {
         .border_style(look.dim())
 }
 
-/// The detail pane for `focus`, from the line `App::detail_scroll` says. When more
+/// The detail pane for `focus`, from the line `App::detail_first` says. When more
 /// follows than fits, its last line says so.
 fn render_detail(app: &App, look: Look, focus: Option<Node>, areas: &Areas, frame: &mut Frame<'_>) {
     let block = detail_block(look, areas.wide);
@@ -705,7 +705,8 @@ fn render_detail(app: &App, look: Look, focus: Option<Node>, areas: &Areas, fram
     frame.render_widget(block, areas.detail);
     let rows = focus.map_or_else(Vec::new, |node| wrap(detail(app, look, node), inner.width));
     let height = usize::from(inner.height);
-    let first = app.detail_scroll.min(rows.len().saturating_sub(height));
+    let scrolled = focus.map_or(0, |node| app.detail_first(node));
+    let first = scrolled.min(rows.len().saturating_sub(height));
     let more = rows.len() > first + height;
     let take = if more {
         height.saturating_sub(1)

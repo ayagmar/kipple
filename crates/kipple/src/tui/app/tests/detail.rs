@@ -1,10 +1,14 @@
 //! The detail pane's scrolling and `y` (`docs/03-functional-spec.md` §5 Detail pane and
 //! Keys, D-054).
 
+use std::path::PathBuf;
+
 use kipple_core::FindingId;
 
-use super::{colour, focus, press, screen, sized, to};
-use crate::tui::app::{App, Effect, Key, Node, Shelf};
+use super::{
+    CARGO, colour, focus, found, measured, press, recent, safe, screen, sized, to, unknown_layout,
+};
+use crate::tui::app::{App, Effect, Key, Msg, Node, Saved, Shelf};
 
 /// The detail pane's lines on an 80×24 screen, where it sits below the tree: between
 /// its top border and the two footer lines.
@@ -65,6 +69,106 @@ fn moving_the_cursor_brings_the_detail_pane_back_to_its_top() {
     assert_eq!(pane(&app), top);
 }
 
+/// What the pane shows now, and whether it is its top: `K` all the way up changes nothing.
+fn at_top(app: &mut App) -> bool {
+    let shown = pane(app);
+    press(app, &[Key::Char('K'); 40]);
+    pane(app) == shown
+}
+
+// Catches the scroll kept when a scan event takes the focused project line away and the
+// pane shows the line now in its place, which then opens in its middle (03 §5: another
+// line starts at the top).
+#[test]
+fn the_line_that_takes_a_vanished_lines_place_shows_its_detail_from_the_top() {
+    let mut app = sized(80, 24);
+    found(
+        &mut app,
+        6,
+        CARGO,
+        "builtin.cargo.target",
+        "/home/ada/projects/api/cli/target",
+    );
+    measured(&mut app, 6, 10, safe());
+    // Findings of api in other buckets lengthen its detail, so it scrolls.
+    found(
+        &mut app,
+        7,
+        CARGO,
+        "builtin.cargo.target",
+        "/home/ada/projects/api/old/target",
+    );
+    measured(&mut app, 7, 10, recent());
+    found(
+        &mut app,
+        8,
+        CARGO,
+        "builtin.cargo.target",
+        "/home/ada/projects/api/odd/target",
+    );
+    measured(&mut app, 8, 10, unknown_layout());
+    let api = app
+        .lines()
+        .iter()
+        .map(|line| line.node)
+        .find(|node| matches!(node, Node::Project(Shelf::Safe, ..)))
+        .unwrap();
+    for _ in 0..app.lines().len() {
+        if focus(&app) == Some(api) {
+            break;
+        }
+        press(&mut app, &[Key::Up]);
+    }
+    assert_eq!(focus(&app), Some(api));
+    press(&mut app, &[Key::Char('J'); 3]);
+    assert_ne!(
+        app.detail_first(api),
+        0,
+        "the project's detail doesn't scroll"
+    );
+
+    // Now recent, it leaves Safe, and api has one finding left there.
+    measured(&mut app, 6, 10, recent());
+
+    assert!(
+        matches!(focus(&app), Some(Node::Finding(_))),
+        "{:?}",
+        focus(&app)
+    );
+    assert!(at_top(&mut app));
+}
+
+// Catches the scroll kept across a scan started again, so the first line focused in the
+// new scan opens in its middle, its title and path out of sight.
+#[test]
+fn a_line_of_a_new_scan_shows_its_detail_from_the_top() {
+    let mut app = sized(80, 24);
+    press(&mut app, &[Key::Char('J'); 3]);
+
+    let saved = Saved {
+        file: None,
+        config: app.config.clone(),
+        policy: app.policy.clone(),
+        roots: vec![PathBuf::from("~/work")],
+        home: app.home.clone(),
+    };
+    app.update(Msg::Saved(Box::new(saved)));
+    assert_eq!(app.take_effect(), Some(Effect::Rescan));
+    found(
+        &mut app,
+        1,
+        CARGO,
+        "builtin.cargo.target",
+        "/home/ada/work/api/target",
+    );
+    // Protected, so it is the last line and one key reaches it.
+    measured(&mut app, 1, 10, unknown_layout());
+    press(&mut app, &[Key::Char('G')]);
+
+    assert_eq!(focus(&app), Some(Node::Finding(FindingId(1))));
+    assert!(at_top(&mut app));
+}
+
 // Catches `J` counting lines that aren't there when everything fits, so `K` would
 // have to be pressed for nothing before the pane moves again.
 #[test]
@@ -74,7 +178,8 @@ fn j_does_nothing_when_the_detail_fits() {
 
     press(&mut app, &[Key::Char('J'); 3]);
 
-    assert_eq!(app.detail_scroll, 0);
+    let node = focus(&app).unwrap();
+    assert_eq!(app.detail_first(node), 0);
 }
 
 // Catches `y` sending another line's path, a path changed on the way (escaped, made
