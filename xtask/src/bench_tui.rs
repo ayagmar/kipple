@@ -339,6 +339,18 @@ struct Timed {
     shown: Option<mpsc::Sender<()>>,
 }
 
+/// What the home screen writes besides frames, such as a clipboard escape for `y`,
+/// which the benchmark never presses. Dropped.
+impl io::Write for Timed {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 impl Backend for Timed {
     type Error = <TestBackend as Backend>::Error;
 

@@ -25,6 +25,9 @@ pub(crate) enum Effect {
     /// Search the home directory for projects outside the roots, then answer with
     /// [`Msg::Suggested`](super::Msg::Suggested).
     Search,
+    /// Send this path to the terminal's clipboard with an OSC 52 escape, through the
+    /// one writer the terminal has. No program is run.
+    Clipboard(String),
 }
 
 /// What the config file says, with the policy and project roots it gives.

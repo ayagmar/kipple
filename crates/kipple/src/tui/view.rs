@@ -1230,6 +1230,7 @@ fn render_help(look: Look, frame: &mut Frame<'_>) {
         ("P", "keep every finding of its rule: turn the rule off"),
         ("o", "sort by size, last change or name"),
         ("J K", "scroll the detail pane"),
+        ("y", "send the path to the terminal clipboard"),
         (",", "settings: level, project roots, method, what is kept"),
         ("enter", "show what is selected"),
         ("?", "this help"),

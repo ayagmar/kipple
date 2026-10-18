@@ -16,13 +16,13 @@ kipple  Careful - [Balanced] - Thorough - scanned in 1.2 s - no project roots
 |P          keep every finding of its rule: turn the rule off                  |
 |o          sort by size, last change or name                                  |
 |J K        scroll the detail pane                                             |
+|y          send the path to the terminal clipboard                            |
 |,          settings: level, project roots, method, what is kept               |
 |enter      show what is selected                                              |
 |?          this help                                                          |
 |q          quit                                                               |
 |                                                                              |
 |This version only finds and explains: selecting removes nothing.              |
-|                                                                              |
 |                                                                              |
 +------------------------------------------------------------------------------+
 j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit

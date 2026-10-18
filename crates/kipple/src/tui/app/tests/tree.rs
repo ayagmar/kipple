@@ -9,7 +9,7 @@ use super::{
     CARGO, DAY, NODE, PACMAN, PYTHON, colour, finished, focus, found, measured, opened, press,
     recent, safe, screen, selected, to, typed, unknown_layout,
 };
-use crate::tui::app::{App, Key, Msg, Node, Order, Shelf};
+use crate::tui::app::{App, Effect, Key, Msg, Node, Order, Shelf};
 use crate::tui::view::Look;
 
 const ASCII: Look = Look {
@@ -582,4 +582,22 @@ fn a_project_line_details_its_path_and_its_findings_in_every_bucket() {
         assert!(shown.contains(line), "{line} in {shown}");
     }
     insta::assert_snapshot!(shown);
+}
+
+// Catches `y` on a project line sending nothing, or the path of a finding inside it.
+#[test]
+fn y_on_a_project_line_sends_the_projects_path() {
+    let mut app = projects();
+    finished(&mut app);
+    let api = project_line(&app, Shelf::Safe, "api");
+    go(&mut app, api);
+
+    press(&mut app, &[Key::Char('y')]);
+
+    let Node::Project(_, _, id) = api else {
+        panic!("{api:?} isn't a project line");
+    };
+    let path = app.project(id).unwrap().path.to_str().unwrap().to_owned();
+    assert!(path.ends_with("api"), "{path}");
+    assert_eq!(app.take_effect(), Some(Effect::Clipboard(path)));
 }

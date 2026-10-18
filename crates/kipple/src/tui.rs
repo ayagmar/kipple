@@ -71,7 +71,8 @@ pub trait Keys {
     fn next(&mut self, timeout: Duration) -> io::Result<Option<Input>>;
 }
 
-/// Runs the home screen on `terminal` until it is closed.
+/// Runs the home screen on `terminal` until it is closed. `y` writes to the backend, so it
+/// is also an [`io::Write`]: the terminal's one writer.
 ///
 /// It scans the roots of `settings` on the machine `env` describes, with their policy, and
 /// returns how long the last scan took when it finished before the screen was closed.
@@ -80,7 +81,7 @@ pub trait Keys {
 ///
 /// # Errors
 /// When the terminal can't be read or drawn, or the built-in rules don't load.
-pub fn run<B: Backend>(
+pub fn run<B: Backend + io::Write>(
     terminal: &mut Terminal<B>,
     keys: &mut dyn Keys,
     env: &Environment,
@@ -110,7 +111,7 @@ struct Start<'a> {
 
 /// [`run`], with the first run's questions over the home screen, while the scan already
 /// runs, when `start` asks for them.
-fn session<B: Backend>(
+fn session<B: Backend + io::Write>(
     terminal: &mut Terminal<B>,
     keys: &mut dyn Keys,
     start: &Start<'_>,
@@ -154,8 +155,7 @@ where
             elapsed: None,
         };
         screen.start();
-        screen.effects();
-        let ran = screen.drive(keys);
+        let ran = screen.effects().and_then(|()| screen.drive(keys));
         // Stops a scan or search still running, so leaving the scope doesn't wait for it.
         screen.stop();
         if let Some(search) = &screen.search {
@@ -258,7 +258,7 @@ struct RootSearch<'scope> {
     found: ScopedJoinHandle<'scope, Found>,
 }
 
-impl<B: Backend> Screen<'_, '_, '_, B>
+impl<B: Backend + io::Write> Screen<'_, '_, '_, B>
 where
     B::Error: Send + Sync + 'static,
 {
@@ -309,8 +309,9 @@ where
         self.scan.as_ref().is_some_and(|scan| scan.report.is_some())
     }
 
-    /// Carries out what the home screen asked for: config writes and new scans.
-    fn effects(&mut self) {
+    /// Carries out what the home screen asked for: config writes, new scans, the root
+    /// search and the clipboard.
+    fn effects(&mut self) -> io::Result<()> {
         while let Some(effect) = self.app.take_effect() {
             match effect {
                 Effect::Write(edits) => {
@@ -319,8 +320,10 @@ where
                 }
                 Effect::Rescan => self.start(),
                 Effect::Search => self.search(),
+                Effect::Clipboard(text) => osc52(self.terminal.backend_mut(), &text)?,
             }
         }
+        Ok(())
     }
 
     /// Reads keys and scan events until the screen is closed. A key is drawn at once;
@@ -333,7 +336,7 @@ where
             let wait = if self.scanning() { FRAME } else { IDLE };
             if let Some(input) = keys.next(wait)? {
                 self.input(input);
-                self.effects();
+                self.effects()?;
                 self.draw()?;
                 drawn = Instant::now();
                 stale = false;
@@ -439,6 +442,35 @@ where
             .map(|_| ())
             .map_err(io::Error::other)
     }
+}
+
+/// Sends `text` to the terminal's clipboard: OSC 52 with `text` in base64, so no byte of
+/// it can end the escape, then a flush so it doesn't wait for the next frame. A
+/// terminal that ignores OSC 52 copies nothing.
+fn osc52(out: &mut impl io::Write, text: &str) -> io::Result<()> {
+    write!(out, "\x1b]52;c;{}\x07", base64(text.as_bytes()))?;
+    out.flush()
+}
+
+/// `bytes` in standard base64, padded.
+fn base64(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let [a, b, c] = [0, 1, 2].map(|i| chunk.get(i).copied().unwrap_or(0));
+        let group = u32::from_be_bytes([0, a, b, c]);
+        for (index, shift) in [18, 12, 6, 0].into_iter().enumerate() {
+            let symbol = if index <= chunk.len() {
+                ALPHABET
+                    .get(usize::try_from((group >> shift) & 0x3f).unwrap_or(0))
+                    .map_or('=', |&symbol| char::from(symbol))
+            } else {
+                '='
+            };
+            encoded.push(symbol);
+        }
+    }
+    encoded
 }
 
 /// The file names that mark a project for the root search: the markers of every
@@ -574,7 +606,53 @@ const fn key_of(key: KeyEvent) -> Option<Key> {
 
 #[cfg(test)]
 mod tests {
+    use ratatui::backend::CrosstermBackend;
+
     use super::*;
+
+    /// What `osc52` writes for `text` through a terminal backend.
+    fn sent(text: &str) -> Vec<u8> {
+        let mut written = Vec::new();
+        osc52(&mut CrosstermBackend::new(&mut written), text).unwrap();
+        written
+    }
+
+    // Catches `y` writing a malformed escape the terminal ignores (wrong introducer,
+    // selection or terminator), or a broken base64 a terminal decodes to another path.
+    #[test]
+    fn y_writes_the_path_as_one_osc_52_escape_in_base64() {
+        assert_eq!(
+            sent("/home/ada/projects/api"),
+            b"\x1b]52;c;L2hvbWUvYWRhL3Byb2plY3RzL2FwaQ==\x07"
+        );
+        // Every padding length.
+        for (text, encoded) in [
+            ("", ""),
+            ("a", "YQ=="),
+            ("ab", "YWI="),
+            ("abc", "YWJj"),
+            ("abcd", "YWJjZA=="),
+            ("abcde", "YWJjZGU="),
+            ("abcdef", "YWJjZGVm"),
+        ] {
+            assert_eq!(base64(text.as_bytes()), encoded, "{text:?}");
+        }
+    }
+
+    // Catches a path with control characters ending the escape early and writing the
+    // rest to the terminal as commands.
+    #[test]
+    fn control_characters_in_a_path_stay_inside_the_escape() {
+        let written = sent("/tmp/a\x07\x1b]0;owned\x07b");
+
+        let controls: Vec<(usize, u8)> = written
+            .iter()
+            .copied()
+            .enumerate()
+            .filter(|(_, byte)| byte.is_ascii_control())
+            .collect();
+        assert_eq!(controls, [(0, 0x1b), (written.len() - 1, 0x07)]);
+    }
 
     fn press(code: KeyCode, modifiers: KeyModifiers) -> Option<Key> {
         key_of(KeyEvent::new(code, modifiers))

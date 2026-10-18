@@ -635,6 +635,7 @@ impl App {
             Key::Char('o') => self.sort(),
             Key::Char('J') => self.scroll_detail(1),
             Key::Char('K') => self.scroll_detail(-1),
+            Key::Char('y') => self.copy_path(),
             Key::Char(',') => self.open_settings(),
             Key::Enter => self.review(),
             Key::Tab => self.next_lens(),
@@ -800,6 +801,31 @@ impl App {
         };
         let end = super::view::detail_end(self, node);
         self.detail_scroll = self.detail_scroll.saturating_add_signed(by).min(end);
+    }
+
+    /// `y`: asks the loop to send the focused finding's or project's path to the
+    /// terminal's clipboard. A path that isn't UTF-8 can't be put in the escape as
+    /// text, so it is refused. Headings and gaps have no path.
+    fn copy_path(&mut self) {
+        let path = match self.focus() {
+            Some(Node::Finding(id)) => self.row(id).map(|row| &row.finding.path),
+            Some(Node::Project(_, _, id)) => self.project(id).map(|project| &project.path),
+            Some(
+                Node::Shelf(_) | Node::Group(..) | Node::Gaps | Node::Gap(_) | Node::Notice(_),
+            )
+            | None => None,
+        };
+        let Some(path) = path else {
+            return;
+        };
+        let Some(text) = path.to_str() else {
+            self.notice = Some(
+                "This path isn't valid UTF-8, so it can't be sent to the clipboard.".to_owned(),
+            );
+            return;
+        };
+        self.effect = Some(Effect::Clipboard(text.to_owned()));
+        self.notice = Some("Path sent to the terminal clipboard.".to_owned());
     }
 
     /// `o`: the next order, said in words.

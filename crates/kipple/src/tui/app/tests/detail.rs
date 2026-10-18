@@ -1,7 +1,10 @@
-//! The detail pane's scrolling (`docs/03-functional-spec.md` §5 Detail pane, D-054).
+//! The detail pane's scrolling and `y` (`docs/03-functional-spec.md` §5 Detail pane and
+//! Keys, D-054).
 
-use super::{colour, press, screen, sized};
-use crate::tui::app::{App, Key};
+use kipple_core::FindingId;
+
+use super::{colour, focus, press, screen, sized, to};
+use crate::tui::app::{App, Effect, Key, Node, Shelf};
 
 /// The detail pane's lines on an 80×24 screen, where it sits below the tree: between
 /// its top border and the two footer lines.
@@ -72,4 +75,79 @@ fn j_does_nothing_when_the_detail_fits() {
     press(&mut app, &[Key::Char('J'); 3]);
 
     assert_eq!(app.detail_scroll, 0);
+}
+
+// Catches `y` sending another line's path, a path changed on the way (escaped, made
+// relative, or with `~`), or nothing at all.
+#[test]
+fn y_on_a_finding_asks_the_loop_to_send_exactly_its_path() {
+    let mut app = sized(80, 24);
+    to(&mut app, 4);
+    let path = app.row(FindingId(4)).unwrap().finding.path.clone();
+
+    press(&mut app, &[Key::Char('y')]);
+
+    assert_eq!(
+        app.take_effect(),
+        Some(Effect::Clipboard(path.to_str().unwrap().to_owned()))
+    );
+    assert_eq!(
+        app.notice.as_deref(),
+        Some("Path sent to the terminal clipboard.")
+    );
+}
+
+// Catches `y` on a heading or gap sending some path anyway, such as the first finding
+// below it.
+#[test]
+fn y_on_a_heading_does_nothing() {
+    let mut app = sized(80, 24);
+    press(&mut app, &[Key::Char('g')]);
+    assert_eq!(focus(&app), Some(Node::Shelf(Shelf::Safe)));
+
+    press(&mut app, &[Key::Char('y')]);
+
+    assert_eq!(app.take_effect(), None);
+    assert_eq!(app.notice, None);
+}
+
+// Catches a path that isn't UTF-8 sent lossily, so the clipboard holds a path that
+// doesn't exist, without a word about it.
+#[cfg(unix)]
+#[test]
+fn y_refuses_a_path_that_isnt_utf8_with_a_message() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt as _;
+
+    use kipple_core::{Category, Finding, RuleId, ScanEvent};
+
+    use super::CARGO;
+    use crate::tui::app::Msg;
+
+    let mut app = sized(80, 24);
+    let path = std::path::Path::new(OsStr::from_bytes(b"/home/ada/caf\xe9/target"));
+    app.update(Msg::Scan(Box::new(ScanEvent::FindingAdded {
+        finding: Finding {
+            id: FindingId(9),
+            integration: CARGO,
+            rule: RuleId("builtin.cargo.target".to_owned()),
+            category: Category::BuildArtifact,
+            path: path.to_owned(),
+            evidence: Vec::new(),
+            size: None,
+            facts: None,
+        },
+    })));
+    to(&mut app, 9);
+
+    press(&mut app, &[Key::Char('y')]);
+
+    assert_eq!(app.take_effect(), None);
+    assert!(
+        app.notice
+            .as_deref()
+            .is_some_and(|notice| notice.contains("isn't valid UTF-8")),
+        "{:?}",
+        app.notice
+    );
 }
