@@ -225,6 +225,41 @@ fn explaining_a_found_path_shows_its_evidence_and_an_unknown_rule_is_a_usage_err
     assert!(err.contains("builtin.cargo.nope"), "{err}");
 }
 
+// Catches an unestimated restore cost reading as the bare word "unknown" in explain's
+// text, as if kipple had failed to check something, and the readable wording leaking
+// into the JSON contract.
+#[test]
+fn explain_says_an_unknown_restore_cost_is_not_estimated_and_the_json_keeps_unknown() {
+    let (temp, env) = demo();
+    let target = temp.path().join("home/projects/rust-app/target");
+
+    let (code, out, _) = kipple(&env, &["explain", target.to_str().unwrap()]);
+    let (_, json, _) = kipple(&env, &["scan", "--json"]);
+
+    assert_eq!(code, ExitCode::SUCCESS);
+    let line = out
+        .lines()
+        .find(|line| line.trim_start().starts_with("Restore cost"))
+        .unwrap_or_else(|| panic!("no restore cost in {out}"));
+    assert!(line.ends_with(" not estimated"), "{line}");
+    let report: Value = serde_json::from_str(&json).unwrap();
+    let finding = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|finding| {
+            Path::new(
+                finding
+                    .pointer("/path/display")
+                    .and_then(Value::as_str)
+                    .unwrap(),
+            )
+            .ends_with("rust-app/target")
+        })
+        .unwrap();
+    assert_eq!(finding["consequence"]["cost"], "unknown");
+}
+
 /// The paths of the findings in a `--json` report.
 #[expect(
     clippy::unwrap_used,

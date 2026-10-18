@@ -1,8 +1,8 @@
 //! Text for people: escaping and sizes.
 
 use kipple_core::{
-    Activity, ActivityGap, Bucket, Caution, Facts, Finding, Hold, Loss, Modified, Policy, Proposal,
-    Recovery, Seen, Tracked, Verdict, WalkGap,
+    Activity, ActivityGap, Bucket, Caution, Cost, Facts, Finding, Hold, Loss, Modified, Policy,
+    Proposal, Recovery, Seen, Tracked, Verdict, WalkGap,
 };
 
 use crate::json::{CompletenessOut, SizeOut};
@@ -123,7 +123,7 @@ pub(crate) fn facts(finding: &Finding, policy: &Policy) -> Vec<(&'static str, St
     if let Some(consequence) = &facts.consequence {
         lines.push(("Comes back", recovery(consequence.recovery).to_owned()));
         lines.push(("You lose", losses(consequence.loss)));
-        lines.push(("Restore cost", consequence.cost.name().to_owned()));
+        lines.push(("Restore cost", restore_cost(consequence.cost).to_owned()));
     }
     let proposal = match &facts.proposal {
         Proposal::Report => "report only: kipple never changes it".to_owned(),
@@ -142,6 +142,15 @@ pub(crate) fn facts(finding: &Finding, policy: &Policy) -> Vec<(&'static str, St
     let window = policy.recent_window_days(&finding.rule, facts);
     lines.push(("Last change", modified(facts, window)));
     lines
+}
+
+/// How expensive bringing it back is. An unknown cost is one kipple doesn't estimate;
+/// it never changes the bucket.
+const fn restore_cost(cost: Cost) -> &'static str {
+    match cost {
+        Cost::Unknown => "not estimated",
+        Cost::Low | Cost::High => cost.name(),
+    }
 }
 
 const fn recovery(recovery: Recovery) -> &'static str {

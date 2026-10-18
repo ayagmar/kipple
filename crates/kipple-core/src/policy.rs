@@ -48,7 +48,7 @@ named! {
         Low = "low",
         /// Expensive, such as a very large build. Never Safe.
         High = "high",
-        /// Not known. Doesn't block Safe; shown as "restore cost unknown".
+        /// Not known. Doesn't block Safe; shown as "not estimated".
         Unknown = "unknown",
     }
 }

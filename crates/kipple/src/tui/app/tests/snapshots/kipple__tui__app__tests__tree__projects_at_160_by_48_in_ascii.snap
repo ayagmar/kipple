@@ -11,7 +11,7 @@ kipple  Careful - [Balanced] - Thorough - scanned in 1.2 s - ~/projects
       web/target  Cargo build output           50.0 MiB                                 |back, untracked, no running program shows it in use, not recent
     v System (1)                              900.0 MiB                                 |What you lose     The next install downloads them again.
       pacman/pkg  pacman package cache        900.0 MiB ######                          |How it comes back the next build makes it again, without the network
-  v Review (3)                                366.0 MiB        loses more, or recent    |Restore cost      unknown
+  v Review (3)                                366.0 MiB        loses more, or recent    |Restore cost      not estimated
     v Dev (3)                                 366.0 MiB                                 |Proposes          remove (delete or trash)
       web/node_modules  Node dependencies     300.0 MiB ##     recent                   |Git               no repository holds it or lives inside it, so git
       v api (2)                                66.0 MiB                                 |tracks nothing inside

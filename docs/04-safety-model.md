@@ -37,7 +37,7 @@ Classification is **ordered and exhaustive**. The first matching row wins:
 | 2 | **Safe** | eligible, *and* `recovery` and `loss` are within the user's **carefulness level** (below), *and* `cost` isn't `high`, *and* the item isn't recent for that level, *and* the method is available and granted, *and* there is no conflict with another operation on the same tree |
 | 3 | **Review** | every other eligible finding: outside the level, `none` recovery, `history` loss, high cost, recent, or in conflict |
 
-An unknown `cost` is optional. It doesn't block Safe, and the detail pane shows "restore cost unknown".
+An unknown `cost` is optional. It doesn't block Safe, and the detail pane and `kipple explain` say the restore cost is "not estimated".
 
 Status: until M3 adds methods, grants and operations, row 2's method-available, granted and no-conflict conditions aren't evaluated.
 
@@ -67,7 +67,7 @@ What this means in practice:
 - **Consequence is composable.** `loss` is a set, and `recovery` and `cost` are separate facts. A package cache prune loses rollback and offline installs at once.
 - **Consequence facts come from the host.** For typed integrations they come from verified semantics. For third-party `remove-files` rules, recovery is `none`, so by row 3 they always land in Review (or Protected) and can never be Safe. A pack's `loss` prose is display text, never input to classification.
 - **Unknown is never Review.** Missing activity or required facts block mutation. More confirmation can't make up for missing evidence.
-- **Optional facts don't gate.** An unknown optional fact (for example the restore cost estimate) shows as "unknown cost". It doesn't make the item Safe, and it doesn't block it.
+- **Optional facts don't gate.** An unknown optional fact, such as a restore cost kipple can't estimate (shown as "not estimated"), doesn't make the item Safe, and it doesn't block it.
 - **Native doesn't mean disposable.** A tool's own command constrains *how* something is removed, not *what is lost*. Native operations go through the same ordered table. For example, a package cache prune loses `rollback-ability` and `offline-ability`, so it is Safe only at Thorough. A journal vacuum loses `history` (diagnostics), so it is never Safe.
 - **"Safe" means passing the current checks**, not "risk-free". The detail pane lists residual risks (§11).
 

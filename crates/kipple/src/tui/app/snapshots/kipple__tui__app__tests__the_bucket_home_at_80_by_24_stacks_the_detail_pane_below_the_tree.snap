@@ -23,6 +23,6 @@ Why it's safe     passes every check at Balanced: recognised, comes back,
 untracked, no running program shows it in use, not recent
 What you lose     The next build compiles everything again.
 How it comes back the next build makes it again, without the network
-Restore cost      unknown
+Restore cost      not estimated
 found 1.7 GiB · eligible 814.0 MiB · selected 1 (512.0 MiB) · frees 512.0 MiB
 j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit
