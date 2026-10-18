@@ -40,7 +40,8 @@ pub enum Colours {
 impl Colours {
     /// What `choice` says, then `NO_COLOR` (set and not empty, per no-color.org), then
     /// whether the output is a `terminal`. The depth comes from `COLORTERM`
-    /// (`truecolor` or `24bit`), else `TERM` (`…256color…`), else 16 colours.
+    /// (`truecolor` or `24bit`), else `WT_SESSION` (Windows Terminal, which always has
+    /// 24-bit colour), else `TERM` (`…256color…`), else 16 colours.
     #[must_use]
     pub fn detect(choice: ColorChoice, env: &Environment, terminal: bool) -> Self {
         let on = match choice {
@@ -62,7 +63,9 @@ impl Depth {
             env.get(name)
                 .map(|value| value.to_string_lossy().to_lowercase())
         };
-        if var("COLORTERM").is_some_and(|value| value == "truecolor" || value == "24bit") {
+        let truecolor =
+            var("COLORTERM").is_some_and(|value| value == "truecolor" || value == "24bit");
+        if truecolor || var("WT_SESSION").is_some_and(|value| !value.is_empty()) {
             Self::TrueColor
         } else if var("TERM").is_some_and(|value| value.contains("256color")) {
             Self::Ansi256
@@ -185,10 +188,10 @@ mod tests {
         }
     }
 
-    // Catches a depth read from the wrong variable, or 24-bit colour sent to a terminal
-    // that only said it has 256.
+    // Catches a depth read from the wrong variable, 24-bit colour sent to a terminal
+    // that only said it has 256, or Windows Terminal brought down to 256 colours.
     #[test]
-    fn depth_comes_from_colorterm_then_term() {
+    fn depth_comes_from_colorterm_then_windows_terminal_then_term() {
         let cases = [
             (vec![("COLORTERM", "truecolor")], Depth::TrueColor),
             (
@@ -202,6 +205,12 @@ mod tests {
             ),
             (vec![("TERM", "xterm")], Depth::Ansi16),
             (vec![], Depth::Ansi16),
+            // Windows Terminal sets no COLORTERM but always has 24-bit colour.
+            (
+                vec![("WT_SESSION", "0f1e2d3c"), ("TERM", "xterm-256color")],
+                Depth::TrueColor,
+            ),
+            (vec![("WT_SESSION", "")], Depth::Ansi16),
         ];
         for (vars, want) in cases {
             let detected = Colours::detect(ColorChoice::Always, &env(&vars), true);
