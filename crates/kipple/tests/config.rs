@@ -1180,24 +1180,23 @@ fn a_path_that_isnt_utf8_is_refused_with_a_message() {
 #[test]
 fn config_errors_and_warnings_never_write_a_control_character_to_the_terminal() {
     let demo = Demo::new(&[], "");
-    let control = |err: &str| err.chars().any(|c| c.is_control() && c != '\n');
+    let scanned = |file: &Path, want: ExitCode| {
+        let args = ["--config", file.to_str().unwrap(), "scan", "--json"];
+        let (code, _, err) = kipple(&demo.env(&[]), &args);
+        assert_eq!(code, want, "{err}");
+        assert!(!err.chars().any(|c| c.is_control() && c != '\n'), "{err:?}");
+        err
+    };
     let bad = demo.config("bad.toml", "\"\\u001b[2J\" = 1\n");
-    let (code, _, err) = kipple(
-        &demo.env(&[]),
-        &["--config", bad.to_str().unwrap(), "scan", "--json"],
-    );
-    assert_eq!(code, ExitCode::from(USAGE));
-    assert!(err.contains("unknown key \\u{1b}[2J"), "{err}");
-    assert!(!control(&err), "{err:?}");
+    let failed = scanned(&bad, ExitCode::from(USAGE));
+    assert!(failed.contains("unknown key \\u{1b}[2J"), "{failed}");
 
     let kept = demo.config("kept.toml", "[keep]\npaths = [\"~/\\u001b[2J\"]\n");
-    let (code, _, err) = kipple(
-        &demo.env(&[]),
-        &["--config", kept.to_str().unwrap(), "scan", "--json"],
+    let warned = scanned(&kept, ExitCode::SUCCESS);
+    assert!(
+        warned.contains("warning: keep.paths: ~/\\u{1b}[2J"),
+        "{warned}"
     );
-    assert_eq!(code, ExitCode::SUCCESS, "{err}");
-    assert!(err.contains("warning: keep.paths: ~/\\u{1b}[2J"), "{err}");
-    assert!(!control(&err), "{err:?}");
 }
 
 // Catches `config show` leaving out the home screen's settings: `[ui]` with its defaults
@@ -1207,12 +1206,15 @@ fn config_errors_and_warnings_never_write_a_control_character_to_the_terminal() 
 fn config_show_prints_the_ui_settings_and_the_keys_that_differ_from_the_defaults() {
     let demo = Demo::new(&[], "");
     let env = demo.env(&[]);
-    let plain = demo.config("plain.toml", "");
-    let (code, shown, err) = kipple(
-        &env,
-        &["--config", plain.to_str().unwrap(), "config", "show"],
-    );
-    assert_eq!(code, ExitCode::SUCCESS, "{err}");
+    let show = |file: &Path| {
+        let (code, shown, err) = kipple(
+            &env,
+            &["--config", file.to_str().unwrap(), "config", "show"],
+        );
+        assert_eq!(code, ExitCode::SUCCESS, "{err}");
+        shown
+    };
+    let plain = show(&demo.config("plain.toml", ""));
     for line in [
         "ui.theme              kipple (default)",
         "ui.summary            true",
@@ -1220,28 +1222,23 @@ fn config_show_prints_the_ui_settings_and_the_keys_that_differ_from_the_defaults
         "ui.bars               true",
         "ui.glyphs             unicode",
     ] {
-        assert!(shown.lines().any(|l| l == line), "{line}:\n{shown}");
+        assert!(plain.lines().any(|l| l == line), "{line}:\n{plain}");
     }
-    assert!(!shown.contains("keys."), "{shown}");
+    assert!(!plain.contains("keys."), "{plain}");
 
     let text = "[ui]\ntheme = \"dusk\"\ndetail = \"off\"\nglyphs = \"ascii\"\n\
                 [keys]\nselect = [\"x\", \"space\"]\nmove-down = [\"j\", \"down\"]\n";
-    let custom = demo.config("custom.toml", text);
-    let (code, shown, err) = kipple(
-        &env,
-        &["--config", custom.to_str().unwrap(), "config", "show"],
-    );
-    assert_eq!(code, ExitCode::SUCCESS, "{err}");
+    let custom = show(&demo.config("custom.toml", text));
     for line in [
         "ui.theme              dusk",
         "ui.detail             off",
         "ui.glyphs             ascii",
         "keys.select           x, space",
     ] {
-        assert!(shown.lines().any(|l| l == line), "{line}:\n{shown}");
+        assert!(custom.lines().any(|l| l == line), "{line}:\n{custom}");
     }
     assert!(
-        !shown.contains("keys.move-down"),
-        "same as the default:\n{shown}"
+        !custom.contains("keys.move-down"),
+        "same as the default:\n{custom}"
     );
 }
