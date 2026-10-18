@@ -291,6 +291,8 @@ pub(crate) struct App {
     /// Where the cursor was, for when its line goes away.
     hint: usize,
     pub(crate) scroll: usize,
+    /// The first line the detail pane shows, back at the top when the cursor moves.
+    pub(crate) detail_scroll: usize,
     pub(crate) width: u16,
     pub(crate) height: u16,
     pub(crate) quit: bool,
@@ -330,6 +332,7 @@ impl App {
             cursor: None,
             hint: 0,
             scroll: 0,
+            detail_scroll: 0,
             width,
             height,
             quit: false,
@@ -554,6 +557,7 @@ impl App {
             self.quit = true;
             return;
         }
+        let before = self.cursor;
         match self.mode {
             Mode::Help => self.mode = Mode::Browse,
             Mode::Filter => self.filter_key(key),
@@ -568,6 +572,10 @@ impl App {
             }
         }
         self.settle();
+        // Before the first key the cursor has no line yet, and nothing has scrolled.
+        if before.is_some() && self.cursor != before {
+            self.detail_scroll = 0;
+        }
     }
 
     fn settings_key(&mut self, key: Key) {
@@ -625,6 +633,8 @@ impl App {
             Key::Char('p') => self.keep_finding(),
             Key::Char('P') => self.keep_rule(),
             Key::Char('o') => self.sort(),
+            Key::Char('J') => self.scroll_detail(1),
+            Key::Char('K') => self.scroll_detail(-1),
             Key::Char(',') => self.open_settings(),
             Key::Enter => self.review(),
             Key::Tab => self.next_lens(),
@@ -781,6 +791,15 @@ impl App {
                 crate::human::bytes(totals.selected)
             )
         });
+    }
+
+    /// `J`/`K`: the detail pane down or up a line, within what it holds.
+    fn scroll_detail(&mut self, by: isize) {
+        let Some(node) = self.focus() else {
+            return;
+        };
+        let end = super::view::detail_end(self, node);
+        self.detail_scroll = self.detail_scroll.saturating_add_signed(by).min(end);
     }
 
     /// `o`: the next order, said in words.

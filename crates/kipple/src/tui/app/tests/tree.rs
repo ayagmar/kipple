@@ -557,3 +557,29 @@ fn projects_by_last_change_at_80_by_24() {
     press(&mut app, &[Key::Char('o')]);
     insta::assert_snapshot!(screen(&app, colour(), 80, 24));
 }
+
+// Catches a project's line showing the detail of its bucket instead of the project, or
+// only the findings of the bucket its line sits in: `api` also has findings to review
+// and protected ones.
+#[test]
+fn a_project_line_details_its_path_and_its_findings_in_every_bucket() {
+    let mut app = projects();
+    finished(&mut app);
+    let api = project_line(&app, Shelf::Safe, "api");
+    go(&mut app, api);
+
+    // The project's path is the root joined with its name, so Windows writes a `\`.
+    let shown = screen(&app, colour(), 160, 48).replace(MAIN_SEPARATOR, "/");
+
+    for line in [
+        "Project api",
+        "/home/ada/projects/api",
+        "Safe to clean: 2 findings, 612.0 MiB",
+        "Review: 2 findings, 66.0 MiB",
+        "Protected: 2 findings, 128.0 MiB",
+        "tool/__pycache__  2.0 MiB",
+    ] {
+        assert!(shown.contains(line), "{line} in {shown}");
+    }
+    insta::assert_snapshot!(shown);
+}

@@ -3,7 +3,6 @@ source: crates/kipple/src/tui/app/tests.rs
 expression: "screen(&app, look, 80, 24)"
 ---
 kipple  Careful - [Balanced] - Thorough - scanned in 1.2 s - no project roots
-  v Safe to clean (2)                        514.0 MiB passes every check
 + Keys ------------------------------------------------------------------------+
 |j k  dn up move                                                               |
 |h l  lt rt fold and unfold a group or project                                 |
@@ -16,6 +15,7 @@ kipple  Careful - [Balanced] - Thorough - scanned in 1.2 s - no project roots
 |p          keep the finding for good, with an optional note                   |
 |P          keep every finding of its rule: turn the rule off                  |
 |o          sort by size, last change or name                                  |
+|J K        scroll the detail pane                                             |
 |,          settings: level, project roots, method, what is kept               |
 |enter      show what is selected                                              |
 |?          this help                                                          |
@@ -23,6 +23,6 @@ kipple  Careful - [Balanced] - Thorough - scanned in 1.2 s - no project roots
 |                                                                              |
 |This version only finds and explains: selecting removes nothing.              |
 |                                                                              |
+|                                                                              |
 +------------------------------------------------------------------------------+
-found 1.7 GiB - eligible 814.0 MiB - selected 0 (0 B) - frees 0 B
 j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit

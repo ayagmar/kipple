@@ -3,6 +3,7 @@
 //! events built here, so no file system or clock is read. Keeping and settings, which
 //! write a config file in a temp dir, are in `settings`; the first run is in `onboarding`.
 
+mod detail;
 mod onboarding;
 mod settings;
 mod tree;

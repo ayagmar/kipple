@@ -199,19 +199,7 @@ pub(crate) fn render(app: &App, look: Look, frame: &mut Frame<'_>) {
     }
     render_list(app, look, &tree, areas.list, frame);
     let focus = lines.get(tree.at).map(|line| line.node);
-    let borders = if areas.wide {
-        Borders::LEFT
-    } else {
-        Borders::TOP
-    };
-    let block = Block::new()
-        .borders(borders)
-        .border_set(look.border())
-        .border_style(look.dim());
-    let detail = Paragraph::new(focus.map_or_else(Vec::new, |node| detail(app, look, node)))
-        .block(block)
-        .wrap(Wrap { trim: false });
-    frame.render_widget(detail, areas.detail);
+    render_detail(app, look, focus, &areas, frame);
     if app.mode == Mode::Help {
         render_help(look, frame);
     }
@@ -701,14 +689,182 @@ fn footer(app: &App, look: Look) -> Paragraph<'static> {
     Paragraph::new(vec![Text::from(first), second])
 }
 
+/// The detail pane's border: on its left beside the tree, on top below it.
+fn detail_block(look: Look, wide: bool) -> Block<'static> {
+    Block::new()
+        .borders(if wide { Borders::LEFT } else { Borders::TOP })
+        .border_set(look.border())
+        .border_style(look.dim())
+}
+
+/// The detail pane for `focus`, from the line `App::detail_scroll` says. When more
+/// follows than fits, its last line says so.
+fn render_detail(app: &App, look: Look, focus: Option<Node>, areas: &Areas, frame: &mut Frame<'_>) {
+    let block = detail_block(look, areas.wide);
+    let inner = block.inner(areas.detail);
+    frame.render_widget(block, areas.detail);
+    let rows = focus.map_or_else(Vec::new, |node| wrap(detail(app, look, node), inner.width));
+    let height = usize::from(inner.height);
+    let first = app.detail_scroll.min(rows.len().saturating_sub(height));
+    let more = rows.len() > first + height;
+    let take = if more {
+        height.saturating_sub(1)
+    } else {
+        height
+    };
+    let mut shown: Vec<Text<'static>> = rows.into_iter().skip(first).take(take).collect();
+    if more {
+        shown.push(Text::styled(
+            format!("{} J/K scroll", look.ellipsis("more")),
+            look.dim(),
+        ));
+    }
+    frame.render_widget(Paragraph::new(shown), inner);
+}
+
+/// The last line the detail pane for `node` can scroll to on `app`'s screen: none
+/// when it all fits.
+pub(crate) fn detail_end(app: &App, node: Node) -> usize {
+    let areas = areas(Rect::new(0, 0, app.width, app.height));
+    // Both looks draw symbols of the same width, so either wraps the same.
+    let look = Look {
+        color: false,
+        ascii: true,
+    };
+    let inner = detail_block(look, areas.wide).inner(areas.detail);
+    let rows = wrap(detail(app, look, node), inner.width).len();
+    rows.saturating_sub(usize::from(inner.height))
+}
+
+/// `lines` broken into rows of at most `width` columns: between words where it can, a
+/// word longer than a row wherever it must. A break swallows the space it falls on.
+fn wrap(lines: Vec<Text<'static>>, width: u16) -> Vec<Text<'static>> {
+    let width = usize::from(width);
+    if width == 0 {
+        return Vec::new();
+    }
+    let mut rows = Vec::new();
+    for line in lines {
+        let mut filling = Filling::new(line.style, width);
+        for (word, space) in words(&line) {
+            filling.word(&word);
+            filling.space(&space);
+        }
+        rows.extend(filling.finish());
+    }
+    rows
+}
+
+/// A styled character.
+type Cell = (char, Style);
+
+/// `line`'s characters with their styles, as words each followed by the spaces after
+/// it. Leading spaces come as a first, empty word's.
+fn words(line: &Text<'_>) -> Vec<(Vec<Cell>, Vec<Cell>)> {
+    let mut words: Vec<(Vec<Cell>, Vec<Cell>)> = vec![(Vec::new(), Vec::new())];
+    for span in &line.spans {
+        for c in span.content.chars() {
+            let style = span.style;
+            let Some(last) = words.last_mut() else {
+                continue;
+            };
+            if c == ' ' {
+                last.1.push((c, style));
+            } else if last.1.is_empty() {
+                last.0.push((c, style));
+            } else {
+                words.push((vec![(c, style)], Vec::new()));
+            }
+        }
+    }
+    words
+}
+
+fn char_cols(c: char) -> usize {
+    cols(c.encode_utf8(&mut [0; 4]))
+}
+
+/// One line of the detail pane being broken into rows.
+struct Filling {
+    width: usize,
+    style: Style,
+    rows: Vec<Text<'static>>,
+    spans: Vec<Span<'static>>,
+    cols: usize,
+}
+
+impl Filling {
+    const fn new(style: Style, width: usize) -> Self {
+        Self {
+            width,
+            style,
+            rows: Vec::new(),
+            spans: Vec::new(),
+            cols: 0,
+        }
+    }
+
+    /// Adds `word` on this row, or on the next when it fits there whole.
+    fn word(&mut self, word: &[Cell]) {
+        let wide: usize = word.iter().map(|&(c, _)| char_cols(c)).sum();
+        if self.cols + wide > self.width && wide <= self.width {
+            self.next_row();
+        }
+        for &(c, style) in word {
+            if self.cols + char_cols(c) > self.width {
+                self.next_row();
+            }
+            self.push(c, style);
+        }
+    }
+
+    /// Adds `space` up to the end of the row, where it breaks and the rest is dropped.
+    fn space(&mut self, space: &[Cell]) {
+        for &(c, style) in space {
+            if self.cols + char_cols(c) > self.width {
+                self.next_row();
+                return;
+            }
+            self.push(c, style);
+        }
+    }
+
+    fn push(&mut self, c: char, style: Style) {
+        self.cols += char_cols(c);
+        match self.spans.last_mut() {
+            Some(span) if span.style == style => span.content.to_mut().push(c),
+            _ => self.spans.push(Span::styled(c.to_string(), style)),
+        }
+    }
+
+    /// Ends the row so far, unless nothing is on it yet.
+    fn next_row(&mut self) {
+        if self.cols == 0 {
+            return;
+        }
+        self.cols = 0;
+        let spans = std::mem::take(&mut self.spans);
+        self.rows.push(Text::from(spans).style(self.style));
+    }
+
+    /// The rows, at least one: an empty line stays a row, and a break on the last
+    /// space doesn't add one.
+    fn finish(mut self) -> Vec<Text<'static>> {
+        self.next_row();
+        if self.rows.is_empty() {
+            self.rows.push(Text::default().style(self.style));
+        }
+        self.rows
+    }
+}
+
 fn detail(app: &App, look: Look, node: Node) -> Vec<Text<'static>> {
     match node {
         Node::Finding(id) => app
             .row(id)
             .map_or_else(Vec::new, |row| finding_detail(app, look, row)),
-        Node::Shelf(shelf) | Node::Group(shelf, _) | Node::Project(shelf, ..) => {
-            shelf_detail(app, look, node, shelf)
-        }
+        Node::Project(_, _, id) => project_detail(app, look, id),
+        Node::Shelf(shelf) | Node::Group(shelf, _) => shelf_detail(app, look, node, shelf),
         Node::Gaps => vec![
             heading("Not covered"),
             Text::from(
@@ -802,6 +958,52 @@ fn finding_detail(app: &App, look: Look, row: &Row) -> Vec<Text<'static>> {
                 .iter()
                 .map(|s| Text::raw(format!("  {}", escaped(s)))),
         );
+    }
+    lines
+}
+
+/// A project's line: its path, then its findings in each bucket with their totals,
+/// as the filter and lens show them.
+fn project_detail(app: &App, look: Look, id: ProjectId) -> Vec<Text<'static>> {
+    let Some(project) = app.project(id) else {
+        return Vec::new();
+    };
+    let mut lines = vec![
+        heading(&format!("Project {}", escaped(&project.name))),
+        Text::raw(escaped(&project.path.display().to_string())),
+    ];
+    for shelf in [
+        Shelf::Safe,
+        Shelf::Review,
+        Shelf::Protected,
+        Shelf::Measuring,
+    ] {
+        let mut rows: Vec<&Row> = [Lens::Agents, Lens::Dev, Lens::System]
+            .into_iter()
+            .flat_map(|lens| app.under(Node::Project(shelf, lens, id)))
+            .collect();
+        if rows.is_empty() {
+            continue;
+        }
+        rows.sort_by(|a, b| a.spot.inside.cmp(&b.spot.inside));
+        let total: u64 = rows.iter().map(|row| row.bytes()).sum();
+        lines.push(Text::from(""));
+        lines.push(Text::styled(
+            format!(
+                "{}: {}, {}",
+                shelf_title(shelf),
+                human::findings(rows.len()),
+                bytes(total)
+            ),
+            look.tint(shelf).add_modifier(Modifier::BOLD),
+        ));
+        lines.extend(rows.iter().map(|row| {
+            Text::raw(format!(
+                "  {}  {}",
+                escaped(&row.spot.inside),
+                human::size(row.size.as_ref())
+            ))
+        }));
     }
     lines
 }
@@ -1027,6 +1229,7 @@ fn render_help(look: Look, frame: &mut Frame<'_>) {
         ("p", "keep the finding for good, with an optional note"),
         ("P", "keep every finding of its rule: turn the rule off"),
         ("o", "sort by size, last change or name"),
+        ("J K", "scroll the detail pane"),
         (",", "settings: level, project roots, method, what is kept"),
         ("enter", "show what is selected"),
         ("?", "this help"),
@@ -1060,7 +1263,7 @@ fn render_help(look: Look, frame: &mut Frame<'_>) {
     let area = frame.area();
     // Full width when narrow, so nothing shows beside it.
     let width = if area.width < WIDE { area.width } else { 72 };
-    let height = area.height.saturating_sub(2).min(20);
+    let height = area.height.saturating_sub(2).min(22);
     let popup = Rect::new(
         area.x + (area.width - width) / 2,
         area.y + (area.height - height) / 2,
