@@ -31,6 +31,11 @@ pub(crate) const PLATFORM: Platform = Platform::Linux;
 
 pub(crate) const PERMISSION_HINT: Option<&str> = None;
 
+/// Linux hides a file only by a leading `.` in its name.
+pub(crate) const fn hidden(_: &fs::Metadata) -> bool {
+    false
+}
+
 /// pacman's config file, which may set `CacheDir`.
 const PACMAN_CONF: &str = "/etc/pacman.conf";
 

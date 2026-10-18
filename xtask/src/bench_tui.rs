@@ -49,8 +49,9 @@ const MAX_SCANS: usize = 100;
 const FIRST_KEYS: usize = 625;
 /// Keys pressed after a scan is expected to have ended, so it can't outrun them.
 const SPARE_KEYS: usize = 10;
-/// What is pressed, in turn: moving, switching lens and opening and closing help.
-const KEYS: [Key; 12] = [
+/// What is pressed, in turn: moving, switching lens, cycling the sort order back to
+/// size, and opening and closing help.
+const KEYS: [Key; 15] = [
     Key::Down,
     Key::Down,
     Key::Down,
@@ -61,6 +62,9 @@ const KEYS: [Key; 12] = [
     Key::Tab,
     Key::Tab,
     Key::Tab,
+    Key::Char('o'),
+    Key::Char('o'),
+    Key::Char('o'),
     Key::Char('?'),
     Key::Char('?'),
 ];
@@ -333,6 +337,18 @@ struct Timed {
     inner: TestBackend,
     flushes: Arc<Mutex<Vec<Instant>>>,
     shown: Option<mpsc::Sender<()>>,
+}
+
+/// What the home screen writes besides frames, such as a clipboard escape for `y`,
+/// which the benchmark never presses. Dropped.
+impl io::Write for Timed {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 impl Backend for Timed {

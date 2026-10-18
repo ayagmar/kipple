@@ -3,11 +3,11 @@
 //! `config::write` the loop calls, and the screen changes only from what was written.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use kipple_core::{
     Caution, Hold, Level, Loss, Method, Modified, ResolvedRoot, RootSource, Roots, RuleId,
-    RuleSettings, SymbolicRoot, Verdict,
+    RuleSettings, Suggestion, SymbolicRoot, Verdict,
 };
 
 use ratatui::style::Color;
@@ -17,6 +17,7 @@ use super::{
 };
 use crate::config::{self, Catalog, Config, Loaded, Location, Settings, Source};
 use crate::tui::app::{App, Effect, Key, Mode, Msg, Saved, Shelf};
+use crate::tui::settings::{Found, Search};
 use crate::tui::view::Look;
 
 const CARGO_RULE: &str = "builtin.cargo.target";
@@ -150,10 +151,12 @@ fn verdict(app: &App, id: u64) -> Verdict {
 }
 
 /// Opens settings, unless they are open, and moves to the `nth` line the cursor can
-/// stand on.
+/// stand on. The root search the first opening asks for is left running.
 fn settings_at(app: &mut App, nth: usize) {
     if app.mode != Mode::Settings {
         press(app, &[Key::Char(',')]);
+        let effect = app.take_effect();
+        assert!(matches!(effect, None | Some(Effect::Search)), "{effect:?}");
     }
     assert_eq!(app.mode, Mode::Settings);
     press(app, &[Key::Char('g')]);
@@ -474,8 +477,36 @@ fn configured(width: u16, height: u16) -> App {
         home: Some(PathBuf::from("/home/ada")),
     });
     app.update(Msg::Resize { width, height });
-    press(&mut app, &[Key::Char(','), Key::Down, Key::Down]);
+    press(&mut app, &[Key::Char(',')]);
+    let found = Found {
+        suggestions: vec![
+            suggestion(
+                "/home/ada/Documents",
+                &["thesis", "uni/compilers", "uni/os", "uni/web"],
+            ),
+            suggestion("/home/ada/notes", &[""]),
+        ],
+        complete: false,
+        unreadable: 0,
+    };
+    app.update(Msg::Suggested(Box::new(found)));
+    press(&mut app, &[Key::Down, Key::Down]);
     app
+}
+
+/// A suggestion of `path` holding the projects at `rests` below it.
+fn suggestion(path: &str, rests: &[&str]) -> Suggestion {
+    let path = PathBuf::from(path);
+    Suggestion {
+        projects: rests
+            .iter()
+            .map(|rest| match *rest {
+                "" => path.clone(),
+                rest => path.join(rest),
+            })
+            .collect(),
+        path,
+    }
 }
 
 #[test]
@@ -575,4 +606,146 @@ fn a_relative_project_root_is_refused_and_nothing_rescans() {
     let notice = app.notice.as_deref().unwrap();
     assert!(notice.starts_with("Nothing was changed"), "{notice}");
     assert_eq!(disk.files(), Vec::<PathBuf>::new());
+}
+
+/// What the search answers: `paths` suggested, each holding one project, and it looked
+/// everywhere.
+fn found_at(paths: &[PathBuf]) -> Found {
+    Found {
+        suggestions: paths
+            .iter()
+            .map(|path| Suggestion {
+                path: path.clone(),
+                projects: vec![path.join("app")],
+            })
+            .collect(),
+        complete: true,
+        unreadable: 0,
+    }
+}
+
+// Catches the search starting again on every opening of settings, or not at all, or a
+// later opening losing what the first found.
+#[test]
+fn the_root_search_starts_on_the_first_opening_only_and_its_result_stays() {
+    let disk = Disk::new();
+    let mut app = screen_on(&disk, Config::default());
+    press(&mut app, &[Key::Char(',')]);
+    assert_eq!(app.take_effect(), Some(Effect::Search));
+    assert!(matches!(app.search, Search::Running));
+    let text = screen(&app, colour(), 160, 48);
+    assert!(text.contains("looking for projects…"), "{text}");
+
+    app.update(Msg::Suggested(Box::new(found_at(&[disk
+        .home()
+        .join("Documents")]))));
+    press(&mut app, &[Key::Esc, Key::Char(',')]);
+    assert_eq!(app.take_effect(), None);
+    assert_eq!(app.search.suggestions().len(), 1);
+}
+
+// Catches a chosen suggestion being written some other way than a typed root, not
+// rescanning, or staying in the list once it is a root.
+#[test]
+fn enter_on_a_suggestion_adds_it_like_a_typed_root_rescans_and_it_leaves_the_list() {
+    let disk = Disk::new();
+    let config = Config {
+        project_roots: Some(vec!["~/projects".to_owned()]),
+        ..Config::default()
+    };
+    let mut app = screen_on(&disk, config);
+    let documents = disk.home().join("Documents");
+    settings_at(&mut app, 0);
+    app.update(Msg::Suggested(Box::new(found_at(&[documents]))));
+
+    // Level, ~/projects, "add another", then the suggestion.
+    settings_at(&mut app, 3);
+    press(&mut app, &[Key::Enter]);
+
+    assert_eq!(disk.run(&mut app), [Effect::Rescan]);
+    assert_eq!(app.roots.len(), 2, "{:?}", app.roots);
+    assert!(app.roots[1].ends_with("Documents"), "{:?}", app.roots);
+    let written = config::load(&disk.location(), &disk.catalog).unwrap();
+    let roots = written.config.project_roots.unwrap();
+    assert_eq!(roots.len(), 2, "{roots:?}");
+    assert!(roots[1].ends_with("Documents"), "{roots:?}");
+    assert_eq!(app.search.suggestions(), []);
+    let notice = app.notice.as_deref().unwrap();
+    assert!(notice.contains("Scanning again"), "{notice}");
+}
+
+// Catches a suggestion that became a root, or that a root added while the search ran
+// holds, still being offered (03 §6, D-053: never a root or a path inside one), so
+// `enter` on it writes it a second time or as a root nested in another.
+#[test]
+fn suggestions_a_root_added_during_the_search_covers_are_not_listed() {
+    let disk = Disk::new();
+    let mut app = screen_on(&disk, Config::default());
+    // No project roots: the level, then "add another".
+    settings_at(&mut app, 1);
+    press(&mut app, &[Key::Enter]);
+    typed(&mut app, "~/Documents");
+    press(&mut app, &[Key::Enter]);
+    assert_eq!(disk.run(&mut app), [Effect::Rescan]);
+
+    // The search, started with no roots, ends now.
+    let home = disk.home();
+    let paths = [
+        home.join("Documents"),
+        home.join("Documents").join("uni"),
+        home.join("notes"),
+    ];
+    app.update(Msg::Suggested(Box::new(found_at(&paths))));
+
+    let listed: Vec<&Path> = app
+        .search
+        .suggestions()
+        .iter()
+        .map(|suggestion| suggestion.path.as_path())
+        .collect();
+    assert_eq!(listed, [home.join("notes")]);
+}
+
+// Catches a listed suggestion staying offered once a root that holds it is added, so
+// `enter` on it writes a root nested in another.
+#[test]
+fn a_suggestion_inside_a_root_added_later_leaves_the_list() {
+    let disk = Disk::new();
+    let mut app = screen_on(&disk, Config::default());
+    settings_at(&mut app, 0);
+    let home = disk.home();
+    let paths = [home.join("Documents").join("uni"), home.join("notes")];
+    app.update(Msg::Suggested(Box::new(found_at(&paths))));
+
+    // The level, then "add another".
+    settings_at(&mut app, 1);
+    press(&mut app, &[Key::Enter]);
+    typed(&mut app, "~/Documents");
+    press(&mut app, &[Key::Enter]);
+    assert_eq!(disk.run(&mut app), [Effect::Rescan]);
+
+    let listed: Vec<&Path> = app
+        .search
+        .suggestions()
+        .iter()
+        .map(|suggestion| suggestion.path.as_path())
+        .collect();
+    assert_eq!(listed, [home.join("notes")]);
+}
+
+// Catches suggestions arriving while settings is open moving the cursor onto one of
+// them, so an enter meant for the method adds a project root instead.
+#[test]
+fn suggestions_arriving_keep_the_cursor_on_its_line() {
+    let disk = Disk::new();
+    let mut app = screen_on(&disk, Config::default());
+    // No project roots: the level, "add another", then the method.
+    settings_at(&mut app, 2);
+    let paths = [disk.home().join("Documents"), disk.home().join("notes")];
+    app.update(Msg::Suggested(Box::new(found_at(&paths))));
+    press(&mut app, &[Key::Enter]);
+
+    disk.run(&mut app);
+    assert_eq!(app.config.method, Some(Method::Trash));
+    assert_eq!(app.roots, Vec::<PathBuf>::new());
 }

@@ -9,9 +9,10 @@ use std::path::{Path, PathBuf};
 
 use kipple_core::{FindingId, Lineage, Policy, SymbolicRoot};
 
-use super::{App, Key, Mode, Node, Progress, Row, Shelf};
+use super::{App, Found, Key, Mode, Node, Progress, Row, Search, Shelf};
 use crate::config::{self, Config, Edit, Settings};
 use crate::human::{escaped, findings};
+use crate::tui::settings;
 
 /// What the home screen asks of the loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -21,6 +22,12 @@ pub(crate) enum Effect {
     Write(Vec<Edit>),
     /// Scan again, with the project roots the config now names.
     Rescan,
+    /// Search the home directory for projects outside the roots, then answer with
+    /// [`Msg::Suggested`](super::Msg::Suggested).
+    Search,
+    /// Send this path to the terminal's clipboard with an OSC 52 escape, through the
+    /// one writer the terminal has. No program is run.
+    Clipboard(String),
 }
 
 /// What the config file says, with the policy and project roots it gives.
@@ -70,6 +77,33 @@ impl App {
         self.policy = saved.policy;
         self.roots = saved.roots;
         self.home = saved.home;
+    }
+
+    /// Asks the loop for the search of roots to suggest, once per session.
+    pub(crate) fn start_search(&mut self) {
+        if matches!(self.search, Search::NotStarted) {
+            self.search = Search::Running;
+            self.effect = Some(Effect::Search);
+        }
+    }
+
+    /// The root search ended. What a root added while it ran covers isn't suggested. The
+    /// settings cursor stays on the line it was on, so a key pressed as the suggestions
+    /// appear doesn't act on one of them.
+    pub(super) fn suggested(&mut self, mut found: Found) {
+        let focus = self.panel.focus(&settings::items(self));
+        found.drop_roots(&self.roots, self.home.as_deref());
+        self.search = Search::Done(found);
+        let items = settings::items(self);
+        if let Some(at) = focus.and_then(|focus| items.iter().position(|item| *item == focus)) {
+            self.panel.cursor = at;
+        }
+    }
+
+    /// `,`: opens settings, and starts the search of roots to suggest the first time.
+    pub(super) fn open_settings(&mut self) {
+        self.mode = Mode::Settings;
+        self.start_search();
     }
 
     /// What the loop should do next, if anything.
@@ -182,6 +216,9 @@ impl App {
         let done = self.pending.take().unwrap_or_default();
         let rescan = saved.roots != self.roots;
         self.configure(saved);
+        if let Search::Done(found) = &mut self.search {
+            found.drop_roots(&self.roots, self.home.as_deref());
+        }
         if rescan {
             self.rescan(&done);
             return;
@@ -222,6 +259,8 @@ impl App {
         self.cursor = None;
         self.hint = 0;
         self.scroll = 0;
+        // A finding's number only holds within one scan, so the line scrolled on is gone.
+        self.detail_scroll = None;
         self.effect = Some(Effect::Rescan);
         let mut notice = format!("{done} Scanning again");
         if cleared > 0 {

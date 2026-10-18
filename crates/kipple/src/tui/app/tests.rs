@@ -3,17 +3,19 @@
 //! events built here, so no file system or clock is read. Keeping and settings, which
 //! write a config file in a temp dir, are in `settings`; the first run is in `onboarding`.
 
+mod detail;
 mod onboarding;
 mod settings;
+mod tree;
 
-use std::path::PathBuf;
+use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 use std::time::Duration;
 
 use kipple_core::{
     Activity, Advice, Allocated, Apparent, Category, Completeness, Consequence, Cost, Evidence,
     Facts, Finding, FindingId, HeldPath, IntegrationId, IntegrationReport, Lens, Lineage, Loss,
     Method, Modified, Omission, ProbeError, Proposal, Recovery, RuleId, RuleText, ScanEvent,
-    ScanOutcome, ScanReport, SpaceEstimate, Tracked, WalkGap,
+    ScanOutcome, ScanReport, SpaceEstimate, SymbolicRoot, Tracked, WalkGap,
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -165,6 +167,15 @@ fn measured(app: &mut App, id: u64, mib: u64, facts: Facts) {
     })));
 }
 
+/// The scan opened the project root at `path`.
+fn opened(app: &mut App, path: &str) {
+    app.update(Msg::Scan(Box::new(ScanEvent::RootOpened {
+        integration: CARGO,
+        root: SymbolicRoot::ProjectRoots,
+        path: PathBuf::from(path),
+    })));
+}
+
 fn press(app: &mut App, keys: &[Key]) {
     for &key in keys {
         app.update(Msg::Key(key));
@@ -199,7 +210,12 @@ fn findings(app: &App) -> Vec<u64> {
         .iter()
         .filter_map(|line| match line.node {
             Node::Finding(id) => Some(id.0),
-            Node::Shelf(_) | Node::Group(..) | Node::Gaps | Node::Gap(_) | Node::Notice(_) => None,
+            Node::Shelf(_)
+            | Node::Group(..)
+            | Node::Project(..)
+            | Node::Gaps
+            | Node::Gap(_)
+            | Node::Notice(_) => None,
         })
         .collect()
 }
@@ -402,6 +418,28 @@ fn the_fuzzy_filter_keeps_findings_whose_name_or_path_match_in_order_and_esc_cle
     assert_eq!(findings(&app), [1, 4, 2, 3, 5]);
 }
 
+// Catches the filter matching the native path, so on Windows `rust-app/target`, as the
+// tree writes paths, matches nothing; and a query typed with `\\` there missing too.
+#[test]
+fn the_filter_reads_a_path_with_slashes_whatever_the_system_writes() {
+    let mut app = App::new(catalog(), 160, 48);
+    let native = Path::new("home").join("rust-app").join("target");
+    found(
+        &mut app,
+        1,
+        CARGO,
+        "builtin.cargo.target",
+        native.to_str().unwrap(),
+    );
+
+    press(&mut app, &[Key::Char('/')]);
+    typed(&mut app, "rust-app/target");
+    assert_eq!(findings(&app), [1]);
+    press(&mut app, &[Key::Esc, Key::Char('/')]);
+    typed(&mut app, &format!("rust-app{MAIN_SEPARATOR}target"));
+    assert_eq!(findings(&app), [1]);
+}
+
 #[test]
 fn tab_shows_one_lens_at_a_time_then_all_of_them() {
     let mut app = home();
@@ -593,9 +631,12 @@ fn finished(app: &mut App) {
 }
 
 /// The home on a `width` by `height` terminal with the cursor on the first Safe finding
-/// and one finding selected.
+/// and one finding selected, and `~/projects` as its project root.
 fn sized(width: u16, height: u16) -> App {
     let mut app = home();
+    app.home = Some(PathBuf::from("/home/ada"));
+    app.roots = vec![PathBuf::from("~/projects")];
+    opened(&mut app, "/home/ada/projects");
     finished(&mut app);
     app.update(Msg::Resize { width, height });
     to(&mut app, 1);

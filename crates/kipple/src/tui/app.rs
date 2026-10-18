@@ -5,6 +5,7 @@
 //! write, and the screen changes only once the loop says it was written.
 
 mod keep;
+mod tree;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
@@ -12,12 +13,14 @@ use std::time::Duration;
 
 use kipple_core::{
     Advice, Caution, Finding, FindingId, IntegrationId, Lens, Policy, RuleId, RuleText, ScanEvent,
-    ScanOutcome, ScanReport, Verdict,
+    ScanOutcome, ScanReport, SymbolicRoot, Verdict,
 };
 
 pub(crate) use self::keep::{Effect, Saved};
+use self::tree::Spot;
+pub(crate) use self::tree::{Order, ProjectId};
 use super::filter;
-use super::settings::{Action, Panel};
+use super::settings::{Action, Found, Panel, Search};
 use crate::config::Config;
 use crate::json::{OmissionOut, SizeOut};
 use crate::setup::Builtin;
@@ -73,6 +76,8 @@ pub(crate) enum Msg {
     Saved(Box<Saved>),
     /// The config couldn't be written, for this reason. Nothing changed.
     NotSaved(String),
+    /// The search for projects outside the roots ended with these suggestions.
+    Suggested(Box<Found>),
 }
 
 /// Where a finding stands: its bucket, or still being measured. Nothing is Safe until
@@ -105,6 +110,8 @@ pub(crate) enum Node {
     Shelf(Shelf),
     /// A lens within a bucket.
     Group(Shelf, Lens),
+    /// A project with two or more findings in a bucket's lens.
+    Project(Shelf, Lens, ProjectId),
     /// A finding.
     Finding(FindingId),
     /// The heading of what the scan couldn't cover.
@@ -153,6 +160,8 @@ pub(crate) struct Row {
     pub(crate) lens: Lens,
     pub(crate) verdict: Option<Verdict>,
     pub(crate) size: Option<SizeOut>,
+    /// Its project, if any, and its label.
+    pub(crate) spot: Spot,
     /// Its rule's title and its path, lowercased, for the filter.
     haystack: String,
 }
@@ -245,6 +254,13 @@ pub(crate) struct App {
     pub(crate) roots: Vec<PathBuf>,
     /// The home directory `~` stands for, when it is known.
     pub(crate) home: Option<PathBuf>,
+    /// The project roots this scan opened, as it reported them.
+    scanned_roots: Vec<PathBuf>,
+    /// Every project seen this session, by [`ProjectId`].
+    projects: Vec<tree::Project>,
+    project_ids: HashMap<PathBuf, ProjectId>,
+    /// What groups and projects are sorted by.
+    pub(crate) order: Order,
     pub(crate) catalog: Catalog,
     pub(crate) rows: Vec<Row>,
     by_id: HashMap<FindingId, usize>,
@@ -265,6 +281,8 @@ pub(crate) struct App {
     /// The note being typed for `p`.
     pub(crate) note: String,
     pub(crate) panel: Panel,
+    /// The search for roots to suggest, once onboarding or settings asked for it.
+    pub(crate) search: Search,
     /// What the loop is asked to do next.
     effect: Option<Effect>,
     /// What to say once the config write asked for has succeeded.
@@ -273,6 +291,9 @@ pub(crate) struct App {
     /// Where the cursor was, for when its line goes away.
     hint: usize,
     pub(crate) scroll: usize,
+    /// The line the detail pane was scrolled on and the first line it shows there. Any
+    /// other line's detail starts at the top, and so does this one's once the cursor moves.
+    detail_scroll: Option<(Node, usize)>,
     pub(crate) width: u16,
     pub(crate) height: u16,
     pub(crate) quit: bool,
@@ -286,6 +307,10 @@ impl App {
             config: Config::default(),
             roots: Vec::new(),
             home: None,
+            scanned_roots: Vec::new(),
+            projects: Vec::new(),
+            project_ids: HashMap::new(),
+            order: Order::default(),
             catalog,
             rows: Vec::new(),
             by_id: HashMap::new(),
@@ -302,11 +327,13 @@ impl App {
             notice: None,
             note: String::new(),
             panel: Panel::default(),
+            search: Search::default(),
             effect: None,
             pending: None,
             cursor: None,
             hint: 0,
             scroll: 0,
+            detail_scroll: None,
             width,
             height,
             quit: false,
@@ -326,6 +353,7 @@ impl App {
             Msg::Finished { report, elapsed } => self.finished(*report, elapsed),
             Msg::Saved(saved) => self.saved(*saved),
             Msg::NotSaved(error) => self.not_saved(&error),
+            Msg::Suggested(found) => self.suggested(*found),
         }
     }
 
@@ -350,7 +378,7 @@ impl App {
         }
         let mut lines = Vec::new();
         let mut last_top = None;
-        for ((top, group), mut rows) in groups {
+        for ((top, group), rows) in groups {
             if last_top != Some(top) {
                 lines.push(Line {
                     node: top,
@@ -368,11 +396,9 @@ impl App {
             if self.is_collapsed(group) {
                 continue;
             }
-            rows.sort_by(|a, b| (b.bytes(), &a.finding.path).cmp(&(a.bytes(), &b.finding.path)));
-            lines.extend(rows.iter().map(|row| Line {
-                node: Node::Finding(row.finding.id),
-                depth: 2,
-            }));
+            if let Node::Group(shelf, lens) = group {
+                lines.extend(self.group_lines((shelf, lens), rows));
+            }
         }
         self.gap_lines(&mut lines);
         lines.extend((0..self.notices.len()).map(|index| Line {
@@ -429,6 +455,9 @@ impl App {
         match node {
             Node::Shelf(_) => node == top,
             Node::Group(..) => node == group,
+            Node::Project(shelf, lens, id) => {
+                group == Node::Group(shelf, lens) && row.spot.project == Some(id)
+            }
             Node::Finding(id) => id == row.finding.id,
             Node::Gaps | Node::Gap(_) | Node::Notice(_) => false,
         }
@@ -474,9 +503,14 @@ impl App {
                 integration: integration.0.to_owned(),
                 message: OmissionOut::from(omission).message,
             })),
-            ScanEvent::ScanStarted { .. }
-            | ScanEvent::RootOpened { .. }
-            | ScanEvent::ScanCompleted { .. } => {}
+            ScanEvent::RootOpened {
+                root: SymbolicRoot::ProjectRoots,
+                path,
+                ..
+            } => self.open_root(path),
+            // A new scan opens its roots again, which may have changed.
+            ScanEvent::ScanStarted { .. } => self.scanned_roots.clear(),
+            ScanEvent::RootOpened { .. } | ScanEvent::ScanCompleted { .. } => {}
         }
     }
 
@@ -487,18 +521,15 @@ impl App {
             .get(&finding.integration)
             .copied()
             .unwrap_or(Lens::System);
-        let haystack = format!(
-            "{} {}",
-            self.catalog.title(&finding.rule),
-            finding.path.display()
-        )
-        .to_lowercase();
+        let haystack = filter::haystack(self.catalog.title(&finding.rule), &finding.path);
+        let spot = self.spot(&finding.path);
         self.by_id.insert(finding.id, self.rows.len());
         self.rows.push(Row {
             finding,
             lens,
             verdict: None,
             size: None,
+            spot,
             haystack,
         });
     }
@@ -522,6 +553,7 @@ impl App {
             self.quit = true;
             return;
         }
+        let before = self.cursor;
         match self.mode {
             Mode::Help => self.mode = Mode::Browse,
             Mode::Filter => self.filter_key(key),
@@ -536,6 +568,10 @@ impl App {
             }
         }
         self.settle();
+        // Before the first key the cursor has no line yet, and nothing has scrolled.
+        if before.is_some() && self.cursor != before {
+            self.detail_scroll = None;
+        }
     }
 
     fn settings_key(&mut self, key: Key) {
@@ -592,7 +628,11 @@ impl App {
             Key::Char('c') => self.add_safe(),
             Key::Char('p') => self.keep_finding(),
             Key::Char('P') => self.keep_rule(),
-            Key::Char(',') => self.mode = Mode::Settings,
+            Key::Char('o') => self.sort(),
+            Key::Char('J') => self.scroll_detail(1),
+            Key::Char('K') => self.scroll_detail(-1),
+            Key::Char('y') => self.copy_path(),
+            Key::Char(',') => self.open_settings(),
             Key::Enter => self.review(),
             Key::Tab => self.next_lens(),
             Key::Esc => self.filter.clear(),
@@ -668,8 +708,8 @@ impl App {
         }
     }
 
-    /// Adds every eligible finding of the focused group, or of the focused finding's
-    /// group. Never adds a Protected, unmeasured or recent one.
+    /// Adds every eligible finding of the focused group or project, or of the focused
+    /// finding's group. Never adds a Protected, unmeasured or recent one.
     fn add_group(&mut self) {
         let Some(focus) = self.focus() else {
             return;
@@ -681,6 +721,7 @@ impl App {
             },
             other @ (Node::Shelf(_)
             | Node::Group(..)
+            | Node::Project(..)
             | Node::Gaps
             | Node::Gap(_)
             | Node::Notice(_)) => other,
@@ -693,7 +734,15 @@ impl App {
         let added = self.add_by_shortcut(&ids);
         self.notice = Some(match ids.len() {
             0 => "Nothing here can be selected.".to_owned(),
-            _ => format!("Added {added} of {} findings in this group.", ids.len()),
+            _ => format!(
+                "Added {added} of {} findings in this {}.",
+                ids.len(),
+                if matches!(node, Node::Project(..)) {
+                    "project"
+                } else {
+                    "group"
+                }
+            ),
         });
     }
 
@@ -739,6 +788,55 @@ impl App {
                 crate::human::bytes(totals.selected)
             )
         });
+    }
+
+    /// `J`/`K`: the detail pane down or up a line, within what it holds.
+    fn scroll_detail(&mut self, by: isize) {
+        let Some(node) = self.focus() else {
+            return;
+        };
+        let end = super::view::detail_end(self, node);
+        let first = self.detail_first(node).saturating_add_signed(by).min(end);
+        self.detail_scroll = Some((node, first));
+    }
+
+    /// The first line of `node`'s detail the pane shows.
+    pub(crate) fn detail_first(&self, node: Node) -> usize {
+        match self.detail_scroll {
+            Some((scrolled, first)) if scrolled == node => first,
+            Some(_) | None => 0,
+        }
+    }
+
+    /// `y`: asks the loop to send the focused finding's or project's path to the
+    /// terminal's clipboard. A path that isn't UTF-8 can't be put in the escape as
+    /// text, so it is refused. Headings and gaps have no path.
+    fn copy_path(&mut self) {
+        let path = match self.focus() {
+            Some(Node::Finding(id)) => self.row(id).map(|row| &row.finding.path),
+            Some(Node::Project(_, _, id)) => self.project(id).map(|project| &project.path),
+            Some(
+                Node::Shelf(_) | Node::Group(..) | Node::Gaps | Node::Gap(_) | Node::Notice(_),
+            )
+            | None => None,
+        };
+        let Some(path) = path else {
+            return;
+        };
+        let Some(text) = path.to_str() else {
+            self.notice = Some(
+                "This path isn't valid UTF-8, so it can't be sent to the clipboard.".to_owned(),
+            );
+            return;
+        };
+        self.effect = Some(Effect::Clipboard(text.to_owned()));
+        self.notice = Some("Path sent to the terminal clipboard.".to_owned());
+    }
+
+    /// `o`: the next order, said in words.
+    fn sort(&mut self) {
+        self.order = self.order.next();
+        self.notice = Some(self.order.said().to_owned());
     }
 
     const fn next_lens(&mut self) {

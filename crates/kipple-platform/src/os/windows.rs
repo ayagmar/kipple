@@ -23,8 +23,8 @@ use windows_sys::Win32::Foundation::{
 use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows_sys::Win32::Security::{GetTokenInformation, PSID, TOKEN_QUERY, TOKEN_USER, TokenUser};
 use windows_sys::Win32::Storage::FileSystem::{
-    BY_HANDLE_FILE_INFORMATION, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT,
-    GetFileInformationByHandle,
+    BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_HIDDEN, FILE_FLAG_BACKUP_SEMANTICS,
+    FILE_FLAG_OPEN_REPARSE_POINT, GetFileInformationByHandle,
 };
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::System::ProcessStatus::K32EnumProcesses;
@@ -45,6 +45,12 @@ use crate::environment::Environment;
 use crate::process::Context;
 
 pub(crate) const PLATFORM: Platform = Platform::Windows;
+
+/// Whether Explorer hides the entry: its hidden attribute, as `AppData` has.
+pub(crate) fn hidden(meta: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt as _;
+    meta.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0
+}
 
 pub(crate) const PERMISSION_HINT: Option<&str> = None;
 

@@ -1,0 +1,52 @@
+---
+source: crates/kipple/src/tui/app/tests/tree.rs
+expression: "screen(&app, ASCII, 160, 48)"
+---
+kipple  Careful - [Balanced] - Thorough - scanned in 1.2 s - ~/projects
+  v Safe to clean (4)                           1.5 GiB        passes every check       |Node dependencies - Safe to clean at Balanced
+    v Dev (3)                                 662.0 MiB                                 |/home/ada/projects/api/node_modules
+      v api (2)                               612.0 MiB                                 |What it is        Node dependencies
+        target  Cargo build output            512.0 MiB ###                             |Why it's here     The package manager installs dependencies here.
+        node_modules  Node dependencies       100.0 MiB #                               |Why it's safe     passes every check at Balanced: recognised, comes
+      web/target  Cargo build output           50.0 MiB                                 |back, untracked, no running program shows it in use, not recent
+    v System (1)                              900.0 MiB                                 |What you lose     The next install downloads them again.
+      pacman/pkg  pacman package cache        900.0 MiB ######                          |How it comes back the next build makes it again, without the network
+  v Review (3)                                366.0 MiB        loses more, or recent    |Restore cost      not estimated
+    v Dev (3)                                 366.0 MiB                                 |Proposes          remove (delete or trash)
+      web/node_modules  Node dependencies     300.0 MiB ##     recent                   |Git               no repository holds it or lives inside it, so git
+      v api (2)                                66.0 MiB                                 |tracks nothing inside
+        cli/target  Cargo build output         64.0 MiB        costly to restore        |In use            no running program shows it in use
+        tool/__pycache__  Python bytecode       2.0 MiB        recent                   |Last change       41 days ago
+  v Protected (2)                             128.0 MiB        not eligible             |Size              100.0 MiB
+    v Dev (2)                                 128.0 MiB                                 |Rule              builtin.node.node-modules
+      v api (2)                               128.0 MiB                                 |
+        docs/node_modules  Node dependenci    120.0 MiB #      unknown: layout +1       |
+        old/__pycache__  Python bytecode c      8.0 MiB        unknown: layout +1       |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+                                                                                        |
+found 2.0 GiB - eligible 1.8 GiB - selected 0 (0 B) - frees 0 B
+j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit

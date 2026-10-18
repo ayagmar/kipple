@@ -2,7 +2,8 @@
 //! into a ratatui frame (`docs/03-functional-spec.md` §5). A finding's state is always
 //! a word; colour only repeats it.
 
-use std::path::Path;
+use std::collections::BTreeSet;
+use std::path::{MAIN_SEPARATOR, Path};
 
 use kipple_core::{Lens, Level, ScanOutcome, Verdict};
 use ratatui::Frame;
@@ -12,7 +13,7 @@ use ratatui::symbols::border;
 use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph, Wrap};
 
-use super::app::{App, Line, Mode, Node, Progress, Row, Shelf};
+use super::app::{App, Line, Mode, Node, Progress, ProjectId, Row, Shelf};
 use super::settings::{self, Item};
 use crate::human::{self, bytes, escaped};
 
@@ -21,6 +22,8 @@ use crate::human::{self, bytes, escaped};
 const WIDE: u16 = 100;
 /// The size column, wide enough for `>= 1023.9 GiB`.
 const SIZE: u16 = 13;
+/// The size bar column from [`WIDE`] columns: a space, then the bar.
+const BAR: u16 = 7;
 /// The state column, wide enough for its longest text: the gaps hint
 /// ` so this report is partial`. The longest row state is ` unknown: what is lost +3`.
 const STATE: u16 = 26;
@@ -70,6 +73,26 @@ impl Look {
 
     pub(crate) fn ellipsis(self, text: &str) -> String {
         format!("{text}{}", if self.ascii { "..." } else { "…" })
+    }
+
+    /// A bar `eighths` eighths of a cell long, padded to `cells` cells.
+    fn bar(self, eighths: u64, cells: usize) -> String {
+        const PARTS: [&str; 8] = ["", "▏", "▎", "▍", "▌", "▋", "▊", "▉"];
+        let full = usize::try_from(eighths / 8).unwrap_or(cells).min(cells);
+        let part = usize::try_from(eighths % 8).unwrap_or(0);
+        let mut bar = if self.ascii {
+            // Whole cells only, rounded to the nearest.
+            "#".repeat((full + usize::from(part >= 4)).min(cells))
+        } else {
+            let mut bar = "█".repeat(full);
+            if full < cells {
+                bar.push_str(PARTS.get(part).copied().unwrap_or(""));
+            }
+            bar
+        };
+        let drawn = bar.chars().count();
+        bar.push_str(&" ".repeat(cells.saturating_sub(drawn)));
+        bar
     }
 
     const fn mark(self) -> &'static str {
@@ -165,8 +188,10 @@ pub(crate) fn render(app: &App, look: Look, frame: &mut Frame<'_>) {
     let tree = Tree {
         at: app.cursor_index(&lines),
         lines: &lines,
+        clashing: app.clashing(),
+        scale: areas.wide.then(|| scale(app, &lines)),
     };
-    frame.render_widget(header(app, look), areas.header);
+    frame.render_widget(header(app, look, areas.header.width), areas.header);
     frame.render_widget(footer(app, look), areas.footer);
     if app.mode == Mode::Settings {
         render_settings(app, look, areas.body, frame);
@@ -174,25 +199,13 @@ pub(crate) fn render(app: &App, look: Look, frame: &mut Frame<'_>) {
     }
     render_list(app, look, &tree, areas.list, frame);
     let focus = lines.get(tree.at).map(|line| line.node);
-    let borders = if areas.wide {
-        Borders::LEFT
-    } else {
-        Borders::TOP
-    };
-    let block = Block::new()
-        .borders(borders)
-        .border_set(look.border())
-        .border_style(look.dim());
-    let detail = Paragraph::new(focus.map_or_else(Vec::new, |node| detail(app, look, node)))
-        .block(block)
-        .wrap(Wrap { trim: false });
-    frame.render_widget(detail, areas.detail);
+    render_detail(app, look, focus, &areas, frame);
     if app.mode == Mode::Help {
         render_help(look, frame);
     }
 }
 
-fn header(app: &App, look: Look) -> Paragraph<'static> {
+fn header(app: &App, look: Look, width: u16) -> Paragraph<'static> {
     let state = match app.progress {
         Progress::Scanning => look.ellipsis("scanning"),
         Progress::Done { outcome, .. } if outcome != ScanOutcome::Completed => {
@@ -212,19 +225,37 @@ fn header(app: &App, look: Look) -> Paragraph<'static> {
     )];
     for (index, &level) in Level::ALL.iter().enumerate() {
         spans.push(Span::raw(if index == 0 { "  " } else { look.dot() }));
-        let style = if level == app.policy.level {
-            look.fg(Color::Cyan).add_modifier(Modifier::BOLD)
+        let name = title_case(level.name());
+        // The brackets mark the level without colour.
+        spans.push(if level == app.policy.level {
+            Span::styled(
+                format!("[{name}]"),
+                look.fg(Color::Cyan).add_modifier(Modifier::BOLD),
+            )
         } else {
-            look.dim()
-        };
-        spans.push(Span::styled(title_case(level.name()), style));
+            Span::styled(name, look.dim())
+        });
     }
-    spans.push(Span::raw(format!(
-        " (level: {})",
-        title_case(app.policy.level.name())
-    )));
     spans.push(Span::raw(look.dot()));
     spans.push(Span::raw(state));
+    spans.push(Span::raw(look.dot()));
+    // A sort order other than size changes how the list reads, and the header is the only
+    // lasting sign of it, so it comes first whenever it fits whole. The roots, fixed
+    // config also listed in settings, get what is left.
+    let used: usize = spans.iter().map(Span::width).sum();
+    let room = usize::from(width).saturating_sub(used);
+    let order = app.order.title().filter(|order| cols(order) <= room);
+    let reserved = order.map_or(0, |order| cols(order) + cols(look.dot()));
+    let roots = roots(app, look, room.saturating_sub(reserved));
+    if let Some(roots) = &roots {
+        spans.push(Span::raw(roots.clone()));
+    }
+    if let Some(order) = order {
+        if roots.is_some() {
+            spans.push(Span::raw(look.dot()));
+        }
+        spans.push(Span::raw(order));
+    }
     if !app.gaps.is_empty() {
         spans.push(Span::raw(look.dot()));
         spans.push(Span::styled(
@@ -243,10 +274,67 @@ fn header(app: &App, look: Look) -> Paragraph<'static> {
     Paragraph::new(Text::from(spans))
 }
 
+/// The project roots in at most `room` columns: the first one and how many more,
+/// the first one shortened from the left, or only how many. `None` when not even that
+/// fits.
+fn roots(app: &App, look: Look, room: usize) -> Option<String> {
+    let fits = |text: String| (cols(&text) <= room).then_some(text);
+    let Some((first, rest)) = app.roots.split_first() else {
+        return fits("no project roots".to_owned());
+    };
+    let first = escaped(&homed(first, app.home.as_deref()));
+    let more = if rest.is_empty() {
+        String::new()
+    } else {
+        format!(" +{}", rest.len())
+    };
+    if let Some(full) = fits(format!("{first}{more}")) {
+        return Some(full);
+    }
+    let ellipsis = look.ellipsis("");
+    let keep = room.saturating_sub(cols(&more) + cols(&ellipsis));
+    // Fewer than a few characters of a path say nothing; the count says more.
+    if keep >= 4 {
+        let mut taken = 0;
+        let start = first
+            .char_indices()
+            .rev()
+            .find_map(|(index, c)| {
+                taken += cols(c.encode_utf8(&mut [0; 4]));
+                (taken > keep).then_some(index + c.len_utf8())
+            })
+            .unwrap_or(0);
+        let end = first.get(start..).unwrap_or_default();
+        return fits(format!("{ellipsis}{end}{more}"));
+    }
+    fits(match app.roots.len() {
+        1 => "1 root".to_owned(),
+        count => format!("{count} roots"),
+    })
+}
+
+/// How many columns `text` takes.
+fn cols(text: &str) -> usize {
+    Span::raw(text).width()
+}
+
+/// `path` with `~` for the home directory.
+fn homed(path: &Path, home: Option<&Path>) -> String {
+    match home.and_then(|home| path.strip_prefix(home).ok()) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".to_owned(),
+        Some(rest) => format!("~{MAIN_SEPARATOR}{}", rest.display()),
+        None => path.display().to_string(),
+    }
+}
+
 /// The visible tree and the cursor's line in it.
 struct Tree<'a> {
     lines: &'a [Line],
     at: usize,
+    /// The projects whose lines show their path from home.
+    clashing: BTreeSet<ProjectId>,
+    /// What a full size bar stands for, when there are bars.
+    scale: Option<u64>,
 }
 
 fn render_list(app: &App, look: Look, tree: &Tree<'_>, area: Rect, frame: &mut Frame<'_>) {
@@ -254,15 +342,18 @@ fn render_list(app: &App, look: Look, tree: &Tree<'_>, area: Rect, frame: &mut F
     let rows = usize::from(area.height);
     let first = offset(app.scroll, at, rows, lines.len());
     let shown = lines.iter().enumerate().skip(first).take(rows);
+    // Reserved even while nothing is measured, so no column moves as sizes stream in.
+    let bar = if tree.scale.is_some() { BAR } else { 0 };
     for (y, (index, line)) in (area.y..).zip(shown) {
         let row = Rect::new(area.x, y, area.width, 1);
-        let [label, size, state] = Split::horizontal([
+        let [label, size, bars, state] = Split::horizontal([
             Constraint::Fill(1),
             Constraint::Length(SIZE),
+            Constraint::Length(bar),
             Constraint::Length(STATE),
         ])
         .areas(row);
-        let cells = cells(app, look, *line);
+        let cells = cells(app, look, tree, *line);
         let base = if index == at {
             Style::new().add_modifier(Modifier::REVERSED)
         } else {
@@ -270,24 +361,54 @@ fn render_list(app: &App, look: Look, tree: &Tree<'_>, area: Rect, frame: &mut F
         };
         frame.render_widget(Paragraph::new(cells.label).style(base), label);
         frame.render_widget(Paragraph::new(cells.size).style(base).right_aligned(), size);
+        frame.render_widget(Paragraph::new(cells.bar).style(base), bars);
         frame.render_widget(Paragraph::new(cells.state).style(base), state);
     }
 }
 
-/// One tree line's three columns.
+/// The largest size among the measured findings in `lines`: what a full bar stands for.
+fn scale(app: &App, lines: &[Line]) -> u64 {
+    lines
+        .iter()
+        .filter_map(|line| match line.node {
+            Node::Finding(id) => app.row(id).filter(|row| measured(row)),
+            Node::Shelf(_)
+            | Node::Group(..)
+            | Node::Project(..)
+            | Node::Gaps
+            | Node::Gap(_)
+            | Node::Notice(_) => None,
+        })
+        .map(Row::bytes)
+        .max()
+        .unwrap_or(0)
+}
+
+/// Whether `row` has its bucket and its size, so it has a bar.
+fn measured(row: &Row) -> bool {
+    row.shelf() != Shelf::Measuring && row.size.is_some()
+}
+
+/// One tree line's columns.
 struct Cells {
     label: Text<'static>,
     size: String,
+    bar: Text<'static>,
     state: Text<'static>,
 }
 
-fn cells(app: &App, look: Look, line: Line) -> Cells {
+fn cells(app: &App, look: Look, tree: &Tree<'_>, line: Line) -> Cells {
     let indent = "  ".repeat(usize::from(line.depth));
     let fold = |node| look.fold(app.is_collapsed(node));
     match line.node {
-        Node::Finding(id) => app
-            .row(id)
-            .map_or_else(empty_cells, |row| finding_cells(app, look, row, &indent)),
+        Node::Finding(id) => app.row(id).map_or_else(empty_cells, |row| {
+            let label = finding_label(app, tree, row, line.depth);
+            let mut cells = finding_cells(app, look, row, &format!("{indent}{label}"));
+            if let Some(scale) = tree.scale.filter(|_| measured(row)) {
+                cells.bar = Text::styled(bar(look, row.bytes(), scale), look.tint(row.shelf()));
+            }
+            cells
+        }),
         Node::Shelf(shelf) => {
             let (count, total) = sum(app, line.node);
             Cells {
@@ -299,19 +420,16 @@ fn cells(app: &App, look: Look, line: Line) -> Cells {
                     ),
                 ]),
                 size: bytes(total),
+                bar: Text::from(""),
                 state: Text::styled(format!(" {}", shelf_hint(shelf)), look.dim()),
             }
         }
         Node::Group(_, lens) => {
-            let (count, total) = sum(app, line.node);
-            Cells {
-                label: Text::from(vec![
-                    Span::raw(format!("  {indent}{}", fold(line.node))),
-                    Span::raw(format!("{} ({count})", lens_title(lens))),
-                ]),
-                size: bytes(total),
-                state: Text::from(""),
-            }
+            heading_cells(app, line, &indent, fold(line.node), lens_title(lens))
+        }
+        Node::Project(_, _, id) => {
+            let name = project_name(app, tree, id);
+            heading_cells(app, line, &indent, fold(line.node), &name)
         }
         Node::Gaps => Cells {
             label: Text::from(vec![
@@ -322,6 +440,7 @@ fn cells(app: &App, look: Look, line: Line) -> Cells {
                 ),
             ]),
             size: String::new(),
+            bar: Text::from(""),
             state: Text::styled(" so this report is partial", look.dim()),
         },
         Node::Notice(index) => Cells {
@@ -335,6 +454,7 @@ fn cells(app: &App, look: Look, line: Line) -> Cells {
                 ),
             ]),
             size: String::new(),
+            bar: Text::from(""),
             state: Text::from(""),
         },
         Node::Gap(index) => Cells {
@@ -345,12 +465,65 @@ fn cells(app: &App, look: Look, line: Line) -> Cells {
                     .map_or_else(String::new, |gap| escaped(&gap.message))
             )),
             size: String::new(),
+            bar: Text::from(""),
             state: Text::from(""),
         },
     }
 }
 
-fn finding_cells(app: &App, look: Look, row: &Row, indent: &str) -> Cells {
+/// A group's or a project's line: its name, how many findings and their total.
+fn heading_cells(app: &App, line: Line, indent: &str, fold: &str, name: &str) -> Cells {
+    let (count, total) = sum(app, line.node);
+    Cells {
+        label: Text::from(vec![
+            Span::raw(format!("  {indent}{fold}")),
+            Span::raw(format!("{} ({count})", escaped(name))),
+        ]),
+        size: bytes(total),
+        bar: Text::from(""),
+        state: Text::from(""),
+    }
+}
+
+/// A project's name, or its path from home when another project shown shares it.
+fn project_name(app: &App, tree: &Tree<'_>, id: ProjectId) -> String {
+    app.project(id).map_or_else(String::new, |project| {
+        if !tree.clashing.contains(&id) {
+            return project.name.clone();
+        }
+        let home = app.home.as_deref();
+        home.and_then(|home| project.path.strip_prefix(home).ok())
+            .map_or_else(
+                || project.path.display().to_string(),
+                |rest| format!("~/{}", slashed(rest)),
+            )
+    })
+}
+
+/// A finding's label: its path inside its project under the project's line, else the
+/// project and that path, else its last two components.
+fn finding_label(app: &App, tree: &Tree<'_>, row: &Row, depth: u8) -> String {
+    let spot = &row.spot;
+    match spot.project {
+        Some(_) if depth > 2 => spot.inside.clone(),
+        Some(id) if tree.clashing.contains(&id) => {
+            format!("{}/{}", project_name(app, tree, id), spot.inside)
+        }
+        Some(_) | None => spot.name.clone(),
+    }
+}
+
+/// A bar for `bytes` out of `scale`, in `look`'s symbols, as wide as the column.
+fn bar(look: Look, bytes: u64, scale: u64) -> String {
+    let cells = usize::from(BAR - 1);
+    let eighths = u128::from(bytes) * (cells as u128 * 8) / u128::from(scale.max(1));
+    format!(
+        " {}",
+        look.bar(u64::try_from(eighths).unwrap_or(u64::MAX), cells)
+    )
+}
+
+fn finding_cells(app: &App, look: Look, row: &Row, label: &str) -> Cells {
     let selected = app.selected.contains(&row.finding.id);
     let mark = if selected {
         Span::styled(format!("{} ", look.mark()), look.fg(Color::Cyan))
@@ -360,7 +533,7 @@ fn finding_cells(app: &App, look: Look, row: &Row, indent: &str) -> Cells {
     Cells {
         label: Text::from(vec![
             mark,
-            Span::raw(format!("{indent}{}", escaped(&tail(&row.finding.path)))),
+            Span::raw(escaped(label)),
             Span::styled(
                 format!("  {}", app.catalog.title(&row.finding.rule)),
                 look.dim(),
@@ -370,6 +543,7 @@ fn finding_cells(app: &App, look: Look, row: &Row, indent: &str) -> Cells {
             .size
             .as_ref()
             .map_or_else(String::new, |size| human::size(Some(size))),
+        bar: Text::from(""),
         state: Text::styled(format!(" {}", state(row)), look.tint(row.shelf())),
     }
 }
@@ -378,6 +552,7 @@ fn empty_cells() -> Cells {
     Cells {
         label: Text::from(""),
         size: String::new(),
+        bar: Text::from(""),
         state: Text::from(""),
     }
 }
@@ -405,13 +580,22 @@ fn sum(app: &App, node: Node) -> (usize, u64) {
 }
 
 /// The last two components of `path`: the project and the artifact, for example
-/// `web/node_modules`.
-fn tail(path: &Path) -> String {
+/// `web/node_modules`. The label of a finding outside every project root.
+pub(crate) fn tail(path: &Path) -> String {
     let parts: Vec<_> = path.components().rev().take(2).collect();
     let parts: Vec<String> = parts
         .iter()
         .rev()
         .map(|part| part.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    parts.join("/")
+}
+
+/// `path`'s components with `/` between them, as the tree writes paths on every system.
+pub(crate) fn slashed(path: &Path) -> String {
+    let parts: Vec<_> = path
+        .components()
+        .map(|part| part.as_os_str().to_string_lossy())
         .collect();
     parts.join("/")
 }
@@ -505,11 +689,182 @@ fn footer(app: &App, look: Look) -> Paragraph<'static> {
     Paragraph::new(vec![Text::from(first), second])
 }
 
+/// The detail pane's border: on its left beside the tree, on top below it.
+fn detail_block(look: Look, wide: bool) -> Block<'static> {
+    Block::new()
+        .borders(if wide { Borders::LEFT } else { Borders::TOP })
+        .border_set(look.border())
+        .border_style(look.dim())
+}
+
+/// The detail pane for `focus`, from the line `App::detail_first` says. When more
+/// follows than fits, its last line says so.
+fn render_detail(app: &App, look: Look, focus: Option<Node>, areas: &Areas, frame: &mut Frame<'_>) {
+    let block = detail_block(look, areas.wide);
+    let inner = block.inner(areas.detail);
+    frame.render_widget(block, areas.detail);
+    let rows = focus.map_or_else(Vec::new, |node| wrap(detail(app, look, node), inner.width));
+    let height = usize::from(inner.height);
+    let scrolled = focus.map_or(0, |node| app.detail_first(node));
+    let first = scrolled.min(rows.len().saturating_sub(height));
+    let more = rows.len() > first + height;
+    let take = if more {
+        height.saturating_sub(1)
+    } else {
+        height
+    };
+    let mut shown: Vec<Text<'static>> = rows.into_iter().skip(first).take(take).collect();
+    if more {
+        shown.push(Text::styled(
+            format!("{} J/K scroll", look.ellipsis("more")),
+            look.dim(),
+        ));
+    }
+    frame.render_widget(Paragraph::new(shown), inner);
+}
+
+/// The last line the detail pane for `node` can scroll to on `app`'s screen: none
+/// when it all fits.
+pub(crate) fn detail_end(app: &App, node: Node) -> usize {
+    let areas = areas(Rect::new(0, 0, app.width, app.height));
+    // Both looks draw symbols of the same width, so either wraps the same.
+    let look = Look {
+        color: false,
+        ascii: true,
+    };
+    let inner = detail_block(look, areas.wide).inner(areas.detail);
+    let rows = wrap(detail(app, look, node), inner.width).len();
+    rows.saturating_sub(usize::from(inner.height))
+}
+
+/// `lines` broken into rows of at most `width` columns: between words where it can, a
+/// word longer than a row wherever it must. A break swallows the space it falls on.
+fn wrap(lines: Vec<Text<'static>>, width: u16) -> Vec<Text<'static>> {
+    let width = usize::from(width);
+    if width == 0 {
+        return Vec::new();
+    }
+    let mut rows = Vec::new();
+    for line in lines {
+        let mut filling = Filling::new(line.style, width);
+        for (word, space) in words(&line) {
+            filling.word(&word);
+            filling.space(&space);
+        }
+        rows.extend(filling.finish());
+    }
+    rows
+}
+
+/// A styled character.
+type Cell = (char, Style);
+
+/// `line`'s characters with their styles, as words each followed by the spaces after
+/// it. Leading spaces come as a first, empty word's.
+fn words(line: &Text<'_>) -> Vec<(Vec<Cell>, Vec<Cell>)> {
+    let mut words: Vec<(Vec<Cell>, Vec<Cell>)> = vec![(Vec::new(), Vec::new())];
+    for span in &line.spans {
+        for c in span.content.chars() {
+            let style = span.style;
+            let Some(last) = words.last_mut() else {
+                continue;
+            };
+            if c == ' ' {
+                last.1.push((c, style));
+            } else if last.1.is_empty() {
+                last.0.push((c, style));
+            } else {
+                words.push((vec![(c, style)], Vec::new()));
+            }
+        }
+    }
+    words
+}
+
+fn char_cols(c: char) -> usize {
+    cols(c.encode_utf8(&mut [0; 4]))
+}
+
+/// One line of the detail pane being broken into rows.
+struct Filling {
+    width: usize,
+    style: Style,
+    rows: Vec<Text<'static>>,
+    spans: Vec<Span<'static>>,
+    cols: usize,
+}
+
+impl Filling {
+    const fn new(style: Style, width: usize) -> Self {
+        Self {
+            width,
+            style,
+            rows: Vec::new(),
+            spans: Vec::new(),
+            cols: 0,
+        }
+    }
+
+    /// Adds `word` on this row, or on the next when it fits there whole.
+    fn word(&mut self, word: &[Cell]) {
+        let wide: usize = word.iter().map(|&(c, _)| char_cols(c)).sum();
+        if self.cols + wide > self.width && wide <= self.width {
+            self.next_row();
+        }
+        for &(c, style) in word {
+            if self.cols + char_cols(c) > self.width {
+                self.next_row();
+            }
+            self.push(c, style);
+        }
+    }
+
+    /// Adds `space` up to the end of the row, where it breaks and the rest is dropped.
+    fn space(&mut self, space: &[Cell]) {
+        for &(c, style) in space {
+            if self.cols + char_cols(c) > self.width {
+                self.next_row();
+                return;
+            }
+            self.push(c, style);
+        }
+    }
+
+    fn push(&mut self, c: char, style: Style) {
+        self.cols += char_cols(c);
+        match self.spans.last_mut() {
+            Some(span) if span.style == style => span.content.to_mut().push(c),
+            _ => self.spans.push(Span::styled(c.to_string(), style)),
+        }
+    }
+
+    /// Ends the row so far, unless nothing is on it yet.
+    fn next_row(&mut self) {
+        if self.cols == 0 {
+            return;
+        }
+        self.cols = 0;
+        let spans = std::mem::take(&mut self.spans);
+        self.rows.push(Text::from(spans).style(self.style));
+    }
+
+    /// The rows, at least one: an empty line stays a row, and a break on the last
+    /// space doesn't add one.
+    fn finish(mut self) -> Vec<Text<'static>> {
+        self.next_row();
+        if self.rows.is_empty() {
+            self.rows.push(Text::default().style(self.style));
+        }
+        self.rows
+    }
+}
+
 fn detail(app: &App, look: Look, node: Node) -> Vec<Text<'static>> {
     match node {
         Node::Finding(id) => app
             .row(id)
             .map_or_else(Vec::new, |row| finding_detail(app, look, row)),
+        Node::Project(_, _, id) => project_detail(app, look, id),
         Node::Shelf(shelf) | Node::Group(shelf, _) => shelf_detail(app, look, node, shelf),
         Node::Gaps => vec![
             heading("Not covered"),
@@ -604,6 +959,52 @@ fn finding_detail(app: &App, look: Look, row: &Row) -> Vec<Text<'static>> {
                 .iter()
                 .map(|s| Text::raw(format!("  {}", escaped(s)))),
         );
+    }
+    lines
+}
+
+/// A project's line: its path, then its findings in each bucket with their totals,
+/// as the filter and lens show them.
+fn project_detail(app: &App, look: Look, id: ProjectId) -> Vec<Text<'static>> {
+    let Some(project) = app.project(id) else {
+        return Vec::new();
+    };
+    let mut lines = vec![
+        heading(&format!("Project {}", escaped(&project.name))),
+        Text::raw(escaped(&project.path.display().to_string())),
+    ];
+    for shelf in [
+        Shelf::Safe,
+        Shelf::Review,
+        Shelf::Protected,
+        Shelf::Measuring,
+    ] {
+        let mut rows: Vec<&Row> = [Lens::Agents, Lens::Dev, Lens::System]
+            .into_iter()
+            .flat_map(|lens| app.under(Node::Project(shelf, lens, id)))
+            .collect();
+        if rows.is_empty() {
+            continue;
+        }
+        rows.sort_by(|a, b| a.spot.inside.cmp(&b.spot.inside));
+        let total: u64 = rows.iter().map(|row| row.bytes()).sum();
+        lines.push(Text::from(""));
+        lines.push(Text::styled(
+            format!(
+                "{}: {}, {}",
+                shelf_title(shelf),
+                human::findings(rows.len()),
+                bytes(total)
+            ),
+            look.tint(shelf).add_modifier(Modifier::BOLD),
+        ));
+        lines.extend(rows.iter().map(|row| {
+            Text::raw(format!(
+                "  {}  {}",
+                escaped(&row.spot.inside),
+                human::size(row.size.as_ref())
+            ))
+        }));
     }
     lines
 }
@@ -737,6 +1138,22 @@ fn settings_head(app: &App, look: Look, panel: &mut PanelLines) {
         ""
     };
     panel.push(Some(&Item::AddRoot), add, vec![Span::raw("+ add another")]);
+    for (index, suggestion) in app.search.suggestions().iter().enumerate() {
+        let label = if index == 0 { "Suggested roots" } else { "" };
+        let line = vec![Span::raw(settings::describe(suggestion, look))];
+        panel.push(Some(&Item::Suggested(index)), label, line);
+    }
+    for (index, note) in settings::search_notes(&app.search, look)
+        .into_iter()
+        .enumerate()
+    {
+        let label = if index == 0 && app.search.suggestions().is_empty() {
+            "Suggested roots"
+        } else {
+            ""
+        };
+        panel.push(None, label, vec![Span::styled(note, look.dim())]);
+    }
     let method = vec![
         Span::raw(settings::method(app).name()),
         Span::styled("  stored only: nothing is removed yet", look.dim()),
@@ -803,15 +1220,18 @@ pub(crate) const fn level_about(level: Level) -> &'static str {
 fn render_help(look: Look, frame: &mut Frame<'_>) {
     let keys = [
         ("j k  ↓ ↑", "move"),
-        ("h l  ← →", "fold and unfold a group"),
+        ("h l  ← →", "fold and unfold a group or project"),
         ("g G", "first and last line"),
         ("/", "filter by name or path; enter keeps it, esc clears it"),
         ("tab", "show one lens: Agents, Dev, System, then all"),
         ("s", "select or unselect the finding"),
-        ("a", "add the group's Safe and Review findings"),
+        ("a", "add the group's or project's Safe and Review findings"),
         ("c", "select the whole Safe bucket"),
         ("p", "keep the finding for good, with an optional note"),
         ("P", "keep every finding of its rule: turn the rule off"),
+        ("o", "sort by size, last change or name"),
+        ("J K", "scroll the detail pane"),
+        ("y", "send the path to the terminal clipboard"),
         (",", "settings: level, project roots, method, what is kept"),
         ("enter", "show what is selected"),
         ("?", "this help"),
@@ -845,7 +1265,7 @@ fn render_help(look: Look, frame: &mut Frame<'_>) {
     let area = frame.area();
     // Full width when narrow, so nothing shows beside it.
     let width = if area.width < WIDE { area.width } else { 72 };
-    let height = area.height.saturating_sub(2).min(19);
+    let height = area.height.saturating_sub(2).min(22);
     let popup = Rect::new(
         area.x + (area.width - width) / 2,
         area.y + (area.height - height) / 2,

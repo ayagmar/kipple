@@ -1,15 +1,15 @@
 //! The settings panel (`,`, `docs/03-functional-spec.md` §2 J2 and §5): the level, the
-//! project roots, the default method, the kept items and the rules turned off. Each change
-//! is a config edit the loop writes; nothing here changes the screen before that write
-//! succeeded.
+//! project roots and the roots kipple suggests (D-053), the default method, the kept items
+//! and the rules turned off. Each change is a config edit the loop writes; nothing here
+//! changes the screen before that write succeeded.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
-use kipple_core::{Level, Method, RuleId};
+use kipple_core::{Level, Method, RuleId, Suggestion};
 
 use super::app::{App, Key};
-use super::view::title_case;
-use crate::config::{Edit, same_config_path};
+use super::view::{Look, title_case};
+use crate::config::{Edit, same_config_path, within_config_path};
 use crate::human::escaped;
 
 /// One line of the panel the cursor can stand on.
@@ -20,6 +20,8 @@ pub(crate) enum Item {
     Root(usize),
     /// Where another root is typed.
     AddRoot,
+    /// A suggested root, by its index in the search's suggestions.
+    Suggested(usize),
     Method,
     /// A kept path, by its index in the config's `keep.paths`.
     Kept(usize),
@@ -40,6 +42,104 @@ pub(crate) enum Action {
     Say(String),
 }
 
+/// The search for projects outside the roots, whose suggestions onboarding and settings
+/// offer. It runs once per session.
+#[derive(Debug, Default)]
+pub(crate) enum Search {
+    #[default]
+    NotStarted,
+    Running,
+    Done(Found),
+}
+
+impl Search {
+    /// The suggestions, once the search has ended.
+    pub(crate) fn suggestions(&self) -> &[Suggestion] {
+        match self {
+            Self::Done(found) => &found.suggestions,
+            Self::NotStarted | Self::Running => &[],
+        }
+    }
+}
+
+/// What the search found.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct Found {
+    pub(crate) suggestions: Vec<Suggestion>,
+    /// Whether it looked everywhere: `false` when a limit stopped it.
+    pub(crate) complete: bool,
+    /// How many directories it couldn't read.
+    pub(crate) unreadable: usize,
+}
+
+impl Found {
+    /// Takes out the suggestions that are now project roots, as an added one is, or are
+    /// inside one.
+    pub(crate) fn drop_roots(&mut self, roots: &[PathBuf], home: Option<&Path>) {
+        self.suggestions.retain(|suggestion| {
+            !roots
+                .iter()
+                .any(|root| within_config_path(&suggestion.path, root, home))
+        });
+    }
+}
+
+/// A suggestion as a line: its path, how many projects it holds and the first names.
+pub(crate) fn describe(suggestion: &Suggestion, look: Look) -> String {
+    const SHOWN: usize = 3;
+    let names: Vec<String> = suggestion
+        .projects
+        .iter()
+        .take(SHOWN)
+        .map(|project| {
+            // A project suggested as itself is named by its last component.
+            let name = match project.strip_prefix(&suggestion.path) {
+                Ok(inside) if !inside.as_os_str().is_empty() => inside,
+                Ok(_) | Err(_) => project.file_name().map_or(project.as_path(), Path::new),
+            };
+            escaped(&name.display().to_string())
+        })
+        .collect();
+    let count = suggestion.projects.len();
+    let more = if count > SHOWN {
+        look.ellipsis(", ")
+    } else {
+        String::new()
+    };
+    let projects = if count == 1 { "project" } else { "projects" };
+    format!(
+        "{} ({count} {projects}: {}{more})",
+        escaped(&suggestion.path.display().to_string()),
+        names.join(", ")
+    )
+}
+
+/// What to say about the search beside its suggestions: that it runs, that it stopped
+/// early, what it couldn't read, or that it found nothing.
+pub(crate) fn search_notes(search: &Search, look: Look) -> Vec<String> {
+    let found = match search {
+        Search::NotStarted => return Vec::new(),
+        Search::Running => return vec![look.ellipsis("looking for projects")],
+        Search::Done(found) => found,
+    };
+    let mut notes = Vec::new();
+    if found.suggestions.is_empty() {
+        notes.push("no projects found outside these folders".to_owned());
+    }
+    if !found.complete {
+        notes.push("stopped early: the list may be incomplete".to_owned());
+    }
+    if found.unreadable > 0 {
+        let folders = if found.unreadable == 1 {
+            "folder"
+        } else {
+            "folders"
+        };
+        notes.push(format!("{} {folders} couldn't be read", found.unreadable));
+    }
+    notes
+}
+
 /// Where the cursor is in the panel, and the root being typed, if any.
 #[derive(Debug, Default)]
 pub(crate) struct Panel {
@@ -53,6 +153,7 @@ pub(crate) fn items(app: &App) -> Vec<Item> {
     let mut items = vec![Item::Level];
     items.extend((0..app.roots.len()).map(Item::Root));
     items.push(Item::AddRoot);
+    items.extend((0..app.search.suggestions().len()).map(Item::Suggested));
     items.push(Item::Method);
     items.extend((0..app.config.keep.len()).map(Item::Kept));
     items.extend(disabled(app).into_iter().map(Item::Disabled));
@@ -141,10 +242,17 @@ impl Panel {
                 self.typing = Some(String::new());
                 Action::Nothing
             }
+            Some(Item::Suggested(index)) if by > 0 => app
+                .search
+                .suggestions()
+                .get(index)
+                .map_or(Action::Nothing, |suggestion| {
+                    add_root(app, &suggestion.path)
+                }),
             Some(Item::Root(_) | Item::Kept(_) | Item::Disabled(_)) => {
                 Action::Say("d removes it.".to_owned())
             }
-            None => Action::Nothing,
+            Some(Item::Suggested(_)) | None => Action::Nothing,
         }
     }
 
@@ -170,7 +278,9 @@ impl Panel {
                     enabled: true,
                 }],
             },
-            Some(Item::Level | Item::Method | Item::AddRoot) | None => Action::Nothing,
+            Some(Item::Level | Item::Method | Item::AddRoot | Item::Suggested(_)) | None => {
+                Action::Nothing
+            }
         }
     }
 
@@ -190,23 +300,7 @@ impl Panel {
                 if path.as_os_str().is_empty() {
                     return Action::Nothing;
                 }
-                let home = app.home.as_deref();
-                if app
-                    .roots
-                    .iter()
-                    .any(|root| same_config_path(root, &path, home))
-                {
-                    return Action::Say(format!(
-                        "{} is already a project root.",
-                        escaped(&path.display().to_string())
-                    ));
-                }
-                let mut roots = app.roots.clone();
-                roots.push(path.clone());
-                return Action::Save {
-                    edits: vec![Edit::ProjectRoots(roots)],
-                    done: format!("Added {} to the project roots.", path.display()),
-                };
+                return add_root(app, &path);
             }
             Key::Up
             | Key::Down
@@ -220,6 +314,31 @@ impl Panel {
             | Key::Interrupt => {}
         }
         Action::Nothing
+    }
+}
+
+/// Adds `path` to the project roots, typed or suggested, unless it is one already,
+/// however it is spelled.
+fn add_root(app: &App, path: &Path) -> Action {
+    let home = app.home.as_deref();
+    if app
+        .roots
+        .iter()
+        .any(|root| same_config_path(root, path, home))
+    {
+        return Action::Say(format!(
+            "{} is already a project root.",
+            escaped(&path.display().to_string())
+        ));
+    }
+    let mut roots = app.roots.clone();
+    roots.push(path.to_owned());
+    Action::Save {
+        edits: vec![Edit::ProjectRoots(roots)],
+        done: format!(
+            "Added {} to the project roots.",
+            escaped(&path.display().to_string())
+        ),
     }
 }
 

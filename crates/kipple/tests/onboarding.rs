@@ -1,6 +1,8 @@
 //! The first run on `demo-home` (`docs/03-functional-spec.md` §2 J0): when it is due,
 //! and that the numbers its first step shows for each level are the totals
-//! `kipple scan --json` gives at that level. Built only with the `test-roots` feature:
+//! `kipple scan --json` gives at that level; and the home screen's header there once a
+//! config exists, and what `y` writes to the terminal (§5). Built only with the
+//! `test-roots` feature:
 //! every root, the config directory included, points into a temp dir.
 
 #[path = "../../kipple-adapters/tests/fixtures/tree.rs"]
@@ -32,18 +34,23 @@ mod venv_v3_14_8;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::thread;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use clap::Parser as _;
 use kipple::config::{self, Settings};
 use kipple::setup::Builtin;
-use kipple::tui::{LevelTotals, first_run_due, level_totals};
+use kipple::tui::{self, Input, Key, Keys, LevelTotals, Look, first_run_due, level_totals};
 use kipple::{Cli, USAGE};
 use kipple_core::{CancelToken, Finding, Level, ScanRequest, event_channel};
 use kipple_platform::Environment;
+use ratatui::Terminal;
+use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
+use ratatui::buffer::Cell;
+use ratatui::layout::{Position, Size};
 use serde_json::Value;
 
 /// `demo-home` in a temp dir, with every demo root but those `left_out` names.
@@ -202,4 +209,204 @@ fn with_an_unknown_config_directory_the_home_screen_exits_2_before_opening() {
     assert_eq!(code, ExitCode::from(USAGE));
     let err = String::from_utf8(err).unwrap();
     assert!(err.contains("config directory is unknown"), "{err}");
+}
+
+/// One `q` once the first frame is up.
+struct Quit {
+    asked: bool,
+}
+
+impl Keys for Quit {
+    fn next(&mut self, _timeout: Duration) -> io::Result<Option<Input>> {
+        let first = !self.asked;
+        self.asked = true;
+        Ok(first.then_some(Input::Key(Key::Char('q'))))
+    }
+}
+
+// Catches the project roots missing from the header, or squeezed off it, on an
+// 80-column terminal once a config exists and the home screen opens without questions.
+#[test]
+fn on_demo_home_the_header_names_the_project_root_at_80_by_24() {
+    let (temp, roots) = demo(&[]);
+    let named = temp.path().join("named.toml");
+    fs::write(&named, "").unwrap();
+    let env = env(&roots, &[(config::VAR, &named)]);
+    let builtin = Builtin::load().unwrap();
+    let settings = settings(&env, &builtin);
+    let mut terminal = Terminal::new(Recorded {
+        screen: TestBackend::new(80, 24),
+        written: Vec::new(),
+    })
+    .unwrap();
+    let look = Look {
+        color: false,
+        ascii: true,
+    };
+
+    tui::run(
+        &mut terminal,
+        &mut Quit { asked: false },
+        &env,
+        &settings,
+        look,
+    )
+    .unwrap();
+
+    let buffer = terminal.backend().screen.buffer();
+    let header: String = (0..80)
+        .map(|x| buffer.cell((x, 0)).map_or(" ", |cell| cell.symbol()))
+        .collect();
+    // However the temp dir is spelled on this system, the root ends in `projects`.
+    assert!(header.trim_end().ends_with("projects"), "{header}");
+    assert!(header.contains("[Balanced]"), "{header}");
+}
+
+/// A test terminal that also keeps what the home screen writes besides its frames.
+struct Recorded {
+    screen: TestBackend,
+    written: Vec<u8>,
+}
+
+impl io::Write for Recorded {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.written.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl Backend for Recorded {
+    type Error = <TestBackend as Backend>::Error;
+
+    fn draw<'a, I>(&mut self, content: I) -> Result<(), Self::Error>
+    where
+        I: Iterator<Item = (u16, u16, &'a Cell)>,
+    {
+        self.screen.draw(content)
+    }
+
+    fn hide_cursor(&mut self) -> Result<(), Self::Error> {
+        self.screen.hide_cursor()
+    }
+
+    fn show_cursor(&mut self) -> Result<(), Self::Error> {
+        self.screen.show_cursor()
+    }
+
+    fn get_cursor_position(&mut self) -> Result<Position, Self::Error> {
+        self.screen.get_cursor_position()
+    }
+
+    fn set_cursor_position<P: Into<Position>>(&mut self, position: P) -> Result<(), Self::Error> {
+        self.screen.set_cursor_position(position)
+    }
+
+    fn clear(&mut self) -> Result<(), Self::Error> {
+        self.screen.clear()
+    }
+
+    fn clear_region(&mut self, clear_type: ClearType) -> Result<(), Self::Error> {
+        self.screen.clear_region(clear_type)
+    }
+
+    fn size(&self) -> Result<Size, Self::Error> {
+        self.screen.size()
+    }
+
+    fn window_size(&mut self) -> Result<WindowSize, Self::Error> {
+        self.screen.window_size()
+    }
+
+    fn flush(&mut self) -> Result<(), Self::Error> {
+        self.screen.flush()
+    }
+}
+
+/// These keys, pressed once the scan has ended, which the loop shows by waiting for a
+/// key longer than a frame.
+struct AfterScan {
+    keys: Vec<Key>,
+}
+
+impl Keys for AfterScan {
+    fn next(&mut self, timeout: Duration) -> io::Result<Option<Input>> {
+        if timeout <= Duration::from_millis(16) {
+            return Ok(None);
+        }
+        Ok(Some(Input::Key(if self.keys.is_empty() {
+            Key::Char('q')
+        } else {
+            self.keys.remove(0)
+        })))
+    }
+}
+
+/// `encoded` from base64.
+#[expect(clippy::unwrap_used, reason = "a malformed escape fails the test")]
+fn unbase64(encoded: &str) -> Vec<u8> {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut bits = 0_u32;
+    let mut count = 0;
+    let mut bytes = Vec::new();
+    for symbol in encoded.bytes().take_while(|&symbol| symbol != b'=') {
+        let value = ALPHABET.iter().position(|&s| s == symbol).unwrap();
+        bits = (bits << 6) | u32::try_from(value).unwrap();
+        count += 6;
+        if count >= 8 {
+            count -= 8;
+            bytes.push(u8::try_from((bits >> count) & 0xff).unwrap());
+        }
+    }
+    bytes
+}
+
+// Catches `y` never reaching the terminal (the escape left unwritten, or written
+// somewhere other than the terminal's one writer) and the loop sending a path other
+// than the focused finding's.
+#[test]
+fn y_on_demo_home_writes_the_focused_path_to_the_terminal_as_osc_52() {
+    let (temp, roots) = demo(&[]);
+    let named = temp.path().join("named.toml");
+    fs::write(&named, "").unwrap();
+    let env = env(&roots, &[(config::VAR, &named)]);
+    let builtin = Builtin::load().unwrap();
+    let settings = settings(&env, &builtin);
+    let backend = Recorded {
+        screen: TestBackend::new(160, 48),
+        written: Vec::new(),
+    };
+    let mut terminal = Terminal::new(backend).unwrap();
+    let mut keys: Vec<Key> = "/rust-app/target".chars().map(Key::Char).collect();
+    keys.extend([Key::Enter, Key::Char('g')]);
+    keys.extend([Key::Char('j'); 2]);
+    keys.push(Key::Char('y'));
+    let look = Look {
+        color: false,
+        ascii: true,
+    };
+
+    tui::run(
+        &mut terminal,
+        &mut AfterScan { keys },
+        &env,
+        &settings,
+        look,
+    )
+    .unwrap();
+
+    let written = &terminal.backend().written;
+    let text = String::from_utf8_lossy(written);
+    let payload = text
+        .strip_prefix("\u{1b}]52;c;")
+        .and_then(|rest| rest.strip_suffix('\u{7}'))
+        .unwrap_or_else(|| panic!("not one OSC 52 escape: {text:?}"));
+    let sent = String::from_utf8(unbase64(payload)).unwrap();
+    assert!(
+        Path::new(&sent).ends_with("projects/rust-app/target"),
+        "{sent}"
+    );
 }

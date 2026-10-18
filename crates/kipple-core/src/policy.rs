@@ -48,7 +48,7 @@ named! {
         Low = "low",
         /// Expensive, such as a very large build. Never Safe.
         High = "high",
-        /// Not known. Doesn't block Safe; shown as "restore cost unknown".
+        /// Not known. Doesn't block Safe; shown as "not estimated".
         Unknown = "unknown",
     }
 }
@@ -428,7 +428,7 @@ fn related(a: &Path, b: &Path) -> bool {
 
 /// Whether `path` is `base` or inside it, comparing components and ignoring case on every
 /// OS: a match only ever holds more.
-fn starts_with(path: &Path, base: &Path) -> bool {
+pub(crate) fn starts_with(path: &Path, base: &Path) -> bool {
     let fold = |c: std::path::Component<'_>| c.as_os_str().to_string_lossy().to_lowercase();
     let mut path = path.components().map(fold);
     base.components()
