@@ -12,7 +12,7 @@ use kipple_core::{
 };
 
 use crate::config::Settings;
-use crate::human::{bytes, escaped, size};
+use crate::human::{bytes, escaped, size, snippet_lines};
 use crate::json::{
     BucketOut, EVENT, EventBody, EventOut, FindingOut, LensOut, OmissionOut, PathOut, ScanOut,
     SizeOut, VerdictOut,
@@ -276,10 +276,8 @@ fn write_advice(out: &mut dyn Write, report: &ScanOut) -> io::Result<()> {
         }
         writeln!(out, "  {integration}: {}", escaped(&advice.title))?;
         writeln!(out, "    {}", escaped(&advice.text))?;
-        for snippet in &advice.snippets {
-            for line in snippet.lines() {
-                writeln!(out, "      {}", escaped(line))?;
-            }
+        for line in advice.snippets.iter().flat_map(|s| snippet_lines(s)) {
+            writeln!(out, "      {line}")?;
         }
     }
     Ok(())

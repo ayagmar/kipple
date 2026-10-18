@@ -18,7 +18,7 @@ use super::app::{App, Key, Progress};
 use super::settings::{Found, describe, search_notes};
 use super::view::{Look, level_about, title_case};
 use crate::config::{Edit, Loaded, Source, is_config_path, same_config_path, within_config_path};
-use crate::human::{bytes, escaped};
+use crate::human::{self, bytes, escaped};
 
 /// Whether the first run is due: no config file at the default location, in a known
 /// config directory. A file named by `--config` or `KIPPLE_CONFIG` never starts it.
@@ -597,8 +597,8 @@ fn tip_lines(app: &App, look: Look) -> Vec<Line<'static>> {
     for tip in tips {
         lines.push(Line::styled(escaped(&tip.title), bold()));
         lines.push(Line::from(escaped(&tip.text)));
-        for snippet in &tip.snippets {
-            lines.push(Line::styled(format!("  {}", escaped(snippet)), look.dim()));
+        for line in tip.snippets.iter().flat_map(|s| human::snippet_lines(s)) {
+            lines.push(Line::styled(format!("  {line}"), look.dim()));
         }
         lines.push(Line::from(""));
     }

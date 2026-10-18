@@ -957,7 +957,8 @@ fn finding_detail(app: &App, look: Look, row: &Row) -> Vec<Text<'static>> {
             advice
                 .snippets
                 .iter()
-                .map(|s| Text::raw(format!("  {}", escaped(s)))),
+                .flat_map(|s| human::snippet_lines(s))
+                .map(|line| Text::raw(format!("  {line}"))),
         );
     }
     lines

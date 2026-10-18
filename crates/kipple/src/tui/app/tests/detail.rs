@@ -3,10 +3,11 @@
 
 use std::path::PathBuf;
 
-use kipple_core::FindingId;
+use kipple_core::{Advice, FindingId, IntegrationReport, ScanOutcome, ScanReport};
 
 use super::{
-    CARGO, colour, focus, found, measured, press, recent, safe, screen, sized, to, unknown_layout,
+    CARGO, PACMAN, colour, focus, found, home, measured, press, recent, safe, screen, sized, to,
+    unknown_layout,
 };
 use crate::tui::app::{App, Effect, Key, Msg, Node, Saved, Shelf};
 
@@ -255,4 +256,48 @@ fn y_refuses_a_path_that_isnt_utf8_with_a_message() {
         "{:?}",
         app.notice
     );
+}
+
+/// The detail pane's lines at 160×48, where it sits right of the tree.
+fn beside(app: &App) -> Vec<String> {
+    screen(app, colour(), 160, 48)
+        .lines()
+        .filter_map(|line| line.split_once('│').map(|(_, pane)| pane.to_owned()))
+        .collect()
+}
+
+// Catches a snippet that spans lines drawn as one line with a literal `\n` (F2).
+#[test]
+fn the_detail_pane_shows_each_line_of_an_advice_snippet_on_its_own_line() {
+    let mut app = home();
+    let report = ScanReport {
+        outcome: ScanOutcome::Completed,
+        integrations: vec![IntegrationReport {
+            id: PACMAN,
+            omissions: Vec::new(),
+            advice: vec![Advice {
+                title: "Keep less in the journal".to_owned(),
+                text: "journald keeps logs up to a size.".to_owned(),
+                snippets: vec!["[Journal]\nSystemMaxUse=200M".to_owned()],
+                references: Vec::new(),
+            }],
+        }],
+        findings: Vec::new(),
+        unchecked_system: 0,
+        by_command_line: 0,
+    };
+    app.update(Msg::Finished {
+        report: Box::new(report),
+        elapsed: std::time::Duration::from_secs(1),
+    });
+    to(&mut app, 5);
+
+    let pane = beside(&app);
+    assert!(!pane.iter().any(|line| line.contains("\\n")), "{pane:?}");
+    for wanted in ["[Journal]", "SystemMaxUse=200M"] {
+        assert!(
+            pane.iter().any(|line| line.trim() == wanted),
+            "{wanted}: {pane:?}"
+        );
+    }
 }

@@ -200,7 +200,7 @@ Status (M2, D-048, D-049): the home screen exists, removes nothing, and judges f
 - **Empty or incomplete:** an incomplete scan is never shown as "nothing to clean". Omissions are listed.
 - **Terminal hygiene:** one writer owns the terminal. Raw mode and the alternate screen are restored on exit, error and panic (an RAII guard plus a panic hook).
 - **Inline mode:** `kipple clean` outside the home screen renders its review and progress inline (fixed height, scrollback kept) instead of taking over the screen. `--fullscreen` switches.
-- **Accessibility:** `NO_COLOR`, `--ascii`, works at 80×24, escapes control characters in paths and plugin text.
+- **Accessibility:** `NO_COLOR`, `--ascii`, works at 80×24, escapes control characters in paths and plugin text. An advice snippet is split into its lines first, so a snippet of several lines shows as lines, not with `\n`.
 - **Responsiveness budget:** keypress-to-frame p95 under 50 ms during a scan.
 
 ## 6. Configuration

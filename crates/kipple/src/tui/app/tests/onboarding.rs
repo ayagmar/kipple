@@ -437,6 +437,32 @@ fn steps_2_to_4_at_80_by_24() {
     insta::assert_snapshot!("step_4_at_80_by_24", screen(&first, &app, 80, 24));
 }
 
+// Catches a snippet that spans lines drawn as one line with a literal `\n` (F2).
+#[test]
+fn step_4_shows_each_line_of_a_snippet_on_its_own_line() {
+    let mut app = home();
+    let mut report = report_with_advice();
+    if let Some(advice) = report
+        .integrations
+        .first_mut()
+        .and_then(|integration| integration.advice.first_mut())
+    {
+        advice.snippets = vec!["[Journal]\nSystemMaxUse=200M".to_owned()];
+    }
+    app.update(Msg::Finished {
+        report: Box::new(report),
+        elapsed: std::time::Duration::from_secs(1),
+    });
+    let mut first = Onboarding::new(&app);
+    answer(&mut first, &[Key::Tab, Key::Tab, Key::Tab]);
+
+    let text = screen(&first, &app, 80, 24);
+    assert!(!text.contains("\\n"), "{text}");
+    for line in ["[Journal]", "SystemMaxUse=200M"] {
+        assert!(text.lines().any(|l| l.trim() == line), "{line}: {text}");
+    }
+}
+
 // Catches step 4 left blank when no tool kipple found has a retention setting.
 #[test]
 fn step_4_says_when_no_tip_is_known() {

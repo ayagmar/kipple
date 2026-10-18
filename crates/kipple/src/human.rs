@@ -108,6 +108,12 @@ pub(crate) fn reasons(verdict: &Verdict) -> String {
     labels.join(", ")
 }
 
+/// An advice snippet's lines, each escaped for the terminal: a snippet may span lines,
+/// and escaping it whole would show its line breaks as `\n`.
+pub(crate) fn snippet_lines(snippet: &str) -> impl Iterator<Item = String> + '_ {
+    snippet.lines().map(escaped)
+}
+
 /// What kipple established about a finding, as labelled lines for a detail view: the
 /// note it is kept with, what comes back and what is lost, then each check its bucket
 /// rests on. Nothing until it is measured.
