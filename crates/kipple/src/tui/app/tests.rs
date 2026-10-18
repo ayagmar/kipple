@@ -19,7 +19,7 @@ use kipple_core::{
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
-use ratatui::style::Color;
+use ratatui::style::{Color, Modifier};
 
 use super::{App, Catalog, Key, Msg, Node, Shelf};
 use crate::tui::view::{self, Look};
@@ -665,6 +665,55 @@ fn screen(app: &App, look: Look, width: u16, height: u16) -> String {
     text
 }
 
+/// `buffer` as text with its style runs: each run of cells drawn in something other
+/// than the terminal's own style reads `«fg=green,bold|text»`, so a snapshot of it
+/// catches a colour or a modifier that moves.
+fn styled(buffer: &ratatui::buffer::Buffer) -> String {
+    let area = buffer.area;
+    let mut text = String::new();
+    for y in area.top()..area.bottom() {
+        let mut runs: Vec<(String, String)> = Vec::new();
+        for x in area.left()..area.right() {
+            let Some(cell) = buffer.cell((x, y)) else {
+                continue;
+            };
+            let style = style_name(cell.fg, cell.bg, cell.modifier);
+            match runs.last_mut() {
+                Some((last, run)) if *last == style => run.push_str(cell.symbol()),
+                _ => runs.push((style, cell.symbol().to_owned())),
+            }
+        }
+        let line: String = runs
+            .into_iter()
+            .map(|(style, run)| {
+                if style.is_empty() {
+                    run
+                } else {
+                    format!("«{style}|{run}»")
+                }
+            })
+            .collect();
+        text.push_str(line.trim_end());
+        text.push('\n');
+    }
+    text
+}
+
+/// A cell's style as `fg=Green,bg=…,bold,reversed`, leaving out the terminal's own
+/// colours: empty when it has none.
+fn style_name(fg: Color, bg: Color, modifier: Modifier) -> String {
+    let mut parts = Vec::new();
+    for (name, colour) in [("fg", fg), ("bg", bg)] {
+        if colour != Color::Reset {
+            parts.push(format!("{name}={colour}"));
+        }
+    }
+    for (name, _) in modifier.iter_names() {
+        parts.push(name.to_lowercase());
+    }
+    parts.join(",")
+}
+
 fn draw(app: &App, look: Look, width: u16, height: u16) -> ratatui::buffer::Buffer {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
     terminal
@@ -756,6 +805,22 @@ fn the_bucket_home_at_80_by_24_stacks_the_detail_pane_below_the_tree() {
 fn the_bucket_home_at_160_by_48_puts_the_detail_pane_beside_the_tree() {
     let app = sized(160, 48);
     insta::assert_snapshot!(screen(&app, colour(), 160, 48));
+}
+
+// Catches a colour or a modifier on the home screen changing while its drawing code
+// moves: the text snapshots above see only the characters.
+#[test]
+fn the_bucket_home_at_160_by_48_in_colour() {
+    let app = sized(160, 48);
+    insta::assert_snapshot!(styled(&draw(&app, colour(), 160, 48)));
+}
+
+// The same for the help over it.
+#[test]
+fn help_at_160_by_48_in_colour() {
+    let mut app = sized(160, 48);
+    press(&mut app, &[Key::Char('?')]);
+    insta::assert_snapshot!(styled(&draw(&app, colour(), 160, 48)));
 }
 
 #[test]

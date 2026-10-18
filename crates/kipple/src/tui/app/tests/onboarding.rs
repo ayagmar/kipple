@@ -11,8 +11,9 @@ use kipple_core::{
 };
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
+use ratatui::buffer::Buffer;
 
-use super::{PACMAN, colour, home};
+use super::{PACMAN, colour, home, styled};
 use crate::config::{self, Catalog, Config, Edit, Loaded, Location, Settings, Source};
 use crate::tui::app::{App, Effect, Key, Msg, Saved};
 use crate::tui::onboarding::{self, Onboarding, Outcome, Step};
@@ -134,11 +135,7 @@ fn finished(outcome: Outcome) -> Vec<Edit> {
 }
 
 fn screen(onboarding: &Onboarding, app: &App, width: u16, height: u16) -> String {
-    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    terminal
-        .draw(|frame| onboarding::render(onboarding, app, colour(), frame))
-        .unwrap();
-    let buffer = terminal.backend().buffer();
+    let buffer = drawn(onboarding, app, width, height);
     let mut text = String::new();
     for y in 0..height {
         let line: String = (0..width)
@@ -148,6 +145,14 @@ fn screen(onboarding: &Onboarding, app: &App, width: u16, height: u16) -> String
         text.push('\n');
     }
     text
+}
+
+fn drawn(onboarding: &Onboarding, app: &App, width: u16, height: u16) -> Buffer {
+    let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
+    terminal
+        .draw(|frame| onboarding::render(onboarding, app, colour(), frame))
+        .unwrap();
+    terminal.backend().buffer().clone()
 }
 
 fn report_with_advice() -> ScanReport {
@@ -461,6 +466,28 @@ fn step_4_shows_each_line_of_a_snippet_on_its_own_line() {
     for line in ["[Journal]", "SystemMaxUse=200M"] {
         assert!(text.lines().any(|l| l.trim() == line), "{line}: {text}");
     }
+}
+
+// Catches a colour or a modifier in the first run's steps changing while their drawing
+// code moves: the text snapshots see only the characters.
+#[test]
+fn steps_1_to_4_at_160_by_48_in_colour() {
+    let mut app = home();
+    app.roots = vec![PathBuf::from("/home/ada/projects")];
+    app.update(Msg::Finished {
+        report: Box::new(report_with_advice()),
+        elapsed: std::time::Duration::from_secs(1),
+    });
+    let mut first = Onboarding::new(&app);
+    app.start_search();
+    let paths = [PathBuf::from("/home/ada/notes")];
+    suggest(&mut app, &mut first, &paths, false);
+    let mut shown = vec![styled(&drawn(&first, &app, 160, 48))];
+    for keys in [&[Key::Enter, Key::Down][..], &[Key::Enter], &[Key::Enter]] {
+        answer(&mut first, keys);
+        shown.push(styled(&drawn(&first, &app, 160, 48)));
+    }
+    insta::assert_snapshot!(shown.join("\n"));
 }
 
 // Catches step 4 left blank when no tool kipple found has a retention setting.

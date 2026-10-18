@@ -1,0 +1,199 @@
+---
+source: crates/kipple/src/tui/app/tests/onboarding.rs
+expression: "shown.join(\"\\n\")"
+---
+«bold| Welcome to kipple» · step 1 of 4 · «fg=DarkGray|scan finished»
+«fg=DarkGray|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────»
+«bold|How careful should kipple be?»
+«fg=DarkGray|Each level shows what it would offer on this machine. It changes nothing.»
+
+  Careful
+«fg=DarkGray|    Safe: build output and regenerated caches; recent: 14 days»
+    514.0 MiB safe to clean, 300.0 MiB to review
+«reversed|> Balanced (the default)»
+«fg=DarkGray|    Safe: rebuilt, reinstalled, re-downloaded; recent: 7 days»
+    514.0 MiB safe to clean, 300.0 MiB to review
+  Thorough
+«fg=DarkGray|    Safe: Balanced plus what costs a rollback; recent: 2 days»
+    814.0 MiB safe to clean, 0 B to review
+
+«fg=DarkGray|The scan has finished: these are the totals.»
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+«fg=DarkGray| enter choose · tab skip · q quit, saving nothing»
+
+«bold| Welcome to kipple» · step 2 of 4 · «fg=DarkGray|scan finished»
+«fg=DarkGray|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────»
+«bold|Where are your projects?»
+«fg=DarkGray|kipple looks for build output and dependencies below these folders.»
+
+  [x] /home/ada/projects
+«reversed|> + add another»
+
+«bold|Suggested: projects found elsewhere in your home folder»
+  [ ] /home/ada/notes (1 project: app)
+«fg=DarkGray|stopped early: the list may be incomplete»
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+«fg=DarkGray| enter choose · space check · tab skip · esc back · q quit, saving nothing»
+
+«bold| Welcome to kipple» · step 2 of 4 · «fg=DarkGray|scan finished»
+«fg=DarkGray|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────»
+«bold|Where are your projects?»
+«fg=DarkGray|kipple looks for build output and dependencies below these folders.»
+
+  [x] /home/ada/projects
+«reversed|> + _»
+
+«bold|Suggested: projects found elsewhere in your home folder»
+  [ ] /home/ada/notes (1 project: app)
+«fg=DarkGray|stopped early: the list may be incomplete»
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+«fg=DarkGray| type a path, enter adds it, esc cancels»
+
+«bold| Welcome to kipple» · step 2 of 4 · «fg=DarkGray|scan finished»
+«fg=DarkGray|────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────»
+«bold|Where are your projects?»
+«fg=DarkGray|kipple looks for build output and dependencies below these folders.»
+
+  [x] /home/ada/projects
+«reversed|> + add another»
+
+«bold|Suggested: projects found elsewhere in your home folder»
+  [ ] /home/ada/notes (1 project: app)
+«fg=DarkGray|stopped early: the list may be incomplete»
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+«fg=DarkGray| enter choose · space check · tab skip · esc back · q quit, saving nothing»

@@ -14,7 +14,7 @@ use ratatui::style::Color;
 
 use super::{
     CARGO, DAY, NODE, colour, draw, focus, found, home, measured, press, safe, screen, selected,
-    to, typed,
+    styled, to, typed,
 };
 use crate::config::{self, Catalog, Config, Loaded, Location, Settings, Source};
 use crate::tui::app::{App, Effect, Key, Mode, Msg, Node, Saved, Shelf};
@@ -543,6 +543,13 @@ fn settings_at_80_by_24() {
 fn settings_at_160_by_48() {
     let app = configured(160, 48);
     insta::assert_snapshot!(screen(&app, colour(), 160, 48));
+}
+
+// Catches a colour or a modifier in settings changing while its drawing code moves.
+#[test]
+fn settings_at_160_by_48_in_colour() {
+    let app = configured(160, 48);
+    insta::assert_snapshot!(styled(&draw(&app, colour(), 160, 48)));
 }
 
 // Catches `a` adding a recent finding, which J2 keeps out of every group shortcut.

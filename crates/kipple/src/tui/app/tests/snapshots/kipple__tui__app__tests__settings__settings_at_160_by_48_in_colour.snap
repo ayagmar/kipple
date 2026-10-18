@@ -1,0 +1,52 @@
+---
+source: crates/kipple/src/tui/app/tests/settings.rs
+expression: "styled(&draw(&app, colour(), 160, 48))"
+---
+«bold|kipple»  «fg=DarkGray|Careful» · «fg=Cyan,bold|[Balanced]» · «fg=DarkGray|Thorough» · scanning… · ~/projects +1
+«fg=DarkGray| Settings ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────»
+«bold|Config file       »«fg=DarkGray|/home/ada/.config/kipple/config.toml»
+«bold|                  »
+«bold|Level             » Careful  «fg=Cyan,bold|[Balanced] » Thorough
+«bold|                  »«fg=DarkGray|Safe: rebuilt, reinstalled, re-downloaded; recent: 7 days»
+«bold|Project roots     »~/projects
+«bold,reversed|                  »«reversed|~/work»
+«bold|                  »+ add another
+«bold|Suggested roots   »/home/ada/Documents (4 projects: thesis, uni/compilers, uni/os, …)
+«bold|                  »/home/ada/notes (1 project: notes)
+«bold|                  »«fg=DarkGray|stopped early: the list may be incomplete»
+«bold|Default method    »trash«fg=DarkGray|  stored only: nothing is removed yet»
+«bold|Kept              »~/projects/api/target«fg=DarkGray|  benchmark baseline»
+«bold|Rules turned off  »pacman package cache«fg=DarkGray|  builtin.pacman.cache»
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+found 1.7 GiB · eligible 814.0 MiB · selected 0 (0 B) · frees 0 B
+«fg=DarkGray|j/k move  h/l change  enter change or add  d remove  esc back»
