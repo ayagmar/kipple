@@ -33,12 +33,17 @@ impl KeysConfig {
         })
     }
 
-    /// Its part of `kipple config show`: each entry that changes a default.
+    /// Its part of `kipple config show`: each entry that changes a default, `none` for
+    /// an action left without a key.
     pub(super) fn write_show(&self, out: &mut dyn Write) -> io::Result<()> {
         for (action, keys) in self.changed() {
-            let keys: Vec<String> = keys.iter().map(|&key| key_name(key)).collect();
-            let key = format!("keys.{}", action.name());
-            writeln!(out, "{key:<22}{}", escaped(&keys.join(", ")))?;
+            let names: Vec<String> = keys.iter().map(|&key| key_name(key)).collect();
+            let shown = if names.is_empty() {
+                "none".to_owned()
+            } else {
+                escaped(&names.join(", "))
+            };
+            writeln!(out, "{:<22}{shown}", format!("keys.{}", action.name()))?;
         }
         Ok(())
     }

@@ -1227,13 +1227,14 @@ fn config_show_prints_the_ui_settings_and_the_keys_that_differ_from_the_defaults
     assert!(!plain.contains("keys."), "{plain}");
 
     let text = "[ui]\ntheme = \"dusk\"\ndetail = \"off\"\nglyphs = \"ascii\"\n\
-                [keys]\nselect = [\"x\", \"space\"]\nmove-down = [\"j\", \"down\"]\n";
+                [keys]\nselect = [\"x\", \"space\"]\nmove-down = [\"j\", \"down\"]\ncopy = []\n";
     let custom = show(&demo.config("custom.toml", text));
     for line in [
         "ui.theme              dusk",
         "ui.detail             off",
         "ui.glyphs             ascii",
         "keys.select           x, space",
+        "keys.copy             none",
     ] {
         assert!(custom.lines().any(|l| l == line), "{line}:\n{custom}");
     }
