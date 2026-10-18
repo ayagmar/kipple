@@ -1,24 +1,46 @@
 //! The `[keys]` table: which key does what on the home screen (D-056). Each entry names
 //! an action and the keys that replace its defaults, `select = ["s", "space"]`.
 
+use std::io::{self, Write};
 use std::ops::Range;
 
 use toml_edit::{Item, TableLike};
 
 use super::parse::{ParseError, Reader, entries};
+use crate::human::escaped;
 use crate::tui::Key;
-use crate::tui::keymap::{Action, Keymap, key_named};
+use crate::tui::keymap::{Action, Keymap, key_name, key_named};
 
 /// What `[keys]` says, as the keymap it gives.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KeysConfig {
     keymap: Keymap,
+    /// The entries, each an action and the keys that replace its defaults.
+    user: Vec<(Action, Vec<Key>)>,
 }
 
 impl KeysConfig {
     /// The keymap: the defaults with the config's bindings over them.
     pub(crate) const fn keymap(&self) -> &Keymap {
         &self.keymap
+    }
+
+    /// Each entry whose keys aren't its action's defaults, in one fixed order.
+    fn changed(&self) -> impl Iterator<Item = (Action, &[Key])> {
+        Action::ALL.into_iter().filter_map(|action| {
+            let (_, keys) = self.user.iter().find(|(a, _)| *a == action)?;
+            (keys.as_slice() != action.defaults()).then_some((action, keys.as_slice()))
+        })
+    }
+
+    /// Its part of `kipple config show`: each entry that changes a default.
+    pub(super) fn write_show(&self, out: &mut dyn Write) -> io::Result<()> {
+        for (action, keys) in self.changed() {
+            let keys: Vec<String> = keys.iter().map(|&key| key_name(key)).collect();
+            let key = format!("keys.{}", action.name());
+            writeln!(out, "{key:<22}{}", escaped(&keys.join(", ")))?;
+        }
+        Ok(())
     }
 }
 
@@ -55,6 +77,7 @@ impl Reader<'_> {
         })?;
         Ok(KeysConfig {
             keymap: Keymap::build(&user),
+            user,
         })
     }
 

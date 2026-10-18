@@ -2,10 +2,12 @@
 //! theme is read here only as a name; whether a theme of that name exists is for the
 //! commands that draw (D-055).
 
+use std::io::{self, Write};
+
 use toml_edit::{Item, TableLike, Value};
 
 use super::parse::{ParseError, Reader};
-use crate::theme::{Glyphs, valid_name};
+use crate::theme::{self, Glyphs, valid_name};
 
 /// What `[ui]` says, with its defaults filled in.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +60,45 @@ impl DetailPlace {
             _ => None,
         }
     }
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Right => "right",
+            Self::Bottom => "bottom",
+            Self::Off => "off",
+        }
+    }
+}
+
+fn glyphs_named(name: &str) -> Option<Glyphs> {
+    match name {
+        "unicode" => Some(Glyphs::Unicode),
+        "ascii" => Some(Glyphs::Ascii),
+        _ => None,
+    }
+}
+
+const fn glyphs_name(glyphs: Glyphs) -> &'static str {
+    match glyphs {
+        Glyphs::Unicode => "unicode",
+        Glyphs::Ascii => "ascii",
+    }
+}
+
+impl UiConfig {
+    /// Its part of `kipple config show`: every key, the defaults filled in.
+    pub(super) fn write_show(&self, out: &mut dyn Write) -> io::Result<()> {
+        let theme = self
+            .theme
+            .clone()
+            .unwrap_or_else(|| format!("{} (default)", theme::DEFAULT));
+        writeln!(out, "{:<22}{theme}", "ui.theme")?;
+        writeln!(out, "{:<22}{}", "ui.summary", self.summary)?;
+        writeln!(out, "{:<22}{}", "ui.detail", self.detail.name())?;
+        writeln!(out, "{:<22}{}", "ui.bars", self.bars)?;
+        writeln!(out, "{:<22}{}", "ui.glyphs", glyphs_name(self.glyphs))
+    }
 }
 
 impl Reader<'_> {
@@ -84,11 +125,7 @@ impl Reader<'_> {
             config.bars = self.flag(item, "ui.bars")?;
         }
         if let Some(item) = ui.get("glyphs") {
-            let glyphs = match item.as_str() {
-                Some("unicode") => Some(Glyphs::Unicode),
-                Some("ascii") => Some(Glyphs::Ascii),
-                _ => None,
-            };
+            let glyphs = item.as_str().and_then(glyphs_named);
             config.glyphs =
                 glyphs.ok_or_else(|| self.bad(item, "ui.glyphs", "unicode or ascii"))?;
         }

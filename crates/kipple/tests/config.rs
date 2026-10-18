@@ -1199,3 +1199,49 @@ fn config_errors_and_warnings_never_write_a_control_character_to_the_terminal() 
     assert!(err.contains("warning: keep.paths: ~/\\u{1b}[2J"), "{err}");
     assert!(!control(&err), "{err:?}");
 }
+
+// Catches `config show` leaving out the home screen's settings: `[ui]` with its defaults
+// filled in, and each `[keys]` entry that changes a default, so a user can check what
+// applies.
+#[test]
+fn config_show_prints_the_ui_settings_and_the_keys_that_differ_from_the_defaults() {
+    let demo = Demo::new(&[], "");
+    let env = demo.env(&[]);
+    let plain = demo.config("plain.toml", "");
+    let (code, shown, err) = kipple(
+        &env,
+        &["--config", plain.to_str().unwrap(), "config", "show"],
+    );
+    assert_eq!(code, ExitCode::SUCCESS, "{err}");
+    for line in [
+        "ui.theme              kipple (default)",
+        "ui.summary            true",
+        "ui.detail             auto",
+        "ui.bars               true",
+        "ui.glyphs             unicode",
+    ] {
+        assert!(shown.lines().any(|l| l == line), "{line}:\n{shown}");
+    }
+    assert!(!shown.contains("keys."), "{shown}");
+
+    let text = "[ui]\ntheme = \"dusk\"\ndetail = \"off\"\nglyphs = \"ascii\"\n\
+                [keys]\nselect = [\"x\", \"space\"]\nmove-down = [\"j\", \"down\"]\n";
+    let custom = demo.config("custom.toml", text);
+    let (code, shown, err) = kipple(
+        &env,
+        &["--config", custom.to_str().unwrap(), "config", "show"],
+    );
+    assert_eq!(code, ExitCode::SUCCESS, "{err}");
+    for line in [
+        "ui.theme              dusk",
+        "ui.detail             off",
+        "ui.glyphs             ascii",
+        "keys.select           x, space",
+    ] {
+        assert!(shown.lines().any(|l| l == line), "{line}:\n{shown}");
+    }
+    assert!(
+        !shown.contains("keys.move-down"),
+        "same as the default:\n{shown}"
+    );
+}

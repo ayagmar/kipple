@@ -438,7 +438,7 @@ pub fn write_path(out: &mut dyn Write, location: &Location) -> io::Result<()> {
 }
 
 /// `kipple config show`: where the config is and, when it loaded, every setting it gives
-/// with the defaults filled in.
+/// with the defaults filled in, and the `[keys]` entries that change a default.
 ///
 /// # Errors
 /// When writing to `out` fails.
@@ -496,5 +496,7 @@ pub fn write_show(
         }
         writeln!(out, "{:<22}{}", format!("rules.{rule}"), parts.join(", "))?;
     }
+    config.ui.write_show(out)?;
+    config.keys.write_show(out)?;
     out.flush()
 }

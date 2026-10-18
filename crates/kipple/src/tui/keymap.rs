@@ -194,7 +194,7 @@ impl Action {
     }
 
     /// Its keys when `[keys]` doesn't name it.
-    const fn defaults(self) -> &'static [Key] {
+    pub(crate) const fn defaults(self) -> &'static [Key] {
         match self {
             Self::MoveDown => &[Key::Char('j'), Key::Down],
             Self::MoveUp => &[Key::Char('k'), Key::Up],
@@ -254,24 +254,36 @@ pub(crate) fn key_named(name: &str) -> Option<Key> {
     {
         return Some(Key::Char(c));
     }
-    let key = match name {
-        "space" => Key::Char(' '),
-        "enter" => Key::Enter,
-        "esc" => Key::Esc,
-        "tab" => Key::Tab,
-        "backspace" => Key::Backspace,
-        "up" => Key::Up,
-        "down" => Key::Down,
-        "left" => Key::Left,
-        "right" => Key::Right,
-        "home" => Key::Home,
-        "end" => Key::End,
-        "pageup" => Key::PageUp,
-        "pagedown" => Key::PageDown,
-        _ => return None,
-    };
-    Some(key)
+    NAMED
+        .iter()
+        .find(|(named, _)| *named == name)
+        .map(|&(_, key)| key)
 }
+
+/// `key` as `[keys]` names it: the inverse of [`key_named`].
+pub(crate) fn key_name(key: Key) -> String {
+    match NAMED.iter().find(|&&(_, named)| named == key) {
+        Some((name, _)) => (*name).to_owned(),
+        None => shown(key),
+    }
+}
+
+/// The keys `[keys]` names by a word rather than their character.
+const NAMED: [(&str, Key); 13] = [
+    ("space", Key::Char(' ')),
+    ("enter", Key::Enter),
+    ("esc", Key::Esc),
+    ("tab", Key::Tab),
+    ("backspace", Key::Backspace),
+    ("up", Key::Up),
+    ("down", Key::Down),
+    ("left", Key::Left),
+    ("right", Key::Right),
+    ("home", Key::Home),
+    ("end", Key::End),
+    ("pageup", Key::PageUp),
+    ("pagedown", Key::PageDown),
+];
 
 /// `key` as help and the key bars write it, arrows as arrows.
 pub(crate) fn shown(key: Key) -> String {
@@ -592,21 +604,10 @@ fn claimed(earlier: &[(Action, Vec<Key>)], action: Action, key: Key) -> Option<(
 }
 
 fn quoted(key: Key) -> String {
-    match key {
-        Key::Char(' ') => "space".to_owned(),
-        Key::Char(c) => format!("\"{c}\""),
-        Key::Up => "up".to_owned(),
-        Key::Down => "down".to_owned(),
-        Key::Left => "left".to_owned(),
-        Key::Right => "right".to_owned(),
-        Key::Home
-        | Key::End
-        | Key::PageUp
-        | Key::PageDown
-        | Key::Enter
-        | Key::Esc
-        | Key::Backspace
-        | Key::Tab
-        | Key::Interrupt => shown(key),
+    let name = key_name(key);
+    if matches!(key, Key::Char(c) if c != ' ') {
+        format!("\"{name}\"")
+    } else {
+        name
     }
 }
