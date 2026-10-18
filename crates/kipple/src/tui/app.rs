@@ -520,12 +520,7 @@ impl App {
             .get(&finding.integration)
             .copied()
             .unwrap_or(Lens::System);
-        let haystack = format!(
-            "{} {}",
-            self.catalog.title(&finding.rule),
-            finding.path.display()
-        )
-        .to_lowercase();
+        let haystack = filter::haystack(self.catalog.title(&finding.rule), &finding.path);
         let spot = self.spot(&finding.path);
         self.by_id.insert(finding.id, self.rows.len());
         self.rows.push(Row {

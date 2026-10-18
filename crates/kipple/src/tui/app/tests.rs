@@ -8,7 +8,7 @@ mod onboarding;
 mod settings;
 mod tree;
 
-use std::path::PathBuf;
+use std::path::{MAIN_SEPARATOR, Path, PathBuf};
 use std::time::Duration;
 
 use kipple_core::{
@@ -416,6 +416,28 @@ fn the_fuzzy_filter_keeps_findings_whose_name_or_path_match_in_order_and_esc_cle
 
     press(&mut app, &[Key::Esc]);
     assert_eq!(findings(&app), [1, 4, 2, 3, 5]);
+}
+
+// Catches the filter matching the native path, so on Windows `rust-app/target`, as the
+// tree writes paths, matches nothing; and a query typed with `\\` there missing too.
+#[test]
+fn the_filter_reads_a_path_with_slashes_whatever_the_system_writes() {
+    let mut app = App::new(catalog(), 160, 48);
+    let native = Path::new("home").join("rust-app").join("target");
+    found(
+        &mut app,
+        1,
+        CARGO,
+        "builtin.cargo.target",
+        native.to_str().unwrap(),
+    );
+
+    press(&mut app, &[Key::Char('/')]);
+    typed(&mut app, "rust-app/target");
+    assert_eq!(findings(&app), [1]);
+    press(&mut app, &[Key::Esc, Key::Char('/')]);
+    typed(&mut app, &format!("rust-app{MAIN_SEPARATOR}target"));
+    assert_eq!(findings(&app), [1]);
 }
 
 #[test]
