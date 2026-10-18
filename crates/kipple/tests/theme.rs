@@ -329,3 +329,30 @@ fn doctor_lists_a_broken_theme_and_its_json_reads_none() {
     let (_, json, _) = kipple(&env, false, &["--config", flag, "doctor", "--json"]);
     assert!(!json.contains("dusk"), "{json}");
 }
+
+// Catches a shared theme writing terminal escapes through kipple's own messages: a role
+// name is copied into the error, and TOML decodes `\u001b` in a quoted key. Every place
+// that reports a theme error writes it escaped.
+#[test]
+fn a_theme_error_never_writes_a_control_character_to_the_terminal() {
+    let demo = Demo::new();
+    demo.theme(
+        "evil",
+        "version = 1\n[roles]\n\"\\u001b]52;c;cm0gLXJm\\u0007\" = {}\n",
+    );
+    let env = demo.env(&[]);
+    let (shown, _, show_err) = kipple(&env, false, &["theme", "show", "evil"]);
+    let (_, _, rules_err) = kipple(
+        &env,
+        false,
+        &["--color", "always", "--theme", "evil", "rules"],
+    );
+    let (opened, home_err) = home(&env, &["--theme", "evil"]);
+    assert_eq!(shown, ExitCode::from(USAGE));
+    assert_eq!(opened, ExitCode::from(USAGE));
+    for err in [show_err, rules_err, home_err] {
+        assert!(err.contains("unknown role"), "{err}");
+        assert!(!err.chars().any(|c| c.is_control() && c != '\n'), "{err:?}");
+        assert!(err.contains("\\u{1b}]52;c;cm0gLXJm\\u{7}"), "{err}");
+    }
+}

@@ -1174,3 +1174,28 @@ fn a_path_that_isnt_utf8_is_refused_with_a_message() {
     assert!(refused.unwrap_err().message.contains("isn't valid UTF-8"));
     assert!(fs::symlink_metadata(&file).is_err());
 }
+
+// Catches a config writing terminal escapes through kipple's own messages: a key name is
+// copied into the error and a kept path into a warning, and TOML decodes `\u001b`.
+#[test]
+fn config_errors_and_warnings_never_write_a_control_character_to_the_terminal() {
+    let demo = Demo::new(&[], "");
+    let control = |err: &str| err.chars().any(|c| c.is_control() && c != '\n');
+    let bad = demo.config("bad.toml", "\"\\u001b[2J\" = 1\n");
+    let (code, _, err) = kipple(
+        &demo.env(&[]),
+        &["--config", bad.to_str().unwrap(), "scan", "--json"],
+    );
+    assert_eq!(code, ExitCode::from(USAGE));
+    assert!(err.contains("unknown key \\u{1b}[2J"), "{err}");
+    assert!(!control(&err), "{err:?}");
+
+    let kept = demo.config("kept.toml", "[keep]\npaths = [\"~/\\u001b[2J\"]\n");
+    let (code, _, err) = kipple(
+        &demo.env(&[]),
+        &["--config", kept.to_str().unwrap(), "scan", "--json"],
+    );
+    assert_eq!(code, ExitCode::SUCCESS, "{err}");
+    assert!(err.contains("warning: keep.paths: ~/\\u{1b}[2J"), "{err}");
+    assert!(!control(&err), "{err:?}");
+}

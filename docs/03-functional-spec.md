@@ -169,7 +169,7 @@ There is no `clean --all --force`. `--yes` suppresses the prompt only. It never 
 
 ## 4. Output contracts
 
-- **stdout carries data, stderr carries diagnostics.** Rendering never contaminates stdout in `--json` mode.
+- **stdout carries data, stderr carries diagnostics.** Rendering never contaminates stdout in `--json` mode. Diagnostics quote config and theme files, paths and OS messages, so their control characters are escaped (`\u{1b}`), as in human output.
 - `--json` emits one versioned envelope when the command finishes: `{"schema":"kipple.scan/v1", ...}`.
 - `--events jsonl` streams versioned event envelopes. Sequence numbers follow emission order. The stream ends in a `completed` or `error` record while stdout stays writable. If stdout closes (broken pipe), kipple cancels and exits 130 without a final record.
 - Final output (`--json` and human reports) is sorted deterministically (by lens, group, path), even though discovery runs concurrently. The event stream is not sorted.

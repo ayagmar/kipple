@@ -229,8 +229,7 @@ pub fn run(
     // Clap can't exempt the global `--config` from a conflict with the commands, so the
     // home screen's own option is refused here.
     if cli.command.is_some() && cli.home.ascii {
-        let message = "kipple: --ascii is for the home screen, not a command";
-        writeln!(stderr, "{message}").ok();
+        say(stderr, "--ascii is for the home screen, not a command");
         return ExitCode::from(USAGE);
     }
     let builtin = match Builtin::load() {
@@ -304,7 +303,7 @@ pub fn home(cli: &Cli, env: &Environment, stderr: &mut dyn Write) -> ExitCode {
     let appearance = match tui::Appearance::new(catalog, &active, host.colours, glyphs) {
         Ok(appearance) => appearance,
         Err(error) => {
-            writeln!(stderr, "kipple: theme {active}: {error}").ok();
+            say(stderr, &format!("theme {active}: {error}"));
             return ExitCode::from(USAGE);
         }
     };
@@ -357,11 +356,10 @@ impl Host<'_> {
             .resolve(&name)
             .unwrap_or_else(|error| {
                 let using = theme::DEFAULT;
-                writeln!(
+                say(
                     stderr,
-                    "kipple: warning: theme {name}: {error}; using {using}"
-                )
-                .ok();
+                    &format!("warning: theme {name}: {error}; using {using}"),
+                );
                 Theme::builtin(using).unwrap_or_default()
             });
         Ink::new(theme.drawn(self.colours))
@@ -385,7 +383,7 @@ impl Host<'_> {
         match Settings::load(self.env, self.config, given, &catalog) {
             Ok(settings) => {
                 for warning in &settings.warnings {
-                    writeln!(stderr, "kipple: warning: {warning}").ok();
+                    say(stderr, &format!("warning: {warning}"));
                 }
                 Ok(settings)
             }
@@ -400,7 +398,7 @@ impl Host<'_> {
 
 /// Reports a config that can't be used: exit code 2.
 fn config_failed(stderr: &mut dyn Write, error: &ConfigError) -> ExitCode {
-    writeln!(stderr, "kipple: {error}").ok();
+    say(stderr, &error.to_string());
     ExitCode::from(USAGE)
 }
 
@@ -486,8 +484,10 @@ fn explain(
         return exit_code(written, stderr);
     }
     if target.starts_with("builtin.") {
-        let message = format!("kipple: there is no rule {target}; `kipple rules` lists them");
-        writeln!(stderr, "{message}").ok();
+        say(
+            stderr,
+            &format!("there is no rule {target}; `kipple rules` lists them"),
+        );
         return ExitCode::from(USAGE);
     }
     let settings = match host.settings(&[], stderr) {
@@ -546,15 +546,14 @@ fn theme_command(
             Ok(dir) => writeln!(stdout, "{}", human::escaped(&dir.display().to_string()))
                 .and_then(|()| stdout.flush()),
             Err(why) => {
-                writeln!(stderr, "kipple: {why}").ok();
+                say(stderr, why);
                 return ExitCode::from(USAGE);
             }
         },
         ThemeAction::List => {
             let catalog = themes.catalog();
             if let (Some(problem), Ok(dir)) = (&catalog.problem, themes.dir()) {
-                let dir = human::escaped(&dir.display().to_string());
-                writeln!(stderr, "kipple: warning: {dir} {problem}").ok();
+                say(stderr, &format!("warning: {} {problem}", dir.display()));
             }
             theme::write_list(stdout, &catalog)
         }
@@ -569,7 +568,7 @@ fn theme_command(
                     .and_then(|()| stdout.flush())
             }
             Err(error) => {
-                writeln!(stderr, "kipple: theme {name}: {error}").ok();
+                say(stderr, &format!("theme {name}: {error}"));
                 return ExitCode::from(USAGE);
             }
         },
@@ -591,8 +590,14 @@ fn write_json(out: &mut dyn Write, value: &impl serde::Serialize) -> io::Result<
 
 /// Reports an internal failure, which is a bug in kipple or its environment.
 fn fail(stderr: &mut dyn Write, message: &str) -> ExitCode {
-    writeln!(stderr, "kipple: {message}").ok();
+    say(stderr, message);
     ExitCode::FAILURE
+}
+
+/// Writes one diagnostic line on `stderr`, escaped: config and theme errors, warnings and
+/// OS messages carry names and paths from files, which may hold control characters.
+fn say(stderr: &mut dyn Write, message: &str) {
+    writeln!(stderr, "kipple: {}", human::escaped(message)).ok();
 }
 
 /// The exit code for a command whose output was written, or failed to be. A closed stdout
@@ -603,7 +608,7 @@ pub fn exit_code(written: io::Result<()>, stderr: &mut dyn Write) -> ExitCode {
         Err(error) if error.kind() == io::ErrorKind::BrokenPipe => ExitCode::from(CANCELLED),
         Err(error) => {
             // Nothing else can be reported if stderr fails too.
-            writeln!(stderr, "kipple: could not write the output: {error}").ok();
+            say(stderr, &format!("could not write the output: {error}"));
             ExitCode::FAILURE
         }
     }
