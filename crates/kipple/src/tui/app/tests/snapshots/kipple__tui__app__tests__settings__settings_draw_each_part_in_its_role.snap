@@ -3,7 +3,7 @@ source: crates/kipple/src/tui/app/tests/settings.rs
 assertion_line: 556
 expression: "styled(&draw(&app, probe(), 160, 48))"
 ---
-«fg=border|╭» «fg=title|kipple»«fg=border| ─ »«fg=level.current|Balanced»«fg=border| ─ »«fg=muted|scanning…»«fg=border| ─ »~/projects +1«fg=border| ─ »found 1.7 GiB · eligible 814.0 MiB «fg=border|──────────────────────────────────────────────────────────────────────────╮»
+«fg=border|╭» «fg=title|kipple»«fg=border| ─ »«fg=level.current|Balanced»«fg=border| ─ »«fg=muted|scanning…»«fg=border| ─ »~/projects +1 «fg=border|───────────────────────────────────────────────────────────────────────────────────────────────────────────────╮»
 «fg=border|│» «fg=title|Settings»                                                                                                                                                     «fg=border|│»
 «fg=border|│»                                                                                                                                                              «fg=border|│»
 «fg=border|│» «fg=label|Config file       »«fg=muted|~/.config/kipple/config.toml»                                                                                                               «fg=border|│»
@@ -47,7 +47,7 @@ expression: "styled(&draw(&app, probe(), 160, 48))"
 «fg=border|│»                                                                                                                                                              «fg=border|│»
 «fg=border|│»                                                                                                                                                              «fg=border|│»
 «fg=border|│»                                                                                                                                                              «fg=border|│»
-«fg=border|│»                                                                                                                                                              «fg=border|│»
 «fg=border|├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤»
-«fg=border|│» «fg=key.label|j/k move  h/l change  enter change or add  d remove  esc back»                                                                   selected 0 · 0 B · frees 0 B «fg=border|│»
+«fg=border|│» found 1.7 GiB · eligible 814.0 MiB · selected 0 · 0 B · frees 0 B                                                                                            «fg=border|│»
+«fg=border|│» «fg=key|j/k»«fg=key.label| move  »«fg=key|h/l»«fg=key.label| change  »«fg=key|enter»«fg=key.label| change or add  »«fg=key|d»«fg=key.label| remove  »«fg=key|esc»«fg=key.label| back»                                                                                                «fg=border|│»
 «fg=border|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»

@@ -197,7 +197,11 @@ fn finding_detail(app: &App, look: Look<'_>, row: &Row) -> Vec<Entry> {
     lines.push(labelled(look, "Path", shown(app, &finding.path)));
     lines.push(labelled(look, "Rule", finding.rule.0.clone()));
     if let Some(kept) = kept {
-        lines.push(labelled(look, "Kept note", kept));
+        let mut line = labelled(look, "Kept note", String::new());
+        line.0
+            .spans
+            .push(Span::styled(kept, look.style(Role::Kept)));
+        lines.push(line);
     }
     for advice in app.advice.get(&finding.integration).into_iter().flatten() {
         lines.push(labelled(look, "Advice", escaped(&advice.title)));

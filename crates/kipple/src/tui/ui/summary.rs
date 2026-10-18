@@ -2,14 +2,14 @@
 //! each with a bar of its share of what was found, or as one line when narrow.
 
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Margin, Rect};
 use ratatui::style::Modifier;
 use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::Paragraph;
 
 use super::frame::vertical;
 use super::layout::Areas;
-use super::{Look, bar_tint, tint};
+use super::{Look, drawn_bar, tint};
 use crate::human::bytes;
 use crate::theme::Role;
 use crate::tui::app::{App, Progress, Shelf};
@@ -55,11 +55,26 @@ fn buckets(app: &App) -> Vec<Bucket> {
     buckets
 }
 
+/// How the one-line band is shortened to fit: the gaps between buckets, then an empty
+/// bucket's words, then the counts, then the gaps again. What follows the buckets
+/// always shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Squeeze {
+    None,
+    Gaps,
+    Empty,
+    Counts,
+    Tight,
+}
+
 /// What a bucket says after its name. An empty bucket of a partial scan says the scan
 /// is partial when `whole`; the one-line band says it once at its end instead.
-fn amount(app: &App, look: Look<'_>, bucket: Bucket, whole: bool) -> String {
+fn amount(app: &App, look: Look<'_>, bucket: Bucket, whole: bool, squeeze: Squeeze) -> String {
     if bucket.shelf == Shelf::Measuring {
         return bucket.count.to_string();
+    }
+    if bucket.count > 0 && squeeze >= Squeeze::Counts {
+        return bytes(bucket.bytes);
     }
     if bucket.count > 0 {
         return format!(
@@ -68,6 +83,9 @@ fn amount(app: &App, look: Look<'_>, bucket: Bucket, whole: bool) -> String {
             look.glyphs.dot(),
             bucket.count
         );
+    }
+    if squeeze >= Squeeze::Empty {
+        return "none".to_owned();
     }
     // An empty bucket of a scan that couldn't read everything says so: it doesn't mean
     // there is nothing there.
@@ -111,16 +129,13 @@ pub(super) fn render(app: &App, look: Look<'_>, areas: &Areas, frame: &mut Frame
     };
     let buckets = buckets(app);
     if !cards {
-        frame.render_widget(Paragraph::new(line(app, look, &buckets)), area);
+        frame.render_widget(
+            Paragraph::new(line(app, look, &buckets, usize::from(area.width))),
+            area,
+        );
         return;
     }
     let found: u64 = buckets.iter().map(|bucket| bucket.bytes).sum();
-    let mut widths: Vec<Constraint> = Vec::new();
-    for _ in &buckets {
-        widths.push(Constraint::Fill(1));
-        widths.push(Constraint::Length(1));
-    }
-    widths.push(Constraint::Length(TOTALS));
     // The band's text area keeps a column clear on each side; the cards' lines start
     // in that column, so they reach the frame.
     let band = Rect::new(
@@ -129,80 +144,193 @@ pub(super) fn render(app: &App, look: Look<'_>, areas: &Areas, frame: &mut Frame
         area.width + 2,
         area.height,
     );
-    let parts = Layout::horizontal(widths).split(band);
-    for (index, bucket) in buckets.iter().enumerate() {
-        let (Some(&card), Some(&line)) = (parts.get(index * 2), parts.get(index * 2 + 1)) else {
-            continue;
-        };
-        let card = card.inner(ratatui::layout::Margin::new(1, 0));
-        frame.render_widget(
-            Paragraph::new(card_lines(
-                app,
-                look,
-                *bucket,
-                found,
-                areas.bars.then_some(card.width),
-            )),
-            card,
-        );
-        vertical(look, line.x, line.y, line.bottom(), frame.buffer_mut());
+    // Beside the detail pane, the totals card is as wide as the pane, so the line
+    // before it meets the line between the tree and the pane.
+    let totals = areas
+        .divider
+        .filter(|&x| x > band.x && x < band.right())
+        .map_or(TOTALS, |x| band.right() - x - 1);
+    let lines = u16::try_from(buckets.len()).unwrap_or(u16::MAX);
+    let room = band.width.saturating_sub(totals).saturating_sub(lines);
+    // Each card needs its widest line; when they don't all fit, their narrowest forms.
+    let needs_of = |least: bool| -> Vec<u16> {
+        let width = if least { 0 } else { usize::MAX };
+        buckets
+            .iter()
+            .map(|&bucket| {
+                let widest = card_lines(app, look, bucket, None, width)
+                    .iter()
+                    .map(Text::width)
+                    .max()
+                    .unwrap_or(0);
+                u16::try_from(widest).unwrap_or(u16::MAX).saturating_add(2)
+            })
+            .collect()
+    };
+    let mut needs = needs_of(false);
+    if needs.iter().sum::<u16>() > room {
+        needs = needs_of(true);
     }
-    if let Some(&last) = parts.last() {
-        let totals = app.totals();
-        let text = vec![
-            Text::raw(format!("found {}", bytes(totals.discovered))),
-            Text::raw(format!("eligible {}", bytes(totals.eligible))),
-        ];
-        let last = last.inner(ratatui::layout::Margin::new(1, 0));
-        frame.render_widget(Paragraph::new(text), last);
+    let widths = share(room, &needs);
+    // One bar length for every card, so the bars read as one split of what was found.
+    let bar = widths.iter().min().map(|width| width.saturating_sub(2));
+    let mut x = band.x;
+    for (&bucket, &width) in buckets.iter().zip(&widths) {
+        let card = Rect::new(x, band.y, width, band.height).inner(Margin::new(1, 0));
+        let bar = bar.filter(|_| areas.bars).map(|bar| (bar, found));
+        let text = card_lines(app, look, bucket, bar, usize::from(card.width));
+        frame.render_widget(Paragraph::new(text), card);
+        x += width;
+        vertical(look, x, band.y, band.bottom(), frame.buffer_mut());
+        x += 1;
+    }
+    let sums = app.totals();
+    let text = vec![
+        Text::raw(format!("found {}", bytes(sums.discovered))),
+        Text::raw(format!("eligible {}", bytes(sums.eligible))),
+    ];
+    let last = Rect::new(x, band.y, band.right().saturating_sub(x), band.height);
+    frame.render_widget(Paragraph::new(text), last.inner(Margin::new(1, 0)));
+}
+
+/// `room` columns shared out among cards that need `needs`: as evenly as can be, with
+/// a card that needs more than its share given what it needs, unless the needs don't
+/// fit at all.
+fn share(room: u16, needs: &[u16]) -> Vec<u16> {
+    let mut given = vec![false; needs.len()];
+    loop {
+        let taken: u16 = needs
+            .iter()
+            .zip(&given)
+            .filter_map(|(&need, &given)| given.then_some(need))
+            .sum();
+        let shared = given.iter().filter(|&&given| !given).count();
+        let Some(mut evenly) = even(room.saturating_sub(taken), shared) else {
+            // Not even their needs fit: an even share each.
+            let mut evenly = even(room, needs.len()).unwrap_or_default();
+            return needs.iter().map(|_| evenly.next()).collect();
+        };
+        let each = evenly.each;
+        let mut grew = false;
+        for (&need, flag) in needs.iter().zip(given.iter_mut()) {
+            if !*flag && need > each {
+                *flag = true;
+                grew = true;
+            }
+        }
+        if !grew {
+            return needs
+                .iter()
+                .zip(&given)
+                .map(|(&need, &given)| if given { need } else { evenly.next() })
+                .collect();
+        }
     }
 }
 
-/// A card: the bucket's name and amount, then a bar `bar` columns wide of its share of
-/// `found`, unless bars are off. An empty bucket has no bar, so what it says goes
-/// there, where it has the card's width.
+/// `room` split into `count` shares as even as can be, the first ones a column wider.
+#[derive(Debug, Default)]
+struct Even {
+    each: u16,
+    extra: u16,
+}
+
+impl Even {
+    fn next(&mut self) -> u16 {
+        let one = u16::from(self.extra > 0);
+        self.extra -= one;
+        self.each + one
+    }
+}
+
+fn even(room: u16, count: usize) -> Option<Even> {
+    let count = u16::try_from(count).ok().filter(|&count| count > 0)?;
+    Some(Even {
+        each: room / count,
+        extra: room % count,
+    })
+}
+
+/// A card `width` columns wide: the bucket's name and amount, then a bar of its share
+/// of what was found, `bar` giving its length and what a full bar stands for, unless
+/// bars are off. An empty bucket has no bar, so
+/// what it says goes there, where it has the card's width, and so does the amount of a
+/// card too narrow for both on one line. Narrower still, an empty bucket of a partial
+/// scan says `none found` after its name and `scan partial` below.
 fn card_lines(
     app: &App,
     look: Look<'_>,
     bucket: Bucket,
-    found: u64,
-    bar: Option<u16>,
+    bar: Option<(u16, u64)>,
+    width: usize,
 ) -> Vec<Text<'static>> {
     let name = name(look, bucket, true);
-    let amount = amount(app, look, bucket, true);
+    let amount = amount(app, look, bucket, true, Squeeze::None);
+    let fits = |lines: &[Text<'static>]| lines.iter().all(|line| line.width() <= width);
     if bucket.shelf == Shelf::Measuring {
         let amount = Span::styled(format!(" {amount}"), look.style(Role::Muted));
         return vec![Text::from(vec![name, amount])];
     }
-    let head = Text::from(vec![name.clone(), Span::raw(format!(" {amount}"))]);
     if bucket.count == 0 {
-        return vec![
-            Text::from(name),
+        let stacked = vec![
+            Text::from(name.clone()),
             Text::styled(amount, look.style(Role::Muted)),
         ];
+        if fits(&stacked) || app.gaps.is_empty() {
+            return stacked;
+        }
+        let none = Span::styled(" none found", look.style(Role::Muted));
+        return vec![
+            Text::from(vec![name, none]),
+            Text::styled("scan partial", look.style(Role::Muted)),
+        ];
     }
-    let Some(cells) = bar.map(usize::from) else {
+    let head = Text::from(vec![name.clone(), Span::raw(format!(" {amount}"))]);
+    if !fits(std::slice::from_ref(&head)) {
+        return vec![Text::from(name), Text::raw(amount)];
+    }
+    let Some((cells, found)) = bar else {
         return vec![head];
     };
+    let cells = usize::from(cells);
     let eighths = u128::from(bucket.bytes) * (cells as u128 * 8) / u128::from(found.max(1));
-    let drawn = look
-        .glyphs
-        .bar(u64::try_from(eighths).unwrap_or(u64::MAX), cells);
     vec![
         head,
-        Text::styled(drawn, look.style(bar_tint(bucket.shelf))),
+        Text::from(drawn_bar(look, bucket.shelf, eighths, cells)),
     ]
 }
 
-/// The band as one line: each bucket's name and amount.
-fn line(app: &App, look: Look<'_>, buckets: &[Bucket]) -> Text<'static> {
+/// The band as one line in `width` columns: each bucket's name and amount, shortened
+/// until what follows them fits.
+fn line(app: &App, look: Look<'_>, buckets: &[Bucket], width: usize) -> Text<'static> {
+    let mut text = line_in(app, look, buckets, Squeeze::None);
+    for squeeze in [
+        Squeeze::Gaps,
+        Squeeze::Empty,
+        Squeeze::Counts,
+        Squeeze::Tight,
+    ] {
+        if text.width() <= width {
+            break;
+        }
+        text = line_in(app, look, buckets, squeeze);
+    }
+    text
+}
+
+fn line_in(app: &App, look: Look<'_>, buckets: &[Bucket], squeeze: Squeeze) -> Text<'static> {
+    let gap = match squeeze {
+        Squeeze::None => "   ",
+        Squeeze::Gaps | Squeeze::Empty | Squeeze::Counts => "  ",
+        Squeeze::Tight => " ",
+    };
     let mut spans = Vec::new();
     for (index, &bucket) in buckets.iter().enumerate() {
         if index > 0 {
-            spans.push(Span::raw("   "));
+            spans.push(Span::raw(gap));
         }
         spans.push(name(look, bucket, false));
-        let amount = Span::raw(format!(" {}", amount(app, look, bucket, false)));
+        let amount = Span::raw(format!(" {}", amount(app, look, bucket, false, squeeze)));
         spans.push(if bucket.shelf == Shelf::Measuring {
             amount.style(look.style(Role::Muted))
         } else {

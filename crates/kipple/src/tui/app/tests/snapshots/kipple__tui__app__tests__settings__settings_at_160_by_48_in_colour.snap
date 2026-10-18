@@ -3,7 +3,7 @@ source: crates/kipple/src/tui/app/tests/settings.rs
 assertion_line: 563
 expression: "styled(&draw(&app, colour(), 160, 48))"
 ---
-«fg=DarkGray|╭» «bold|kipple»«fg=DarkGray| ─ »«fg=Cyan,bold|Balanced»«fg=DarkGray| ─ scanning… ─ »~/projects +1«fg=DarkGray| ─ »found 1.7 GiB · eligible 814.0 MiB «fg=DarkGray|──────────────────────────────────────────────────────────────────────────╮»
+«fg=DarkGray|╭» «bold|kipple»«fg=DarkGray| ─ »«fg=Cyan,bold|Balanced»«fg=DarkGray| ─ scanning… ─ »~/projects +1 «fg=DarkGray|───────────────────────────────────────────────────────────────────────────────────────────────────────────────╮»
 «fg=DarkGray|│» «bold|Settings»                                                                                                                                                     «fg=DarkGray|│»
 «fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
 «fg=DarkGray|│» «bold|Config file       »«fg=DarkGray|~/.config/kipple/config.toml»                                                                                                               «fg=DarkGray|│»
@@ -47,7 +47,7 @@ expression: "styled(&draw(&app, colour(), 160, 48))"
 «fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
 «fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
 «fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
-«fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
 «fg=DarkGray|├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤»
-«fg=DarkGray|│» «fg=DarkGray|j/k move  h/l change  enter change or add  d remove  esc back»                                                                   selected 0 · 0 B · frees 0 B «fg=DarkGray|│»
+«fg=DarkGray|│» found 1.7 GiB · eligible 814.0 MiB · selected 0 · 0 B · frees 0 B                                                                                            «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|j/k»«fg=DarkGray| move  »«bold|h/l»«fg=DarkGray| change  »«bold|enter»«fg=DarkGray| change or add  »«bold|d»«fg=DarkGray| remove  »«bold|esc»«fg=DarkGray| back»                                                                                                «fg=DarkGray|│»
 «fg=DarkGray|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»

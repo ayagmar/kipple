@@ -1,5 +1,6 @@
 //! The frame round the screen and the lines inside it, and the title line in its top
-//! edge: the level, the scan, the roots, the sort order, and what narrows the tree.
+//! edge: the level, the scan, the roots, the sort order, and what narrows the tree,
+//! each shortened or left out in turn when they don't all fit.
 
 use kipple_core::ScanOutcome;
 use ratatui::Frame;
@@ -9,7 +10,7 @@ use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::{Block, Paragraph};
 
 use super::{Look, cols, lens_title, title_case};
-use crate::human::{bytes, escaped, homed};
+use crate::human::{escaped, homed};
 use crate::theme::Role;
 use crate::tui::app::{App, Mode, Progress};
 
@@ -101,77 +102,232 @@ fn separator(look: Look<'_>) -> Span<'static> {
     Span::styled(format!(" {line} "), look.style(Role::Border))
 }
 
-/// The home screen's title line, in at most `width` columns, with the found and
-/// eligible totals when `totals` says nothing else shows them.
-pub(super) fn header(app: &App, look: Look<'_>, width: u16, totals: bool) -> Text<'static> {
+/// The home screen's title line, in at most `width` columns.
+pub(super) fn header(app: &App, look: Look<'_>, width: u16) -> Text<'static> {
     let sep = separator(look);
-    let state = match app.progress {
-        Progress::Scanning => look.glyphs.ellipsis("scanning"),
-        Progress::Done { outcome, .. } if outcome != ScanOutcome::Completed => {
-            "scan stopped early".to_owned()
+    let width = usize::from(width);
+    let mut items = Items::new(app, look);
+    // While the line is too wide, each step shortens or drops one item: the scan time's
+    // words, the sort order's and the partial warning's first, then the scan time, the
+    // sort order, the lens, the filter and last the partial warning. What changes how
+    // the tree reads has its room before the roots, and the filter's text is cut to
+    // what is left before the filter goes.
+    for step in [
+        Step::Short(Item::State),
+        Step::Short(Item::Order),
+        Step::Short(Item::Partial),
+        Step::Drop(Item::State),
+        Step::Drop(Item::Order),
+        Step::Drop(Item::Lens),
+        Step::Drop(Item::Filter),
+        Step::Drop(Item::Partial),
+    ] {
+        // Words and the scan time go to keep the filter whole; a signal goes only to
+        // keep the filter's first character.
+        let least = !matches!(step, Step::Short(_) | Step::Drop(Item::State));
+        if items.width(sep.width()) + items.filter_width(look, sep.width(), least) <= width {
+            break;
         }
-        Progress::Done { elapsed, .. } => {
-            format!(
-                "scanned in {}.{} s",
-                elapsed.as_secs(),
-                elapsed.subsec_millis() / 100
-            )
-        }
-    };
-    let level = title_case(app.policy.level.name());
-    let head = vec![
+        items.apply(step);
+    }
+    let room = width.saturating_sub(items.width(sep.width()));
+    let filter = items.filter.as_deref().map(|filter| {
+        cut(
+            look,
+            filter,
+            room.saturating_sub(sep.width() + cols(&filter_text(""))),
+        )
+    });
+    let room = room.saturating_sub(
+        filter
+            .as_deref()
+            .map_or(0, |filter| sep.width() + cols(&filter_text(filter))),
+    );
+    let mut spans = vec![
         Span::raw(" "),
         Span::styled("kipple", look.style(Role::Title)),
         sep.clone(),
-        Span::styled(level, look.style(Role::LevelCurrent)),
-        sep.clone(),
-        Span::styled(state, look.style(Role::Muted)),
+        Span::styled(items.level.clone(), look.style(Role::LevelCurrent)),
     ];
-    // What changes how the tree reads comes after the roots, but has its room first:
-    // the roots, fixed config also listed in settings, get what is left.
-    let mut tail = Vec::new();
-    if totals {
-        let sums = app.totals();
-        tail.push(Span::raw(format!(
-            "found {}{}eligible {}",
-            bytes(sums.discovered),
-            look.glyphs.dot(),
-            bytes(sums.eligible)
-        )));
+    if let Some(state) = items.state() {
+        spans.push(sep.clone());
+        spans.push(Span::styled(state, look.style(Role::Muted)));
     }
-    if let Some(order) = app.order.title() {
-        tail.push(Span::raw(order));
-    }
-    if !app.gaps.is_empty() {
-        tail.push(Span::styled(
-            format!("partial: {} not covered", app.gaps.len()),
-            look.style(Role::Warning),
-        ));
-    }
-    if let Some(lens) = app.lens {
-        tail.push(Span::raw(format!("lens: {}", lens_title(lens))));
-    }
-    if !app.filter.is_empty() && app.mode != Mode::Filter {
-        tail.push(Span::raw(format!("filter: {}", escaped(&app.filter))));
-    }
-    let used: usize = head.iter().map(Span::width).sum::<usize>()
-        + tail
-            .iter()
-            .map(|span| span.width() + sep.width())
-            .sum::<usize>()
-        + 1;
-    let room = usize::from(width).saturating_sub(used + sep.width());
-    let mut spans = head;
-    if let Some(roots) = roots(app, look, room) {
+    if let Some(roots) = roots(app, look, room.saturating_sub(sep.width())) {
         spans.push(sep.clone());
         spans.push(Span::raw(roots));
     }
-    for span in tail {
+    for span in items.tail(look, filter) {
         spans.push(sep.clone());
         spans.push(span);
     }
     spans.push(Span::raw(" "));
     Text::from(spans)
+}
+
+/// A part of the title line that can be shortened or dropped to fit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Item {
+    State,
+    Order,
+    Partial,
+    Lens,
+    Filter,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Step {
+    Short(Item),
+    Drop(Item),
+}
+
+/// The title line's items besides the roots, each shown while it is `Some`.
+struct Items {
+    level: String,
+    /// The scan state, and the scan time alone when it finished: only that can go.
+    state: Option<(String, Option<String>)>,
+    order: Option<&'static str>,
+    partial: Option<usize>,
+    lens: Option<String>,
+    /// The filter's text, cut to the room left.
+    filter: Option<String>,
+    short: Vec<Item>,
+}
+
+impl Items {
+    fn new(app: &App, look: Look<'_>) -> Self {
+        let state = match app.progress {
+            Progress::Scanning => (look.glyphs.ellipsis("scanning"), None),
+            Progress::Done { outcome, .. } if outcome != ScanOutcome::Completed => {
+                ("scan stopped early".to_owned(), None)
+            }
+            Progress::Done { elapsed, .. } => {
+                let time = format!("{}.{} s", elapsed.as_secs(), elapsed.subsec_millis() / 100);
+                (format!("scanned in {time}"), Some(time))
+            }
+        };
+        Self {
+            level: title_case(app.policy.level.name()),
+            state: Some(state),
+            order: app.order.title(),
+            partial: (!app.gaps.is_empty()).then_some(app.gaps.len()),
+            lens: app.lens.map(|lens| format!("lens: {}", lens_title(lens))),
+            filter: (!app.filter.is_empty() && app.mode != Mode::Filter)
+                .then(|| escaped(&app.filter)),
+            short: Vec::new(),
+        }
+    }
+
+    fn apply(&mut self, step: Step) {
+        match step {
+            Step::Short(item) => self.short.push(item),
+            // A scan still running, or stopped early, always says so.
+            Step::Drop(Item::State) => {
+                if matches!(self.state, Some((_, Some(_)))) {
+                    self.state = None;
+                }
+            }
+            Step::Drop(Item::Order) => self.order = None,
+            Step::Drop(Item::Partial) => self.partial = None,
+            Step::Drop(Item::Lens) => self.lens = None,
+            Step::Drop(Item::Filter) => self.filter = None,
+        }
+    }
+
+    fn state(&self) -> Option<String> {
+        let (full, time) = self.state.as_ref()?;
+        Some(match time {
+            Some(time) if self.short.contains(&Item::State) => time.clone(),
+            Some(_) | None => full.clone(),
+        })
+    }
+
+    fn order(&self) -> Option<&'static str> {
+        let order = self.order?;
+        Some(match order {
+            "by last change" if self.short.contains(&Item::Order) => "by change",
+            order => order,
+        })
+    }
+
+    fn partial(&self) -> Option<String> {
+        let gaps = self.partial?;
+        Some(if self.short.contains(&Item::Partial) {
+            format!("partial: {gaps}")
+        } else {
+            format!("partial: {gaps} not covered")
+        })
+    }
+
+    /// The columns the filter takes with its separator: its whole text, or its first
+    /// character and an ellipsis when `least`.
+    fn filter_width(&self, look: Look<'_>, sep: usize, least: bool) -> usize {
+        self.filter.as_deref().map_or(0, |filter| {
+            let shown = if least {
+                cut(look, filter, 1)
+            } else {
+                filter.to_owned()
+            };
+            sep + cols(&filter_text(&shown)).min(cols(&filter_text(filter)))
+        })
+    }
+
+    /// The columns the line takes without the roots and the filter.
+    fn width(&self, sep: usize) -> usize {
+        let parts = [
+            Some(cols(&self.level)),
+            self.state().map(|state| cols(&state)),
+            self.order().map(cols),
+            self.partial().map(|partial| cols(&partial)),
+            self.lens.as_deref().map(cols),
+        ];
+        let items: usize = parts.iter().flatten().map(|part| part + sep).sum();
+        // ` kipple` and the space at the end.
+        1 + cols("kipple") + items + 1
+    }
+
+    /// The items after the roots, in order: the sort order, the partial warning, the
+    /// lens and `filter`.
+    fn tail(&self, look: Look<'_>, filter: Option<String>) -> Vec<Span<'static>> {
+        let mut spans = Vec::new();
+        if let Some(order) = self.order() {
+            spans.push(Span::raw(order));
+        }
+        if let Some(partial) = self.partial() {
+            spans.push(Span::styled(partial, look.style(Role::Warning)));
+        }
+        if let Some(lens) = &self.lens {
+            spans.push(Span::raw(lens.clone()));
+        }
+        if let Some(filter) = filter {
+            spans.push(Span::raw(filter_text(&filter)));
+        }
+        spans
+    }
+}
+
+fn filter_text(text: &str) -> String {
+    format!("filter: {text}")
+}
+
+/// `text` in at most `room` columns: whole, or as much of its start as fits before an
+/// ellipsis, and never less than its first character.
+fn cut(look: Look<'_>, text: &str, room: usize) -> String {
+    if cols(text) <= room {
+        return text.to_owned();
+    }
+    let ellipsis = look.glyphs.ellipsis("");
+    let mut kept = String::new();
+    let mut used = cols(&ellipsis);
+    for c in text.chars() {
+        let wide = cols(c.encode_utf8(&mut [0; 4]));
+        if used + wide > room && !kept.is_empty() {
+            break;
+        }
+        used += wide;
+        kept.push(c);
+    }
+    format!("{kept}{ellipsis}")
 }
 
 /// A title line of `parts` joined by the frame's line, for the screens beside the home:

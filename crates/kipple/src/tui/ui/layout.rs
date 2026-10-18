@@ -7,7 +7,8 @@ use ratatui::layout::{Margin, Rect};
 use crate::config::{DetailPlace, UiConfig};
 
 /// From this many columns, findings have size bars and the band shows one card per
-/// bucket; below it, the band is one line and the totals take a line of the key bar.
+/// bucket; below it, the band is one line and the totals take a line of the key bar, as
+/// they do whenever there is no band.
 pub(crate) const WIDE: u16 = 100;
 /// From this many columns, the detail pane goes right of the tree unless `[ui]` says
 /// where.
@@ -35,9 +36,8 @@ pub(super) enum Screen {
 pub(super) enum Totals {
     /// In the band's last card.
     Band,
-    /// On the title line.
-    Title,
-    /// On the key bar's first line, with the selection.
+    /// On the key bar's first line, with the selection: whenever the band doesn't have
+    /// a card for them.
     KeyBar,
 }
 
@@ -66,12 +66,12 @@ pub(super) struct Areas {
 pub(super) fn layout(area: Rect, ui: &UiConfig, screen: Screen) -> Areas {
     let wide = area.width >= WIDE;
     let banded = screen == Screen::Home && ui.summary && area.height >= BAND_ROWS;
-    let mut rows = rows(area, banded);
-    let totals = match (rows.band, wide) {
-        (Some(_), true) => Totals::Band,
-        (None, true) => Totals::Title,
-        (_, false) => Totals::KeyBar,
+    let totals = if banded && wide {
+        Totals::Band
+    } else {
+        Totals::KeyBar
     };
+    let mut rows = rows(area, banded, totals);
     let beside = match (screen, ui.detail) {
         (Screen::Panel, _) | (Screen::Home, DetailPlace::Off) => None,
         (Screen::Home, DetailPlace::Right) => Some(true),
@@ -115,8 +115,8 @@ pub(super) fn layout(area: Rect, ui: &UiConfig, screen: Screen) -> Areas {
     }
 }
 
-/// The frame's rows, top to bottom: the band when `banded`, the body, the key bar, and
-/// the rules between them.
+/// The frame's rows, top to bottom: the band when `banded`, the body, the key bar (two
+/// lines when it shows the `totals`), and the rules between them.
 struct Rows {
     band: Option<Rect>,
     body: Rect,
@@ -124,11 +124,14 @@ struct Rows {
     rules: Vec<u16>,
 }
 
-fn rows(area: Rect, banded: bool) -> Rows {
+fn rows(area: Rect, banded: bool, totals: Totals) -> Rows {
     let wide = area.width >= WIDE;
     let inner = area.inner(Margin::new(1, 1));
     let mut rules = Vec::new();
-    let keybar_rows = if wide { 1 } else { 2 };
+    let keybar_rows = match totals {
+        Totals::Band => 1,
+        Totals::KeyBar => 2,
+    };
     let mut bottom = inner.bottom().saturating_sub(keybar_rows).max(inner.y);
     let keybar = Rect::new(inner.x, bottom, inner.width, keybar_rows.min(inner.height));
     let mut top = inner.y;

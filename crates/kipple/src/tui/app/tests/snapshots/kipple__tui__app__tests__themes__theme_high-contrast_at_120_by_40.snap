@@ -3,22 +3,22 @@ source: crates/kipple/src/tui/app/tests/themes.rs
 assertion_line: 41
 expression: "styled(&draw(&app, look(&theme), 120, 40))"
 ---
-╭ «bold,underlined|kipple» ─ «fg=LightCyan,bold,underlined|Balanced» ─ scanning… ─ no project roots ─────────────┬───────────────────────────────┬──────────────────────╮
-│ «fg=LightGreen,bold|SAFE» 514.0 MiB · 2            │ «fg=LightYellow,bold|REVIEW» 300.0 MiB · 1          │ «fg=LightBlue,bold|PROTECTED» 1020.0 MiB · 2      │ found 1.7 GiB        │
-│ «fg=LightGreen|████████▏                    » │ «fg=LightYellow|████▋                        » │ «fg=LightBlue|████████████████▏            » │ eligible 814.0 MiB   │
-├───────────────────────────────┴───────────────────────────────┴────────┬──────────────────────┴──────────────────────┤
-│ «bold,reversed|  ▾ »«fg=LightGreen,bold,reversed|Safe to clean (2)»«bold,reversed|       514.0 MiB        passes every check       » │ «fg=LightGreen,bold|Safe to clean»                               │
-│     ▾ Dev (2)               514.0 MiB                                  │ 2 findings, 514.0 MiB                       │
-│       api/target  Cargo…    512.0 MiB«fg=LightGreen| ███▍  »«fg=LightGreen,bold| »                          │                                             │
-│       tool/__pycache__…       2.0 MiB«fg=LightGreen|       »«fg=LightGreen,bold| »                          │ Passes every check at this level: kipple    │
-│   ▾ «fg=LightYellow,bold|Review (1)»              300.0 MiB        loses more, or recent     │ recognised it, knows how it comes back,     │
-│     ▾ Dev (1)               300.0 MiB                                  │ nothing inside is tracked by git, no        │
-│       web/node_modules…     300.0 MiB«fg=LightYellow| ██    »«fg=LightYellow,bold| recent»                    │ running program shows it in use, and it     │
-│   ▾ «fg=LightBlue,bold|Protected (2)»          1020.0 MiB        not eligible              │ hasn't changed recently. c selects all of   │
-│     ▾ Dev (1)               120.0 MiB                                  │ it.                                         │
-│   …                         120.0 MiB«fg=LightBlue| ▊     »«fg=LightBlue,bold| layout not recognised +1»  │                                             │
-│     ▾ System (1)            900.0 MiB                                  │                                             │
-│       pacman/pkg…           900.0 MiB«fg=LightBlue| ██████»«fg=LightBlue,bold| advice only»               │                                             │
+╭ «bold,underlined|kipple» ─ «fg=LightCyan,bold,underlined|Balanced» ─ scanning… ─ no project roots ──────────────────────┬─────────────────────────────────────────────╮
+│ «fg=LightGreen,bold|SAFE» 514.0 MiB · 2   │ «fg=LightYellow,bold|REVIEW» 300.0 MiB · 1 │ «fg=LightBlue,bold|PROTECTED» 1020.0 MiB · 2 │ found 1.7 GiB                               │
+│ «fg=LightGreen|█████▌»               │ «fg=LightYellow|███▎»                 │ «fg=LightBlue|███████████»              │ eligible 814.0 MiB                          │
+├──────────────────────┴──────────────────────┴──────────────────────────┼─────────────────────────────────────────────┤
+│ «bold,reversed|  ▾ »«fg=LightGreen,bold,reversed|Safe to clean (2)»«bold,reversed|        514.0 MiB passes every check             » │ «fg=LightGreen,bold|Safe to clean»                               │
+│     ▾ Dev (2)                514.0 MiB                                 │ 2 findings, 514.0 MiB                       │
+│       api/target  Cargo…     512.0 MiB «fg=LightGreen|███▍»  «fg=LightGreen,bold| »                         │                                             │
+│       tool/__pycache__         2.0 MiB       «fg=LightGreen,bold| »                         │ Passes every check at this level: kipple    │
+│   ▾ «fg=LightYellow,bold|Review (1)»               300.0 MiB loses more, or recent           │ recognised it, knows how it comes back,     │
+│     ▾ Dev (1)                300.0 MiB                                 │ nothing inside is tracked by git, no        │
+│       web/node_modules       300.0 MiB «fg=LightYellow|██»    «fg=LightYellow,bold| recent»                   │ running program shows it in use, and it     │
+│   ▾ «fg=LightBlue,bold|Protected (2)»           1020.0 MiB not eligible                    │ hasn't changed recently. c selects all of   │
+│     ▾ Dev (1)                120.0 MiB                                 │ it.                                         │
+│       bunapp/node_modules    120.0 MiB «fg=LightBlue|▊»     «fg=LightBlue,bold| layout not recognised +1» │                                             │
+│     ▾ System (1)             900.0 MiB                                 │                                             │
+│       pacman/pkg  pacman…    900.0 MiB «fg=LightBlue|██████»«fg=LightBlue,bold| advice only»              │                                             │
 │                                                                        │                                             │
 │                                                                        │                                             │
 │                                                                        │                                             │
@@ -41,5 +41,5 @@ expression: "styled(&draw(&app, look(&theme), 120, 40))"
 │                                                                        │                                             │
 │                                                                        │                                             │
 ├────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────┤
-│ j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit                selected 0 · 0 B · frees 0 B │
+│ «bold,underlined|j/k» move  «bold,underlined|/» filter  «bold,underlined|s» select  «bold,underlined|c» safe  «bold,underlined|p» keep  «bold,underlined|,» settings  «bold,underlined|?» help  «bold,underlined|q» quit                selected 0 · 0 B · frees 0 B │
 ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯

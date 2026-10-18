@@ -6,14 +6,14 @@ expression: "screen(&app, colour(), 80, 24)"
 ╭ kipple ─ Balanced ─ scanned in 1.2 s ─ ~/projects ─ by last change ──────────╮
 │ Safe 1.5 GiB · 4   Review 366.0 MiB · 3   Protected 128.0 MiB · 2            │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│   ▾ Safe to clean (4)                      1.5 GiB passes every check        │
-│     ▾ Dev (3)                            662.0 MiB                           │
-│       ▾ api (2)                          612.0 MiB                           │
-│         node_modules  Node…              100.0 MiB                           │
-│         target  Cargo build output       512.0 MiB                           │
-│       web/target  Cargo build output      50.0 MiB                           │
-│     ▾ System (1)                         900.0 MiB                           │
-│       pacman/pkg  pacman package…        900.0 MiB                           │
+│   ▾ Safe to clean (4)                             1.5 GiB passes every check │
+│     ▾ Dev (3)                                   662.0 MiB                    │
+│       ▾ api (2)                                 612.0 MiB                    │
+│         node_modules  Node dependencies         100.0 MiB                    │
+│         target  Cargo build output              512.0 MiB                    │
+│       web/target  Cargo build output             50.0 MiB                    │
+│     ▾ System (1)                                900.0 MiB                    │
+│       pacman/pkg  pacman package cache          900.0 MiB                    │
 ├──────────────────────────────────────────────────────────────────────────────┤
 │ Safe to clean                                                                │
 │ 4 findings, 1.5 GiB                                                          │

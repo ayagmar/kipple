@@ -7,6 +7,7 @@ use ratatui::layout::{Constraint, Layout, Margin};
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 
+use super::keybar::joined;
 use super::settings::{describe, search_notes};
 use super::{Look, level_about, title_case};
 use crate::human::{self, bytes, escaped, homed};
@@ -213,36 +214,35 @@ fn tip_lines(app: &App, look: Look<'_>) -> Vec<Line<'static>> {
 }
 
 fn keys(onboarding: &Onboarding, look: Look<'_>) -> Paragraph<'static> {
-    let mut text = String::new();
     if onboarding.typing.is_some() {
-        text.push_str("type a path, enter adds it, esc cancels");
-    } else {
-        let hint = |actions: &[Action], between: &str, what: &str| {
-            onboarding
-                .keymap
-                .hint(Mode::Onboarding, actions, between, what)
-        };
-        let choose = match onboarding.step {
-            Step::Tips => "finish",
-            Step::Level | Step::Roots | Step::Method => "choose",
-        };
-        let mut hints = vec![hint(&[Action::Choose], "", choose)];
-        if onboarding.step == Step::Roots {
-            hints.push(hint(&[Action::Check], "", "check"));
-        }
-        if onboarding.step == Step::Tips {
-            hints.push(hint(&[Action::MoveDown, Action::MoveUp], " ", "scroll"));
-        }
-        hints.push(hint(&[Action::Skip], "", "skip"));
-        if onboarding.step != Step::Level {
-            hints.push(Some("esc back".to_owned()));
-        }
-        hints.push(hint(&[Action::Quit], "", "quit, saving nothing"));
-        let hints: Vec<String> = hints.into_iter().flatten().collect();
-        text.push_str(&hints.join(look.glyphs.dot()));
+        return Paragraph::new(Line::styled(
+            "type a path, enter adds it, esc cancels",
+            look.style(Role::KeyLabel),
+        ));
     }
-    Paragraph::new(Line::styled(
-        look.glyphs.keys(&text),
-        look.style(Role::KeyLabel),
-    ))
+    let hint = |actions: &[Action], between: &str, what: &str| {
+        let keys: Vec<String> = actions
+            .iter()
+            .filter_map(|&action| onboarding.keymap.first(Mode::Onboarding, action))
+            .collect();
+        (!keys.is_empty()).then(|| (look.glyphs.keys(&keys.join(between)), what.to_owned()))
+    };
+    let choose = match onboarding.step {
+        Step::Tips => "finish",
+        Step::Level | Step::Roots | Step::Method => "choose",
+    };
+    let mut hints = vec![hint(&[Action::Choose], "", choose)];
+    if onboarding.step == Step::Roots {
+        hints.push(hint(&[Action::Check], "", "check"));
+    }
+    if onboarding.step == Step::Tips {
+        hints.push(hint(&[Action::MoveDown, Action::MoveUp], " ", "scroll"));
+    }
+    hints.push(hint(&[Action::Skip], "", "skip"));
+    if onboarding.step != Step::Level {
+        hints.push(Some(("esc".to_owned(), "back".to_owned())));
+    }
+    hints.push(hint(&[Action::Quit], "", "quit, saving nothing"));
+    let hints: Vec<(String, String)> = hints.into_iter().flatten().collect();
+    Paragraph::new(joined(look, &hints, look.glyphs.dot()))
 }

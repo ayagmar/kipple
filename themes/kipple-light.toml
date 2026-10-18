@@ -19,7 +19,7 @@ error = { fg = "#B3261E" }
 "bar.safe" = { fg = "#2E7D32" }
 "bar.review" = { fg = "#7A6000" }
 "bar.protected" = { fg = "#2F5E8C" }
-"bar.track" = { fg = "#D8D0C2" }
+"bar.track" = { bg = "#EEE7DB" }
 key = { fg = "#15171C", bold = true }
 "key.label" = { fg = "#6B655C" }
 "level.current" = { fg = "#8F531A", bold = true }

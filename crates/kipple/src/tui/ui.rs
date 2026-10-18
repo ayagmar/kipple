@@ -69,6 +69,23 @@ const fn bar_tint(shelf: Shelf) -> Role {
     }
 }
 
+/// A bar `eighths` eighths of a cell long in `cells` cells, for a finding or a bucket
+/// in `shelf`: what is filled in the bar's role and the rest in the track's, whose
+/// background also shows behind a part-filled cell.
+fn drawn_bar(look: Look<'_>, shelf: Shelf, eighths: u128, cells: usize) -> Vec<Span<'static>> {
+    let drawn = look
+        .glyphs
+        .bar(u64::try_from(eighths).unwrap_or(u64::MAX), cells);
+    let filled = drawn.trim_end();
+    let track = look.style(Role::BarTrack);
+    let mut style = look.style(bar_tint(shelf));
+    style.bg = style.bg.or(track.bg);
+    vec![
+        Span::styled(filled.to_owned(), style),
+        Span::styled(" ".repeat(cells.saturating_sub(cols(filled))), track),
+    ]
+}
+
 /// Draws `app` into `frame`.
 pub(crate) fn render(app: &App, look: Look<'_>, frame: &mut Frame<'_>) {
     look.fill(frame);
@@ -87,7 +104,7 @@ pub(crate) fn render(app: &App, look: Look<'_>, frame: &mut Frame<'_>) {
         frame,
     );
     let width = areas.outer.width.saturating_sub(4);
-    let title = frame::header(app, look, width, areas.totals == Totals::Title);
+    let title = frame::header(app, look, width);
     if screen == Screen::Panel {
         settings::render(app, look, areas.body, frame);
         frame::title(look, title, areas.outer, frame);

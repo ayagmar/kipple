@@ -3,22 +3,22 @@ source: crates/kipple/src/tui/app/tests/themes.rs
 assertion_line: 41
 expression: "styled(&draw(&app, look(&theme), 120, 40))"
 ---
-«fg=DarkGray|╭» «bold|kipple»«fg=DarkGray| ─ »«fg=Cyan,bold|Balanced»«fg=DarkGray| ─ scanning… ─ »no project roots «fg=DarkGray|─────────────┬───────────────────────────────┬──────────────────────╮»
-«fg=DarkGray|│» «fg=Green,bold|SAFE» 514.0 MiB · 2            «fg=DarkGray|│» «fg=Yellow,bold|REVIEW» 300.0 MiB · 1          «fg=DarkGray|│» «fg=Blue,bold|PROTECTED» 1020.0 MiB · 2      «fg=DarkGray|│» found 1.7 GiB        «fg=DarkGray|│»
-«fg=DarkGray|│» «fg=Green|████████▏                    » «fg=DarkGray|│» «fg=Yellow|████▋                        » «fg=DarkGray|│» «fg=Blue|████████████████▏            » «fg=DarkGray|│» eligible 814.0 MiB   «fg=DarkGray|│»
-«fg=DarkGray|├───────────────────────────────┴───────────────────────────────┴────────┬──────────────────────┴──────────────────────┤»
-«fg=DarkGray|│» «reversed|  ▾ »«fg=Green,bold,reversed|Safe to clean (2)»«reversed|       514.0 MiB       »«fg=DarkGray,reversed| passes every check»«reversed|       » «fg=DarkGray|│» «fg=Green,bold|Safe to clean»                               «fg=DarkGray|│»
-«fg=DarkGray|│»     ▾ Dev (2)               514.0 MiB                                  «fg=DarkGray|│» 2 findings, 514.0 MiB                       «fg=DarkGray|│»
-«fg=DarkGray|│»       api/target«fg=DarkGray|  Cargo…»    512.0 MiB«fg=Green| ███▍   »                          «fg=DarkGray|│»                                             «fg=DarkGray|│»
-«fg=DarkGray|│»       tool/__pycache__«fg=DarkGray|…»       2.0 MiB«fg=Green|        »                          «fg=DarkGray|│» Passes every check at this level: kipple    «fg=DarkGray|│»
-«fg=DarkGray|│»   ▾ «fg=Yellow,bold|Review (1)»              300.0 MiB       «fg=DarkGray| loses more, or recent»     «fg=DarkGray|│» recognised it, knows how it comes back,     «fg=DarkGray|│»
-«fg=DarkGray|│»     ▾ Dev (1)               300.0 MiB                                  «fg=DarkGray|│» nothing inside is tracked by git, no        «fg=DarkGray|│»
-«fg=DarkGray|│»       web/node_modules«fg=DarkGray|…»     300.0 MiB«fg=Yellow| ██     recent»                    «fg=DarkGray|│» running program shows it in use, and it     «fg=DarkGray|│»
-«fg=DarkGray|│»   ▾ «fg=Blue,bold|Protected (2)»          1020.0 MiB       «fg=DarkGray| not eligible»              «fg=DarkGray|│» hasn't changed recently. c selects all of   «fg=DarkGray|│»
-«fg=DarkGray|│»     ▾ Dev (1)               120.0 MiB                                  «fg=DarkGray|│» it.                                         «fg=DarkGray|│»
-«fg=DarkGray|│»   …                         120.0 MiB«fg=Blue| ▊      layout not recognised +1»  «fg=DarkGray|│»                                             «fg=DarkGray|│»
-«fg=DarkGray|│»     ▾ System (1)            900.0 MiB                                  «fg=DarkGray|│»                                             «fg=DarkGray|│»
-«fg=DarkGray|│»       pacman/pkg«fg=DarkGray|…»           900.0 MiB«fg=Blue| ██████ advice only»               «fg=DarkGray|│»                                             «fg=DarkGray|│»
+«fg=DarkGray|╭» «bold|kipple»«fg=DarkGray| ─ »«fg=Cyan,bold|Balanced»«fg=DarkGray| ─ scanning… ─ »no project roots «fg=DarkGray|──────────────────────┬─────────────────────────────────────────────╮»
+«fg=DarkGray|│» «fg=Green,bold|SAFE» 514.0 MiB · 2   «fg=DarkGray|│» «fg=Yellow,bold|REVIEW» 300.0 MiB · 1 «fg=DarkGray|│» «fg=Blue,bold|PROTECTED» 1020.0 MiB · 2 «fg=DarkGray|│» found 1.7 GiB                               «fg=DarkGray|│»
+«fg=DarkGray|│» «fg=Green|█████▌»               «fg=DarkGray|│» «fg=Yellow|███▎»                 «fg=DarkGray|│» «fg=Blue|███████████»              «fg=DarkGray|│» eligible 814.0 MiB                          «fg=DarkGray|│»
+«fg=DarkGray|├──────────────────────┴──────────────────────┴──────────────────────────┼─────────────────────────────────────────────┤»
+«fg=DarkGray|│» «reversed|  ▾ »«fg=Green,bold,reversed|Safe to clean (2)»«reversed|        514.0 MiB»«fg=DarkGray,reversed| passes every check»«reversed|             » «fg=DarkGray|│» «fg=Green,bold|Safe to clean»                               «fg=DarkGray|│»
+«fg=DarkGray|│»     ▾ Dev (2)                514.0 MiB                                 «fg=DarkGray|│» 2 findings, 514.0 MiB                       «fg=DarkGray|│»
+«fg=DarkGray|│»       api/target«fg=DarkGray|  Cargo…»     512.0 MiB «fg=Green|███▍»  «fg=Green| »                         «fg=DarkGray|│»                                             «fg=DarkGray|│»
+«fg=DarkGray|│»       tool/__pycache__         2.0 MiB       «fg=Green| »                         «fg=DarkGray|│» Passes every check at this level: kipple    «fg=DarkGray|│»
+«fg=DarkGray|│»   ▾ «fg=Yellow,bold|Review (1)»               300.0 MiB«fg=DarkGray| loses more, or recent»           «fg=DarkGray|│» recognised it, knows how it comes back,     «fg=DarkGray|│»
+«fg=DarkGray|│»     ▾ Dev (1)                300.0 MiB                                 «fg=DarkGray|│» nothing inside is tracked by git, no        «fg=DarkGray|│»
+«fg=DarkGray|│»       web/node_modules       300.0 MiB «fg=Yellow|██»    «fg=Yellow| recent»                   «fg=DarkGray|│» running program shows it in use, and it     «fg=DarkGray|│»
+«fg=DarkGray|│»   ▾ «fg=Blue,bold|Protected (2)»           1020.0 MiB«fg=DarkGray| not eligible»                    «fg=DarkGray|│» hasn't changed recently. c selects all of   «fg=DarkGray|│»
+«fg=DarkGray|│»     ▾ Dev (1)                120.0 MiB                                 «fg=DarkGray|│» it.                                         «fg=DarkGray|│»
+«fg=DarkGray|│»       bunapp/node_modules    120.0 MiB «fg=Blue|▊»     «fg=Blue| layout not recognised +1» «fg=DarkGray|│»                                             «fg=DarkGray|│»
+«fg=DarkGray|│»     ▾ System (1)             900.0 MiB                                 «fg=DarkGray|│»                                             «fg=DarkGray|│»
+«fg=DarkGray|│»       pacman/pkg«fg=DarkGray|  pacman…»    900.0 MiB «fg=Blue|██████ advice only»              «fg=DarkGray|│»                                             «fg=DarkGray|│»
 «fg=DarkGray|│»                                                                        «fg=DarkGray|│»                                             «fg=DarkGray|│»
 «fg=DarkGray|│»                                                                        «fg=DarkGray|│»                                             «fg=DarkGray|│»
 «fg=DarkGray|│»                                                                        «fg=DarkGray|│»                                             «fg=DarkGray|│»
@@ -41,5 +41,5 @@ expression: "styled(&draw(&app, look(&theme), 120, 40))"
 «fg=DarkGray|│»                                                                        «fg=DarkGray|│»                                             «fg=DarkGray|│»
 «fg=DarkGray|│»                                                                        «fg=DarkGray|│»                                             «fg=DarkGray|│»
 «fg=DarkGray|├────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────┤»
-«fg=DarkGray|│» «fg=DarkGray|j/k move  / filter  s select  c safe  p keep  , settings  ? help  q quit»                selected 0 · 0 B · frees 0 B «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|j/k»«fg=DarkGray| move  »«bold|/»«fg=DarkGray| filter  »«bold|s»«fg=DarkGray| select  »«bold|c»«fg=DarkGray| safe  »«bold|p»«fg=DarkGray| keep  »«bold|,»«fg=DarkGray| settings  »«bold|?»«fg=DarkGray| help  »«bold|q»«fg=DarkGray| quit»                selected 0 · 0 B · frees 0 B «fg=DarkGray|│»
 «fg=DarkGray|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»

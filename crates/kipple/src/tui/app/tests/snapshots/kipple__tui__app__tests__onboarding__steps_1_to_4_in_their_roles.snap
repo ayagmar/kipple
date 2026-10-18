@@ -49,7 +49,7 @@ expression: "probed.join(\"\\n\")"
 «fg=border|│»                                                                                                                                                              «fg=border|│»
 «fg=border|│»                                                                                                                                                              «fg=border|│»
 «fg=border|├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤»
-«fg=border|│» «fg=key.label|enter choose · tab skip · q quit, saving nothing»                                                                                                             «fg=border|│»
+«fg=border|│» «fg=key|enter»«fg=key.label| choose · »«fg=key|tab»«fg=key.label| skip · »«fg=key|q»«fg=key.label| quit, saving nothing»                                                                                                             «fg=border|│»
 «fg=border|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»
 
 «fg=border|╭» «fg=title|Welcome to kipple»«fg=border| ─ »step 2 of 4«fg=border| ─ »«fg=muted|scan finished» «fg=border|─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮»
@@ -98,7 +98,7 @@ expression: "probed.join(\"\\n\")"
 «fg=border|│»                                                                                                                                                              «fg=border|│»
 «fg=border|│»                                                                                                                                                              «fg=border|│»
 «fg=border|├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤»
-«fg=border|│» «fg=key.label|enter choose · space check · tab skip · esc back · q quit, saving nothing»                                                                                    «fg=border|│»
+«fg=border|│» «fg=key|enter»«fg=key.label| choose · »«fg=key|space»«fg=key.label| check · »«fg=key|tab»«fg=key.label| skip · »«fg=key|esc»«fg=key.label| back · »«fg=key|q»«fg=key.label| quit, saving nothing»                                                                                    «fg=border|│»
 «fg=border|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»
 
 «fg=border|╭» «fg=title|Welcome to kipple»«fg=border| ─ »step 2 of 4«fg=border| ─ »«fg=muted|scan finished» «fg=border|─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮»
@@ -196,5 +196,5 @@ expression: "probed.join(\"\\n\")"
 «fg=border|│»                                                                                                                                                              «fg=border|│»
 «fg=border|│»                                                                                                                                                              «fg=border|│»
 «fg=border|├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤»
-«fg=border|│» «fg=key.label|enter choose · space check · tab skip · esc back · q quit, saving nothing»                                                                                    «fg=border|│»
+«fg=border|│» «fg=key|enter»«fg=key.label| choose · »«fg=key|space»«fg=key.label| check · »«fg=key|tab»«fg=key.label| skip · »«fg=key|esc»«fg=key.label| back · »«fg=key|q»«fg=key.label| quit, saving nothing»                                                                                    «fg=border|│»
 «fg=border|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»

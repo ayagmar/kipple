@@ -49,7 +49,7 @@ expression: "shown.join(\"\\n\")"
 «fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
 «fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
 «fg=DarkGray|├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤»
-«fg=DarkGray|│» «fg=DarkGray|enter choose · tab skip · q quit, saving nothing»                                                                                                             «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|enter»«fg=DarkGray| choose · »«bold|tab»«fg=DarkGray| skip · »«bold|q»«fg=DarkGray| quit, saving nothing»                                                                                                             «fg=DarkGray|│»
 «fg=DarkGray|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»
 
 «fg=DarkGray|╭» «bold|Welcome to kipple»«fg=DarkGray| ─ »step 2 of 4«fg=DarkGray| ─ scan finished» «fg=DarkGray|─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮»
@@ -98,7 +98,7 @@ expression: "shown.join(\"\\n\")"
 «fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
 «fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
 «fg=DarkGray|├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤»
-«fg=DarkGray|│» «fg=DarkGray|enter choose · space check · tab skip · esc back · q quit, saving nothing»                                                                                    «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|enter»«fg=DarkGray| choose · »«bold|space»«fg=DarkGray| check · »«bold|tab»«fg=DarkGray| skip · »«bold|esc»«fg=DarkGray| back · »«bold|q»«fg=DarkGray| quit, saving nothing»                                                                                    «fg=DarkGray|│»
 «fg=DarkGray|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»
 
 «fg=DarkGray|╭» «bold|Welcome to kipple»«fg=DarkGray| ─ »step 2 of 4«fg=DarkGray| ─ scan finished» «fg=DarkGray|─────────────────────────────────────────────────────────────────────────────────────────────────────────────╮»
@@ -196,5 +196,5 @@ expression: "shown.join(\"\\n\")"
 «fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
 «fg=DarkGray|│»                                                                                                                                                              «fg=DarkGray|│»
 «fg=DarkGray|├──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤»
-«fg=DarkGray|│» «fg=DarkGray|enter choose · space check · tab skip · esc back · q quit, saving nothing»                                                                                    «fg=DarkGray|│»
+«fg=DarkGray|│» «bold|enter»«fg=DarkGray| choose · »«bold|space»«fg=DarkGray| check · »«bold|tab»«fg=DarkGray| skip · »«bold|esc»«fg=DarkGray| back · »«bold|q»«fg=DarkGray| quit, saving nothing»                                                                                    «fg=DarkGray|│»
 «fg=DarkGray|╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯»
