@@ -17,7 +17,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use super::app::{App, Key, Progress};
 use super::settings::{Found, describe, search_notes};
 use super::view::{Look, level_about, title_case};
-use crate::config::{Edit, Loaded, Source, is_config_path, same_config_path};
+use crate::config::{Edit, Loaded, Source, is_config_path, same_config_path, within_config_path};
 use crate::human::{bytes, escaped};
 
 /// Whether the first run is due: no config file at the default location, in a known
@@ -279,7 +279,8 @@ impl Onboarding {
         edits
     }
 
-    /// The checked roots, then the checked suggestions that aren't among them.
+    /// The checked roots, then the checked suggestions that aren't among them or inside
+    /// one of them.
     fn checked_roots(&self) -> Vec<PathBuf> {
         let mut chosen: Vec<PathBuf> = self
             .roots
@@ -290,7 +291,10 @@ impl Onboarding {
         let home = self.home.as_deref();
         for offer in self.offers.iter().filter(|offer| offer.checked) {
             let path = &offer.suggestion.path;
-            if !chosen.iter().any(|root| same_config_path(root, path, home)) {
+            if !chosen
+                .iter()
+                .any(|root| within_config_path(path, root, home))
+            {
                 chosen.push(path.clone());
             }
         }

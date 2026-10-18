@@ -3,7 +3,7 @@
 //! `config::write` the loop calls, and the screen changes only from what was written.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use kipple_core::{
     Caution, Hold, Level, Loss, Method, Modified, ResolvedRoot, RootSource, Roots, RuleId,
@@ -674,10 +674,11 @@ fn enter_on_a_suggestion_adds_it_like_a_typed_root_rescans_and_it_leaves_the_lis
     assert!(notice.contains("Scanning again"), "{notice}");
 }
 
-// Catches a suggestion that became a root while the search ran being written a second
-// time: it is refused as a typed duplicate is.
+// Catches a suggestion that became a root, or that a root added while the search ran
+// holds, still being offered (03 §6, D-053: never a root or a path inside one), so
+// `enter` on it writes it a second time or as a root nested in another.
 #[test]
-fn a_suggestion_that_is_already_a_root_is_refused_like_a_typed_one() {
+fn suggestions_a_root_added_during_the_search_covers_are_not_listed() {
     let disk = Disk::new();
     let mut app = screen_on(&disk, Config::default());
     // No project roots: the level, then "add another".
@@ -686,21 +687,50 @@ fn a_suggestion_that_is_already_a_root_is_refused_like_a_typed_one() {
     typed(&mut app, "~/Documents");
     press(&mut app, &[Key::Enter]);
     assert_eq!(disk.run(&mut app), [Effect::Rescan]);
-    let before = disk.text();
 
     // The search, started with no roots, ends now.
-    app.update(Msg::Suggested(Box::new(found_at(&[disk
-        .home()
-        .join("Documents")]))));
-    // Level, ~/Documents, "add another", then the suggestion.
-    settings_at(&mut app, 3);
-    press(&mut app, &[Key::Enter]);
+    let home = disk.home();
+    let paths = [
+        home.join("Documents"),
+        home.join("Documents").join("uni"),
+        home.join("notes"),
+    ];
+    app.update(Msg::Suggested(Box::new(found_at(&paths))));
 
-    assert_eq!(disk.run(&mut app), []);
-    assert_eq!(app.roots, [PathBuf::from("~/Documents")]);
-    assert_eq!(disk.text(), before);
-    let notice = app.notice.as_deref().unwrap();
-    assert!(notice.contains("is already a project root"), "{notice}");
+    let listed: Vec<&Path> = app
+        .search
+        .suggestions()
+        .iter()
+        .map(|suggestion| suggestion.path.as_path())
+        .collect();
+    assert_eq!(listed, [home.join("notes")]);
+}
+
+// Catches a listed suggestion staying offered once a root that holds it is added, so
+// `enter` on it writes a root nested in another.
+#[test]
+fn a_suggestion_inside_a_root_added_later_leaves_the_list() {
+    let disk = Disk::new();
+    let mut app = screen_on(&disk, Config::default());
+    settings_at(&mut app, 0);
+    let home = disk.home();
+    let paths = [home.join("Documents").join("uni"), home.join("notes")];
+    app.update(Msg::Suggested(Box::new(found_at(&paths))));
+
+    // The level, then "add another".
+    settings_at(&mut app, 1);
+    press(&mut app, &[Key::Enter]);
+    typed(&mut app, "~/Documents");
+    press(&mut app, &[Key::Enter]);
+    assert_eq!(disk.run(&mut app), [Effect::Rescan]);
+
+    let listed: Vec<&Path> = app
+        .search
+        .suggestions()
+        .iter()
+        .map(|suggestion| suggestion.path.as_path())
+        .collect();
+    assert_eq!(listed, [home.join("notes")]);
 }
 
 // Catches suggestions arriving while settings is open moving the cursor onto one of

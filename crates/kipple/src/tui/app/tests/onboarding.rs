@@ -544,6 +544,42 @@ fn a_checked_suggestion_is_written_once_with_the_other_roots() {
     assert!(written[2].ends_with("Documents"), "{written:?}");
 }
 
+// Catches a checked suggestion inside a root typed in the same step being written as a
+// root nested in it (03 §6, D-053: a path inside a root is never suggested).
+#[test]
+fn a_checked_suggestion_inside_a_typed_root_is_not_written() {
+    let disk = Disk::new();
+    let (mut app, mut first) = disk.first_run();
+    let uni = disk.home().join("Documents").join("uni");
+    suggest(&mut app, &mut first, std::slice::from_ref(&uni), true);
+    answer(&mut first, &[Key::Enter]);
+
+    // projects, code, "add another", then the suggestion.
+    answer(
+        &mut first,
+        &[Key::Down, Key::Down, Key::Down, Key::Char(' ')],
+    );
+    assert!(first.offers[0].checked);
+    answer(&mut first, &[Key::Up, Key::Enter]);
+    for c in "~/Documents".chars() {
+        first.key(Key::Char(c));
+    }
+
+    let edits = finished(answer(
+        &mut first,
+        &[Key::Enter, Key::Enter, Key::Tab, Key::Tab],
+    ));
+    let roots = vec![
+        disk.home().join("projects"),
+        disk.home().join("code"),
+        PathBuf::from("~/Documents"),
+    ];
+    assert_eq!(
+        edits,
+        [Edit::Level(Level::Balanced), Edit::ProjectRoots(roots)]
+    );
+}
+
 // Catches quitting after checking a suggestion writing it anyway.
 #[test]
 fn quitting_with_a_checked_suggestion_writes_nothing() {

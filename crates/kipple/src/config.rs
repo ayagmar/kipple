@@ -15,7 +15,7 @@ use std::path::{self, Component, Path, PathBuf};
 
 use kipple_core::{
     FileIdentity, FsProbe as _, HeldPath, Level, Lineage, Method, Policy, RootSource, Roots,
-    RuleId, RuleSettings, SymbolicRoot,
+    RuleId, RuleSettings, SymbolicRoot, is_within,
 };
 use kipple_platform::{
     CONFIG_FILE, Environment, NoFollowFs, kipple_dirs, read_config, resolve_roots,
@@ -403,9 +403,18 @@ fn same_path(a: &Path, b: &Path) -> bool {
 /// excluded paths are matched: `~` expanded from `home`, then by components, ignoring
 /// case and a trailing separator.
 pub(crate) fn same_config_path(a: &Path, b: &Path, home: Option<&Path>) -> bool {
-    let full =
-        |path: &Path| expand(&path.to_string_lossy(), home).unwrap_or_else(|| path.to_owned());
-    same_path(&full(a), &full(b))
+    same_path(&full_path(a, home), &full_path(b, home))
+}
+
+/// Whether `path` is `base` or inside it, both as config writes them, compared as
+/// [`same_config_path`] compares them.
+pub(crate) fn within_config_path(path: &Path, base: &Path, home: Option<&Path>) -> bool {
+    is_within(&full_path(path, home), &full_path(base, home))
+}
+
+/// `path` with `~` expanded from `home`, or as it is when it can't be.
+fn full_path(path: &Path, home: Option<&Path>) -> PathBuf {
+    expand(&path.to_string_lossy(), home).unwrap_or_else(|| path.to_owned())
 }
 
 /// `kipple config path`: the file, when its directory is known.

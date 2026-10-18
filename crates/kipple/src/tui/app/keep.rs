@@ -87,10 +87,12 @@ impl App {
         }
     }
 
-    /// The root search ended. The settings cursor stays on the line it was on, so a key
-    /// pressed as the suggestions appear doesn't act on one of them.
-    pub(super) fn suggested(&mut self, found: Found) {
+    /// The root search ended. What a root added while it ran covers isn't suggested. The
+    /// settings cursor stays on the line it was on, so a key pressed as the suggestions
+    /// appear doesn't act on one of them.
+    pub(super) fn suggested(&mut self, mut found: Found) {
         let focus = self.panel.focus(&settings::items(self));
+        found.drop_roots(&self.roots, self.home.as_deref());
         self.search = Search::Done(found);
         let items = settings::items(self);
         if let Some(at) = focus.and_then(|focus| items.iter().position(|item| *item == focus)) {

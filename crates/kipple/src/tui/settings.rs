@@ -9,7 +9,7 @@ use kipple_core::{Level, Method, RuleId, Suggestion};
 
 use super::app::{App, Key};
 use super::view::{Look, title_case};
-use crate::config::{Edit, same_config_path};
+use crate::config::{Edit, same_config_path, within_config_path};
 use crate::human::escaped;
 
 /// One line of the panel the cursor can stand on.
@@ -73,12 +73,13 @@ pub(crate) struct Found {
 }
 
 impl Found {
-    /// Takes out the suggestions that are now project roots, as an added one is.
+    /// Takes out the suggestions that are now project roots, as an added one is, or are
+    /// inside one.
     pub(crate) fn drop_roots(&mut self, roots: &[PathBuf], home: Option<&Path>) {
         self.suggestions.retain(|suggestion| {
             !roots
                 .iter()
-                .any(|root| same_config_path(root, &suggestion.path, home))
+                .any(|root| within_config_path(&suggestion.path, root, home))
         });
     }
 }
