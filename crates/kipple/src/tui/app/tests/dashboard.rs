@@ -347,6 +347,19 @@ fn a_path_too_long_for_the_tree_keeps_its_last_component() {
     assert!(shown.lines().any(|line| kept(&line)), "{shown}");
 }
 
+// Catches a hold's words cut short when the tree is narrow, as beside the detail pane at
+// 80 columns: the state is the hold's only label (never colour alone), so the path gives
+// way first, down to nothing but its ellipsis.
+#[test]
+fn a_findings_state_shows_whole_however_narrow_the_tree() {
+    let mut app = sized(80, 24);
+    app.config.ui.detail = DetailPlace::Right;
+    for ascii in [false, true] {
+        let shown = screen(&app, look(true, ascii), 80, 24);
+        assert!(shown.contains("layout not recognised +1"), "{shown}");
+    }
+}
+
 // Catches the band's card lines meeting the rule under it a few columns away from the
 // line that starts there between the tree and the detail pane: wherever the detail
 // pane is beside the tree, the two meet in one cross, with or without a Measuring card.

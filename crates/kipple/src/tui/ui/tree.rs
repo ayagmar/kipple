@@ -169,11 +169,14 @@ impl Columns {
         if compact {
             size = sizes(true).min(size);
         }
+        // A finding's state is its hold's only label (never colour alone), so it keeps
+        // its room and the path gives way below its floor first.
+        let room = width.saturating_sub(states);
         let label = width
             .saturating_sub(size + bar + state)
-            .max(floor.min(width));
-        let size = size.min(width - label);
-        let bar = bar.min(width - label - size);
+            .max(floor.min(room));
+        let size = size.min(room.saturating_sub(label));
+        let bar = bar.min(room.saturating_sub(label + size));
         let narrow = |value: usize| u16::try_from(value).unwrap_or(u16::MAX);
         Self {
             label: narrow(label),
