@@ -45,7 +45,7 @@ type At<'a> = &'a dyn Fn(Option<Range<usize>>, String) -> ParseError;
 /// A string from the file, with where it is.
 type Spanned = (String, Option<Range<usize>>);
 
-struct Reader<'a> {
+pub(super) struct Reader<'a> {
     catalog: &'a Catalog,
     at: At<'a>,
 }
@@ -53,7 +53,9 @@ struct Reader<'a> {
 impl Reader<'_> {
     fn config(&self, root: &dyn TableLike) -> Result<Config, ParseError> {
         let mut config = Config::default();
-        let known = ["care", "clean", "scan", "exclude", "keep", "rules"];
+        let known = [
+            "care", "clean", "scan", "exclude", "keep", "rules", "ui", "keys",
+        ];
         for (name, key, item) in entries(root) {
             if !known.contains(&name) && !LATER.contains(&name) {
                 return Err(self.unknown(name, key));
@@ -66,6 +68,8 @@ impl Reader<'_> {
                 "exclude" => self.exclude(table, &mut config)?,
                 "keep" => self.keep(table, &mut config)?,
                 "rules" => self.rules(table, &mut config)?,
+                "ui" => config.ui = self.ui(table)?,
+                "keys" => config.keys = self.keys(table)?,
                 _ => return Err(self.unknown(name, key)),
             }
         }
@@ -283,7 +287,7 @@ impl Reader<'_> {
             .ok_or_else(|| (self.at)(item.span(), format!("{name}: expected a table")))
     }
 
-    fn only(
+    pub(super) fn only(
         &self,
         table: &str,
         entries_of: &dyn TableLike,

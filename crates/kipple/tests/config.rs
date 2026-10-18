@@ -222,6 +222,17 @@ fn every_config_kipple_cant_use_exits_2_with_the_reason_and_where_it_is() {
             "line 2, column 1: unknown key care.speed",
         ),
         ("colour = true", "line 1, column 1: unknown key colour"),
+        // [ui] and [keys] exist but read nothing yet: no key in them is silently
+        // ignored.
+        (
+            "[ui]\ntheme = \"dusk\"",
+            "line 2, column 1: unknown key ui.theme",
+        ),
+        (
+            "[keys]\nselect = [\"x\"]",
+            "line 2, column 1: unknown key keys.select",
+        ),
+        ("ui = 1", "ui: expected a table"),
         (
             "[review]\nconfirm_by_typing_above = \"5 GB\"",
             "review is not supported yet",

@@ -6,7 +6,9 @@
 //! scan exit with code 2.
 
 mod edit;
+mod keys;
 mod parse;
+mod ui;
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -23,6 +25,8 @@ use kipple_platform::{
 };
 
 pub use self::edit::{Edit, write};
+pub use self::keys::KeysConfig;
+pub use self::ui::UiConfig;
 use crate::human::escaped;
 use crate::setup::Builtin;
 
@@ -80,6 +84,10 @@ pub struct Config {
     pub keep: Vec<(String, Option<String>)>,
     /// `rules.<id>`.
     pub rules: Vec<(RuleId, RuleSettings)>,
+    /// `[ui]`.
+    pub ui: UiConfig,
+    /// `[keys]`.
+    pub keys: KeysConfig,
 }
 
 /// A config that loaded: where it is, whether a file was there, and what it says.
