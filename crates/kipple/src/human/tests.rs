@@ -195,7 +195,10 @@ fn a_secret_in_a_process_title_never_reaches_json_or_the_detail_lines() {
             sizer: Box::new(Sized),
             processes: Box::new(Titled(title)),
             clock: Box::new(Epoch),
-            tracked: Box::new(kipple_platform::NoGit),
+            // No `PATH`, so git is never found; the fixture holds no repository anyway.
+            tracked: Box::new(kipple_platform::GitQuery::new(
+                &kipple_platform::Environment::default(),
+            )),
         };
         let engine = Engine::new(ports, vec![Box::new(Venv(venv.clone()))], vec![rule()]).unwrap();
         let mut roots = Roots::default();

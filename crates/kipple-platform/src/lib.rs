@@ -12,6 +12,7 @@ mod config_file;
 mod environment;
 mod executor;
 mod fs_probe;
+mod git;
 mod host;
 mod os;
 mod process;
@@ -29,6 +30,7 @@ pub use config_file::{WriteError, read_config, write_config};
 pub use environment::Environment;
 pub use executor::{ConfinedFs, OsNames};
 pub use fs_probe::NoFollowFs;
+pub use git::GitQuery;
 pub use host::{SystemClock, clock, processes};
 pub use process::OsProcesses;
 pub use project_search::{ProjectSearch, ProjectsFound, SearchLimits, search_projects};
@@ -37,7 +39,7 @@ pub use roots::{
     resolve_roots_from,
 };
 pub use trash::ConfinedTrash;
-pub use unbuilt::{NoGit, NoRunStore};
+pub use unbuilt::NoRunStore;
 pub use walk::Walker;
 
 /// The operating system kipple was built for.
