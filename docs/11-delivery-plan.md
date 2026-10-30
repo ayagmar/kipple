@@ -104,7 +104,7 @@ Verify:
 - Profile regressions: switching Careful to Balanced, switching Balanced to Thorough, a per-rule level or recent-window change, re-enabling a rule, same rule ID with a wider pattern, a replaced root, a changed method or retention, a removed grant, a new rule, and a once-Safe item becoming Review or unknown. Each one suspends or skips, and none of them widens.
 - Overlap regressions: an alias across a protected root, a hard link with an unselected sibling, a parent/child overlap, a method conflict.
 - The native-profile suite passes on all three CI OSes.
-- `proptest` confinement properties run for 10k cases in CI.
+- A seeded confinement property runs 10k cases in CI (D-061: each failure names the seed that reproduces it, with no dependency).
 - End to end on `demo-home`: `clean --only builtin.cargo.target --yes` removes exactly the snapshotted set and writes a receipt. `restore` brings back trash-backed items on Linux and Windows, and on macOS as S4 decided.
 
 ## M4: Agent integrations

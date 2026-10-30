@@ -114,7 +114,7 @@ Test cases come from the spec, not from the implementation. The required failure
 - Retention: keep-active, keep-running, keep-N, per-group
 - Plan revalidation that only subtracts
 - Integration layouts against `FixtureTree` fixtures, one per supported upstream version (06 §7)
-- Confinement, idempotence and dedup with `proptest`, since those are the invariants that matter
+- Confinement, idempotence and dedup as seeded property tests (a generated case per seed, so a failure names the seed that reproduces it), since those are the invariants that matter
 - Manifest parsing and path normalization with `cargo-fuzz` (nightly CI job, not the gate)
 - CLI end-to-end against the shared `demo-home` with every root redirected by the `test-roots` override, plus `insta` snapshots of the JSON report (`cargo xtask verify-demo`)
 - TUI state transitions, plus buffer snapshots at 80×24 and 160×48
