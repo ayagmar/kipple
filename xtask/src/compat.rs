@@ -575,9 +575,14 @@ fn is_union(schema: &Value) -> bool {
 
 /// The variants of `schema`, each with the keywords beside its `anyOf` or `oneOf` merged
 /// in, and nested unions flattened.
+///
+/// A document matching two variants of a `oneOf` matches none, so the variants are read
+/// as an `anyOf` only once no two of them can be shown to share a document.
 fn variants(root: &Value, schema: &Value) -> Result<Vec<Value>, String> {
-    let Some(list) = schema.get("anyOf").or_else(|| schema.get("oneOf")) else {
-        return Ok(vec![schema.clone()]);
+    let (list, exclusive) = match (schema.get("anyOf"), schema.get("oneOf")) {
+        (Some(list), _) => (list, false),
+        (None, Some(list)) => (list, true),
+        (None, None) => return Ok(vec![schema.clone()]),
     };
     let list = list.as_array().ok_or("a union that isn't a list")?;
     let mut base = schema.as_object().cloned().unwrap_or_default();
@@ -586,9 +591,110 @@ fn variants(root: &Value, schema: &Value) -> Result<Vec<Value>, String> {
     for variant in list {
         let (variant, _) = resolve(root, variant)?;
         let merged = merge(&base, variant)?;
-        found.extend(variants(root, &merged)?);
+        let own = variants(root, &merged)?;
+        if exclusive
+            && let Some((one, other)) = found
+                .iter()
+                .flat_map(|one| own.iter().map(move |other| (one, other)))
+                .find(|(one, other)| !disjoint(root, one, other))
+        {
+            return Err(format!(
+                "a `oneOf` whose variants {} and {} may overlap",
+                label(one),
+                label(other)
+            ));
+        }
+        found.extend(own);
     }
     Ok(found)
+}
+
+/// Whether no document can match both `one` and `other`: their values or types don't
+/// meet, or a property both require can't take the same value.
+fn disjoint(root: &Value, one: &Value, other: &Value) -> bool {
+    let (Ok((one, _)), Ok((other, _))) = (resolve(root, one), resolve(root, other)) else {
+        return false;
+    };
+    if is_union(one) || is_union(other) {
+        return false;
+    }
+    if let Some(list) = values(one) {
+        return list.iter().all(|value| !admits(other, value));
+    }
+    if let Some(list) = values(other) {
+        return list.iter().all(|value| !admits(one, value));
+    }
+    if let (Some(kinds), Some(others)) = (types(one), types(other))
+        && kinds
+            .iter()
+            .all(|kind| others.iter().all(|o| !same_kind(kind, o)))
+    {
+        return true;
+    }
+    let property = |schema: &'_ Value, name: &str| schema.get("properties")?.get(name).cloned();
+    required(one).intersection(&required(other)).any(|name| {
+        match (property(one, name), property(other, name)) {
+            (Some(mine), Some(theirs)) => disjoint(root, &mine, &theirs),
+            _ => false,
+        }
+    })
+}
+
+/// Whether `schema` may allow `value`, judged by its values, types and `pattern` only.
+fn admits(schema: &Value, value: &Value) -> bool {
+    let listed = values(schema).is_none_or(|list| list.contains(&value));
+    let typed = types(schema).is_none_or(|kinds| kinds.iter().any(|kind| is_kind(value, kind)));
+    let patterned = match (
+        schema.get("pattern").and_then(Value::as_str),
+        value.as_str(),
+    ) {
+        (Some(pattern), Some(text)) => text.starts_with(literal_prefix(pattern)),
+        _ => true,
+    };
+    listed && typed && patterned
+}
+
+/// Whether one value can have both type names.
+fn same_kind(one: &str, other: &str) -> bool {
+    one == other || matches!((one, other), ("integer", "number") | ("number", "integer"))
+}
+
+/// Whether `value` has the type `kind`. An unknown name may be any value.
+fn is_kind(value: &Value, kind: &str) -> bool {
+    match kind {
+        "null" => value.is_null(),
+        "boolean" => value.is_boolean(),
+        "string" => value.is_string(),
+        "array" => value.is_array(),
+        "object" => value.is_object(),
+        "number" => value.is_number(),
+        "integer" => value.as_f64().is_some_and(|n| n.fract() == 0.0),
+        _ => true,
+    }
+}
+
+/// The text every string matching `pattern` starts with: the literal characters after a
+/// leading `^`, up to the first that isn't one. Empty when that can't be told.
+fn literal_prefix(pattern: &str) -> &str {
+    let Some(rest) = pattern.strip_prefix('^') else {
+        return "";
+    };
+    if pattern.contains('|') {
+        return "";
+    }
+    let end = rest
+        .find(|c: char| "\\.^$|?*+()[]{}".contains(c))
+        .unwrap_or(rest.len());
+    let Some((literal, after)) = rest.split_at_checked(end) else {
+        return "";
+    };
+    // `?`, `*` or `{0,…}` may leave out the last literal character.
+    if after.starts_with(['?', '*', '{']) {
+        let mut chars = literal.chars();
+        chars.next_back();
+        return chars.as_str();
+    }
+    literal
 }
 
 /// `variant` with the keywords of `base` that constrain, properties and required ones
@@ -799,6 +905,38 @@ mod tests {
                 found[0].starts_with("note: `minLength`, which the check can't compare"),
                 "{found:?}"
             );
+        }
+    }
+
+    // Catches a `oneOf` read as `anyOf`: a value matching an old variant and a new one
+    // matches two, and so no longer validates.
+    #[test]
+    fn a_one_of_variant_overlapping_another_fails_for_every_reader() {
+        let old = json!({
+            "oneOf": [
+                { "type": "string", "enum": ["red", "green"] },
+                { "type": "string", "pattern": "^#[0-9a-f]{6}$" },
+                { "type": "integer", "minimum": 0, "maximum": 255 }
+            ]
+        });
+        let red = edited(old.clone(), |s| {
+            let variant = json!({ "type": "string", "const": "red" });
+            s["oneOf"].as_array_mut().unwrap().push(variant);
+        });
+        let hex = edited(old.clone(), |s| {
+            let variant = json!({ "type": "string", "pattern": "^#" });
+            s["oneOf"].as_array_mut().unwrap().push(variant);
+        });
+        assert_eq!(changes(&old, &old, ReadBy::Kipple), Vec::<String>::new());
+        for (new, read_by) in [
+            (&red, ReadBy::Kipple),
+            (&hex, ReadBy::Kipple),
+            (&red, ReadBy::Others),
+        ] {
+            let found = changes(&old, new, read_by);
+
+            assert_eq!(found.len(), 1, "{found:?}");
+            assert!(found[0].contains("may overlap"), "{found:?}");
         }
     }
 
