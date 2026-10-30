@@ -38,8 +38,10 @@ pub struct Reconciled {
 }
 
 /// Looks at each pending item through `ports` and records it as indeterminate in
-/// `journal`, with what was found. Stops before the next item once `cancel` is set: the
-/// rest stay pending for the next start.
+/// `journal`, with what was found.
+///
+/// Stops once `cancel` is set, recording nothing for the item it was looking at: that
+/// one and the rest stay pending for the next start.
 ///
 /// # Errors
 /// When the journal can't record an outcome: the items not recorded stay pending.
@@ -58,6 +60,9 @@ pub fn reconcile(
             || Found::Unreadable(ApplyError::new(ErrorCode::Journal)),
             |entry| find(entry, intent, ports, cancel),
         );
+        if matches!(&found, Found::Unreadable(error) if error.code == ErrorCode::Cancelled) {
+            break;
+        }
         let outcome = ItemOutcome::Indeterminate(found);
         journal.outcome(intent.item, &outcome)?;
         reconciled.push(Reconciled {
