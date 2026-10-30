@@ -197,14 +197,22 @@ impl Log for Failing {
 
 /// Catches a record a full disk or a failed sync left half-written (pinned 8): the
 /// append fails, and the journal is cut back to the sound records, the torn tail it was
-/// asked to write over gone too.
+/// asked to write over gone too. Without a torn tail, the sync that fails is the one
+/// after the record was written, which must cut it off again.
 #[test]
 fn a_failed_append_leaves_only_the_sound_records() {
     let temp = tempfile::TempDir::new().unwrap();
     let path = temp.path().join(JOURNAL);
     let sound = b"{\"one\":1}\n";
-    for fault in [Fault::Full(0), Fault::Full(5), Fault::Sync] {
-        fs::write(&path, [&sound[..], b"{\"torn"].concat()).unwrap();
+    let torn = [&sound[..], b"{\"torn"].concat();
+    let cases: [(&[u8], Fault); 4] = [
+        (&torn, Fault::Full(0)),
+        (&torn, Fault::Full(5)),
+        (&torn, Fault::Sync),
+        (sound, Fault::Sync),
+    ];
+    for (before, fault) in cases {
+        fs::write(&path, before).unwrap();
         let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
         let mut journal = Failing { file, fault };
 
