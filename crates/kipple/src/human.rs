@@ -1,6 +1,7 @@
 //! Text for people: every word the CLI's human output and the home screen show for a
 //! fact kipple established, so the two never word one fact apart. Frontends lay these
-//! out, fit and colour them (`docs/05-architecture.md` §4).
+//! out, fit and colour them; `cargo xtask check-arch` fails when one words a core enum
+//! that this module words (`docs/05-architecture.md` §4).
 
 use std::path::{MAIN_SEPARATOR, Path};
 

@@ -70,6 +70,7 @@ Limits are a smell detector, not a target. Split code by responsibility, never j
 - any kipple crate that core depends on
 - `kipple-adapters` and `kipple-platform` depending on each other
 - `#[cfg(target_os` outside `kipple-platform`
+- a module of the binary other than `human` wording a core enum that `human` words, or one worded in two frontend modules ([05-architecture.md](05-architecture.md) §4)
 
 These are cheap and deterministic, and they protect the boundaries in [05-architecture.md](05-architecture.md). We add no custom "smell score".
 
