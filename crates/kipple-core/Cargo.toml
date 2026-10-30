@@ -9,8 +9,9 @@ repository.workspace = true
 publish.workspace = true
 
 [features]
-# `DeleteOp::for_platform_tests`, for the platform's native executor tests. Only ever a
-# dev-dependency feature: `cargo xtask check-arch` fails on any other use.
+# `DeleteOp::for_platform_tests` and `TrashOp::for_platform_tests`, for the platform's
+# native executor and trash tests. Only ever a dev-dependency feature: `cargo xtask
+# check-arch` fails on any other use.
 platform-tests = []
 
 [dependencies]

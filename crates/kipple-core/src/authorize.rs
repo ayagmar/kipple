@@ -136,6 +136,23 @@ impl TrashOp {
     pub const fn target(&self) -> &Authorized {
         &self.0
     }
+
+    /// A trash move of `tree` at `anchor`, with what `marks` authorize, made without a
+    /// plan, a review or revalidation, and without checking the marks are whole: the
+    /// platform's native tests must show its backend refuses a move `admit` would never
+    /// make. Only under the `platform-tests` feature, as
+    /// [`DeleteOp::for_platform_tests`].
+    #[cfg(feature = "platform-tests")]
+    #[must_use]
+    pub fn for_platform_tests(anchor: Anchor, tree: FrozenTree, marks: Marks) -> Self {
+        Self(Authorized {
+            item: ItemId(0),
+            anchor,
+            digest: tree.digest_with(&marks),
+            tree: Arc::new(tree),
+            marks,
+        })
+    }
 }
 
 /// An operation revalidation authorized.
