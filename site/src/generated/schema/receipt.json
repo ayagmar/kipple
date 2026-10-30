@@ -4,6 +4,13 @@
   "description": "What a run did, item by item.",
   "type": "object",
   "properties": {
+    "dropped": {
+      "description": "For `apply FILE`, the file's items left out of the fresh plan, in file order;\nempty for `clean`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DroppedOut"
+      }
+    },
     "ending": {
       "description": "How the command ended.",
       "$ref": "#/$defs/EndingOut"
@@ -20,6 +27,13 @@
       "type": "array",
       "items": {
         "$ref": "#/$defs/ReceiptItemOut"
+      }
+    },
+    "refused": {
+      "description": "For `clean`, the selected findings planning refused; empty for `apply FILE`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RefusedOut"
       }
     },
     "run": {
@@ -43,6 +57,8 @@
     "ending",
     "exit",
     "items",
+    "dropped",
+    "refused",
     "totals"
   ],
   "$defs": {
@@ -122,6 +138,142 @@
         "overlap",
         "method",
         "scope"
+      ]
+    },
+    "DroppedOut": {
+      "description": "An item of a plan file left out of the fresh plan.",
+      "type": "object",
+      "properties": {
+        "index": {
+          "description": "Its place in the file, from 0.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "path": {
+          "description": "Where the file says it is.",
+          "$ref": "#/$defs/TextOut"
+        },
+        "why": {
+          "description": "Why it was left out.",
+          "$ref": "#/$defs/DroppedWhyOut"
+        }
+      },
+      "required": [
+        "index",
+        "path",
+        "why"
+      ]
+    },
+    "DroppedWhyOut": {
+      "description": "Why an item of a plan file was left out.",
+      "oneOf": [
+        {
+          "description": "The fresh scan doesn't find it there by its rule.",
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string",
+              "const": "not-found"
+            }
+          },
+          "required": [
+            "reason"
+          ]
+        },
+        {
+          "description": "It is below another root now, or its root has another identity.",
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string",
+              "const": "root-changed"
+            }
+          },
+          "required": [
+            "reason"
+          ]
+        },
+        {
+          "description": "The file removes it by a method the current config doesn't choose.",
+          "type": "object",
+          "properties": {
+            "file": {
+              "description": "The file's method.",
+              "$ref": "#/$defs/Method"
+            },
+            "now": {
+              "description": "The current config's.",
+              "$ref": "#/$defs/Method"
+            },
+            "reason": {
+              "type": "string",
+              "const": "method-widened"
+            }
+          },
+          "required": [
+            "reason",
+            "file",
+            "now"
+          ]
+        },
+        {
+          "description": "The file names its rule with two methods.",
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string",
+              "const": "methods-differ"
+            }
+          },
+          "required": [
+            "reason"
+          ]
+        },
+        {
+          "description": "Planning it now refused it.",
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string",
+              "const": "refused"
+            },
+            "skip": {
+              "description": "Why.",
+              "$ref": "#/$defs/SkipOut"
+            }
+          },
+          "required": [
+            "reason",
+            "skip"
+          ]
+        },
+        {
+          "description": "Its fresh tree and the file's share no entry to remove.",
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string",
+              "const": "nothing-in-common"
+            }
+          },
+          "required": [
+            "reason"
+          ]
+        },
+        {
+          "description": "Another item of the file is the same item now.",
+          "type": "object",
+          "properties": {
+            "reason": {
+              "type": "string",
+              "const": "duplicate"
+            }
+          },
+          "required": [
+            "reason"
+          ]
+        }
       ]
     },
     "EffectOut": {
@@ -765,6 +917,24 @@
         "path",
         "method",
         "outcome"
+      ]
+    },
+    "RefusedOut": {
+      "description": "A selected finding `clean` didn't plan.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "Its path, as the scan reported it.",
+          "$ref": "#/$defs/TextOut"
+        },
+        "skip": {
+          "description": "Why it wasn't planned.",
+          "$ref": "#/$defs/SkipOut"
+        }
+      },
+      "required": [
+        "path",
+        "skip"
       ]
     },
     "RemovedOut": {

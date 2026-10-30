@@ -12,6 +12,7 @@
 //! holds Safe items only until the TUI's review (M3c).
 
 use std::fmt;
+use std::path::PathBuf;
 
 use crate::apply::{
     ApplyPorts, ApplyRequest, ItemEvent, ItemSink, Reconciled, Recorders, apply, reconcile,
@@ -261,6 +262,38 @@ pub struct Finished {
     pub receipt: Receipt,
     /// The plan file's items left out of the fresh plan, with why; empty for `clean`.
     pub dropped: Vec<DroppedItem>,
+    /// For `clean`, the selected findings planning refused, with why; empty for
+    /// `apply FILE`, whose refusals are among `dropped`.
+    pub refused: Vec<RefusedItem>,
+}
+
+/// A selected finding `clean` didn't plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefusedItem {
+    /// Its path, as the scan reported it.
+    pub path: PathBuf,
+    /// Why it wasn't planned.
+    pub skip: Skip,
+}
+
+impl RefusedItem {
+    /// `refused`, each with its finding's path in `scan`, the scan it was planned from.
+    #[must_use]
+    pub fn list(scan: &ScanReport, refused: &[Refused]) -> Vec<Self> {
+        refused
+            .iter()
+            .filter_map(|refused| {
+                let finding = scan
+                    .findings
+                    .iter()
+                    .find(|finding| finding.id == refused.finding)?;
+                Some(Self {
+                    path: finding.path.clone(),
+                    skip: refused.skip.clone(),
+                })
+            })
+            .collect()
+    }
 }
 
 impl Finished {
@@ -270,6 +303,7 @@ impl Finished {
             run: None,
             receipt: Receipt::default(),
             dropped: Vec::new(),
+            refused: Vec::new(),
         }
     }
 }
@@ -305,13 +339,17 @@ pub fn run_clean(
     if cancel.is_cancelled() {
         return Finished::before(Ending::Cancelled);
     }
+    let refused = RefusedItem::list(request.scan, &planned.refused);
     if planned.plan.entries().is_empty() {
         let ending = if planned.refused.is_empty() {
             Ending::NothingToClean
         } else {
             Ending::NoneRan
         };
-        return Finished::before(ending);
+        return Finished {
+            refused,
+            ..Finished::before(ending)
+        };
     }
     let review = Review {
         plan: &planned.plan,
@@ -320,9 +358,15 @@ pub fn run_clean(
         dropped: &[],
     };
     let Some(authorization) = consent.authorize(&review) else {
-        return Finished::before(Ending::Declined);
+        return Finished {
+            refused,
+            ..Finished::before(Ending::Declined)
+        };
     };
-    execute(&planned.plan, authorization, session, events, cancel)
+    Finished {
+        refused,
+        ..execute(&planned.plan, authorization, session, events, cancel)
+    }
 }
 
 /// What `apply FILE` applies: a plan file, and a fresh scan of the roots the current
@@ -459,6 +503,7 @@ fn execute(
         run: Some(run),
         receipt,
         dropped: Vec::new(),
+        refused: Vec::new(),
     }
 }
 

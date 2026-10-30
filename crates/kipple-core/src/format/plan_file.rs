@@ -19,7 +19,7 @@ use crate::root::SymbolicRoot;
 use crate::rule::{Method, RuleId};
 
 /// The most bytes a plan file may take.
-pub(crate) const PLAN_LIMIT: usize = 1024 * 1024 * 1024;
+pub const PLAN_LIMIT: usize = 1024 * 1024 * 1024;
 
 /// A plan file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
