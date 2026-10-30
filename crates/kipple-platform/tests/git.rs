@@ -9,7 +9,7 @@ mod fixture;
 use std::ffi::OsString;
 use std::fs;
 
-use fixture::{Repo, freeze, host_env, query, remove, rename};
+use fixture::{Repo, freeze, host_env, paths, query, remove, rename};
 use kipple_core::{CancelToken, GitGap, TrackedQuery as _};
 use kipple_platform::{Environment, GitQuery};
 
@@ -129,22 +129,37 @@ fn a_tracked_path_that_matches_no_frozen_entry_blocks_the_item() {
     assert_eq!(entries, Err(GitGap::Unplaced));
 }
 
-/// Catches the query answering for the work tree it wasn't asked about: a nested
-/// repository's files are its own, and the outer one is never asked about them.
+/// Catches only the nearest repository asked: one made inside a directory another
+/// already tracks files in leaves them in the outer index, and they would be removed.
+/// Each repository answers for its own files, and an outer one holding the inner as a
+/// submodule tracks nothing inside it.
 #[test]
-fn a_nested_repository_answers_for_its_own_files() {
+fn every_repository_above_an_item_answers_for_its_files() {
     let outer = Repo::new();
     outer.track("README");
+    outer.track("inner/target/outer.rs");
     let inner = outer.at("inner");
-    fs::create_dir(&inner).unwrap();
     outer.git(&["-C", "inner", "init", "-q"]);
-    outer.write("inner/target/tracked.rs");
-    outer.git(&["-C", "inner", "add", "target/tracked.rs"]);
-
+    outer.write("inner/target/inner.rs");
+    outer.git(&["-C", "inner", "add", "target/inner.rs"]);
+    outer.write("inner/target/untracked.rs");
     let query = query();
-    let count = query.count(&inner, &inner.join("target"), &CancelToken::new());
+    let cancel = CancelToken::new();
+    let anchor = outer.anchor("inner/target");
+    let tree = freeze(&anchor);
 
-    assert_eq!(count, Ok(1));
+    assert_eq!(query.count(&inner, &anchor.path(), &cancel), Ok(2));
+    let ids = query.entries(&inner, &anchor, &tree, &cancel).unwrap();
+    assert_eq!(paths(&tree, &ids), ["inner.rs", "outer.rs"]);
+
+    outer.git(&["rm", "-q", "--cached", "inner/target/outer.rs"]);
+    outer.git(&[
+        "update-index",
+        "--add",
+        "--cacheinfo",
+        "160000,0123456789abcdef0123456789abcdef01234567,inner",
+    ]);
+    assert_eq!(query.count(&inner, &anchor.path(), &cancel), Ok(1));
 }
 
 /// Catches a `.git` file (a linked worktree or submodule) not followed to its git

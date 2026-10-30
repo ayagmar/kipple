@@ -1,8 +1,10 @@
 //! Asking git which entries inside an item it tracks (`docs/04-safety-model.md` §3.2,
 //! D-066).
 //!
-//! kipple's own walk finds the work tree (the directory holding `.git`); this module only
-//! asks it. git is found once on `PATH`, as `doctor` finds it, and must be 2.32 or newer.
+//! kipple's own walk finds the work tree (the directory holding `.git`); this module asks
+//! it, and every directory above it with a `.git` of its own: a repository made inside a
+//! directory another already tracks files in leaves those paths in the outer index, and
+//! only the outer repository answers for them. git is found once on `PATH`, as `doctor` finds it, and must be 2.32 or newer.
 //! Each question runs it twice through the platform runner, from the work tree, isolated
 //! from the system and global config, the XDG config, hooks, the pager, the fsmonitor and
 //! optional locks: `rev-parse --show-toplevel`, which must name the same directory by file
@@ -25,6 +27,8 @@
 mod command;
 mod place;
 
+use std::fs;
+use std::io;
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -34,6 +38,7 @@ use kipple_core::{
 
 use crate::environment::Environment;
 use crate::executor::sys::{self, Dir};
+use crate::fs_probe::exact;
 use crate::os;
 use command::{Git, Listing, Pathspec};
 use place::{Entries, Located, Place, Placer};
@@ -92,8 +97,12 @@ impl GitQuery {
 impl TrackedQuery for GitQuery {
     fn count(&self, work_tree: &Path, item: &Path, cancel: &CancelToken) -> Result<u64, GitGap> {
         let _quiet = sys::NoMaterialize::new();
-        let (located, listing) = self.ask(work_tree, item, cancel)?;
-        Ok(place_all(&located, &listing, cancel)?.tracked)
+        let mut tracked = 0;
+        for repository in enclosing(work_tree)? {
+            let (located, listing) = self.ask(repository, item, cancel)?;
+            tracked += place_all(&located, &listing, cancel)?.tracked;
+        }
+        Ok(tracked)
     }
 
     fn entries(
@@ -104,10 +113,34 @@ impl TrackedQuery for GitQuery {
         cancel: &CancelToken,
     ) -> Result<Vec<NodeId>, GitGap> {
         let _quiet = sys::NoMaterialize::new();
-        let (located, listing) = self.ask(work_tree, &anchor.path(), cancel)?;
-        let placed = place_all(&located, &listing, cancel)?;
-        Entries::of(tree, &located, &placed.on_disk)
+        let item = anchor.path();
+        let mut found = Vec::new();
+        for repository in enclosing(work_tree)? {
+            let (located, listing) = self.ask(repository, &item, cancel)?;
+            let placed = place_all(&located, &listing, cancel)?;
+            found.extend(Entries::of(tree, &located, &placed.on_disk)?);
+        }
+        found.sort_unstable();
+        found.dedup();
+        Ok(found)
     }
+}
+
+/// `nearest`, the work tree kipple's walk found, and every directory above it holding a
+/// `.git` (a file, link or directory) of its own.
+///
+/// # Errors
+/// [`GitGap::Failed`] when a directory above can't be checked for one.
+fn enclosing(nearest: &Path) -> Result<Vec<&Path>, GitGap> {
+    let mut found = vec![nearest];
+    for dir in nearest.ancestors().skip(1) {
+        match fs::symlink_metadata(exact(&dir.join(".git"))) {
+            Ok(_) => found.push(dir),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(_) => return Err(GitGap::Failed),
+        }
+    }
+    Ok(found)
 }
 
 /// Where the paths git tracks in an item are.
