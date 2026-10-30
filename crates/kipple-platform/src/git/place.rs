@@ -1,7 +1,9 @@
-//! Placing git's answer on disk. Each path is resolved handle-relative from the work tree
-//! git was asked about, one component at a time, never through a link, so the file
-//! system folds case and normalization itself; a path is then matched to a frozen entry
-//! by its file identity, never by its name.
+//! Placing git's answer on disk. git is asked about the item's path only as far as git
+//! matches each name the way the file system does; past the first name it might not, it
+//! is asked about that name's directory. Each path it returns is resolved handle-relative
+//! from the work tree, one component at a time, never through a link, so the file system
+//! folds case and normalization itself; a path is then matched to the item, and below it
+//! to a frozen entry, by its file identity, never by its name.
 
 use std::collections::HashMap;
 use std::io;
@@ -21,16 +23,24 @@ pub(super) struct Located {
     pub(super) work_tree_identity: FileIdentity,
     /// The item's components below the work tree.
     relative: Vec<Component>,
+    /// How many of them git is asked about.
+    asked: usize,
     /// What the item is.
     item: Seen,
     /// The item, open, when it is a directory.
     item_dir: Option<Dir>,
-    /// How git must match the item's path: ignoring case when a directory on the way
-    /// folds it.
+    /// How git must match the path it is asked about: ignoring case when a directory on
+    /// the way folds it.
     pub(super) matching: Matching,
 }
 
 impl Located {
+    /// The path git is asked about: the item's, or the nearest directory above it whose
+    /// every name git matches as the file system does. Empty for the whole work tree.
+    pub(super) fn asked(&self) -> &[Component] {
+        self.relative.get(..self.asked).unwrap_or_default()
+    }
+
     /// Which file the item is.
     pub(super) const fn identity(&self) -> FileIdentity {
         self.item.snapshot.identity
@@ -38,8 +48,8 @@ impl Located {
 }
 
 /// Opens `work_tree`, a path without links, and walks `relative` from it without following
-/// one, noting whether any directory on the way folds the case of the name looked up in
-/// it.
+/// one, noting how much of it git can be asked about and whether any directory on that
+/// part folds the case of the name looked up in it.
 ///
 /// # Errors
 /// [`GitGap::Failed`] when the work tree can't be opened, and
@@ -51,18 +61,17 @@ pub(super) fn locate(work_tree: &Path, relative: Vec<Component>) -> Result<Locat
         return Err(GitGap::Failed);
     }
     let (last, way) = relative.split_last().ok_or(GitGap::NestedRepository)?;
-    let mut folds = false;
+    let mut question = Question::default();
     let mut below: Option<Dir> = None;
     for component in way {
         let holder = below.as_ref().unwrap_or(&root);
         let (dir, seen) = open_dir(holder, component).map_err(|_| GitGap::OtherWorkTree)?;
-        folds |= folds_case(holder, component, &seen)?;
+        question.add(holder, component, &seen, Some(&dir))?;
         below = Some(dir);
     }
     let holder = below.as_ref().unwrap_or(&root);
     let name = sys::name(last.as_os_str()).map_err(|_| GitGap::OtherWorkTree)?;
     let item = holder.stat(&name).map_err(|_| GitGap::OtherWorkTree)?;
-    folds |= folds_case(holder, last, &item)?;
     let item_dir = if item.snapshot.kind == EntryKind::Dir {
         let (dir, seen) = open_dir(holder, last).map_err(|_| GitGap::OtherWorkTree)?;
         if seen.snapshot.identity != item.snapshot.identity {
@@ -72,19 +81,73 @@ pub(super) fn locate(work_tree: &Path, relative: Vec<Component>) -> Result<Locat
     } else {
         None
     };
+    question.add(holder, last, &item, item_dir.as_ref())?;
     drop(below);
     Ok(Located {
         work_tree: root,
         work_tree_identity: root_seen.snapshot.identity,
         relative,
+        asked: question.asked,
         item,
         item_dir,
-        matching: if folds {
+        matching: if question.folds {
             Matching::FoldCase
         } else {
             Matching::Exact
         },
     })
+}
+
+/// How much of the item's path git is asked about, and how.
+#[derive(Debug, Default)]
+struct Question {
+    /// How many names, from the work tree down.
+    asked: usize,
+    /// Whether a name was left out, and with it every one below.
+    cut: bool,
+    /// Whether a directory on the asked part folds case.
+    folds: bool,
+}
+
+impl Question {
+    /// Adds `name`, found as `seen` in `holder` and open as `opened` when a directory,
+    /// unless git can't match it as the file system does or a name above it was left out.
+    fn add(
+        &mut self,
+        holder: &Dir,
+        name: &Component,
+        seen: &Seen,
+        opened: Option<&Dir>,
+    ) -> Result<(), GitGap> {
+        if self.cut || !matched_by_git(name, opened) {
+            self.cut = true;
+            return Ok(());
+        }
+        self.asked += 1;
+        self.folds |= folds_case(holder, name, seen)?;
+        Ok(())
+    }
+}
+
+/// Whether git, matching `name` byte for byte or ignoring ASCII case, finds every name the
+/// file system takes for it. git folds neither Unicode case nor normalization, which a
+/// file system may (APFS, NTFS, Linux casefold directories), so a name with a byte past
+/// ASCII could be in the index under another spelling git wouldn't match.
+#[cfg(unix)]
+fn matched_by_git(name: &Component, _opened: Option<&Dir>) -> bool {
+    name.as_os_str().as_encoded_bytes().is_ascii()
+}
+
+/// On Windows a directory also answers to its 8.3 short name (`MYPROJ~1`), so `name` must
+/// also be the name it is stored under, but for ASCII case, read from its handle. A file's
+/// isn't read: it is asked about by its directory.
+#[cfg(windows)]
+fn matched_by_git(name: &Component, opened: Option<&Dir>) -> bool {
+    let given = name.as_os_str().as_encoded_bytes();
+    given.is_ascii()
+        && opened
+            .and_then(|dir| dir.stored_name().ok())
+            .is_some_and(|stored| stored.as_encoded_bytes().eq_ignore_ascii_case(given))
 }
 
 /// Whether `dir` finds `name`, seen as `seen`, under another ASCII case too. git folds
@@ -125,6 +188,8 @@ fn is_dir(seen: &Seen) -> bool {
 /// Where one tracked path is.
 #[derive(Debug)]
 pub(super) enum Place {
+    /// Not in the item: another path below the directory git was asked about.
+    Outside,
     /// Not on disk (a skip-worktree or sparse entry): nothing of the item is tracked by it.
     Absent,
     /// The item itself, a file.
@@ -148,6 +213,9 @@ pub(super) struct Placer<'located> {
     located: &'located Located,
     /// Other spellings of the item's path already found to reach it.
     spellings: Vec<Vec<Component>>,
+    /// The last start found to be another path. git lists paths sorted, so those below
+    /// one directory follow each other.
+    elsewhere: Option<Vec<Component>>,
     open: Vec<Opened>,
 }
 
@@ -156,6 +224,7 @@ impl<'located> Placer<'located> {
         Self {
             located,
             spellings: Vec::new(),
+            elsewhere: None,
             open: Vec::new(),
         }
     }
@@ -163,15 +232,17 @@ impl<'located> Placer<'located> {
     /// Where `record` is.
     ///
     /// # Errors
-    /// [`GitGap::Unplaced`] when its start doesn't reach the item, when it is the item
-    /// and the item is a directory (a submodule), when it is a directory, or when a
-    /// directory on its way is a link or a file.
+    /// [`GitGap::Unplaced`] when its start can't be told to be the item or not, when it
+    /// is the item and the item is a directory (a submodule), when it is a directory, or
+    /// when a directory on its way in the item is a link or a file.
     pub(super) fn place(&mut self, record: &[Component]) -> Result<Place, GitGap> {
         let located = self.located;
-        let (start, below) = record
-            .split_at_checked(located.relative.len())
-            .ok_or(GitGap::Unplaced)?;
-        self.reach_item(start)?;
+        let Some((start, below)) = record.split_at_checked(located.relative.len()) else {
+            return Ok(Place::Outside);
+        };
+        if !self.reaches_item(start)? {
+            return Ok(Place::Outside);
+        }
         let Some((last, way)) = below.split_last() else {
             return if located.item.snapshot.kind == EntryKind::Dir {
                 Err(GitGap::Unplaced)
@@ -197,28 +268,49 @@ impl<'located> Placer<'located> {
         }
     }
 
-    /// Checks that `start`, a record's first components, reaches the item: they are the
-    /// item's own, or another spelling that resolves to the same file.
-    fn reach_item(&mut self, start: &[Component]) -> Result<(), GitGap> {
+    /// Whether `start`, a record's first components, is the item: its own path, or
+    /// another spelling the file system resolves to the same file.
+    fn reaches_item(&mut self, start: &[Component]) -> Result<bool, GitGap> {
         let located = self.located;
         if start == located.relative.as_slice() || self.spellings.iter().any(|s| s == start) {
-            return Ok(());
+            return Ok(true);
         }
+        if self.elsewhere.as_deref() == Some(start) {
+            return Ok(false);
+        }
+        let reaches = self.resolves_to_item(start)?;
+        if reaches {
+            self.spellings.push(start.to_vec());
+        } else {
+            self.elsewhere = Some(start.to_vec());
+        }
+        Ok(reaches)
+    }
+
+    /// Resolves `start` from the work tree: the item when it ends on the item's file. A
+    /// path that names nothing, or passes through a file, isn't the item.
+    ///
+    /// # Errors
+    /// [`GitGap::Unplaced`] when a directory on the way is a link, a junction, a mount
+    /// point or a placeholder, which could lead anywhere, or can't be read.
+    fn resolves_to_item(&self, start: &[Component]) -> Result<bool, GitGap> {
+        let located = self.located;
         let (last, way) = start.split_last().ok_or(GitGap::Unplaced)?;
         let mut below: Option<Dir> = None;
         for component in way {
             let holder = below.as_ref().unwrap_or(&located.work_tree);
-            let (dir, _) = open_dir(holder, component).map_err(|_| GitGap::Unplaced)?;
-            below = Some(dir);
+            match step(holder, component)? {
+                Some(dir) => below = Some(dir),
+                None => return Ok(false),
+            }
         }
         let holder = below.as_ref().unwrap_or(&located.work_tree);
         let name = sys::name(last.as_os_str()).map_err(|_| GitGap::Unplaced)?;
-        let seen = holder.stat(&name).map_err(|_| GitGap::Unplaced)?;
-        if seen.snapshot.identity != located.identity() {
-            return Err(GitGap::Unplaced);
+        match holder.stat(&name) {
+            Ok(seen) => Ok(seen.snapshot.identity == located.identity()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(_) => Err(GitGap::Unplaced),
         }
-        self.spellings.push(start.to_vec());
-        Ok(())
     }
 
     /// Opens the directories `way` below `item`, keeping those already open. `false`
@@ -245,6 +337,29 @@ impl<'located> Placer<'located> {
         }
         Ok(true)
     }
+}
+
+/// The directory `name` in `holder`, opened on the way to a record's start. `None` when
+/// nothing has that name or it is a file, neither of which can hold the item.
+fn step(holder: &Dir, name: &Component) -> Result<Option<Dir>, GitGap> {
+    let os_name = sys::name(name.as_os_str()).map_err(|_| GitGap::Unplaced)?;
+    let seen = match holder.stat(&os_name) {
+        Ok(seen) => seen,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(GitGap::Unplaced),
+    };
+    if seen.form == Form::Plain && matches!(seen.snapshot.kind, EntryKind::File | EntryKind::Other)
+    {
+        return Ok(None);
+    }
+    if !is_dir(&seen) {
+        return Err(GitGap::Unplaced);
+    }
+    let (dir, opened) = open_dir(holder, name).map_err(|_| GitGap::Unplaced)?;
+    if opened.snapshot.identity != seen.snapshot.identity {
+        return Err(GitGap::Unplaced);
+    }
+    Ok(Some(dir))
 }
 
 /// The entries of a frozen tree that tracked paths are.
@@ -282,7 +397,7 @@ impl Entries {
         let mut found = Vec::new();
         for place in places {
             match place {
-                Place::Absent => {}
+                Place::Outside | Place::Absent => {}
                 Place::Item => found.push(NodeId::TOP),
                 Place::Below { parent, seen } => {
                     found.extend(below(tree, &by_identity, *parent, seen)?);
@@ -317,4 +432,40 @@ fn below(
         return Err(GitGap::Unplaced);
     }
     Ok(found)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::*;
+
+    fn components(path: &str) -> Vec<Component> {
+        path.split('/')
+            .map(|name| Component::new(name).unwrap())
+            .collect()
+    }
+
+    fn asked(dirs: &str) -> Vec<String> {
+        let temp = tempfile::TempDir::new().unwrap();
+        fs::create_dir_all(temp.path().join(dirs)).unwrap();
+        let root = crate::os::physical(temp.path()).unwrap();
+        let located = locate(&root, components(dirs)).unwrap();
+        located
+            .asked()
+            .iter()
+            .map(|name| name.as_os_str().to_str().unwrap().to_owned())
+            .collect()
+    }
+
+    /// Catches a name git can't match as the file system does put in the pathspec: a
+    /// folding volume finds `Été` under `été` while git's string match doesn't, so git
+    /// answers nothing and the item's tracked files are deleted. git is asked about the
+    /// directory above that name instead.
+    #[test]
+    fn git_is_asked_about_the_item_only_up_to_a_name_past_ascii() {
+        assert_eq!(asked("p/target"), ["p", "target"]);
+        assert_eq!(asked("p/\u{c9}t\u{e9}/target"), ["p"]);
+        assert_eq!(asked("\u{fc}ber/target"), Vec::<String>::new());
+    }
 }

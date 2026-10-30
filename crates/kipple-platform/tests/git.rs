@@ -316,6 +316,51 @@ fn a_directory_renamed_only_in_case_is_still_asked_about() {
     }
 }
 
+/// Catches a case-only rename past ASCII on a volume that folds Unicode case (APFS,
+/// NTFS): git folds only ASCII case, so asking by the new name finds nothing and the
+/// tracked file is removed. git is asked about the directory above, and the paths it
+/// holds elsewhere there are neither counted nor blocking. Where the volume tells the
+/// cases apart, the file at the new name isn't the one git tracks.
+#[test]
+fn a_directory_renamed_only_in_case_past_ascii_is_still_asked_about() {
+    let repo = Repo::new();
+    repo.track("p/\u{fc}ber/target/keep.rs");
+    repo.track("p/other/target/elsewhere.rs");
+    repo.track("p/\u{fc}berall/target/beside.rs");
+    repo.track("README");
+    rename(&repo.at("p/\u{fc}ber"), &repo.at("p/\u{dc}ber"));
+    let folds = repo.at("p/\u{fc}ber").exists();
+
+    let tracked = repo.tracked("p/\u{dc}ber/target");
+
+    if folds {
+        assert_eq!(repo.count("p/\u{dc}ber/target"), Ok(1));
+        assert_eq!(tracked, Ok(vec!["keep.rs".to_owned()]));
+    } else {
+        assert_eq!(repo.count("p/\u{dc}ber/target"), Ok(0));
+        assert_eq!(tracked, Ok(Vec::new()));
+    }
+}
+
+/// Catches an item reached by its 8.3 short name (`--root C:\\code\\MY-LON~1`): git
+/// matches only the long name the index holds, so asking by the short one finds nothing
+/// and the tracked file is removed. A volume that makes no short names has nothing to
+/// test.
+#[cfg(windows)]
+#[test]
+fn an_item_reached_by_its_short_name_is_still_asked_about() {
+    let repo = Repo::new();
+    repo.track("my-long-project/target/keep.rs");
+    let Some(short) = fixture::short_name(&repo.at("my-long-project")) else {
+        return;
+    };
+
+    let item = repo.root.join(short).join("target");
+    let count = query().count(&repo.root, &item, &CancelToken::new());
+
+    assert_eq!(count, Ok(1));
+}
+
 /// Catches a directory whose name is stored in another Unicode normalization than the
 /// index holds (macOS): the file system finds one by the other, so its tracked files are
 /// still named. Where the volume tells them apart, the renamed one isn't tracked.

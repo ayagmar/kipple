@@ -6,15 +6,21 @@
 //! Each question runs it twice through the platform runner, from the work tree, isolated
 //! from the system and global config, the XDG config, hooks, the pager, the fsmonitor and
 //! optional locks: `rev-parse --show-toplevel`, which must name the same directory by file
-//! identity, and `ls-files -z --cached --full-name` with the item's path as one literal
-//! pathspec. Where a directory on the item's path folds case, git is asked ignoring ASCII
-//! case, since its pathspecs match case-sensitively whatever the file system does.
+//! identity, and `ls-files -z --cached --full-name` with one literal pathspec: the item's
+//! path, or the nearest directory above it whose every name is ASCII (and on Windows the
+//! name it is stored under, not an 8.3 short name). git matches pathspecs as strings,
+//! folding at most ASCII case, while a file system may fold Unicode case and
+//! normalization or take a short name; asking about the item by such a name could miss
+//! every path git holds under another spelling of it. Where a directory on the asked
+//! path folds case, git is asked ignoring ASCII case.
 //!
 //! Every path git returns is resolved handle-relative from the work tree, without
-//! following a link, and must reach the item. Below it, a path that isn't on disk places
-//! nothing; one that is a directory (a submodule), lies through a link, or matches no
-//! frozen entry by identity blocks the item. Anything git can't answer in full is a
-//! [`GitGap`], which blocks it too.
+//! following a link. One that doesn't resolve to the item is another path below the
+//! asked directory and is passed over; one whose way there leads through a link can't
+//! be told apart and blocks. Below the item, a path that isn't on disk places nothing;
+//! one that is a directory (a submodule), lies through a link, or matches no frozen entry
+//! by identity blocks the item. Anything git can't answer in full is a [`GitGap`], which
+//! blocks it too.
 
 mod command;
 mod place;
@@ -73,7 +79,7 @@ impl GitQuery {
             .ok_or(GitGap::OtherWorkTree)?;
         let work_tree = os::physical(work_tree).map_err(|_| GitGap::Failed)?;
         let located = place::locate(&work_tree, relative.components().to_vec())?;
-        let pathspec = Pathspec::of(relative.components(), located.matching)?;
+        let pathspec = Pathspec::of(located.asked(), located.matching)?;
         let toplevel = git.toplevel(&work_tree, cancel)?;
         if identity(&toplevel) != Some(located.work_tree_identity) {
             return Err(GitGap::OtherWorkTree);
@@ -124,11 +130,12 @@ fn place_all(located: &Located, listing: &Listing, cancel: &CancelToken) -> Resu
         if cancel.is_cancelled() {
             return Err(GitGap::Failed);
         }
-        answer.tracked += 1;
         match placer.place(&record?)? {
+            Place::Outside => continue,
             Place::Absent => {}
             place @ (Place::Item | Place::Below { .. }) => answer.on_disk.push(place),
         }
+        answer.tracked += 1;
     }
     Ok(answer)
 }

@@ -37,8 +37,8 @@ named! {
         /// The work tree git reports isn't the directory kipple's walk found.
         OtherWorkTree = "git-other-work-tree",
         /// A path git returned exists inside the item but is no entry kipple froze, is a
-        /// directory (a submodule or a sparse directory), or doesn't resolve below the
-        /// item.
+        /// directory (a submodule or a sparse directory), or leads through a link, a
+        /// junction or a mount point, so whether it is in the item can't be told.
         Unplaced = "git-unplaced",
         /// The item's path can't be passed to git without loss (ill-formed UTF-16 on
         /// Windows).

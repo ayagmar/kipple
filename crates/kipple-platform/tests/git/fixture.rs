@@ -234,3 +234,31 @@ pub(crate) fn fake_git(repo: &Repo, version: &str, listing: &Path) -> Environmen
     fs::set_permissions(&git, fs::Permissions::from_mode(0o755)).unwrap();
     Environment::from_vars([(OsString::from("PATH"), bin.into_os_string())])
 }
+
+/// The 8.3 short name of `path`'s last component, when its volume made one.
+#[cfg(windows)]
+#[expect(
+    unsafe_code,
+    reason = "windows-sys exposes GetShortPathNameW as a raw call"
+)]
+pub(crate) fn short_name(path: &Path) -> Option<OsString> {
+    use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
+
+    use windows_sys::Win32::Storage::FileSystem::GetShortPathNameW;
+
+    let long: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+    let mut short = vec![0_u16; 32_768];
+    // SAFETY: `long` ends in a NUL and `short` is writable for its length.
+    let written = unsafe {
+        GetShortPathNameW(
+            long.as_ptr(),
+            short.as_mut_ptr(),
+            u32::try_from(short.len()).unwrap(),
+        )
+    };
+    let short = PathBuf::from(OsString::from_wide(
+        short.get(..usize::try_from(written).ok()?)?,
+    ));
+    let name = short.file_name()?.to_owned();
+    (written != 0 && Some(name.as_os_str()) != path.file_name()).then_some(name)
+}

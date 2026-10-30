@@ -95,14 +95,14 @@ impl Git {
         pathspec: &Pathspec,
         cancel: &CancelToken,
     ) -> Result<Listing, GitGap> {
-        let tail = [
+        let mut tail = vec![
             OsStr::new("ls-files"),
             OsStr::new("-z"),
             OsStr::new("--cached"),
             OsStr::new("--full-name"),
             OsStr::new("--"),
-            &pathspec.arg,
         ];
+        tail.extend(pathspec.arg.as_deref());
         let output = self.run(dir, pathspec.matching, &tail, cancel)?;
         Listing::of(output.stdout)
     }
@@ -175,17 +175,25 @@ fn isolation(matching: Matching) -> Vec<Var<'static>> {
 /// One pathspec, and how git is to match it.
 #[derive(Debug)]
 pub(super) struct Pathspec {
-    arg: OsString,
+    /// None for the whole work tree.
+    arg: Option<OsString>,
     matching: Matching,
 }
 
 impl Pathspec {
-    /// The pathspec of `path` below the work tree, joined with `/` as git writes paths.
+    /// The pathspec of `path` below the work tree, joined with `/` as git writes paths;
+    /// none when `path` is empty.
     ///
     /// # Errors
     /// [`GitGap::Unpassable`] when a component can't reach git without loss: ill-formed
     /// UTF-16 on Windows.
     pub(super) fn of(path: &[Component], matching: Matching) -> Result<Self, GitGap> {
+        if path.is_empty() {
+            return Ok(Self {
+                arg: None,
+                matching: Matching::Exact,
+            });
+        }
         let mut arg = match matching {
             Matching::Exact => Vec::new(),
             Matching::FoldCase => b":(literal,icase)".to_vec(),
@@ -197,7 +205,7 @@ impl Pathspec {
             arg.extend(passable(component.as_os_str()).ok_or(GitGap::Unpassable)?);
         }
         Ok(Self {
-            arg: os_string(&arg).ok_or(GitGap::Unpassable)?,
+            arg: Some(os_string(&arg).ok_or(GitGap::Unpassable)?),
             matching,
         })
     }
