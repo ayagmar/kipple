@@ -24,8 +24,8 @@ use kipple_core::{
 use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
 use windows_sys::Wdk::Storage::FileSystem::{
     FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT,
-    FILE_SYNCHRONOUS_IO_NONALERT, FileFsDeviceInformation, NtCreateFile,
-    NtQueryVolumeInformationFile,
+    FILE_RENAME_INFORMATION, FILE_SYNCHRONOUS_IO_NONALERT, FileFsDeviceInformation,
+    FileRenameInformation, NtCreateFile, NtQueryVolumeInformationFile, NtSetInformationFile,
 };
 use windows_sys::Wdk::System::SystemServices::{FILE_FS_DEVICE_INFORMATION, FILE_REMOTE_DEVICE};
 use windows_sys::Win32::Foundation::{
@@ -38,13 +38,12 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_BASIC_INFO, FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
     FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX, FILE_FLAG_BACKUP_SEMANTICS,
     FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_EXTD_DIR_INFO, FILE_INFO_BY_HANDLE_CLASS,
-    FILE_LIST_DIRECTORY, FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES, FILE_RENAME_INFO,
-    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_TRAVERSE,
-    FILE_WRITE_DATA, FileAttributeTagInfo, FileBasicInfo, FileDispositionInfoEx,
-    FileIdExtdDirectoryInfo, FileIdExtdDirectoryRestartInfo, FileRenameInfo, FileStandardInfo,
-    FlushFileBuffers, GetFileInformationByHandleEx, GetFinalPathNameByHandleW,
-    GetVolumeInformationByHandleW, MAXIMUM_REPARSE_DATA_BUFFER_SIZE, SYNCHRONIZE,
-    SetFileInformationByHandle, VOLUME_NAME_NONE,
+    FILE_LIST_DIRECTORY, FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_TRAVERSE, FILE_WRITE_DATA,
+    FileAttributeTagInfo, FileBasicInfo, FileDispositionInfoEx, FileIdExtdDirectoryInfo,
+    FileIdExtdDirectoryRestartInfo, FileStandardInfo, FlushFileBuffers,
+    GetFileInformationByHandleEx, GetFinalPathNameByHandleW, GetVolumeInformationByHandleW,
+    MAXIMUM_REPARSE_DATA_BUFFER_SIZE, SYNCHRONIZE, SetFileInformationByHandle, VOLUME_NAME_NONE,
 };
 use windows_sys::Win32::System::IO::{DeviceIoControl, IO_STATUS_BLOCK};
 use windows_sys::Win32::System::Ioctl::{FILE_DEVICE_NETWORK_FILE_SYSTEM, FSCTL_GET_REPARSE_POINT};
@@ -418,10 +417,11 @@ fn dispose(handle: &OwnedHandle) -> io::Result<()> {
 
 /// Renames `name` in `from` to `into` in `to`, failing if anything is at `into`: the run
 /// store's one rename. `name` is opened as itself, relative to `from`, and renamed on that
-/// handle, relative to `to`'s.
+/// handle, relative to `to`'s: `NtSetInformationFile(FileRenameInformation)`, which takes
+/// `FileName` relative to `RootDirectory`.
 #[expect(
     unsafe_code,
-    reason = "windows-sys exposes SetFileInformationByHandle as a raw call"
+    reason = "windows-sys exposes NtSetInformationFile as a raw call"
 )]
 #[expect(
     clippy::disallowed_methods,
@@ -430,11 +430,11 @@ fn dispose(handle: &OwnedHandle) -> io::Result<()> {
 pub(crate) fn no_replace(from: &Dir, name: &Name, to: &Dir, into: &Name) -> io::Result<()> {
     let handle = open_at(from, name, DELETE | SYNCHRONIZE, 0)?;
     let length = size_of_val(into.as_slice());
-    let bytes = size_of::<FILE_RENAME_INFO>() + length;
+    let bytes = size_of::<FILE_RENAME_INFORMATION>() + length;
     // `u64`s keep the buffer aligned for the struct; it is zeroed, so `ReplaceIfExists`
     // is false.
     let mut buf = vec![0_u64; bytes.div_ceil(size_of::<u64>())];
-    let rename = buf.as_mut_ptr().cast::<FILE_RENAME_INFO>();
+    let rename = buf.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
     // SAFETY: `buf` is aligned for the struct and holds it with room for `into` from its
     // `FileName` on.
     unsafe {
@@ -443,20 +443,19 @@ pub(crate) fn no_replace(from: &Dir, name: &Name, to: &Dir, into: &Name) -> io::
         let to_name = (&raw mut (*rename).FileName).cast::<u16>();
         ptr::copy_nonoverlapping(into.as_ptr(), to_name, into.len());
     }
+    let mut status = IO_STATUS_BLOCK::default();
     // SAFETY: `handle` is open with DELETE access, and `buf` holds the struct the class
     // names and its name, `bytes` long.
-    let ok = unsafe {
-        SetFileInformationByHandle(
+    let result = unsafe {
+        NtSetInformationFile(
             handle.as_raw_handle(),
-            FileRenameInfo,
+            &raw mut status,
             buf.as_ptr().cast::<c_void>(),
             u32::try_from(bytes).map_err(io::Error::other)?,
+            FileRenameInformation,
         )
     };
-    if ok == 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
+    nt(result)
 }
 
 /// An NTSTATUS as a result, its error as the Win32 error it stands for.

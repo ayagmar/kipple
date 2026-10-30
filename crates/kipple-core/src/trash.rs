@@ -211,8 +211,8 @@ pub trait TrashBackend: fmt::Debug + Send + Sync {
     /// Moves a trashed item back. Opens the original parent from its verified root
     /// without following links, checks its recorded identity, checks the trashed entry is
     /// the item, and renames it back without replacing anything (Linux
-    /// `renameat2(RENAME_NOREPLACE)`, macOS `renameatx_np(RENAME_EXCL)`, Windows
-    /// `FileRenameInfo` with `ReplaceIfExists` off, relative to the parent's handle).
+    /// `renameat2(RENAME_NOREPLACE)`, macOS `renameatx_np(RENAME_EXCL)`; Windows has no
+    /// trash backend, D-062).
     /// A missing or replaced parent, or anything at the original name, refuses: the
     /// parent is never created and nothing is overwritten.
     ///
