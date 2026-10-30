@@ -835,22 +835,22 @@ fn each_entry_counts_once() {
     );
 }
 
-/// Catches an executor touching an entry the run wasn't authorized for, which the
-/// receipt would otherwise not show while the item still ends done (04 §1): one the plan
-/// left out, one revalidation dropped, and one that isn't in the tree.
+/// Catches an executor's removal outside its authorization going unseen, or counted
+/// twice (as removed and as left): reporting removed an entry the plan left out, one
+/// revalidation dropped, or one not in the tree fails the item and counts it once.
 #[test]
-fn a_report_about_an_entry_the_run_may_not_touch_fails_the_item() {
+fn a_removal_the_run_may_not_make_fails_the_item_and_counts_once() {
     use kipple_core::{EffectSink as _, Freed};
-    let mut tree = build(Scope::Whole, &target());
-    let excluded = find(&tree, ".rustc_info.json");
-    tree.exclude(excluded);
-    let mut marks = Marks::of(&tree);
-    let dropped = find(&tree, "debug/incremental/s-1");
-    marks.drop_subtree(&tree, dropped, LeftReason::Changed);
+    let (tree, marks, excluded, dropped) = tree_with_entries_outside_the_run();
     let others: Vec<String> = (0..20).map(|i| format!("f{i:02}")).collect();
     let others: Vec<Spec<'_>> = others.iter().map(|path| spec(path, 100)).collect();
     let bigger = build(Scope::Whole, &others);
     let outside = bigger.entries().last().unwrap().id();
+    let before = {
+        let mut tally = Tally::new(&tree, &marks);
+        let run = FakeExecutor::default().run(&tree, &marks, &mut tally, &CancelToken::new());
+        effect_of(tally.finish(run)).expect("a run has an effect")
+    };
 
     let cases = [
         (excluded, Some(path(".rustc_info.json"))),
@@ -858,22 +858,69 @@ fn a_report_about_an_entry_the_run_may_not_touch_fails_the_item() {
         (outside, None),
     ];
     for (id, at) in cases {
-        for removed in [true, false] {
-            let mut tally = Tally::new(&tree, &marks);
-            let run = FakeExecutor::default().run(&tree, &marks, &mut tally, &CancelToken::new());
-            if removed {
-                tally.removed(id, Freed::Allocated(Allocated(10)));
-            } else {
-                tally.left(id, LeftReason::Busy);
-            }
-            let ItemOutcome::Failed { error, .. } = tally.finish(run) else {
-                panic!("a report about {at:?} fails the item");
-            };
-            assert_eq!(
-                (error.code, error.at),
-                (ErrorCode::Unauthorized, at.clone())
-            );
+        let mut tally = Tally::new(&tree, &marks);
+        let run = FakeExecutor::default().run(&tree, &marks, &mut tally, &CancelToken::new());
+        tally.removed(id, Freed::Allocated(Allocated(10)));
+        let ItemOutcome::Failed { error, effect } = tally.finish(run) else {
+            panic!("removing {at:?} fails the item");
+        };
+
+        assert_eq!(
+            (error.code, error.at.clone()),
+            (ErrorCode::Unauthorized, at)
+        );
+        let counted = effect.removed.names + effect.left.total() + effect.excluded;
+        let reported = before.removed.names + before.left.total() + before.excluded;
+        assert_eq!(
+            counted,
+            reported + u64::from(id == outside),
+            "{error:?} counted once"
+        );
+    }
+}
+
+/// Catches an executor that leaves a changed directory whole failing its item: reporting
+/// left an entry the run may not touch is what it does inside such a directory, and the
+/// entry was already counted.
+#[test]
+fn leaving_an_entry_outside_the_run_changes_nothing() {
+    use kipple_core::EffectSink as _;
+    let (tree, marks, excluded, dropped) = tree_with_entries_outside_the_run();
+    let outcome = |extra: Option<NodeId>| {
+        let mut tally = Tally::new(&tree, &marks);
+        let run = FakeExecutor::default().run(&tree, &marks, &mut tally, &CancelToken::new());
+        if let Some(id) = extra {
+            tally.left(id, LeftReason::Busy);
         }
+        tally.finish(run)
+    };
+
+    for id in [excluded, dropped] {
+        assert_eq!(
+            outcome(Some(id)),
+            outcome(None),
+            "leaving {id:?} changes nothing"
+        );
+    }
+}
+
+fn tree_with_entries_outside_the_run() -> (FrozenTree, Marks, NodeId, NodeId) {
+    let mut tree = build(Scope::Whole, &target());
+    let excluded = find(&tree, ".rustc_info.json");
+    tree.exclude(excluded);
+    let mut marks = Marks::of(&tree);
+    let dropped = find(&tree, "debug/incremental/s-1");
+    marks.drop_subtree(&tree, dropped, LeftReason::Changed);
+    (tree, marks, excluded, dropped)
+}
+
+fn effect_of(outcome: ItemOutcome) -> Option<kipple_core::Effect> {
+    match outcome {
+        ItemOutcome::Done(effect)
+        | ItemOutcome::Partial(effect)
+        | ItemOutcome::Cancelled(effect)
+        | ItemOutcome::Failed { effect, .. } => Some(effect),
+        ItemOutcome::Skipped(_) | ItemOutcome::Indeterminate(_) => None,
     }
 }
 

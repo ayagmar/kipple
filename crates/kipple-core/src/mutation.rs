@@ -116,7 +116,9 @@ pub enum Finish {
 }
 
 /// Where an executor reports what happened to each entry it may touch, once per entry.
-/// A report about any other entry is a fault: [`Tally`](crate::Tally) fails the item.
+///
+/// Reporting any other entry removed is a fault: [`Tally`](crate::Tally) fails the item.
+/// Reporting one left (inside a directory left whole) changes nothing.
 pub trait EffectSink {
     /// `id` was removed, freeing `freed`.
     fn removed(&mut self, id: NodeId, freed: Freed);

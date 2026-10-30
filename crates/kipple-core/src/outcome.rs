@@ -493,8 +493,9 @@ enum State {
     /// Authorized and not reported yet.
     Pending,
     /// Not authorized for this run: left out by the plan, its top, or dropped at
-    /// revalidation. A report about it is a fault.
-    Out,
+    /// revalidation, with the mark that says which. Reporting it removed is a fault;
+    /// reporting it left is what an executor does inside a directory it leaves whole.
+    Out(Mark),
     /// Reported.
     Reported,
 }
@@ -504,9 +505,11 @@ enum State {
 /// [`EffectSink`].
 ///
 /// It starts with what revalidation dropped already counted as left. Each entry counts
-/// once: a second report about it is ignored. A report about an entry the run wasn't
-/// authorized to touch, or one not in the tree, is a fault ([`ErrorCode::Unauthorized`])
-/// that fails the item, and a removal it reports still counts as removed.
+/// once: a second report about it is ignored. Reporting an entry the run wasn't
+/// authorized to touch as removed, or any report about one not in the tree, is a fault
+/// ([`ErrorCode::Unauthorized`]) that fails the item; the removal still counts as removed,
+/// and no longer as left or excluded. Reporting such an entry left changes nothing: it
+/// was already counted.
 #[derive(Debug)]
 pub struct Tally<'run> {
     tree: &'run FrozenTree,
@@ -539,15 +542,15 @@ impl<'run> Tally<'run> {
         for entry in tree.entries() {
             let state = match marks.get(entry.id()) {
                 Mark::Remove => State::Pending,
-                Mark::Dropped(reason) => {
+                mark @ Mark::Dropped(reason) => {
                     tally.count(entry.id(), reason);
-                    State::Out
+                    State::Out(mark)
                 }
-                Mark::Unauthorized(Unauthorized::Excluded) => {
+                mark @ Mark::Unauthorized(Unauthorized::Excluded) => {
                     tally.excluded += 1;
-                    State::Out
+                    State::Out(mark)
                 }
-                Mark::Unauthorized(Unauthorized::Top) => State::Out,
+                mark @ Mark::Unauthorized(Unauthorized::Top) => State::Out(mark),
             };
             tally.states.push(state);
         }
@@ -564,23 +567,49 @@ impl<'run> Tally<'run> {
     }
 
     /// What to make of a report about `id`: the first about an entry this run may touch
-    /// is taken, a second about any entry ignored, and the first about any other entry,
-    /// or one not in the tree, is a fault.
+    /// is taken, a second about any entry ignored, one about an entry outside the run
+    /// returns its mark, and one about an entry not in the tree is a fault.
     fn take(&mut self, id: NodeId) -> Report {
         let Some(state) = self.states.get_mut(id.index()) else {
             self.fault(None);
-            return Report::Unauthorized;
+            return Report::Unknown;
         };
-        let report = match *state {
-            State::Pending => Report::Taken,
-            State::Reported => return Report::Again,
-            State::Out => Report::Unauthorized,
-        };
-        *state = State::Reported;
-        if report == Report::Unauthorized {
-            self.fault(self.tree.entry(id).map(|entry| entry.path()));
+        match *state {
+            State::Pending => {
+                *state = State::Reported;
+                Report::Taken
+            }
+            State::Reported => Report::Again,
+            State::Out(mark) => Report::Out(mark),
         }
-        report
+    }
+
+    /// Takes back one entry counted as left for `reason`.
+    fn uncount(&mut self, id: NodeId, reason: LeftReason) {
+        let Some(counted) = self.left.get_mut(&reason) else {
+            return;
+        };
+        counted.count = counted.count.saturating_sub(1);
+        counted.sample.remove(&id);
+        if counted.count == 0 {
+            self.left.remove(&reason);
+        }
+    }
+
+    /// Takes back what [`Tally::new`] counted for an entry outside the run that was
+    /// reported removed after all, so it counts once, as removed, and faults the item.
+    fn removed_outside(&mut self, id: NodeId, mark: Mark) {
+        match mark {
+            Mark::Dropped(reason) => self.uncount(id, reason),
+            Mark::Unauthorized(Unauthorized::Excluded) => {
+                self.excluded = self.excluded.saturating_sub(1);
+            }
+            Mark::Remove | Mark::Unauthorized(Unauthorized::Top) => {}
+        }
+        if let Some(state) = self.states.get_mut(id.index()) {
+            *state = State::Reported;
+        }
+        self.fault(self.tree.entry(id).map(|entry| entry.path()));
     }
 
     /// Records the first report about an entry the run wasn't authorized to touch.
@@ -668,21 +697,28 @@ enum Report {
     Taken,
     /// A second about one.
     Again,
-    /// About an entry the run wasn't authorized to touch.
-    Unauthorized,
+    /// About an entry the run wasn't authorized to touch, with its mark.
+    Out(Mark),
+    /// About an entry that isn't in the tree.
+    Unknown,
 }
 
 impl EffectSink for Tally<'_> {
     fn removed(&mut self, id: NodeId, freed: Freed) {
         match self.take(id) {
-            Report::Taken | Report::Unauthorized => self.removed.record(freed),
+            Report::Taken | Report::Unknown => self.removed.record(freed),
+            Report::Out(mark) => {
+                self.removed_outside(id, mark);
+                self.removed.record(freed);
+            }
             Report::Again => {}
         }
     }
 
     fn left(&mut self, id: NodeId, reason: LeftReason) {
-        if self.take(id) == Report::Taken {
-            self.count(id, reason);
+        match self.take(id) {
+            Report::Taken => self.count(id, reason),
+            Report::Again | Report::Out(_) | Report::Unknown => {}
         }
     }
 }
