@@ -469,7 +469,14 @@ fn prepare(
     events: &mut dyn EventSink,
     cancel: &CancelToken,
 ) -> Result<Locked, Ending> {
-    let lock = session.store.lock(cancel).map_err(Ending::Refused)?;
+    let lock = session.store.lock(cancel).map_err(|refusal| {
+        // A cancel ends the wait for another's lock: the command was cancelled.
+        if refusal == StoreRefusal::Busy && cancel.is_cancelled() {
+            Ending::Cancelled
+        } else {
+            Ending::Refused(refusal)
+        }
+    })?;
     let runs = session
         .store
         .runs()

@@ -174,7 +174,8 @@ pub trait RunStore: fmt::Debug + Send + Sync {
     /// file system.
     ///
     /// # Errors
-    /// [`StoreRefusal::Busy`] when another holds it longer, another refusal when the lock
+    /// [`StoreRefusal::Busy`] when another holds it longer, or when `cancel` ended the
+    /// wait (the caller ends the command as cancelled); another refusal when the lock
     /// can't be taken at all or the store can't be used.
     fn lock(&self, cancel: &CancelToken) -> Result<Locked, StoreRefusal>;
 

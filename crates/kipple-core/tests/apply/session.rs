@@ -428,6 +428,20 @@ fn a_cancel_before_the_run_exits_130() {
     assert_eq!(machine.world.state().ran, Vec::new());
 }
 
+/// Catches a cancel during the wait for another's lock reported as a busy store, exit 1
+/// (pinned 17): it is a cancel, exit 130, and nothing runs.
+#[test]
+fn a_cancel_while_waiting_for_the_lock_exits_130() {
+    let machine = Machine::new(Method::Delete);
+    machine.world.state().busy = true;
+    let cancel = CancelToken::new();
+    cancel.cancel();
+    let finished = machine.clean(Consent::Yes, &mut Events::default(), &cancel);
+    assert_eq!(finished.ending, Ending::Cancelled);
+    assert_eq!(finished.ending.code(), 130);
+    assert_eq!(machine.world.state().ran, Vec::new());
+}
+
 /// Catches apply trusting the scan's activity or git's answer from planning (pinned 3,
 /// 4, 15): a program using the item now, or git tracking more of it now, only takes
 /// away; git failing now skips it.
