@@ -161,6 +161,24 @@ fn a_shown_theme_saved_as_your_own_is_the_same_theme_and_is_listed() {
     );
 }
 
+// Catches a theme name as wide as the name column running into what `theme list` says
+// of it.
+#[test]
+fn a_long_theme_name_is_set_apart_in_the_list() {
+    let demo = Demo::new();
+    let env = demo.env(&[]);
+    demo.theme("solarized-autumn", "version = 1\nextends = \"kipple\"\n");
+
+    let (code, list, _) = kipple(&env, false, &["theme", "list"]);
+
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert!(
+        list.lines()
+            .any(|line| line.starts_with("solarized-autumn ")),
+        "{list}"
+    );
+}
+
 // Catches a broken theme reaching data output: `scan --json` reads no theme, so its
 // output and exit code are the same as with no theme at all, even in colour.
 #[test]

@@ -89,7 +89,7 @@ pub(crate) fn write_list(out: &mut dyn Write, catalog: &Catalog) -> io::Result<(
             (Ok(_), Origin::Builtin) if entry.name == DEFAULT => "built-in, the default".to_owned(),
             (Ok(_), origin) => origin.to_string(),
         };
-        writeln!(out, "{:<16}{}", escaped(&entry.name), escaped(&about))?;
+        writeln!(out, "{:<15} {}", escaped(&entry.name), escaped(&about))?;
     }
     out.flush()
 }
