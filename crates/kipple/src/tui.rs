@@ -21,8 +21,8 @@ use std::thread::{self, Scope, ScopedJoinHandle};
 use std::time::{Duration, Instant};
 
 use kipple_core::{
-    CancelToken, Engine, EventRx, ScanOutcome, ScanReport, ScanRequest, Selector, SymbolicRoot,
-    event_channel, suggest,
+    CancelToken, Engine, EventChannel, EventRx, ScanOutcome, ScanReport, ScanRequest, Selector,
+    SymbolicRoot, event_channel, suggest,
 };
 use kipple_platform::{
     Environment, ProjectSearch, SearchLimits, SystemClock, kipple_dirs, search_projects,
@@ -38,7 +38,7 @@ use self::onboarding::{Onboarding, Outcome};
 use self::settings::Found;
 use self::themes::Picker;
 use crate::config::{self, Edit, Loaded, Settings};
-use crate::setup::Builtin;
+use crate::setup::{Builtin, BuiltinRule};
 use crate::theme::{self, Colours, Glyphs, Look, ThemeError};
 
 /// How long the loop waits for a key while the scan streams: one frame at 60 Hz.
@@ -129,9 +129,9 @@ where
 
 /// What a session runs with: the machine, the settings and the appearance, and whether
 /// the first run's questions come before the home screen.
-struct Start<'a> {
-    env: &'a Environment,
-    settings: &'a Settings,
+struct Start<'env> {
+    env: &'env Environment,
+    settings: &'env Settings,
     appearance: Appearance,
     first: bool,
 }
@@ -225,8 +225,8 @@ impl Drop for Restore {
 }
 
 /// The config file the home screen writes, and the settings it last gave.
-struct Store<'e> {
-    env: &'e Environment,
+struct Store<'env> {
+    env: &'env Environment,
     catalog: config::Catalog,
     settings: Settings,
 }
@@ -267,10 +267,10 @@ struct Scan<'scope> {
 }
 
 /// One home screen session: the state, the scan feeding it and the terminal drawing it.
-struct Screen<'s, 'scope, 'env, B: Backend> {
-    terminal: &'s mut Terminal<B>,
+struct Screen<'ui, 'scope, 'env, B: Backend> {
+    terminal: &'ui mut Terminal<B>,
     glyphs: Glyphs,
-    app: &'s mut App,
+    app: &'ui mut App,
     /// The first run's questions, until they are answered.
     onboarding: Option<Onboarding>,
     store: Store<'env>,
@@ -304,7 +304,10 @@ where
             exclude: settings.policy.exclude.clone(),
         };
         let cancel = CancelToken::new();
-        let (events, received) = event_channel(STREAM_CAPACITY, &cancel);
+        let EventChannel {
+            tx: events,
+            rx: received,
+        } = event_channel(STREAM_CAPACITY, &cancel);
         let engine = self.engine;
         let token = cancel.clone();
         let report = self
@@ -514,7 +517,7 @@ fn base64(bytes: &[u8]) -> String {
 fn markers(builtin: &Builtin) -> Vec<OsString> {
     let mut markers: Vec<OsString> = builtin
         .rules()
-        .filter_map(|(_, rule)| match &rule.selector {
+        .filter_map(|BuiltinRule { rule, .. }| match &rule.selector {
             Selector::ProjectArtifact { markers, .. } => Some(markers),
             Selector::DirsMatching { .. }
             | Selector::FilesMatching { .. }

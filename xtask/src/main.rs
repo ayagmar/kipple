@@ -6,8 +6,11 @@ mod bench_tree;
 mod bench_tui;
 mod check;
 mod cmd;
+mod compat;
 mod demo;
+mod docs_cmds;
 mod gen_docs;
+mod style;
 
 // The demo tree, built from the same fixtures as the integration tests.
 #[path = "../../crates/kipple-adapters/tests/fixtures/node/bun_v1_4_2.rs"]
@@ -62,6 +65,16 @@ enum Task {
     Fix,
     /// Fail on crate dependencies or OS-specific code that break the architecture.
     CheckArch,
+    /// Fail when a published JSON schema breaks its baseline, the last released one.
+    CheckCompat {
+        /// Make each compatible schema, or one whose version has no baseline, the baseline.
+        #[arg(long)]
+        refresh: bool,
+    },
+    /// Fail on a `kipple` command in a shell block of the docs that the CLI doesn't accept.
+    CheckDocs,
+    /// Fail on the style rules clippy can't check, such as a type's one-letter lifetime.
+    CheckStyle,
     /// Build a benchmark reference tree. The references are 100000 and 1000000 entries.
     BenchTree {
         /// Where to build it. Must be missing or empty.
@@ -104,15 +117,36 @@ fn main() -> Result<()> {
         Task::Check { skip } => check::run(root, &skip),
         Task::Fix => check::fix(root),
         Task::CheckArch => arch::run(root),
+        Task::CheckCompat { refresh } => {
+            let baselines = if refresh {
+                compat::Baselines::Refresh
+            } else {
+                compat::Baselines::Keep
+            };
+            compat::run(root, baselines)
+        }
+        Task::CheckDocs => docs_cmds::run(root),
+        Task::CheckStyle => style::run(root),
         Task::BenchTree { dir, entries } => bench_tree::run(&dir, entries),
         Task::BenchTui { tree } => bench_tui::run(root, tree.as_deref()),
         Task::TestNative => {
-            let disposable =
-                std::env::var_os("KIPPLE_TEST_DISPOSABLE_HOST").is_some_and(|v| v == "1");
-            check::test_native(root, disposable)
+            let host = if std::env::var_os("KIPPLE_TEST_DISPOSABLE_HOST").is_some_and(|v| v == "1")
+            {
+                check::Host::Disposable
+            } else {
+                check::Host::Precious
+            };
+            check::test_native(root, host)
         }
         Task::DemoHome { dir } => demo::build(&dir),
         Task::VerifyDemo => demo::verify(root),
-        Task::GenDocs { check } => gen_docs::run(root, check),
+        Task::GenDocs { check } => {
+            let committed = if check {
+                gen_docs::Committed::Check
+            } else {
+                gen_docs::Committed::Rewrite
+            };
+            gen_docs::run(root, committed)
+        }
     }
 }

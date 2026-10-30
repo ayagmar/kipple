@@ -1,15 +1,15 @@
 //! The first run's steps, each in the same frame: a title line, the question and its
 //! choices, and the keys.
 
-use kipple_core::{Level, Method, ScanOutcome};
+use kipple_core::{Level, Method};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin};
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 
-use super::keybar::joined;
+use super::keybar::{Hint, joined};
 use super::settings::{describe, search_notes};
-use super::{Look, level_about, title_case};
+use super::{Look, title_case};
 use crate::human::{self, bytes, escaped, homed};
 use crate::theme::Role;
 use crate::tui::app::{App, Progress};
@@ -50,11 +50,8 @@ pub(crate) fn render(onboarding: &Onboarding, app: &App, look: Look<'_>, frame: 
 
 fn head(onboarding: &Onboarding, app: &App, look: Look<'_>) -> Line<'static> {
     let state = match app.progress {
-        Progress::Scanning => look.glyphs.ellipsis("scanning"),
-        Progress::Done { outcome, .. } if outcome != ScanOutcome::Completed => {
-            "scan stopped early".to_owned()
-        }
-        Progress::Done { .. } => "scan finished".to_owned(),
+        Progress::Scanning => look.glyphs.ellipsis(human::SCANNING),
+        Progress::Done { outcome, .. } => human::outcome(outcome).to_owned(),
     };
     let step = format!("step {} of 4", onboarding.step.number());
     super::frame::plain(look, &["Welcome to kipple".to_owned(), step, state])
@@ -68,8 +65,10 @@ fn question(text: &str, about: &str, look: Look<'_>) -> Vec<Line<'static>> {
     ]
 }
 
-/// A choice line: a marker, and the cursor's style when the cursor is on it.
-fn choice(look: Look<'_>, focused: bool, text: &str) -> Line<'static> {
+/// The line of the choice `this`: a marker, and the cursor's style when `cursor` is on
+/// it.
+fn choice<T: PartialEq + Copy>(look: Look<'_>, this: T, cursor: T, text: &str) -> Line<'static> {
+    let focused = this == cursor;
     let line = Line::from(format!("{}{text}", if focused { "> " } else { "  " }));
     if focused { look.cursor(line) } else { line }
 }
@@ -83,13 +82,13 @@ fn level_lines(onboarding: &Onboarding, app: &App, look: Look<'_>) -> Vec<Line<'
     let findings = app.rows.iter().map(|row| &row.finding);
     for &level in Level::ALL {
         let totals = level_totals(findings.clone(), &app.policy, level);
-        let mut name = title_case(level.name());
+        let mut name = human::level(level).to_owned();
         if level == Level::Balanced {
             name.push_str(" (the default)");
         }
-        lines.push(choice(look, level == onboarding.level, &name));
+        lines.push(choice(look, level, onboarding.level, &name));
         lines.push(Line::styled(
-            format!("    {}", level_about(level)),
+            format!("    {}", human::level_about(level)),
             look.style(Role::Muted),
         ));
         lines.push(Line::from(format!(
@@ -124,7 +123,8 @@ fn root_lines(onboarding: &Onboarding, app: &App, look: Look<'_>) -> Vec<Line<'s
         let path = escaped(&homed(&root.path, app.home.as_deref()));
         lines.push(choice(
             look,
-            index == onboarding.root_cursor,
+            index,
+            onboarding.root_cursor,
             &format!("{mark} {path}"),
         ));
     }
@@ -132,7 +132,9 @@ fn root_lines(onboarding: &Onboarding, app: &App, look: Look<'_>) -> Vec<Line<'s
         || "+ add another".to_owned(),
         |typed| format!("+ {}_", escaped(typed)),
     );
-    lines.push(choice(look, onboarding.on_add(), &add));
+    // "Add another" comes after the roots.
+    let add_at = onboarding.roots.len();
+    lines.push(choice(look, add_at, onboarding.root_cursor, &add));
     suggestion_lines(onboarding, app, look, &mut lines);
     if let Some(notice) = &onboarding.notice {
         lines.push(Line::from(""));
@@ -159,7 +161,7 @@ fn suggestion_lines(onboarding: &Onboarding, app: &App, look: Look<'_>, lines: &
             "{mark} {}",
             describe(&offer.suggestion, app.home.as_deref(), look)
         );
-        lines.push(choice(look, onboarding.root_cursor == first + index, &text));
+        lines.push(choice(look, first + index, onboarding.root_cursor, &text));
     }
     lines.extend(
         notes
@@ -181,7 +183,8 @@ fn method_lines(onboarding: &Onboarding, look: Look<'_>) -> Vec<Line<'static>> {
         };
         lines.push(choice(
             look,
-            method == onboarding.method,
+            method,
+            onboarding.method,
             &format!("{:<8}{about}", title_case(method.name())),
         ));
     }
@@ -225,7 +228,8 @@ fn keys(onboarding: &Onboarding, look: Look<'_>) -> Paragraph<'static> {
             .iter()
             .filter_map(|&action| onboarding.keymap.first(Mode::Onboarding, action))
             .collect();
-        (!keys.is_empty()).then(|| (look.glyphs.keys(&keys.join(between)), what.to_owned()))
+        (!keys.is_empty())
+            .then(|| Hint::new(look.glyphs.keys(&keys.join(between)), what.to_owned()))
     };
     let choose = match onboarding.step {
         Step::Tips => "finish",
@@ -240,9 +244,9 @@ fn keys(onboarding: &Onboarding, look: Look<'_>) -> Paragraph<'static> {
     }
     hints.push(hint(&[Action::Skip], "", "skip"));
     if onboarding.step != Step::Level {
-        hints.push(Some(("esc".to_owned(), "back".to_owned())));
+        hints.push(Some(Hint::new("esc".to_owned(), "back".to_owned())));
     }
     hints.push(hint(&[Action::Quit], "", "quit, saving nothing"));
-    let hints: Vec<(String, String)> = hints.into_iter().flatten().collect();
+    let hints: Vec<Hint> = hints.into_iter().flatten().collect();
     Paragraph::new(joined(look, &hints, look.glyphs.dot()))
 }

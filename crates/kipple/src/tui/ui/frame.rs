@@ -9,8 +9,8 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use super::{Look, cols, lens_title, title_case};
-use crate::human::{escaped, homed};
+use super::{Look, cols};
+use crate::human::{self, escaped, homed};
 use crate::theme::Role;
 use crate::tui::app::{App, Mode, Progress};
 
@@ -51,14 +51,23 @@ pub(super) fn vertical(look: Look<'_>, x: u16, top: u16, bottom: u16, buffer: &m
         }
     }
     if let Some(above) = top.checked_sub(1) {
-        join(look, buffer, (x, above), true);
+        join(look, buffer, (x, above), Vertical::StartsBelow);
     }
-    join(look, buffer, (x, bottom), false);
+    join(look, buffer, (x, bottom), Vertical::EndsOn);
 }
 
-/// Joins a vertical line to the horizontal one at `at`: `below` when the vertical line
-/// starts under it, else when it ends on it.
-fn join(look: Look<'_>, buffer: &mut Buffer, at: (u16, u16), below: bool) {
+/// Where a vertical line meets a horizontal one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Vertical {
+    /// It starts under it.
+    StartsBelow,
+    /// It ends on it.
+    EndsOn,
+}
+
+/// Joins a vertical line to the horizontal one at `at`, where `vertical` says it meets it.
+fn join(look: Look<'_>, buffer: &mut Buffer, at: (u16, u16), vertical: Vertical) {
+    let below = vertical == Vertical::StartsBelow;
     let lines = look.glyphs.lines();
     let Some(cell) = buffer.cell_mut(at) else {
         return;
@@ -124,8 +133,12 @@ pub(super) fn header(app: &App, look: Look<'_>, width: u16) -> Text<'static> {
     ] {
         // Words and the scan time go to keep the filter whole; a signal goes only to
         // keep the filter's first character.
-        let least = !matches!(step, Step::Short(_) | Step::Drop(Item::State));
-        if items.width(sep.width()) + items.filter_width(look, sep.width(), least) <= width {
+        let filter = if matches!(step, Step::Short(_) | Step::Drop(Item::State)) {
+            FilterText::Whole
+        } else {
+            FilterText::Least
+        };
+        if items.width(sep.width()) + items.filter_width(look, sep.width(), filter) <= width {
             break;
         }
         items.apply(step);
@@ -175,6 +188,15 @@ enum Item {
     Filter,
 }
 
+/// How much of the filter's text the title line shows.
+#[derive(Debug, Clone, Copy)]
+enum FilterText {
+    /// All of it.
+    Whole,
+    /// Its first character and an ellipsis.
+    Least,
+}
+
 #[derive(Debug, Clone, Copy)]
 enum Step {
     Short(Item),
@@ -197,9 +219,9 @@ struct Items {
 impl Items {
     fn new(app: &App, look: Look<'_>) -> Self {
         let state = match app.progress {
-            Progress::Scanning => (look.glyphs.ellipsis("scanning"), None),
+            Progress::Scanning => (look.glyphs.ellipsis(human::SCANNING), None),
             Progress::Done { outcome, .. } if outcome != ScanOutcome::Completed => {
-                ("scan stopped early".to_owned(), None)
+                (human::outcome(outcome).to_owned(), None)
             }
             Progress::Done { elapsed, .. } => {
                 let time = format!("{}.{} s", elapsed.as_secs(), elapsed.subsec_millis() / 100);
@@ -207,11 +229,11 @@ impl Items {
             }
         };
         Self {
-            level: title_case(app.policy.level.name()),
+            level: human::level(app.policy.level).to_owned(),
             state: Some(state),
             order: app.order.title(),
             partial: (!app.gaps.is_empty()).then_some(app.gaps.len()),
-            lens: app.lens.map(|lens| format!("lens: {}", lens_title(lens))),
+            lens: app.lens.map(|lens| format!("lens: {}", human::lens(lens))),
             filter: (!app.filter.is_empty() && app.mode != Mode::Filter)
                 .then(|| escaped(&app.filter)),
             short: Vec::new(),
@@ -259,14 +281,13 @@ impl Items {
         })
     }
 
-    /// The columns the filter takes with its separator: its whole text, or its first
-    /// character and an ellipsis when `least`.
-    fn filter_width(&self, look: Look<'_>, sep: usize, least: bool) -> usize {
+    /// The columns the filter takes with its separator, showing as much of its text as
+    /// `text` says.
+    fn filter_width(&self, look: Look<'_>, sep: usize, text: FilterText) -> usize {
         self.filter.as_deref().map_or(0, |filter| {
-            let shown = if least {
-                cut(look, filter, 1)
-            } else {
-                filter.to_owned()
+            let shown = match text {
+                FilterText::Least => cut(look, filter, 1),
+                FilterText::Whole => filter.to_owned(),
             };
             sep + cols(&filter_text(&shown)).min(cols(&filter_text(filter)))
         })

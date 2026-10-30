@@ -37,18 +37,18 @@ impl Default for SearchLimits {
 
 /// What to search and what to leave out.
 #[derive(Debug, Clone, Copy)]
-pub struct ProjectSearch<'a> {
+pub struct ProjectSearch<'config> {
     /// The resolved home directory the search starts from. It is never a project itself.
-    pub home: &'a Path,
+    pub home: &'config Path,
     /// The file names that mark a project besides `.git`: the markers of the built-in
     /// `project-artifact` rules.
-    pub markers: &'a [OsString],
+    pub markers: &'config [OsString],
     /// Directories never entered, with everything inside them: every form of the existing
     /// project roots, and kipple's own directories. Compared by path and by identity, so a
     /// root given by its physical path is skipped when home is reached through a link.
-    pub skip: &'a [PathBuf],
+    pub skip: &'config [PathBuf],
     /// The config's `exclude.paths`, compared by path and by identity.
-    pub exclude: &'a [HeldPath],
+    pub exclude: &'config [HeldPath],
     /// When it stops early.
     pub limits: SearchLimits,
 }
@@ -135,8 +135,8 @@ struct Listing {
 }
 
 /// One search's settings, as each directory is read.
-struct Walk<'a> {
-    search: &'a ProjectSearch<'a>,
+struct Walk<'search> {
+    search: &'search ProjectSearch<'search>,
     /// Home's file system.
     device: Option<u64>,
     /// When the time limit runs out; `None` when it is too far to represent.

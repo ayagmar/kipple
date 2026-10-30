@@ -6,9 +6,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use kipple_core::{
-    Activity, ActivityGap, Advice, Completeness, Consequence, Evidence, Finding, IntegrationId,
-    IntegrationReport, Lens, Omission, Policy, ScanOutcome, ScanReport, Seen, SpaceEstimate,
-    SymbolicRoot, UnresolvedRoot, Verdict,
+    Activity, ActivityGap, Advice, Bucket, Completeness, Consequence, Evidence, Finding,
+    IntegrationId, IntegrationReport, Lens, Omission, Policy, ScanOutcome, ScanReport, Seen,
+    SpaceEstimate, SymbolicRoot, UnresolvedRoot, Verdict,
 };
 use kipple_platform::{PLATFORM, raw_path};
 use schemars::JsonSchema;
@@ -179,6 +179,16 @@ impl From<Lens> for LensOut {
     }
 }
 
+impl From<LensOut> for Lens {
+    fn from(lens: LensOut) -> Self {
+        match lens {
+            LensOut::Agents => Self::Agents,
+            LensOut::Dev => Self::Dev,
+            LensOut::System => Self::System,
+        }
+    }
+}
+
 /// A bucket of the home screen (`docs/04-safety-model.md` §2a).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
@@ -189,6 +199,16 @@ pub enum BucketOut {
     Review,
     /// Blocked, unknown, report-only or advice only.
     Protected,
+}
+
+impl From<BucketOut> for Bucket {
+    fn from(bucket: BucketOut) -> Self {
+        match bucket {
+            BucketOut::Safe => Self::Safe,
+            BucketOut::Review => Self::Review,
+            BucketOut::Protected => Self::Protected,
+        }
+    }
 }
 
 /// A finding's bucket and every reason for it.
@@ -453,6 +473,15 @@ pub struct SizeOut {
     pub skipped_mounts: Option<u64>,
 }
 
+impl SizeOut {
+    /// What the item takes on disk: allocated storage where known, else its apparent
+    /// size. Every size and total kipple shows for people is this.
+    #[must_use]
+    pub(crate) fn on_disk(&self) -> u64 {
+        self.allocated.unwrap_or(self.apparent)
+    }
+}
+
 impl From<&SpaceEstimate> for SizeOut {
     fn from(size: &SpaceEstimate) -> Self {
         let (completeness, unreadable, skipped_mounts) = match size.completeness {
@@ -641,19 +670,29 @@ pub enum EventBody {
     },
 }
 
-/// Every published schema, by the file name the docs give it.
+/// A published schema, by the file name the docs give it.
+#[derive(Debug, Clone)]
+pub struct NamedSchema {
+    /// The file name, without `.json`.
+    pub name: &'static str,
+    /// The schema.
+    pub schema: schemars::Schema,
+}
+
+/// Every published schema.
 #[must_use]
-pub fn schemas() -> Vec<(&'static str, schemars::Schema)> {
+pub fn schemas() -> Vec<NamedSchema> {
+    let named = |name, schema| NamedSchema { name, schema };
     vec![
-        ("doctor", schemars::schema_for!(crate::doctor::DoctorOut)),
-        ("event", schemars::schema_for!(EventOut)),
-        ("rules", schemars::schema_for!(crate::rules::RulesOut)),
-        ("scan", schemars::schema_for!(ScanOut)),
-        (
+        named("doctor", schemars::schema_for!(crate::doctor::DoctorOut)),
+        named("event", schemars::schema_for!(EventOut)),
+        named("rules", schemars::schema_for!(crate::rules::RulesOut)),
+        named("scan", schemars::schema_for!(ScanOut)),
+        named(
             "support-matrix",
             schemars::schema_for!(crate::support::SupportMatrixOut),
         ),
-        ("theme", crate::theme::schema()),
+        named("theme", crate::theme::schema()),
     ]
 }
 

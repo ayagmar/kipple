@@ -37,17 +37,26 @@ pub enum Colours {
     On(Depth),
 }
 
+/// Where standard output goes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stdout {
+    /// A terminal.
+    Terminal,
+    /// A pipe or a file.
+    Redirected,
+}
+
 impl Colours {
     /// What `choice` says, then `NO_COLOR` (set and not empty, per no-color.org), then
-    /// whether the output is a `terminal`. The depth comes from `COLORTERM`
+    /// whether `stdout` is a terminal. The depth comes from `COLORTERM`
     /// (`truecolor` or `24bit`), else `WT_SESSION` (Windows Terminal, which always has
     /// 24-bit colour), else `TERM` (`…256color…`), else 16 colours.
     #[must_use]
-    pub fn detect(choice: ColorChoice, env: &Environment, terminal: bool) -> Self {
+    pub fn detect(choice: ColorChoice, env: &Environment, stdout: Stdout) -> Self {
         let on = match choice {
             ColorChoice::Always => true,
             ColorChoice::Never => false,
-            ColorChoice::Auto => terminal && env.get("NO_COLOR").is_none(),
+            ColorChoice::Auto => stdout == Stdout::Terminal && env.get("NO_COLOR").is_none(),
         };
         if on {
             Self::On(Depth::detect(env))
@@ -172,18 +181,18 @@ mod tests {
         let empty = env(&[("NO_COLOR", "")]);
         let on = Colours::On(Depth::Ansi16);
         let cases = [
-            (ColorChoice::Auto, &plain, true, on),
-            (ColorChoice::Auto, &plain, false, Colours::Off),
-            (ColorChoice::Auto, &no_color, true, Colours::Off),
-            (ColorChoice::Auto, &empty, true, on),
-            (ColorChoice::Always, &no_color, false, on),
-            (ColorChoice::Never, &plain, true, Colours::Off),
+            (ColorChoice::Auto, &plain, Stdout::Terminal, on),
+            (ColorChoice::Auto, &plain, Stdout::Redirected, Colours::Off),
+            (ColorChoice::Auto, &no_color, Stdout::Terminal, Colours::Off),
+            (ColorChoice::Auto, &empty, Stdout::Terminal, on),
+            (ColorChoice::Always, &no_color, Stdout::Redirected, on),
+            (ColorChoice::Never, &plain, Stdout::Terminal, Colours::Off),
         ];
-        for (choice, env, terminal, want) in cases {
+        for (choice, env, stdout, want) in cases {
             assert_eq!(
-                Colours::detect(choice, env, terminal),
+                Colours::detect(choice, env, stdout),
                 want,
-                "{choice:?} {terminal}"
+                "{choice:?} {stdout:?}"
             );
         }
     }
@@ -213,7 +222,7 @@ mod tests {
             (vec![("WT_SESSION", "")], Depth::Ansi16),
         ];
         for (vars, want) in cases {
-            let detected = Colours::detect(ColorChoice::Always, &env(&vars), true);
+            let detected = Colours::detect(ColorChoice::Always, &env(&vars), Stdout::Terminal);
             assert_eq!(detected, Colours::On(want), "{vars:?}");
         }
     }

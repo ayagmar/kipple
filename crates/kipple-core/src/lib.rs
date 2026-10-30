@@ -65,7 +65,7 @@ pub use engine::{
     Engine, EngineError, Finding, FindingId, IntegrationReport, Omission, Ports, ScanOutcome,
     ScanReport, ScanRequest,
 };
-pub use event::{EventRx, EventTx, ScanEvent, Sequenced, event_channel};
+pub use event::{EventChannel, EventRx, EventTx, ScanEvent, Sequenced, event_channel};
 pub use integration::{
     ActivityEvidence, Advice, Evidence, FindingSink, Integration, IntegrationDescriptor,
     IntegrationError, IntegrationId, IntegrationSelector, ScanContext,
@@ -80,12 +80,12 @@ pub use probe::{
     ProbeError, Sizer,
 };
 pub use process::{
-    Capabilities, EnvPath, Inventory, MountNamespace, Observer, Probed, ProcessClass,
+    Capabilities, CommandLines, EnvPath, Inventory, MountNamespace, Observer, Probed, ProcessClass,
     ProcessOutcome, ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Unread, UserId,
 };
 pub use root::{
-    LinkProblem, ResolvedRoot, RootLink, RootSource, Roots, SettingProblem, SymbolicRoot,
-    UnresolvedRoot,
+    LinkProblem, Resolution, ResolvedRoot, RootLink, RootSource, Roots, SettingProblem,
+    SymbolicRoot, UnresolvedRoot,
 };
 pub use rule::{
     Bounds, Category, FactKind, FactSpec, GENERIC_FACTS, GENERIC_SELECTORS, Lens, Method, Name,

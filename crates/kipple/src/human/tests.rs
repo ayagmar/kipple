@@ -1,6 +1,8 @@
-//! No secret on a process's command line reaches what kipple shows (`docs/04-safety-model.md`
-//! §8a): a scan over an injected process whose title holds a token and a broker URL, shown
-//! as JSON and as the detail lines that `explain` and the home screen print.
+//! What kipple shows people. No secret on a process's command line reaches it
+//! (`docs/04-safety-model.md` §8a): a scan over an injected process whose title holds a
+//! token and a broker URL, shown as JSON and as the detail lines that `explain` and the
+//! home screen print. A size written short for a narrow tree says what the full form
+//! says.
 
 use std::hash::{DefaultHasher, Hash as _, Hasher as _};
 use std::io;
@@ -10,15 +12,15 @@ use std::time::SystemTime;
 
 use kipple_core::{
     ActivityEvidence, Apparent, CancelToken, Category, Clock, Completeness, Consequence, Cost,
-    DirAccess, DirEntryMeta, Engine, EntryKind, EntryMeta, Evidence, FileIdentity, FindingSink,
-    FsProbe, Integration, IntegrationDescriptor, IntegrationError, IntegrationId, Inventory, Lens,
-    Measurement, Method, Observer, Operation, Platform, Policy, Ports, ProbeError, ProcessOutcome,
-    ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Recovery, ResolvedRoot, RootSource,
-    Roots, Rule, RuleId, RuleText, ScanContext, ScanRequest, Selector, Sizer, SpaceEstimate,
-    SymbolicRoot, event_channel,
+    DirAccess, DirEntryMeta, Engine, EntryKind, EntryMeta, EventChannel, Evidence, FileIdentity,
+    FindingSink, FsProbe, Integration, IntegrationDescriptor, IntegrationError, IntegrationId,
+    Inventory, Lens, Measurement, Method, Observer, Operation, Platform, Policy, Ports, ProbeError,
+    ProcessOutcome, ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Recovery,
+    ResolvedRoot, RootSource, Roots, Rule, RuleId, RuleText, ScanContext, ScanRequest, Selector,
+    Sizer, SpaceEstimate, SymbolicRoot, event_channel,
 };
 
-use crate::json::FindingOut;
+use crate::json::{CompletenessOut, FindingOut, SizeOut};
 
 const SECRETS: [&str; 2] = ["hunter2", "s3cret"];
 
@@ -208,7 +210,7 @@ fn a_secret_in_a_process_title_never_reaches_json_or_the_detail_lines() {
             exclude: Vec::new(),
         };
         let cancel = CancelToken::new();
-        let (tx, rx) = event_channel(1024, &cancel);
+        let EventChannel { tx, rx } = event_channel(1024, &cancel);
         let drain = std::thread::spawn(move || rx.into_iter().count());
         let report = engine.scan(&request, &tx, &cancel);
         drop(tx);
@@ -218,7 +220,11 @@ fn a_secret_in_a_process_title_never_reaches_json_or_the_detail_lines() {
 
         let json = serde_json::to_string(&FindingOut::new(finding, Lens::Dev, &policy)).unwrap();
         let lines = super::facts(finding, &policy);
-        let (_, in_use) = lines.iter().find(|(label, _)| *label == "In use").unwrap();
+        let in_use = &lines
+            .iter()
+            .find(|fact| fact.label == "In use")
+            .unwrap()
+            .text;
 
         assert!(json.contains("\"in-use\""), "{json}");
         assert!(in_use.starts_with("process 9 was started with"), "{in_use}");
@@ -227,4 +233,39 @@ fn a_secret_in_a_process_title_never_reaches_json_or_the_detail_lines() {
             assert!(!in_use.contains(secret), "{in_use}");
         }
     }
+}
+
+// Catches the short form of a size worked out apart from the full one: another unit,
+// rounding up instead of down, or a lower bound that no longer says it is one, so a
+// narrow tree shows another size than `kipple scan`.
+#[test]
+fn a_size_written_short_keeps_its_unit_its_rounding_and_its_lower_bound() {
+    const MIB: u64 = 1024 * 1024;
+    let cases = [
+        (512 * MIB, "512.0 MiB", "512M"),
+        (5 * 1024 * MIB / 2, "2.5 GiB", "2.5G"),
+        (1024 * 1024 * MIB - 1, "1023.9 GiB", "1023G"),
+        (99 * MIB + MIB * 99 / 100, "99.9 MiB", "99.9M"),
+        (1023, "1023 B", "1023B"),
+        (0, "0 B", "0B"),
+    ];
+    for (count, full, short) in cases {
+        assert_eq!(
+            (
+                super::bytes(count).as_str(),
+                super::bytes_short(count).as_str()
+            ),
+            (full, short)
+        );
+    }
+    let partial = SizeOut {
+        apparent: 9 * MIB,
+        allocated: Some(8 * MIB),
+        unique_reclaim: None,
+        completeness: CompletenessOut::Incomplete,
+        unreadable: Some(1),
+        skipped_mounts: Some(0),
+    };
+    assert_eq!(super::size(Some(&partial)), ">= 8.0 MiB");
+    assert_eq!(super::size_short(Some(&partial)), ">=8.0M");
 }

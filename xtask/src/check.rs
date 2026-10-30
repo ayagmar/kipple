@@ -6,7 +6,7 @@ use std::path::Path;
 use anyhow::{Result, bail};
 use clap::ValueEnum;
 
-use crate::{arch, cmd, gen_docs};
+use crate::{arch, cmd, compat, docs_cmds, gen_docs, style};
 
 /// Gate steps that may be left out because CI runs them as their own job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -39,6 +39,22 @@ const STEPS: &[Step] = &[
             "clippy",
             "--workspace",
             "--all-targets",
+            "--locked",
+            "--",
+            "-D",
+            "warnings",
+        ],
+        env: &[],
+        skip: None,
+    },
+    Step {
+        name: "lint (all features)",
+        program: "cargo",
+        args: &[
+            "clippy",
+            "--workspace",
+            "--all-targets",
+            "--all-features",
             "--locked",
             "--",
             "-D",
@@ -108,14 +124,29 @@ pub(crate) fn run(root: &Path, skip: &[Skip]) -> Result<()> {
     announce("architecture")?;
     arch::run(root)?;
     announce("generated docs")?;
-    gen_docs::run(root, true)?;
+    gen_docs::run(root, gen_docs::Committed::Check)?;
+    announce("compatibility")?;
+    compat::run(root, compat::Baselines::Keep)?;
+    announce("documented commands")?;
+    docs_cmds::run(root)?;
+    announce("style")?;
+    style::run(root)?;
     announce("all checks passed")
+}
+
+/// The machine xtask runs on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Host {
+    /// A CI runner or a throwaway VM: `KIPPLE_TEST_DISPOSABLE_HOST=1`.
+    Disposable,
+    /// Anything else, such as someone's own machine.
+    Precious,
 }
 
 /// Runs the `native` nextest profile, which reads real OS state (the process table,
 /// Known Folders). Only on a disposable host: a CI runner or a throwaway VM.
-pub(crate) fn test_native(root: &Path, disposable_host: bool) -> Result<()> {
-    if !disposable_host {
+pub(crate) fn test_native(root: &Path, host: Host) -> Result<()> {
+    if host != Host::Disposable {
         bail!(
             "the native tests read real OS state; run them only on a disposable host \
              (a CI runner or a throwaway VM) with KIPPLE_TEST_DISPOSABLE_HOST=1"

@@ -95,20 +95,29 @@ pub struct EventRx {
     ended: bool,
 }
 
+/// Both ends of an event stream.
+#[derive(Debug)]
+pub struct EventChannel {
+    /// The engine's end.
+    pub tx: EventTx,
+    /// The frontend's end.
+    pub rx: EventRx,
+}
+
 /// A stream that holds at most `capacity` undelivered events, for a scan cancelled by
 /// `cancel`. A full stream makes the engine wait: findings and outcomes are never dropped.
 #[must_use]
-pub fn event_channel(capacity: usize, cancel: &CancelToken) -> (EventTx, EventRx) {
+pub fn event_channel(capacity: usize, cancel: &CancelToken) -> EventChannel {
     let (sender, receiver) = crossbeam_channel::bounded(capacity);
-    (
-        EventTx(sender),
-        EventRx {
+    EventChannel {
+        tx: EventTx(sender),
+        rx: EventRx {
             receiver,
             next_seq: 0,
             cancel: cancel.clone(),
             ended: false,
         },
-    )
+    }
 }
 
 impl EventTx {

@@ -11,7 +11,7 @@ use std::time::Duration;
 use kipple_core::{Lens, Modified};
 
 use super::super::ui;
-use super::{App, Line, Node, Row, Shelf};
+use super::{App, Extent, Line, Node, Row, Shelf};
 
 /// A project, by the order it was first seen in this session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -96,12 +96,12 @@ fn caseless(text: &str) -> impl Iterator<Item = char> + '_ {
 
 /// What a line sorts by.
 #[derive(Debug, Clone, Copy)]
-struct Key<'a> {
+struct Key<'rows> {
     bytes: u64,
     /// How long ago it last changed; for a project, its oldest finding's.
     age: Option<Duration>,
-    name: &'a str,
-    path: &'a Path,
+    name: &'rows str,
+    path: &'rows Path,
 }
 
 impl<'a> Key<'a> {
@@ -124,21 +124,23 @@ fn age(row: &Row) -> Option<Duration> {
 }
 
 /// One line of a group: a finding, or a project with the findings under its line.
-struct Entry<'a> {
+struct Entry<'rows> {
     node: Node,
-    key: Key<'a>,
-    rows: Vec<&'a Row>,
+    key: Key<'rows>,
+    rows: Vec<&'rows Row>,
+}
+
+/// A lens within a bucket, as the tree groups findings.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Group {
+    pub(super) shelf: Shelf,
+    pub(super) lens: Lens,
 }
 
 impl App {
-    /// The lines of the group `(bucket, lens)` holding `rows`, sorted, below its heading;
-    /// `whole` unfolds every project.
-    pub(super) fn group_lines(
-        &self,
-        group: (Shelf, Lens),
-        rows: Vec<&Row>,
-        whole: bool,
-    ) -> Vec<Line> {
+    /// The lines of `group` holding `rows`, sorted, below its heading; the whole tree
+    /// unfolds every project.
+    pub(super) fn group_lines(&self, group: Group, rows: Vec<&Row>, extent: Extent) -> Vec<Line> {
         let mut projects: BTreeMap<ProjectId, Vec<&Row>> = BTreeMap::new();
         let mut entries = Vec::new();
         for row in rows {
@@ -161,7 +163,7 @@ impl App {
                 node: entry.node,
                 depth: 2,
             });
-            if !whole && self.is_collapsed(entry.node) {
+            if extent == Extent::Shown && self.is_collapsed(entry.node) {
                 continue;
             }
             entry
@@ -280,13 +282,13 @@ impl App {
 /// A project's line in the group `(bucket, lens)`: its total, its oldest finding and
 /// its name.
 fn project_entry<'a>(
-    (bucket, lens): (Shelf, Lens),
+    Group { shelf, lens }: Group,
     id: ProjectId,
     project: &'a Project,
     rows: Vec<&'a Row>,
 ) -> Entry<'a> {
     Entry {
-        node: Node::Project(bucket, lens, id),
+        node: Node::Project(shelf, lens, id),
         key: Key {
             bytes: rows.iter().map(|row| row.bytes()).sum(),
             age: rows.iter().filter_map(|row| age(row)).max(),

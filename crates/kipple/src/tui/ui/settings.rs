@@ -9,13 +9,15 @@ use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::Paragraph;
 
+use super::Look;
 use super::tree::offset;
-use super::{Look, level_about, title_case};
-use crate::human::{escaped, homed};
+use crate::config::Kept;
+use crate::human::{self, escaped, homed};
 use crate::theme::{Colours, Role};
 use crate::tui::app::App;
 use crate::tui::keymap::{Action, Mode};
 use crate::tui::settings::{self, Item, Search};
+use crate::tui::themes::Place;
 
 /// The settings panel in place of the tree and the detail pane. Every line says its
 /// value in words, so the cursor and the current level read without colour.
@@ -42,8 +44,8 @@ pub(super) fn render(app: &App, look: Look<'_>, area: Rect, frame: &mut Frame<'_
 }
 
 /// The settings panel's lines as they are built, and which one the cursor is on.
-struct PanelLines<'a> {
-    look: Look<'a>,
+struct PanelLines<'theme> {
+    look: Look<'theme>,
     focus: Option<Item>,
     lines: Vec<Text<'static>>,
     at: usize,
@@ -80,7 +82,10 @@ fn settings_head(app: &App, look: Look<'_>, panel: &mut PanelLines<'_>) {
     );
     panel.push(None, "", Vec::new());
     panel.push(Some(&Item::Level), "Level", level_spans(app, look));
-    let about = Span::styled(level_about(app.policy.level), look.style(Role::Muted));
+    let about = Span::styled(
+        human::level_about(app.policy.level),
+        look.style(Role::Muted),
+    );
     panel.push(None, "", vec![about]);
     panel.push(Some(&Item::Theme), "Theme", theme_spans(app, look));
     for (index, root) in app.roots.iter().enumerate() {
@@ -123,7 +128,7 @@ fn settings_head(app: &App, look: Look<'_>, panel: &mut PanelLines<'_>) {
 
 /// The kept paths and the rules turned off, each undone with `d`.
 fn settings_lists(app: &App, look: Look<'_>, panel: &mut PanelLines<'_>) {
-    for (index, (path, note)) in app.config.keep.iter().enumerate() {
+    for (index, Kept { path, note }) in app.config.keep.iter().enumerate() {
         let label = if index == 0 { "Kept" } else { "" };
         let mut value = vec![Span::raw(escaped(path))];
         if let Some(note) = note {
@@ -170,7 +175,7 @@ fn theme_spans(app: &App, look: Look<'_>) -> Vec<Span<'static>> {
     let Some(choice) = app.themes.shown() else {
         return Vec::new();
     };
-    let (at, count) = app.themes.place();
+    let Place { shown: at, count } = app.themes.place();
     let about = match &choice.drawn {
         Err(error) => format!("{at} of {count}, can't be used: {}", escaped(error)),
         Ok(_) if app.themes.previewing() => {
@@ -198,7 +203,7 @@ fn level_spans(app: &App, look: Look<'_>) -> Vec<Span<'static>> {
     Level::ALL
         .iter()
         .map(|&level| {
-            let name = title_case(level.name());
+            let name = human::level(level);
             if level == app.policy.level {
                 Span::styled(format!("[{name}] "), look.style(Role::LevelCurrent))
             } else {

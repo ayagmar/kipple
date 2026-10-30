@@ -108,7 +108,10 @@ fn kernel_threads_run_no_program_file() {
 
     let kthreads = snapshot.processes.iter();
     let kthreads = kthreads.filter(|p| matches!(p.outcome, ProcessOutcome::NoExecutable));
-    assert!(kthreads.count() > 0);
+    assert!(
+        kthreads.count() > 0,
+        "the process table lists at least one kernel thread"
+    );
 }
 
 #[test]

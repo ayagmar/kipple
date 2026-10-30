@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::json::{LensOut, SUPPORT_MATRIX, VERSION};
-use crate::setup::Builtin;
+use crate::setup::{Builtin, BuiltinRule};
 
 /// The generated support matrix.
 #[derive(Debug, Serialize, JsonSchema)]
@@ -60,15 +60,15 @@ impl SupportMatrixOut {
                 verified: d.verified.to_vec(),
                 rules: builtin
                     .rules()
-                    .filter(|(_, rule)| rule.integration == d.id)
-                    .map(|(_, rule)| rule.id.0.clone())
+                    .filter(|BuiltinRule { rule, .. }| rule.integration == d.id)
+                    .map(|BuiltinRule { rule, .. }| rule.id.0.clone())
                     .collect(),
                 platforms: Platform::ALL
                     .iter()
                     .map(|&platform| {
                         let supported = d.platforms.contains(&platform);
                         // Advice alone, as for Claude Code, finds nothing.
-                        let finds = builtin.rules().any(|(_, rule)| {
+                        let finds = builtin.rules().any(|BuiltinRule { rule, .. }| {
                             rule.integration == d.id && rule.platforms.contains(&platform)
                         });
                         PlatformSupport {

@@ -1,10 +1,13 @@
-//! Text for people: escaping and sizes.
+//! Text for people: every word the CLI's human output and the home screen show for a
+//! fact kipple established, so the two never word one fact apart. Frontends lay these
+//! out, fit and colour them; `cargo xtask check-arch` fails when one words a core enum
+//! that this module words (`docs/05-architecture.md` §4).
 
 use std::path::{MAIN_SEPARATOR, Path};
 
 use kipple_core::{
-    Activity, ActivityGap, Bucket, Caution, Cost, Facts, Finding, Hold, Loss, Modified, Policy,
-    Proposal, Recovery, Seen, Tracked, Verdict, WalkGap,
+    Activity, ActivityGap, Bucket, Caution, Cost, Facts, Finding, Hold, Lens, Level, Loss,
+    Modified, Policy, Proposal, Recovery, ScanOutcome, Seen, Tracked, Verdict, WalkGap,
 };
 
 use crate::json::{CompletenessOut, SizeOut};
@@ -25,9 +28,52 @@ pub(crate) fn escaped(text: &str) -> String {
 
 /// A byte count in binary units, such as `8.0 MiB`.
 pub(crate) fn bytes(count: u64) -> String {
+    match scaled(count) {
+        Scaled { unit: None, .. } => format!("{count} B"),
+        Scaled {
+            whole,
+            tenths,
+            unit: Some(unit),
+        } => format!("{whole}.{tenths} {unit}"),
+    }
+}
+
+/// A byte count written short, for a narrow column: its unit's letter, and no decimal
+/// from 100 on (`512M`, `2.5G`, `512B`).
+pub(crate) fn bytes_short(count: u64) -> String {
+    match scaled(count) {
+        Scaled { unit: None, .. } => format!("{count}B"),
+        Scaled {
+            whole,
+            tenths,
+            unit: Some(unit),
+        } => {
+            let letter = unit.get(..1).unwrap_or(unit);
+            if whole >= 100 {
+                format!("{whole}{letter}")
+            } else {
+                format!("{whole}.{tenths}{letter}")
+            }
+        }
+    }
+}
+
+/// A byte count in its binary unit, in whole units and tenths rounded down; no unit
+/// below a KiB.
+struct Scaled {
+    whole: u64,
+    tenths: u64,
+    unit: Option<&'static str>,
+}
+
+fn scaled(count: u64) -> Scaled {
     const UNITS: [&str; 5] = ["KiB", "MiB", "GiB", "TiB", "PiB"];
     if count < 1024 {
-        return format!("{count} B");
+        return Scaled {
+            whole: count,
+            tenths: 0,
+            unit: None,
+        };
     }
     let mut value = count;
     let mut unit = 0;
@@ -35,22 +81,34 @@ pub(crate) fn bytes(count: u64) -> String {
         value /= 1024;
         unit += 1;
     }
-    // One decimal, computed in integers: tenths of the unit, rounded down.
+    // Tenths of the unit, computed in integers.
     let tenths = value * 10 / 1024;
-    let name = UNITS.get(unit).copied().unwrap_or("PiB");
-    format!("{}.{} {name}", tenths / 10, tenths % 10)
+    Scaled {
+        whole: tenths / 10,
+        tenths: tenths % 10,
+        unit: Some(UNITS.get(unit).copied().unwrap_or("PiB")),
+    }
 }
 
 /// What removing an item frees: allocated storage where known, else apparent size. A
 /// partial measurement is a lower bound.
 pub(crate) fn size(size: Option<&SizeOut>) -> String {
+    sized(size, bytes, ">= ")
+}
+
+/// [`size`] written short, as [`bytes_short`] writes bytes.
+pub(crate) fn size_short(size: Option<&SizeOut>) -> String {
+    sized(size, bytes_short, ">=")
+}
+
+fn sized(size: Option<&SizeOut>, write: fn(u64) -> String, bound: &str) -> String {
     let Some(size) = size else {
         return "unsized".to_owned();
     };
-    let shown = bytes(size.allocated.unwrap_or(size.apparent));
+    let shown = write(size.on_disk());
     match size.completeness {
         CompletenessOut::Complete => shown,
-        CompletenessOut::Incomplete | CompletenessOut::Cancelled => format!(">= {shown}"),
+        CompletenessOut::Incomplete | CompletenessOut::Cancelled => format!("{bound}{shown}"),
     }
 }
 
@@ -65,10 +123,153 @@ pub(crate) fn findings(count: usize) -> String {
 
 /// A bucket's name on screen.
 pub(crate) const fn bucket(bucket: Bucket) -> &'static str {
+    standing(Some(bucket)).title
+}
+
+/// How a bucket is worded, or a finding not in one yet.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Standing {
+    /// Its heading: `Safe to clean`.
+    pub(crate) title: &'static str,
+    /// Its name where room is short: `Safe`.
+    pub(crate) name: &'static str,
+    /// What puts a finding there, in a few words beside its heading.
+    pub(crate) hint: &'static str,
+    /// What the reasons a finding is there are labelled.
+    pub(crate) why: &'static str,
+    /// What being there means, in full.
+    pub(crate) about: &'static str,
+}
+
+/// How `bucket` is worded, or with `None` a finding still being measured, in one table
+/// so the heading, the band and the detail pane never drift apart.
+pub(crate) const fn standing(bucket: Option<Bucket>) -> Standing {
     match bucket {
-        Bucket::Safe => "Safe to clean",
-        Bucket::Review => "Review",
-        Bucket::Protected => "Protected",
+        Some(Bucket::Safe) => Standing {
+            title: "Safe to clean",
+            name: "Safe",
+            hint: "passes every check",
+            why: "Why safe",
+            about: "Passes every check at this level: kipple recognised it, knows how it \
+                    comes back, nothing inside is tracked by git, no running program shows \
+                    it in use, and it hasn't changed recently.",
+        },
+        Some(Bucket::Review) => Standing {
+            title: "Review",
+            name: "Review",
+            hint: "loses more, or recent",
+            why: "Why review",
+            about: "Eligible, but it loses more than this level allows, costs a lot to bring \
+                    back, or changed recently. Each row says which.",
+        },
+        Some(Bucket::Protected) => Standing {
+            title: "Protected",
+            name: "Protected",
+            hint: "not eligible",
+            why: "Why it's held",
+            about: "Not eligible: blocked, unknown, report only or advice only. Each row \
+                    says why. kipple never selects these.",
+        },
+        None => Standing {
+            title: "Measuring",
+            name: "Measuring",
+            hint: "not sorted yet",
+            why: "Status",
+            about: "Still being measured and checked. Nothing counts as Safe until kipple \
+                    knows.",
+        },
+    }
+}
+
+/// A finding still being measured, as its row says it.
+pub(crate) const MEASURING: &str = "measuring";
+
+/// What a finished report calls a finding that was never measured, so it has no bucket.
+pub(crate) const NOT_MEASURED: &str = "Not measured";
+
+/// A finding's bucket as `kipple scan` lists it: the name reports use, or
+/// `unmeasured`.
+pub(crate) const fn bucket_name(bucket: Option<Bucket>) -> &'static str {
+    match bucket {
+        Some(bucket) => bucket.name(),
+        None => "unmeasured",
+    }
+}
+
+/// Where a finding stands at `level`: `Safe to clean at Balanced`, or that it is still
+/// being measured.
+pub(crate) fn placed(verdict: Option<&Verdict>, level: Level) -> String {
+    verdict.map_or_else(
+        || MEASURING.to_owned(),
+        |verdict| format!("{} at {}", bucket(verdict.bucket()), self::level(level)),
+    )
+}
+
+/// Why a finding stands where it does at `level`, in full: what Safe passed, every
+/// reason it isn't Safe, or that it is still being measured.
+pub(crate) fn why(verdict: Option<&Verdict>, level: Level) -> String {
+    match verdict {
+        None => "still being measured and checked".to_owned(),
+        Some(Verdict::Safe) => format!(
+            "passes every check at {}: recognised, comes back, untracked, no running program \
+             shows it in use, not recent",
+            self::level(level)
+        ),
+        Some(verdict) => reasons_in_full(verdict),
+    }
+}
+
+/// Why a finding can't be selected.
+pub(crate) fn not_selectable(verdict: Option<&Verdict>) -> String {
+    match verdict {
+        Some(verdict @ Verdict::Protected(_)) => {
+            format!("Protected ({}): kipple never selects it.", reasons(verdict))
+        }
+        _ => "Still measuring: it can be selected once kipple knows its bucket.".to_owned(),
+    }
+}
+
+/// A scan still running, as a title says it.
+pub(crate) const SCANNING: &str = "scanning";
+
+/// How a scan ended, as a title says it.
+pub(crate) const fn outcome(outcome: ScanOutcome) -> &'static str {
+    match outcome {
+        ScanOutcome::Completed => "scan finished",
+        ScanOutcome::Cancelled => "scan stopped early",
+    }
+}
+
+/// What the scan couldn't cover, as a heading.
+pub(crate) const NOT_COVERED: &str = "Not covered";
+
+/// What anything not covered makes of the report.
+pub(crate) const PARTIAL: &str = "so this report is partial";
+
+/// A lens's name on screen.
+pub(crate) const fn lens(lens: Lens) -> &'static str {
+    match lens {
+        Lens::Agents => "Agents",
+        Lens::Dev => "Dev",
+        Lens::System => "System",
+    }
+}
+
+/// A level's name on screen.
+pub(crate) const fn level(level: Level) -> &'static str {
+    match level {
+        Level::Careful => "Careful",
+        Level::Balanced => "Balanced",
+        Level::Thorough => "Thorough",
+    }
+}
+
+/// What `level` puts in Safe (`docs/04-safety-model.md` §2a).
+pub(crate) const fn level_about(level: Level) -> &'static str {
+    match level {
+        Level::Careful => "Safe: build output and regenerated caches; recent: 14 days",
+        Level::Balanced => "Safe: rebuilt, reinstalled, re-downloaded; recent: 7 days",
+        Level::Thorough => "Safe: Balanced plus what costs a rollback; recent: 2 days",
     }
 }
 
@@ -138,14 +339,18 @@ pub(crate) const fn caution(caution: Caution) -> &'static str {
     }
 }
 
-/// Every reason for `verdict`, joined for one line. Empty when Safe.
-pub(crate) fn reasons(verdict: &Verdict) -> String {
-    let labels: Vec<&str> = match verdict {
+/// Every reason for `verdict`, each as a row shows it. Empty when Safe.
+pub(crate) fn reason_labels(verdict: &Verdict) -> Vec<&'static str> {
+    match verdict {
         Verdict::Safe => Vec::new(),
         Verdict::Review(cautions) => cautions.iter().map(|&c| caution(c)).collect(),
         Verdict::Protected(holds) => holds.iter().map(|&h| hold(h)).collect(),
-    };
-    labels.join(", ")
+    }
+}
+
+/// Every reason for `verdict`, joined for one line. Empty when Safe.
+pub(crate) fn reasons(verdict: &Verdict) -> String {
+    reason_labels(verdict).join(", ")
 }
 
 /// Every reason for `verdict` in full: a Protected finding's holds as sentences, a
@@ -184,22 +389,41 @@ pub(crate) fn homed(path: &Path, home: Option<&Path>) -> String {
     }
 }
 
+/// A labelled line of a detail view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Fact {
+    pub(crate) label: &'static str,
+    pub(crate) text: String,
+}
+
+impl Fact {
+    const fn new(label: &'static str, text: String) -> Self {
+        Self { label, text }
+    }
+}
+
 /// What kipple established about a finding, as labelled lines for a detail view: the
 /// note it is kept with, what comes back and what is lost, then each check its bucket
 /// rests on. Nothing until it is measured.
-pub(crate) fn facts(finding: &Finding, policy: &Policy) -> Vec<(&'static str, String)> {
+pub(crate) fn facts(finding: &Finding, policy: &Policy) -> Vec<Fact> {
     let mut lines = Vec::new();
     let Some(facts) = &finding.facts else {
         return lines;
     };
     if let Some(kept) = policy.kept(&finding.path, &facts.lineage) {
         let note = kept.note.as_deref().unwrap_or("in the config's keep.paths");
-        lines.push(("Kept", escaped(note)));
+        lines.push(Fact::new("Kept", escaped(note)));
     }
     if let Some(consequence) = &facts.consequence {
-        lines.push(("Comes back", recovery(consequence.recovery).to_owned()));
-        lines.push(("You lose", losses(consequence.loss)));
-        lines.push(("Restore cost", restore_cost(consequence.cost).to_owned()));
+        lines.push(Fact::new(
+            "Comes back",
+            recovery(consequence.recovery).to_owned(),
+        ));
+        lines.push(Fact::new("You lose", losses(consequence.loss)));
+        lines.push(Fact::new(
+            "Restore cost",
+            restore_cost(consequence.cost).to_owned(),
+        ));
     }
     let proposal = match &facts.proposal {
         Proposal::Report => "report only: kipple never changes it".to_owned(),
@@ -209,14 +433,14 @@ pub(crate) fn facts(finding: &Finding, policy: &Policy) -> Vec<(&'static str, St
             format!("remove ({})", names.join(" or "))
         }
     };
-    lines.push(("Proposes", proposal));
+    lines.push(Fact::new("Proposes", proposal));
     if !matches!(facts.proposal, Proposal::Remove(_)) {
         return lines;
     }
-    lines.push(("Git", tracked(&facts.tracked)));
-    lines.push(("In use", activity(&facts.activity)));
+    lines.push(Fact::new("Git", tracked(&facts.tracked)));
+    lines.push(Fact::new("In use", activity(&facts.activity)));
     let window = policy.recent_window_days(&finding.rule, facts);
-    lines.push(("Last change", modified(facts, window)));
+    lines.push(Fact::new("Last change", modified(facts, window)));
     lines
 }
 

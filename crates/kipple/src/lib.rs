@@ -29,8 +29,8 @@ use kipple_platform::Environment;
 
 use crate::config::{ConfigError, Settings};
 use crate::json::{EventBody, ScanOut};
-use crate::setup::Builtin;
-use crate::theme::{ColorChoice, Colours, Glyphs, Ink, Theme, Themes};
+use crate::setup::{Builtin, BuiltinRule};
+use crate::theme::{ColorChoice, Colours, Glyphs, Ink, Stdout, Theme, Themes};
 
 /// Command-line arguments for `kipple`.
 #[derive(Debug, Parser)]
@@ -218,11 +218,11 @@ pub const CANCELLED: u8 = 130;
 pub const USAGE: u8 = 2;
 
 /// Runs `cli`, writing data to `stdout` and diagnostics to `stderr`. Human output is in
-/// colour when `--color` says so, or by default when `stdout` is a `terminal`.
+/// colour when `--color` says so, or by default when `goes_to` is a terminal.
 pub fn run(
     cli: &Cli,
     env: &Environment,
-    terminal: bool,
+    goes_to: Stdout,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> ExitCode {
@@ -241,7 +241,7 @@ pub fn run(
         env,
         config: cli.config.as_deref(),
         theme: cli.theme.as_deref(),
-        colours: Colours::detect(cli.colour_choice(), env, terminal),
+        colours: Colours::detect(cli.colour_choice(), env, goes_to),
     };
     match &cli.command {
         None => summary(&host, stdout, stderr),
@@ -287,7 +287,7 @@ pub fn home(cli: &Cli, env: &Environment, stderr: &mut dyn Write) -> ExitCode {
         env,
         config: cli.config.as_deref(),
         theme: cli.theme.as_deref(),
-        colours: Colours::detect(cli.colour_choice(), env, true),
+        colours: Colours::detect(cli.colour_choice(), env, Stdout::Terminal),
     };
     let settings = match host.settings(&[], stderr) {
         Ok(settings) => settings,
@@ -316,12 +316,12 @@ pub fn home(cli: &Cli, env: &Environment, stderr: &mut dyn Write) -> ExitCode {
 /// What every command runs with: the built-in rules, the environment snapshot, the
 /// config file `--config` names, if any, and how human output is drawn.
 #[derive(Debug, Clone, Copy)]
-struct Host<'a> {
-    builtin: &'a Builtin,
-    env: &'a Environment,
-    config: Option<&'a Path>,
+struct Host<'cli> {
+    builtin: &'cli Builtin,
+    env: &'cli Environment,
+    config: Option<&'cli Path>,
     /// `--theme`.
-    theme: Option<&'a str>,
+    theme: Option<&'cli str>,
     /// Whether human output is in colour, and in how many.
     colours: Colours,
 }
@@ -412,7 +412,7 @@ fn summary(host: &Host<'_>, stdout: &mut dyn Write, stderr: &mut dyn Write) -> E
         Ok(engine) => engine,
         Err(message) => return fail(stderr, &message),
     };
-    let (report, _) = scan::run(&engine, &settings, None, &mut |_| Ok(()));
+    let report = scan::run(&engine, &settings, None, &mut |_| Ok(())).report;
     let out = ScanOut::new(&report, &host.builtin.lenses(), &settings.policy);
     exit_code(scan::write_summary(stdout, &out, &host.ink(stderr)), stderr)
 }
@@ -443,7 +443,7 @@ fn scan(
         policy: &settings.policy,
         found: HashMap::new(),
     };
-    let (report, streamed) = scan::run(&engine, &settings, lens, &mut |event| {
+    let scan::Scanned { report, streamed } = scan::run(&engine, &settings, lens, &mut |event| {
         last_seq = Some(event.seq);
         match args.events {
             Some(EventsFormat::Jsonl) => scan::write_event(stdout, &event, &mut stream),
@@ -477,7 +477,7 @@ fn explain(
     stderr: &mut dyn Write,
 ) -> ExitCode {
     let builtin = host.builtin;
-    if let Some((pack, rule)) = explain::find_rule(builtin, target) {
+    if let Some(BuiltinRule { pack, rule }) = explain::find_rule(builtin, target) {
         let ink = host.ink(stderr);
         let written =
             explain::write_rule(stdout, &ink, builtin, pack, rule).and_then(|()| stdout.flush());
@@ -498,7 +498,7 @@ fn explain(
         Ok(engine) => engine,
         Err(message) => return fail(stderr, &message),
     };
-    let (report, _) = scan::run(&engine, &settings, None, &mut |_| Ok(()));
+    let report = scan::run(&engine, &settings, None, &mut |_| Ok(())).report;
     let path = PathBuf::from(target);
     let ink = host.ink(stderr);
     let judged = explain::Judged {

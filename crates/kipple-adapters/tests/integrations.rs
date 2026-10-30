@@ -36,8 +36,8 @@ use std::time::SystemTime;
 use kipple_adapters::builtin;
 use kipple_core::{
     Advice, Apparent, CancelToken, Clock, Completeness, DirEntryMeta, Engine, EntryKind, EntryMeta,
-    Evidence, FsProbe, Inventory, Measurement, Observer, Ports, ProbeError, ProcessProbe,
-    ProcessSnapshot, ResolvedRoot, RootSource, Roots, ScanReport, ScanRequest, Sizer,
+    EventChannel, Evidence, FsProbe, Inventory, Measurement, Observer, Ports, ProbeError,
+    ProcessProbe, ProcessSnapshot, ResolvedRoot, RootSource, Roots, ScanReport, ScanRequest, Sizer,
     SpaceEstimate, SymbolicRoot, event_channel,
 };
 use tree::FixtureTree;
@@ -177,7 +177,7 @@ fn scan_built(temp: tempfile::TempDir) -> (tempfile::TempDir, ScanReport) {
     };
     let engine = Engine::new(ports, builtin::integrations(), rules).unwrap();
     let cancel = CancelToken::new();
-    let (events, rx) = event_channel(4096, &cancel);
+    let EventChannel { tx: events, rx } = event_channel(4096, &cancel);
     let report = engine.scan(
         &ScanRequest {
             roots,
@@ -295,7 +295,10 @@ fn every_supported_layout_in_the_demo_home_is_found_with_its_evidence_and_nothin
     .collect::<Vec<_>>();
     expected.sort();
     assert_eq!(found, expected);
-    assert!(report.integrations.iter().all(|i| i.omissions.is_empty()));
+    assert!(
+        report.integrations.iter().all(|i| i.omissions.is_empty()),
+        "no integration has an omission"
+    );
 }
 
 #[test]
@@ -384,7 +387,8 @@ fn system_locations_are_advised_on_when_present_and_reported_only_when_not_empty
     assert!(
         pacman
             .iter()
-            .any(|a| a.snippets.contains(&"sudo paccache -rk3".to_owned()))
+            .any(|a| a.snippets.contains(&"sudo paccache -rk3".to_owned())),
+        "pacman advice gives the paccache command"
     );
     assert_eq!(advice(&report, "journald").len(), 1);
 
@@ -412,9 +416,18 @@ fn claude_code_advice_shows_the_retention_its_settings_resolve_to() {
     invalid.file("home/.claude/settings.json", b"{\"cleanupPeriodDays\": 0}");
 
     assert!(text(&set).contains(": 14 days, from "), "{}", text(&set));
-    assert!(text(&unset).contains(": 30 days, the default"));
-    assert!(text(&empty).contains(": 30 days, the default"));
-    assert!(text(&invalid).contains(": unknown: "));
+    assert!(
+        text(&unset).contains(": 30 days, the default"),
+        "unset settings mean the default retention"
+    );
+    assert!(
+        text(&empty).contains(": 30 days, the default"),
+        "empty settings mean the default retention"
+    );
+    assert!(
+        text(&invalid).contains(": unknown: "),
+        "invalid retention is unknown"
+    );
 }
 
 #[test]

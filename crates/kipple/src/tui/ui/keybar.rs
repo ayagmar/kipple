@@ -8,6 +8,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::Paragraph;
 
+use super::layout::Totals;
 use super::tree::tail;
 use super::{Look, cols};
 use crate::human::{bytes, escaped};
@@ -19,16 +20,16 @@ use crate::tui::app::{App, Mode};
 const ALWAYS: [&str; 3] = [" help", " quit", " back"];
 
 /// Draws the key bar in `area`: one line, or two with the found and eligible totals
-/// first when `totals`.
-pub(super) fn render(app: &App, look: Look<'_>, area: Rect, totals: bool, frame: &mut Frame<'_>) {
+/// first when `totals` puts them on the key bar.
+pub(super) fn render(app: &App, look: Look<'_>, area: Rect, totals: Totals, frame: &mut Frame<'_>) {
     let width = usize::from(area.width);
     let left = left(app, look);
-    if totals {
+    if totals == Totals::KeyBar {
         let left = match left {
             Left::Hints(hints) => hints_line(look, &hints, width),
             Left::Text(text) => text,
         };
-        let sums = selection(app, look, true, width);
+        let sums = selection(app, look, Totals::KeyBar, width);
         frame.render_widget(Paragraph::new(vec![sums, left]), area);
         return;
     }
@@ -37,7 +38,7 @@ pub(super) fn render(app: &App, look: Look<'_>, area: Rect, totals: bool, frame:
             // The hints that always show have their room first; the selection shortens
             // to fit beside them, and the other hints get what is left.
             let beside = width.saturating_sub(always_width(&hints) + 2);
-            let selection = selection(app, look, false, beside);
+            let selection = selection(app, look, Totals::Band, beside);
             let room = width.saturating_sub(selection.width() + 2);
             frame.render_widget(Paragraph::new(hints_line(look, &hints, room)), area);
             frame.render_widget(Paragraph::new(selection).right_aligned(), area);
@@ -48,27 +49,34 @@ pub(super) fn render(app: &App, look: Look<'_>, area: Rect, totals: bool, frame:
     frame.render_widget(Paragraph::new(left.clone()), area);
     // The selection shows when it fits beside what is typed or answered.
     let room = width.saturating_sub(left.width() + 2);
-    let selection = selection(app, look, false, room);
+    let selection = selection(app, look, Totals::Band, room);
     if selection.width() <= room {
         frame.render_widget(Paragraph::new(selection).right_aligned(), area);
     }
 }
 
 /// What the selection is and what it frees, after the found and eligible totals when
-/// `totals`, in at most `room` columns if it can be: the selection's size goes first,
-/// so what it frees always shows.
-fn selection(app: &App, look: Look<'_>, totals: bool, room: usize) -> Text<'static> {
-    let full = selection_with(app, look, totals, true);
+/// `totals` puts them on the key bar, in at most `room` columns if it can be: the
+/// selection's size goes first, so what it frees always shows.
+fn selection(app: &App, look: Look<'_>, totals: Totals, room: usize) -> Text<'static> {
+    let full = selection_with(app, look, totals, SelectedSize::Shown);
     if full.width() <= room {
         return full;
     }
-    selection_with(app, look, totals, false)
+    selection_with(app, look, totals, SelectedSize::Left)
 }
 
-fn selection_with(app: &App, look: Look<'_>, totals: bool, size: bool) -> Text<'static> {
+/// Whether the selection's size shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectedSize {
+    Shown,
+    Left,
+}
+
+fn selection_with(app: &App, look: Look<'_>, totals: Totals, size: SelectedSize) -> Text<'static> {
     let sums = app.totals();
     let mut spans = Vec::new();
-    if totals {
+    if totals == Totals::KeyBar {
         spans.push(Span::raw(format!("found {}", bytes(sums.discovered))));
         spans.push(Span::raw(look.glyphs.dot()));
         spans.push(Span::raw(format!("eligible {}", bytes(sums.eligible))));
@@ -80,7 +88,7 @@ fn selection_with(app: &App, look: Look<'_>, totals: bool, size: bool) -> Text<'
         ));
     }
     spans.push(Span::raw(format!("selected {}", sums.selected_count)));
-    if size {
+    if size == SelectedSize::Shown {
         spans.push(Span::raw(look.glyphs.dot()));
         spans.push(Span::raw(bytes(sums.selected)));
     }
@@ -150,11 +158,11 @@ fn hints_line(look: Look<'_>, hints: &str, room: usize) -> Text<'static> {
         }
     }
     // A hint is its keys, joined by `/`, then what they do.
-    let shown: Vec<(String, String)> = shown
+    let shown: Vec<Hint> = shown
         .iter()
         .map(|hint| {
             let (keys, what) = hint.split_once(' ').unwrap_or((hint, ""));
-            (keys.to_owned(), what.to_owned())
+            Hint::new(keys.to_owned(), what.to_owned())
         })
         .collect();
     joined(look, &shown, "  ")
@@ -174,12 +182,24 @@ fn always(hint: &str) -> bool {
     ALWAYS.iter().any(|what| hint.ends_with(what))
 }
 
+/// A key hint: the keys, then what they do.
+pub(super) struct Hint {
+    keys: String,
+    what: String,
+}
+
+impl Hint {
+    pub(super) const fn new(keys: String, what: String) -> Self {
+        Self { keys, what }
+    }
+}
+
 /// `hints` joined by `between`, each its keys in the key role and what they do in the
 /// key label role.
-pub(super) fn joined(look: Look<'_>, hints: &[(String, String)], between: &str) -> Text<'static> {
+pub(super) fn joined(look: Look<'_>, hints: &[Hint], between: &str) -> Text<'static> {
     let label = look.style(Role::KeyLabel);
     let mut spans = Vec::new();
-    for (index, (keys, what)) in hints.iter().enumerate() {
+    for (index, Hint { keys, what }) in hints.iter().enumerate() {
         if index > 0 {
             spans.push(Span::styled(between.to_owned(), label));
         }

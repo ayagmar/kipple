@@ -188,9 +188,9 @@ impl WalkPlan {
 }
 
 /// The paths `exclude.paths` names, as the walk checks them.
-struct Exclusions<'a> {
-    fs: &'a dyn FsProbe,
-    paths: &'a [HeldPath],
+struct Exclusions<'scan> {
+    fs: &'scan dyn FsProbe,
+    paths: &'scan [HeldPath],
 }
 
 impl Exclusions<'_> {

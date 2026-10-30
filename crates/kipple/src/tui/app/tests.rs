@@ -7,6 +7,7 @@ mod dashboard;
 mod detail;
 mod keys;
 mod onboarding;
+mod parity;
 mod settings;
 mod themes;
 mod tree;
@@ -295,7 +296,7 @@ fn a_finding_waits_under_measuring_until_its_facts_arrive_and_is_never_safe_befo
 
     measured(&mut app, 1, 512, safe());
 
-    assert_eq!(app.row(FindingId(1)).unwrap().shelf(), Shelf::Safe);
+    assert_eq!(app.row(FindingId(1)).unwrap().shelf(), Shelf::SAFE);
     assert_eq!(app.totals().eligible, 512 * MIB);
 }
 
@@ -361,7 +362,7 @@ fn a_finding_under_a_kept_path_is_protected_and_s_refuses_it_as_kept() {
     );
     measured(&mut app, 1, 512, safe());
 
-    assert_eq!(app.row(FindingId(1)).unwrap().shelf(), Shelf::Protected);
+    assert_eq!(app.row(FindingId(1)).unwrap().shelf(), Shelf::PROTECTED);
     to(&mut app, 1);
     press(&mut app, &[Key::Char('s')]);
     assert!(app.selected.is_empty(), "a kept finding was selected");
@@ -379,11 +380,11 @@ fn a_adds_the_eligible_findings_under_the_focused_heading_but_never_protected() 
     let protected = app
         .lines()
         .iter()
-        .position(|line| line.node == Node::Shelf(Shelf::Protected))
+        .position(|line| line.node == Node::Shelf(Shelf::PROTECTED))
         .unwrap();
     press(&mut app, &[Key::Char('g')]);
     press(&mut app, &vec![Key::Down; protected]);
-    assert_eq!(focus(&app), Some(Node::Shelf(Shelf::Protected)));
+    assert_eq!(focus(&app), Some(Node::Shelf(Shelf::PROTECTED)));
     press(&mut app, &[Key::Char('a')]);
 
     assert_eq!(selected(&app), [1, 4], "a Protected finding was added");
@@ -407,7 +408,10 @@ fn the_cursor_stays_on_its_finding_while_sizes_stream_in_and_reorder_the_tree() 
     press(&mut app, &[Key::Char('/')]);
     typed(&mut app, "zzz");
     assert_eq!(findings(&app), Vec::<u64>::new());
-    assert!(focus(&app).is_some());
+    assert!(
+        focus(&app).is_some(),
+        "the cursor stays on a finding while the filter shows none"
+    );
 }
 
 /// The findings `query` leaves shown, typed after `/` and cleared again with `esc`.
@@ -447,7 +451,7 @@ fn enter_keeps_the_filter_and_esc_clears_it() {
     assert_eq!(findings(&app), [2]);
     // q while typing is text, not quit.
     typed(&mut app, "q");
-    assert!(!app.quit);
+    assert!(!app.quit, "q while typing is text, not quit");
     press(&mut app, &[Key::Backspace, Key::Enter]);
     assert_eq!(findings(&app), [2], "enter keeps the filter");
 
@@ -533,11 +537,11 @@ fn h_folds_a_heading_and_from_a_finding_climbs_to_its_heading_and_l_unfolds() {
     assert_eq!(focus(&app), Some(Node::Finding(FindingId(1))));
 
     press(&mut app, &[Key::Char('h')]);
-    assert_eq!(focus(&app), Some(Node::Group(Shelf::Safe, Lens::Dev)));
+    assert_eq!(focus(&app), Some(Node::Group(Shelf::SAFE, Lens::Dev)));
     press(&mut app, &[Key::Char('h')]);
     assert_eq!(findings(&app), [2, 3, 5], "Safe's Dev group folded");
     press(&mut app, &[Key::Char('h')]);
-    assert_eq!(focus(&app), Some(Node::Shelf(Shelf::Safe)));
+    assert_eq!(focus(&app), Some(Node::Shelf(Shelf::SAFE)));
 
     press(&mut app, &[Key::Char('l'), Key::Down, Key::Char('l')]);
     assert_eq!(findings(&app), [1, 4, 2, 3, 5]);
@@ -642,25 +646,31 @@ fn q_and_ctrl_c_quit_and_any_key_closes_help() {
     press(&mut app, &[Key::Char('q')]);
     assert!(!app.quit, "q closes help first");
     press(&mut app, &[Key::Char('q')]);
-    assert!(app.quit);
+    assert!(app.quit, "a second q quits");
 
     let mut typing = home();
     press(&mut typing, &[Key::Char('/'), Key::Interrupt]);
-    assert!(typing.quit);
+    assert!(typing.quit, "ctrl-c quits while typing");
 }
 
-/// The default theme, or `mono` without colour, with Unicode or ASCII symbols.
-fn look(colour: bool, ascii: bool) -> Look<'static> {
+/// Whether a test draws in colour.
+#[derive(Clone, Copy)]
+enum Paint {
+    /// The default theme.
+    Colour,
+    /// `mono`, without colour.
+    Mono,
+}
+
+/// The theme `paint` says, with `glyphs`.
+fn look(paint: Paint, glyphs: Glyphs) -> Look<'static> {
     static KIPPLE: LazyLock<Theme> = LazyLock::new(|| Theme::builtin("kipple").unwrap());
     static MONO: LazyLock<Theme> = LazyLock::new(|| Theme::builtin("mono").unwrap());
-    Look {
-        theme: if colour { &KIPPLE } else { &MONO },
-        glyphs: if ascii {
-            Glyphs::Ascii
-        } else {
-            Glyphs::Unicode
-        },
-    }
+    let theme = match paint {
+        Paint::Colour => &KIPPLE,
+        Paint::Mono => &MONO,
+    };
+    Look { theme, glyphs }
 }
 
 /// The probe theme, which draws each role in its own colour, with Unicode symbols.
@@ -673,7 +683,7 @@ fn probe() -> Look<'static> {
 }
 
 fn colour() -> Look<'static> {
-    look(true, false)
+    look(Paint::Colour, Glyphs::Unicode)
 }
 
 /// `app` drawn on a `width` by `height` terminal, as text. Paths shown from `~` are
@@ -820,7 +830,7 @@ fn a_finding_holding_a_mount_shows_its_size_as_a_lower_bound_and_names_the_mount
 
     let shown = screen(&app, colour(), 160, 48);
 
-    assert_eq!(app.row(FindingId(1)).unwrap().shelf(), Shelf::Protected);
+    assert_eq!(app.row(FindingId(1)).unwrap().shelf(), Shelf::PROTECTED);
     assert!(shown.contains("Size          >= 512.0 MiB"), "{shown}");
     for label in ["Git ", "Last change "] {
         let line = shown.lines().find(|line| line.contains(label)).unwrap();
@@ -894,7 +904,7 @@ fn help_at_80_by_24_in_ascii() {
         height: 24,
     });
     press(&mut app, &[Key::Char('?')]);
-    let look = look(false, true);
+    let look = look(Paint::Mono, Glyphs::Ascii);
     insta::assert_snapshot!(screen(&app, look, 80, 24));
 }
 
@@ -903,7 +913,7 @@ fn no_color_draws_every_cell_in_the_terminals_own_colours_and_ascii_only_ascii()
     for (width, height) in [(80, 24), (160, 48)] {
         let mut app = sized(width, height);
         press(&mut app, &[Key::Char('?')]);
-        let plain = look(false, true);
+        let plain = look(Paint::Mono, Glyphs::Ascii);
         let buffer = draw(&app, plain, width, height);
 
         for cell in &buffer.content {

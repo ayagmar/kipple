@@ -7,20 +7,28 @@ use std::path::PathBuf;
 use std::thread;
 
 use kipple_core::{
-    CancelToken, Engine, FindingId, IntegrationId, Lens, Policy, RuleId, ScanEvent, ScanReport,
-    ScanRequest, Sequenced, event_channel,
+    Bucket, CancelToken, Engine, EventChannel, FindingId, IntegrationId, Lens, Policy, RuleId,
+    ScanEvent, ScanReport, ScanRequest, Sequenced, event_channel,
 };
 
 use crate::config::Settings;
-use crate::human::{bytes, escaped, reason, size, snippet_lines};
+use crate::human::{self, bytes, escaped, reason, size, snippet_lines};
 use crate::json::{
-    BucketOut, EVENT, EventBody, EventOut, FindingOut, LensOut, OmissionOut, PathOut, ScanOut,
-    SizeOut, VerdictOut,
+    EVENT, EventBody, EventOut, FindingOut, LensOut, OmissionOut, PathOut, ScanOut, SizeOut,
+    VerdictOut,
 };
 use crate::theme::{Ink, Role};
 
 /// How many undelivered events the stream holds before the scan waits.
 const STREAM_CAPACITY: usize = 256;
+
+/// A scan's report, and whether every event was passed on.
+#[derive(Debug)]
+pub(crate) struct Scanned {
+    pub(crate) report: ScanReport,
+    /// The error passing an event on, which cancelled the scan.
+    pub(crate) streamed: io::Result<()>,
+}
 
 /// Runs a scan of the roots of `settings` over `engine`, never entering a path the config
 /// excludes, passing each event to `on_event` as it arrives. When `on_event` fails, the
@@ -30,14 +38,17 @@ pub(crate) fn run(
     settings: &Settings,
     lens: Option<Lens>,
     on_event: &mut dyn FnMut(Sequenced) -> io::Result<()>,
-) -> (ScanReport, io::Result<()>) {
+) -> Scanned {
     let request = ScanRequest {
         roots: settings.roots.clone(),
         lens,
         exclude: settings.policy.exclude.clone(),
     };
     let cancel = CancelToken::new();
-    let (events, mut received) = event_channel(STREAM_CAPACITY, &cancel);
+    let EventChannel {
+        tx: events,
+        rx: mut received,
+    } = event_channel(STREAM_CAPACITY, &cancel);
     thread::scope(|scope| {
         let scan = scope.spawn(|| {
             let events = events;
@@ -59,17 +70,27 @@ pub(crate) fn run(
             unchecked_system: 0,
             by_command_line: 0,
         });
-        (report, delivered)
+        Scanned {
+            report,
+            streamed: delivered,
+        }
     })
 }
 
 /// What the event stream needs to write each event: each finding's verdict comes from the
 /// policy, with the rule and path its `FindingAdded` record carried.
 #[derive(Debug)]
-pub(crate) struct Stream<'a> {
-    pub(crate) lenses: &'a BTreeMap<IntegrationId, Lens>,
-    pub(crate) policy: &'a Policy,
-    pub(crate) found: HashMap<FindingId, (RuleId, PathBuf)>,
+pub(crate) struct Stream<'policy> {
+    pub(crate) lenses: &'policy BTreeMap<IntegrationId, Lens>,
+    pub(crate) policy: &'policy Policy,
+    pub(crate) found: HashMap<FindingId, FoundAt>,
+}
+
+/// The rule that found a finding, and its path.
+#[derive(Debug)]
+pub(crate) struct FoundAt {
+    pub(crate) rule: RuleId,
+    pub(crate) path: PathBuf,
 }
 
 /// Writes each event as one JSONL record.
@@ -94,7 +115,10 @@ pub(crate) fn write_event(
             path: PathOut::new(path),
         },
         ScanEvent::FindingAdded { finding } => {
-            let place = (finding.rule.clone(), finding.path.clone());
+            let place = FoundAt {
+                rule: finding.rule.clone(),
+                path: finding.path.clone(),
+            };
             stream.found.insert(finding.id, place);
             EventBody::FindingAdded {
                 id: finding.id.0,
@@ -107,7 +131,7 @@ pub(crate) fn write_event(
         }
         ScanEvent::FindingUpdated { id, size, facts } => {
             // The engine adds every finding before it updates it.
-            let (rule, path) = stream.found.get(id).ok_or_else(|| {
+            let FoundAt { rule, path } = stream.found.get(id).ok_or_else(|| {
                 io::Error::other(format!("finding {id} was updated before it was added"))
             })?;
             let verdict = VerdictOut::from(&stream.policy.verdict(rule, path, facts));
@@ -146,18 +170,21 @@ pub(crate) fn write_record(out: &mut dyn Write, seq: u64, event: EventBody) -> i
 /// Writes the report for people, grouped by lens.
 pub(crate) fn write_human(out: &mut dyn Write, report: &ScanOut, ink: &Ink) -> io::Result<()> {
     writeln!(out, "kipple {} scan (read-only)", report.kipple)?;
-    for lens in [LensOut::Agents, LensOut::Dev, LensOut::System] {
-        let found: Vec<&FindingOut> = report.findings.iter().filter(|f| f.lens == lens).collect();
-        writeln!(out, "\n{}", ink.paint(Role::Title, lens_title(lens)))?;
+    for &lens in Lens::ALL {
+        let found: Vec<&FindingOut> = report
+            .findings
+            .iter()
+            .filter(|f| f.lens == LensOut::from(lens))
+            .collect();
+        writeln!(out, "\n{}", ink.paint(Role::Title, human::lens(lens)))?;
         if found.is_empty() {
             writeln!(out, "  {}", ink.paint(Role::Muted, "nothing found"))?;
         }
         for finding in found {
-            let bucket = finding.verdict.as_ref().map(|v| v.bucket);
-            let word = bucket.map_or("unsized", bucket_word);
+            let bucket = bucket_of(finding);
             let bucket = ink.paint(
-                bucket.map_or(Role::Muted, bucket_role),
-                &format!("{word:<9}"),
+                bucket.map_or(Role::Muted, Role::bucket),
+                &format!("{:<10}", human::bucket_name(bucket)),
             );
             let reasons = finding
                 .verdict
@@ -186,17 +213,11 @@ pub(crate) fn write_human(out: &mut dyn Write, report: &ScanOut, ink: &Ink) -> i
     for notice in notices {
         writeln!(out, "{notice}")?;
     }
-    let total: u64 = report
-        .findings
-        .iter()
-        .filter_map(|f| f.size.as_ref())
-        .map(|s| s.allocated.unwrap_or(s.apparent))
-        .sum();
     writeln!(
         out,
-        "\n{} findings taking {} of storage in all. Nothing was changed. `kipple explain PATH` says why each one is here.",
-        report.findings.len(),
-        bytes(total)
+        "\n{} taking {} of storage in all. Nothing was changed. `kipple explain PATH` says why each one is here.",
+        human::findings(report.findings.len()),
+        bytes(on_disk(&report.findings))
     )?;
     out.flush()
 }
@@ -209,35 +230,26 @@ pub(crate) fn write_summary(out: &mut dyn Write, report: &ScanOut, ink: &Ink) ->
         "kipple {} (read-only, level: {})",
         report.kipple, report.level
     )?;
-    let rows = [
-        ("Safe to clean", Some(BucketOut::Safe)),
-        ("Review", Some(BucketOut::Review)),
-        ("Protected", Some(BucketOut::Protected)),
-        ("Not measured", None),
-    ];
-    for (title, bucket) in rows {
+    let rows = Bucket::ALL.iter().copied().map(Some).chain([None]);
+    for bucket in rows {
         let found: Vec<&FindingOut> = report
             .findings
             .iter()
-            .filter(|f| f.verdict.as_ref().map(|v| v.bucket) == bucket)
+            .filter(|f| bucket_of(f) == bucket)
             .collect();
         if bucket.is_none() && found.is_empty() {
             continue;
         }
-        let total: u64 = found
-            .iter()
-            .filter_map(|f| f.size.as_ref())
-            .map(|s| s.allocated.unwrap_or(s.apparent))
-            .sum();
+        let title = bucket.map_or(human::NOT_MEASURED, human::bucket);
         let title = ink.paint(
-            bucket.map_or(Role::Muted, bucket_role),
+            bucket.map_or(Role::Muted, Role::bucket),
             &format!("{title:<14}"),
         );
         writeln!(
             out,
             "  {title} {:>12}  {}",
-            bytes(total),
-            crate::human::findings(found.len())
+            bytes(on_disk(found.iter().copied())),
+            human::findings(found.len())
         )?;
     }
     let gaps: usize = report.integrations.iter().map(|i| i.omissions.len()).sum();
@@ -256,29 +268,18 @@ pub(crate) fn write_summary(out: &mut dyn Write, report: &ScanOut, ink: &Ink) ->
     out.flush()
 }
 
-const fn bucket_word(bucket: BucketOut) -> &'static str {
-    match bucket {
-        BucketOut::Safe => "safe",
-        BucketOut::Review => "review",
-        BucketOut::Protected => "protected",
-    }
+/// A finding's bucket; none until it is measured.
+fn bucket_of(finding: &FindingOut) -> Option<Bucket> {
+    finding.verdict.as_ref().map(|v| Bucket::from(v.bucket))
 }
 
-/// The role a bucket is painted in, as on the home screen.
-const fn bucket_role(bucket: BucketOut) -> Role {
-    match bucket {
-        BucketOut::Safe => Role::Safe,
-        BucketOut::Review => Role::Review,
-        BucketOut::Protected => Role::Protected,
-    }
-}
-
-const fn lens_title(lens: LensOut) -> &'static str {
-    match lens {
-        LensOut::Agents => "Agents",
-        LensOut::Dev => "Dev",
-        LensOut::System => "System",
-    }
+/// What `found` takes on disk, summed.
+fn on_disk<'a>(found: impl IntoIterator<Item = &'a FindingOut>) -> u64 {
+    found
+        .into_iter()
+        .filter_map(|f| f.size.as_ref())
+        .map(SizeOut::on_disk)
+        .sum()
 }
 
 fn write_advice(out: &mut dyn Write, report: &ScanOut, ink: &Ink) -> io::Result<()> {
@@ -310,7 +311,8 @@ fn write_omissions(out: &mut dyn Write, report: &ScanOut, ink: &Ink) -> io::Resu
     let mut first = true;
     for (integration, omission) in omitted {
         if first {
-            let heading = ink.paint(Role::Warning, "Not covered, so this report is partial");
+            let heading = format!("{}, {}", human::NOT_COVERED, human::PARTIAL);
+            let heading = ink.paint(Role::Warning, &heading);
             writeln!(out, "\n{heading}")?;
             first = false;
         }
@@ -323,8 +325,8 @@ fn write_omissions(out: &mut dyn Write, report: &ScanOut, ink: &Ink) -> io::Resu
 fn process_notices(report: &ScanOut) -> Vec<String> {
     let by_command_line = report.by_command_line_processes.unwrap_or_default();
     [
-        crate::human::unchecked_system(report.unchecked_system_processes),
-        crate::human::by_command_line(by_command_line),
+        human::unchecked_system(report.unchecked_system_processes),
+        human::by_command_line(by_command_line),
     ]
     .into_iter()
     .flatten()

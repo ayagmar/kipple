@@ -5,7 +5,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use kipple::doctor::{ConfigStatus, IntegrationRoots, Report, RootCheck};
+use kipple::doctor::{ConfigStatus, IntegrationRoots, Probed, Report, RootCheck};
 use kipple::theme::Ink;
 use kipple::{CANCELLED, exit_code};
 use kipple_core::{
@@ -51,7 +51,10 @@ fn report(cache_error: io::ErrorKind) -> Report {
         config: ConfigStatus::default(),
         roots: vec![RootCheck {
             root: SymbolicRoot::XdgCache,
-            status: Ok((cache, Err(failure))),
+            status: Ok(Probed {
+                at: cache,
+                meta: Err(failure),
+            }),
         }],
         integrations: Vec::new(),
         tools: Vec::new(),
@@ -114,7 +117,7 @@ fn the_permission_hint_appears_only_after_a_permission_failure() {
 fn a_root_resolved_through_a_link_shows_the_link_and_where_it_leads() {
     let mut report = report(io::ErrorKind::NotFound);
     let check = &mut report.roots[0];
-    if let Ok((cache, _)) = &mut check.status {
+    if let Ok(Probed { at: cache, .. }) = &mut check.status {
         cache.link = Some(RootLink {
             configured: cache.path.clone(),
             identity: FileIdentity { volume: 1, file: 2 },
@@ -130,6 +133,23 @@ fn a_root_resolved_through_a_link_shows_the_link_and_where_it_leads() {
         PathBuf::from("/mnt/ssd/cache").display()
     );
     assert!(output.contains(&shown), "{output}");
+}
+
+// Catches the longest root name filling its column and running into what is said of it.
+#[test]
+fn a_root_name_as_wide_as_its_column_is_set_apart_from_its_state() {
+    let mut report = report(io::ErrorKind::NotFound);
+    report.roots = vec![RootCheck {
+        root: SymbolicRoot::RoamingAppData,
+        status: Err(UnresolvedRoot::NotSet { var: "APPDATA" }),
+    }];
+
+    let output = printed(&report);
+
+    assert!(
+        output.contains("\n  known.roaming-app-data unknown: "),
+        "{output}"
+    );
 }
 
 #[test]

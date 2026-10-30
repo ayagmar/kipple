@@ -16,7 +16,7 @@ use kipple_core::{
 };
 
 use crate::fs_probe::exact;
-use crate::os;
+use crate::os::{self, HardLink};
 
 /// Sizes trees on its own bounded thread pool. It reads no ignore file or git config,
 /// skips nothing hidden, never follows a link or junction, and stays on the file system
@@ -76,12 +76,12 @@ impl Sizer for Walker {
 
 /// What every task of one walk shares.
 #[derive(Clone, Copy)]
-struct Walk<'s> {
+struct Walk<'scan> {
     /// The item's file system.
     device: Option<u64>,
     device_of: DeviceOf,
-    tally: &'s Tally,
-    cancel: &'s CancelToken,
+    tally: &'scan Tally,
+    cancel: &'scan CancelToken,
 }
 
 /// Sizes the entries of `dir` and schedules each subdirectory on the same device as its
@@ -159,13 +159,13 @@ impl Counts {
         let allocated = os::allocated(meta);
         self.allocation_unknown |= allocated.is_none();
         let allocated = allocated.unwrap_or(0);
-        let Some((identity, links)) = os::hard_link(meta) else {
+        let Some(HardLink { identity, names }) = os::hard_link(meta) else {
             self.apparent += apparent;
             self.allocated += allocated;
             return;
         };
         let linked = Linked {
-            links,
+            links: names,
             names_seen: 1,
             apparent,
             allocated,
@@ -351,7 +351,10 @@ mod tests {
                 skipped_mounts: 1
             }
         );
-        assert!(measured.size.apparent < Apparent(1 << 20));
+        assert!(
+            measured.size.apparent < Apparent(1 << 20),
+            "the size leaves out the other file system"
+        );
         assert_eq!(measured.repository, None);
     }
 }

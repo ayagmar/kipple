@@ -323,7 +323,7 @@ impl App {
             return false;
         }
         self.shortcut.get(&id).is_none_or(|&added| {
-            !row.recent() && (added != Shelf::Safe || row.shelf() == Shelf::Safe)
+            !row.recent() && (added != Shelf::SAFE || row.shelf() == Shelf::SAFE)
         })
     }
 }

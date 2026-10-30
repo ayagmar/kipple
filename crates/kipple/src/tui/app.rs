@@ -12,12 +12,12 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use kipple_core::{
-    Advice, Caution, Finding, FindingId, IntegrationId, Lens, Policy, RuleId, RuleText, ScanEvent,
-    ScanOutcome, ScanReport, SymbolicRoot, Verdict,
+    Advice, Bucket, Caution, Finding, FindingId, IntegrationId, Lens, Policy, RuleId, RuleText,
+    ScanEvent, ScanOutcome, ScanReport, SymbolicRoot, Verdict,
 };
 
 pub(crate) use self::keep::{Effect, Saved};
-use self::tree::Spot;
+use self::tree::{Group, Spot};
 pub(crate) use self::tree::{Order, ProjectId};
 use super::filter;
 use super::keymap::{self, Action, Keymap};
@@ -25,7 +25,7 @@ use super::settings::{Found, Outcome, Panel, Search};
 use super::themes::Picker;
 use crate::config::Config;
 use crate::json::{OmissionOut, SizeOut};
-use crate::setup::Builtin;
+use crate::setup::{Builtin, BuiltinRule};
 
 /// A key, as the home screen reads it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -82,25 +82,32 @@ pub(crate) enum Msg {
     Suggested(Box<Found>),
 }
 
-/// Where a finding stands: its bucket, or still being measured. Nothing is Safe until
-/// kipple knows.
+/// Where a finding stands: its bucket, or still being measured, after every bucket.
+/// Nothing is Safe until kipple knows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Shelf {
-    Safe,
-    Review,
-    Protected,
+    Bucket(Bucket),
     Measuring,
 }
 
 impl Shelf {
-    pub(crate) const SORTED: [Self; 3] = [Self::Safe, Self::Review, Self::Protected];
+    pub(crate) const SAFE: Self = Self::Bucket(Bucket::Safe);
+    pub(crate) const REVIEW: Self = Self::Bucket(Bucket::Review);
+    pub(crate) const PROTECTED: Self = Self::Bucket(Bucket::Protected);
+    pub(crate) const SORTED: [Self; 3] = [Self::SAFE, Self::REVIEW, Self::PROTECTED];
 
     const fn of(verdict: Option<&Verdict>) -> Self {
         match verdict {
-            Some(Verdict::Safe) => Self::Safe,
-            Some(Verdict::Review(_)) => Self::Review,
-            Some(Verdict::Protected(_)) => Self::Protected,
+            Some(verdict) => Self::Bucket(verdict.bucket()),
             None => Self::Measuring,
+        }
+    }
+
+    /// Its bucket; none while measuring.
+    pub(crate) const fn bucket(self) -> Option<Bucket> {
+        match self {
+            Self::Bucket(bucket) => Some(bucket),
+            Self::Measuring => None,
         }
     }
 }
@@ -123,6 +130,15 @@ pub(crate) enum Node {
     /// A notice of the report, by its index: something to know that doesn't make the
     /// report partial.
     Notice(usize),
+}
+
+/// How much of the tree its lines cover.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Extent {
+    /// What is shown now: filtered, without what is collapsed.
+    Shown,
+    /// Every finding, unfiltered and unfolded.
+    Whole,
 }
 
 /// A visible line and how deep it sits in the tree.
@@ -173,11 +189,9 @@ impl Row {
         Shelf::of(self.verdict.as_ref())
     }
 
-    /// What it takes on disk: allocated storage where known, else apparent size.
+    /// What it takes on disk, as [`SizeOut::on_disk`] says.
     pub(crate) fn bytes(&self) -> u64 {
-        self.size
-            .as_ref()
-            .map_or(0, |size| size.allocated.unwrap_or(size.apparent))
+        self.size.as_ref().map_or(0, SizeOut::on_disk)
     }
 
     /// What removing it frees at once: only the storage no other path holds.
@@ -191,7 +205,7 @@ impl Row {
 
     /// Whether it may be selected: Safe or Review, never Protected or unmeasured.
     const fn eligible(&self) -> bool {
-        matches!(self.shelf(), Shelf::Safe | Shelf::Review)
+        matches!(self.shelf(), Shelf::SAFE | Shelf::REVIEW)
     }
 
     /// Whether it changed within its rule's recent window, which keeps it out of every
@@ -219,7 +233,7 @@ impl Catalog {
     pub(crate) fn new(builtin: &Builtin) -> Self {
         let rules = builtin
             .rules()
-            .map(|(_, rule)| (rule.id.clone(), rule.text.clone()))
+            .map(|BuiltinRule { rule, .. }| (rule.id.clone(), rule.text.clone()))
             .collect();
         Self {
             rules,
@@ -381,12 +395,12 @@ impl App {
     /// The tree as it is shown now: filtered, grouped and sorted, without what is
     /// collapsed.
     pub(crate) fn lines(&self) -> Vec<Line> {
-        self.tree(false)
+        self.tree(Extent::Shown)
     }
 
-    /// The tree's lines: as shown, or `whole`, with every finding, unfiltered and
-    /// unfolded.
-    fn tree(&self, whole: bool) -> Vec<Line> {
+    /// The tree's lines, as far as `extent` says.
+    fn tree(&self, extent: Extent) -> Vec<Line> {
+        let whole = extent == Extent::Whole;
         let mut groups: BTreeMap<(Node, Node), Vec<&Row>> = BTreeMap::new();
         for top in Self::tops() {
             groups.entry((top, top)).or_default();
@@ -415,7 +429,7 @@ impl App {
                 continue;
             }
             if let Node::Group(shelf, lens) = group {
-                lines.extend(self.group_lines((shelf, lens), rows, whole));
+                lines.extend(self.group_lines(Group { shelf, lens }, rows, extent));
             }
         }
         self.gap_lines(&mut lines);
@@ -758,7 +772,7 @@ impl App {
             return;
         };
         if !row.eligible() {
-            self.notice = Some(not_selectable(row));
+            self.notice = Some(crate::human::not_selectable(row.verdict.as_ref()));
             return;
         }
         // Chosen by hand now, so no longer a shortcut's.
@@ -812,8 +826,8 @@ impl App {
         let safe: Vec<(FindingId, Shelf)> = self
             .rows
             .iter()
-            .filter(|row| row.shelf() == Shelf::Safe)
-            .map(|row| (row.finding.id, Shelf::Safe))
+            .filter(|row| row.shelf() == Shelf::SAFE)
+            .map(|row| (row.finding.id, Shelf::SAFE))
             .collect();
         if safe.is_empty() {
             self.notice = Some("Nothing is Safe to clean yet.".to_owned());
@@ -953,7 +967,11 @@ impl App {
     fn nearest(&self, gone: Node, lines: &[Line]) -> Option<Node> {
         let finding = |node: &Node| matches!(node, Node::Finding(_));
         let shown: BTreeSet<Node> = lines.iter().map(|line| line.node).filter(finding).collect();
-        let whole: Vec<Node> = self.tree(true).iter().map(|line| line.node).collect();
+        let whole: Vec<Node> = self
+            .tree(Extent::Whole)
+            .iter()
+            .map(|line| line.node)
+            .collect();
         let here: Vec<Node> = lines.iter().map(|line| line.node).collect();
         let (order, at) = whole
             .iter()
@@ -983,17 +1001,6 @@ fn notices(report: &ScanReport) -> Vec<String> {
     .into_iter()
     .flatten()
     .collect()
-}
-
-/// Why `row` can't be selected.
-fn not_selectable(row: &Row) -> String {
-    match &row.verdict {
-        Some(verdict @ Verdict::Protected(_)) => format!(
-            "Protected ({}): kipple never selects it.",
-            crate::human::reasons(verdict)
-        ),
-        _ => "Still measuring: it can be selected once kipple knows its bucket.".to_owned(),
-    }
 }
 
 #[cfg(test)]

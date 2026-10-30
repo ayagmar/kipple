@@ -13,6 +13,12 @@ const MAX_PREDICATES: usize = 32;
 /// The range of a count bound.
 const COUNT: Range<i64> = 0..1_000_001;
 
+/// A rule's two tables of predicates.
+pub(super) struct RulePredicates {
+    pub(super) requirements: Vec<Predicate>,
+    pub(super) eligibility: Vec<Predicate>,
+}
+
 /// The rule's `requirements` and `eligibility`, for a rule using `selector`.
 pub(super) fn rule_predicates(
     c: &mut Checker<'_>,
@@ -20,7 +26,7 @@ pub(super) fn rule_predicates(
     at: Range<usize>,
     selector: &str,
     catalog: Catalog<'_>,
-) -> Option<(Vec<Predicate>, Vec<Predicate>)> {
+) -> Option<RulePredicates> {
     let tables: Vec<Vec<Entry<'_, '_>>> = ["requirements", "eligibility"]
         .into_iter()
         .map(|key| {
@@ -39,7 +45,10 @@ pub(super) fn rule_predicates(
         .map(|entries| predicates(c, entries, selector, catalog));
     let requirements = parsed.next().flatten();
     let eligibility = parsed.next().flatten();
-    Some((requirements?, eligibility?))
+    Some(RulePredicates {
+        requirements: requirements?,
+        eligibility: eligibility?,
+    })
 }
 
 /// One predicate as written: the fact's full name, where it is, and the test.

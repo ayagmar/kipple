@@ -8,7 +8,7 @@ use std::os::unix::fs::PermissionsExt as _;
 use std::path::Path;
 
 use kipple_core::{NativeTool, ToolError, ToolStatus};
-use kipple_platform::{Environment, probe_tools};
+use kipple_platform::{Environment, ToolProbe, probe_tools};
 use tempfile::TempDir;
 
 #[expect(
@@ -37,26 +37,34 @@ fn a_tool_counts_only_as_an_executable_on_an_absolute_path_entry_that_reports_a_
     let found = probe_tools(&env);
 
     let [
-        (
-            NativeTool::Git,
-            ToolStatus::Found {
-                path: git,
-                version: Ok(version),
-            },
-        ),
-        (NativeTool::Paccache, ToolStatus::NotFound),
-        (
-            NativeTool::Journalctl,
-            ToolStatus::Found {
-                version: Err(failure),
-                ..
-            },
-        ),
+        ToolProbe {
+            tool: NativeTool::Git,
+            status:
+                ToolStatus::Found {
+                    path: git,
+                    version: Ok(version),
+                },
+        },
+        ToolProbe {
+            tool: NativeTool::Paccache,
+            status: ToolStatus::NotFound,
+        },
+        ToolProbe {
+            tool: NativeTool::Journalctl,
+            status:
+                ToolStatus::Found {
+                    version: Err(failure),
+                    ..
+                },
+        },
     ] = found.as_slice()
     else {
         panic!("unexpected {found:?}");
     };
     assert_eq!(git, &tools.join("git"));
     assert_eq!(version.to_string(), "2.56.0");
-    assert!(matches!(failure, ToolError::Failed { code: Some(3), stderr } if stderr == "broken"));
+    assert!(
+        matches!(failure, ToolError::Failed { code: Some(3), stderr } if stderr == "broken"),
+        "a version probe that exits 3 fails with its code and stderr"
+    );
 }

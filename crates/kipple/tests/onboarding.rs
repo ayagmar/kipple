@@ -43,11 +43,11 @@ use std::time::{Duration, SystemTime};
 use clap::Parser as _;
 use kipple::config::{self, Settings};
 use kipple::setup::Builtin;
-use kipple::theme::{Catalog, Colours, Glyphs};
+use kipple::theme::{Catalog, Colours, Glyphs, Stdout};
 use kipple::tui::Appearance;
 use kipple::tui::{self, Input, Key, Keys, LevelTotals, first_run_due, level_totals};
 use kipple::{Cli, USAGE};
-use kipple_core::{CancelToken, Finding, Level, ScanRequest, event_channel};
+use kipple_core::{CancelToken, EventChannel, Finding, Level, ScanRequest, event_channel};
 use kipple_platform::Environment;
 use ratatui::Terminal;
 use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
@@ -113,7 +113,10 @@ fn scan(env: &Environment, builtin: &Builtin, settings: &Settings) -> Vec<Findin
         exclude: settings.policy.exclude.clone(),
     };
     let cancel = CancelToken::new();
-    let (events, received) = event_channel(256, &cancel);
+    let EventChannel {
+        tx: events,
+        rx: received,
+    } = event_channel(256, &cancel);
     thread::scope(|scope| {
         let scan = scope.spawn(|| {
             let events = events;
@@ -140,7 +143,7 @@ fn json_totals(env: &Environment, dir: &Path, level: Level) -> LevelTotals {
         "--json",
     ]);
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = kipple::run(&cli, env, false, &mut out, &mut err);
+    let code = kipple::run(&cli, env, Stdout::Redirected, &mut out, &mut err);
     assert_eq!(code, ExitCode::SUCCESS, "{}", String::from_utf8_lossy(&err));
     let report: Value = serde_json::from_slice(&out).unwrap();
     let mut totals = LevelTotals::default();
@@ -188,14 +191,20 @@ fn the_first_run_is_not_due_once_a_config_file_exists_or_one_is_named() {
     let named = temp.path().join("named.toml");
     fs::write(&named, "").unwrap();
     let with_var = env(&roots, &[(config::VAR, &named)]);
-    assert!(!first_run_due(&settings(&with_var, &builtin).loaded));
+    assert!(
+        !first_run_due(&settings(&with_var, &builtin).loaded),
+        "a config named through the variable means the first run isn't due"
+    );
 
     let plain = env(&roots, &[]);
     let file = settings(&plain, &builtin).loaded.location.path.unwrap();
     fs::create_dir_all(file.parent().unwrap()).unwrap();
     fs::write(&file, "").unwrap();
 
-    assert!(!first_run_due(&settings(&plain, &builtin).loaded));
+    assert!(
+        !first_run_due(&settings(&plain, &builtin).loaded),
+        "a config file at the default location means the first run isn't due"
+    );
 }
 
 // Catches the home screen opening, and asking the first run's questions it can never

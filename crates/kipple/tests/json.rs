@@ -30,8 +30,9 @@ fn a_unicode_path_needs_no_raw_form() {
 #[test]
 fn the_schema_names_every_reason_a_verdict_can_carry() {
     let schemas = kipple::json::schemas();
-    let (_, scan) = schemas.iter().find(|(name, _)| *name == "scan").unwrap();
+    let scan = schemas.iter().find(|s| s.name == "scan").unwrap();
     let described = scan
+        .schema
         .as_value()
         .pointer("/$defs/VerdictOut/properties/reasons/description")
         .and_then(|description| description.as_str())

@@ -23,8 +23,10 @@ use std::path::PathBuf;
 
 use ratatui::style::Style;
 
-pub use self::colour::{ColorChoice, Colours, Depth};
-pub use self::glyphs::Glyphs;
+use crate::config::Position;
+
+pub use self::colour::{ColorChoice, Colours, Depth, Stdout};
+pub use self::glyphs::{Fold, Glyphs};
 pub use self::ink::Ink;
 pub use self::role::Role;
 pub(crate) use self::schema::schema;
@@ -145,9 +147,9 @@ fn builtin_text(name: &str) -> Option<&'static str> {
 /// How the screen is drawn: the theme gives each role its style, the glyphs its
 /// symbols.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Look<'a> {
+pub(crate) struct Look<'theme> {
     /// The styles.
-    pub(crate) theme: &'a Theme,
+    pub(crate) theme: &'theme Theme,
     /// The symbols.
     pub(crate) glyphs: Glyphs,
 }
@@ -165,8 +167,8 @@ impl Look<'_> {
 pub struct ThemeError {
     /// The theme file, unless the theme is built in or wasn't found.
     pub file: Option<PathBuf>,
-    /// The line and column, from 1.
-    pub position: Option<(usize, usize)>,
+    /// Where in the file.
+    pub position: Option<Position>,
     /// What is wrong.
     pub message: String,
 }
@@ -186,11 +188,11 @@ impl fmt::Display for ThemeError {
         if let Some(file) = &self.file {
             write!(f, "{}", file.display())?;
             match self.position {
-                Some((line, column)) => write!(f, ", line {line}, column {column}: ")?,
+                Some(position) => write!(f, ", {position}: ")?,
                 None => f.write_str(": ")?,
             }
-        } else if let Some((line, column)) = self.position {
-            write!(f, "line {line}, column {column}: ")?;
+        } else if let Some(position) = self.position {
+            write!(f, "{position}: ")?;
         }
         f.write_str(&self.message)
     }
@@ -203,6 +205,7 @@ mod tests {
     use ratatui::style::{Color, Modifier};
 
     use super::*;
+    use crate::config::Position;
 
     // Catches a built-in theme that no longer reads, which would stop the home screen
     // from opening, or one that leans on `extends`, which built-ins don't resolve.
@@ -213,7 +216,10 @@ mod tests {
             assert_eq!(parse::parse(text).unwrap().extends, None, "{name}");
             assert!(valid_name(name), "{name}");
         }
-        assert!(Theme::builtin("dusk").is_err());
+        assert!(
+            Theme::builtin("dusk").is_err(),
+            "an unknown built-in name is refused"
+        );
     }
 
     // Catches a built-in theme that leaves a role to the terminal by mistake: every
@@ -224,7 +230,7 @@ mod tests {
             let file = parse::parse(text).unwrap();
             for role in Role::ALL {
                 assert!(
-                    file.roles.iter().any(|&(named, _)| named == role),
+                    file.roles.iter().any(|set| set.role == role),
                     "{name} leaves out {}",
                     role.name()
                 );
@@ -244,12 +250,14 @@ mod tests {
         assert!(
             mono.style(Role::Cursor)
                 .add_modifier
-                .contains(Modifier::REVERSED)
+                .contains(Modifier::REVERSED),
+            "mono shows the cursor reversed"
         );
         assert!(
             mono.style(Role::Title)
                 .add_modifier
-                .contains(Modifier::BOLD)
+                .contains(Modifier::BOLD),
+            "mono keeps titles bold"
         );
     }
 
@@ -287,40 +295,62 @@ mod tests {
     fn a_mistake_in_a_theme_file_is_an_error_at_its_line_and_column() {
         let cases = [
             ("[roles]\nsafe = {}", None, "version: expected 1"),
-            ("version = 2", Some((1, 11)), "version: expected 1"),
+            (
+                "version = 2",
+                Some(Position {
+                    line: 1,
+                    column: 11,
+                }),
+                "version: expected 1",
+            ),
             (
                 "version = 1\nname = \"x\"",
-                Some((2, 1)),
+                Some(Position { line: 2, column: 1 }),
                 "unknown key name",
             ),
             (
                 "version = 1\nextends = \"Dusk\"",
-                Some((2, 11)),
+                Some(Position {
+                    line: 2,
+                    column: 11,
+                }),
                 "extends: expected a theme name",
             ),
             (
                 "version = 1\n[roles]\nsafer = {}",
-                Some((3, 1)),
+                Some(Position { line: 3, column: 1 }),
                 "unknown role safer",
             ),
             (
                 "version = 1\n[roles]\nsafe = { fg = \"grean\" }",
-                Some((3, 15)),
+                Some(Position {
+                    line: 3,
+                    column: 15,
+                }),
                 "safe.fg: expected",
             ),
             (
                 "version = 1\n[roles]\nsafe = { fg = 256 }",
-                Some((3, 15)),
+                Some(Position {
+                    line: 3,
+                    column: 15,
+                }),
                 "safe.fg: expected",
             ),
             (
                 "version = 1\n[roles]\nsafe = { blink = true }",
-                Some((3, 10)),
+                Some(Position {
+                    line: 3,
+                    column: 10,
+                }),
                 "unknown key safe.blink",
             ),
             (
                 "version = 1\n[roles]\nsafe = { bold = 1 }",
-                Some((3, 17)),
+                Some(Position {
+                    line: 3,
+                    column: 17,
+                }),
                 "safe.bold: expected true or false",
             ),
         ];

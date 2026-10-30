@@ -15,7 +15,7 @@ use ratatui::style::{Color, Modifier, Style};
 use toml_edit::{Document, Item, TableLike, Value};
 
 use super::{Role, Theme, ThemeError, valid_name};
-use crate::config::position;
+use crate::config::{Position, position};
 
 /// The ANSI colour names a theme may use, in the terminal's palette order.
 pub(super) const ANSI: [(&str, Color); 16] = [
@@ -48,19 +48,33 @@ pub(super) const MODIFIERS: [(&str, Modifier); 5] = [
 
 const COLOUR: &str = "an ANSI colour name, #rrggbb, an index from 0 to 255, or reset";
 
+/// The theme a theme file extends, and where it says so.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) struct Extends {
+    pub(super) name: String,
+    pub(super) at: Position,
+}
+
+/// A role a theme file sets, and its style.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) struct RoleStyle {
+    pub(super) role: Role,
+    pub(super) style: Style,
+}
+
 /// What a theme file says: the theme it extends, if any, and its own roles.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub(super) struct ThemeFile {
     /// The theme it starts from, and where its name is in the file.
-    pub(super) extends: Option<(String, (usize, usize))>,
+    pub(super) extends: Option<Extends>,
     /// The roles it sets; each replaces the style the base theme gives it.
-    pub(super) roles: Vec<(Role, Style)>,
+    pub(super) roles: Vec<RoleStyle>,
 }
 
 impl ThemeFile {
     /// `base` with this file's roles set over it.
     pub(super) fn over(&self, mut base: Theme) -> Theme {
-        for &(role, style) in &self.roles {
+        for &RoleStyle { role, style } in &self.roles {
             base.set(role, style);
         }
         base
@@ -87,9 +101,9 @@ pub(super) fn parse(text: &str) -> Result<ThemeFile, ThemeError> {
     .theme(document.as_table())
 }
 
-struct Reader<'a> {
-    at: &'a dyn Fn(Option<Range<usize>>, String) -> ThemeError,
-    place: &'a dyn Fn(Option<Range<usize>>) -> Option<(usize, usize)>,
+struct Reader<'doc> {
+    at: &'doc dyn Fn(Option<Range<usize>>, String) -> ThemeError,
+    place: &'doc dyn Fn(Option<Range<usize>>) -> Option<Position>,
 }
 
 impl Reader<'_> {
@@ -115,7 +129,7 @@ impl Reader<'_> {
     }
 
     /// The name of the theme `extends` names, and where it is.
-    fn extends(&self, item: &Item) -> Result<(String, (usize, usize)), ThemeError> {
+    fn extends(&self, item: &Item) -> Result<Extends, ThemeError> {
         let name = item
             .as_str()
             .filter(|name| valid_name(name))
@@ -123,8 +137,11 @@ impl Reader<'_> {
                 let wanted = "extends: expected a theme name: lowercase letters, digits and -";
                 (self.at)(item.span(), wanted.to_owned())
             })?;
-        let place = (self.place)(item.span()).unwrap_or((1, 1));
-        Ok((name.to_owned(), place))
+        let at = (self.place)(item.span()).unwrap_or(Position { line: 1, column: 1 });
+        Ok(Extends {
+            name: name.to_owned(),
+            at,
+        })
     }
 
     fn roles(&self, roles: &Item, theme: &mut ThemeFile) -> Result<(), ThemeError> {
@@ -135,7 +152,8 @@ impl Reader<'_> {
             let span = table.key(name).and_then(toml_edit::Key::span);
             let role = Role::from_name(name)
                 .ok_or_else(|| (self.at)(span, format!("unknown role {name}")))?;
-            theme.roles.push((role, self.style(name, value)?));
+            let style = self.style(name, value)?;
+            theme.roles.push(RoleStyle { role, style });
         }
         Ok(())
     }

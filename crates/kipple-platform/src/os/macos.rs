@@ -16,8 +16,8 @@ use kipple_core::{
 };
 
 pub(crate) use super::unix::{
-    KIPPLE_DIRS, allocated, device, dir_access, env_name_matches, hard_link, identity,
-    is_executable, physical, process_env, raw_bytes,
+    INHERITED_VARS, KIPPLE_DIRS, allocated, device, dir_access, env_name_matches, hard_link,
+    identity, is_executable, physical, raw_bytes,
 };
 use super::unix::{env_paths, nul_separated, owner, path_args, unread, xdg_roots};
 use crate::environment::Environment;
@@ -521,9 +521,9 @@ fn sysctl(mib: &mut [c_int], buf: &mut [u8]) -> io::Result<usize> {
 
 /// The arguments and environment entries of a `KERN_PROCARGS2` record.
 #[derive(Debug)]
-struct ProcArgs<'a> {
-    args: Vec<&'a [u8]>,
-    env: Vec<&'a [u8]>,
+struct ProcArgs<'buf> {
+    args: Vec<&'buf [u8]>,
+    env: Vec<&'buf [u8]>,
 }
 
 /// After the argument count and the executable path come NUL padding, then the
@@ -555,12 +555,24 @@ mod tests {
     #[test]
     fn only_an_acl_of_deny_entries_grants_nothing() {
         let allow = 1;
-        assert!(!grants(&[]));
-        assert!(!grants(&[Some(ACL_EXTENDED_DENY)]));
-        assert!(!grants(&[Some(ACL_EXTENDED_DENY), Some(ACL_EXTENDED_DENY)]));
-        assert!(grants(&[Some(ACL_EXTENDED_DENY), Some(allow)]));
+        assert!(!grants(&[]), "an empty ACL grants nothing");
+        assert!(
+            !grants(&[Some(ACL_EXTENDED_DENY)]),
+            "a deny entry grants nothing"
+        );
+        assert!(
+            !grants(&[Some(ACL_EXTENDED_DENY), Some(ACL_EXTENDED_DENY)]),
+            "deny entries grant nothing"
+        );
+        assert!(
+            grants(&[Some(ACL_EXTENDED_DENY), Some(allow)]),
+            "an allow entry grants something"
+        );
         // An entry whose tag couldn't be read might grant something.
-        assert!(grants(&[Some(ACL_EXTENDED_DENY), None]));
+        assert!(
+            grants(&[Some(ACL_EXTENDED_DENY), None]),
+            "an entry with an unread tag might grant something"
+        );
     }
 
     fn record(argc: c_int, rest: &[u8]) -> Vec<u8> {
@@ -584,7 +596,13 @@ mod tests {
 
     #[test]
     fn a_procargs_record_with_fewer_arguments_than_it_counts_is_unknown() {
-        assert!(split_procargs(&record(3, b"/bin/x\0\0x\0")).is_err());
-        assert!(split_procargs(&[1, 0]).is_err());
+        assert!(
+            split_procargs(&record(3, b"/bin/x\0\0x\0")).is_err(),
+            "a record with fewer arguments than it counts is unknown"
+        );
+        assert!(
+            split_procargs(&[1, 0]).is_err(),
+            "a record cut short in its count is unknown"
+        );
     }
 }

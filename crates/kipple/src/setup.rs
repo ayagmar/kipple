@@ -16,6 +16,15 @@ pub struct Builtin {
     pub packs: Vec<Pack>,
 }
 
+/// A built-in rule and its pack.
+#[derive(Debug, Clone, Copy)]
+pub struct BuiltinRule<'builtin> {
+    /// The pack.
+    pub pack: &'builtin Pack,
+    /// The rule.
+    pub rule: &'builtin Rule,
+}
+
 impl Builtin {
     /// Loads the built-in packs, validated against this engine.
     ///
@@ -47,10 +56,12 @@ impl Builtin {
     }
 
     /// Every rule of every pack, in pack order.
-    pub fn rules(&self) -> impl Iterator<Item = (&Pack, &Rule)> {
-        self.packs
-            .iter()
-            .flat_map(|pack| pack.rules.iter().map(move |rule| (pack, rule)))
+    pub fn rules(&self) -> impl Iterator<Item = BuiltinRule<'_>> {
+        self.packs.iter().flat_map(|pack| {
+            pack.rules
+                .iter()
+                .map(move |rule| BuiltinRule { pack, rule })
+        })
     }
 
     /// Each integration's lens.
@@ -72,8 +83,8 @@ impl Builtin {
             .collect();
         let rules = self
             .rules()
-            .filter(|(_, rule)| rule.platforms.contains(&PLATFORM))
-            .map(|(_, rule)| rule.clone())
+            .filter(|BuiltinRule { rule, .. }| rule.platforms.contains(&PLATFORM))
+            .map(|BuiltinRule { rule, .. }| rule.clone())
             .collect();
         let walker = Walker::new().map_err(|e| format!("could not start sizing: {e}"))?;
         let ports = Ports {

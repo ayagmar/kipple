@@ -41,14 +41,21 @@ pub(super) enum Totals {
     KeyBar,
 }
 
+/// Where the band's text goes, and whether it shows one card per bucket.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Band {
+    pub(super) area: Rect,
+    pub(super) cards: bool,
+}
+
 /// Where each part of the screen goes. Every area but `outer` is inside the frame,
 /// and the text areas keep a column clear on each side.
 #[derive(Debug, Clone)]
 pub(super) struct Areas {
     /// The whole screen: the frame is drawn on its edge.
     pub(super) outer: Rect,
-    /// The band's text, and whether it shows one card per bucket.
-    pub(super) band: Option<(Rect, bool)>,
+    /// The band's text.
+    pub(super) band: Option<Band>,
     /// Between the band's rule and the key bar's: where a panel goes.
     pub(super) body: Rect,
     pub(super) list: Rect,
@@ -58,8 +65,15 @@ pub(super) struct Areas {
     pub(super) keybar: Rect,
     /// The rows of the rules that cross the whole frame.
     pub(super) rules: Vec<u16>,
-    pub(super) bars: bool,
+    pub(super) bars: Bars,
     pub(super) totals: Totals,
+}
+
+/// Whether findings and the band's cards have size bars.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Bars {
+    Shown,
+    Hidden,
 }
 
 /// The parts of `screen` on `area`, as `ui` sets them out.
@@ -71,7 +85,12 @@ pub(super) fn layout(area: Rect, ui: &UiConfig, screen: Screen) -> Areas {
     } else {
         Totals::KeyBar
     };
-    let mut rows = rows(area, banded, totals);
+    let summary = if banded {
+        SummaryBand::Shown
+    } else {
+        SummaryBand::Hidden
+    };
+    let mut rows = rows(area, summary, totals);
     let beside = match (screen, ui.detail) {
         (Screen::Panel, _) | (Screen::Home, DetailPlace::Off) => None,
         (Screen::Home, DetailPlace::Right) => Some(true),
@@ -94,7 +113,10 @@ pub(super) fn layout(area: Rect, ui: &UiConfig, screen: Screen) -> Areas {
     let keybar = rows.keybar;
     Areas {
         outer: area,
-        band: rows.band.map(|band| (padded(band), wide)),
+        band: rows.band.map(|band| Band {
+            area: padded(band),
+            cards: wide,
+        }),
         body,
         list: padded(list),
         detail: detail.map(padded),
@@ -110,13 +132,24 @@ pub(super) fn layout(area: Rect, ui: &UiConfig, screen: Screen) -> Areas {
             }
         },
         rules: rows.rules,
-        bars: ui.bars && wide,
+        bars: if ui.bars && wide {
+            Bars::Shown
+        } else {
+            Bars::Hidden
+        },
         totals,
     }
 }
 
-/// The frame's rows, top to bottom: the band when `banded`, the body, the key bar (two
-/// lines when it shows the `totals`), and the rules between them.
+/// Whether the summary band is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SummaryBand {
+    Shown,
+    Hidden,
+}
+
+/// The frame's rows, top to bottom: the band when it is shown, the body, the key bar
+/// (two lines when it shows the `totals`), and the rules between them.
 struct Rows {
     band: Option<Rect>,
     body: Rect,
@@ -124,7 +157,7 @@ struct Rows {
     rules: Vec<u16>,
 }
 
-fn rows(area: Rect, banded: bool, totals: Totals) -> Rows {
+fn rows(area: Rect, summary: SummaryBand, totals: Totals) -> Rows {
     let wide = area.width >= WIDE;
     let inner = area.inner(Margin::new(1, 1));
     let mut rules = Vec::new();
@@ -135,7 +168,7 @@ fn rows(area: Rect, banded: bool, totals: Totals) -> Rows {
     let mut bottom = inner.bottom().saturating_sub(keybar_rows).max(inner.y);
     let keybar = Rect::new(inner.x, bottom, inner.width, keybar_rows.min(inner.height));
     let mut top = inner.y;
-    let band = banded.then(|| {
+    let band = (summary == SummaryBand::Shown).then(|| {
         let height = if wide { 2 } else { 1 };
         let band = Rect::new(inner.x, top, inner.width, height);
         rules.push(top + height);

@@ -14,12 +14,24 @@ use crate::runner::{self, Output};
 /// How long a `--version` probe may take.
 const VERSION_DEADLINE: Duration = Duration::from_secs(2);
 
+/// A native tool and what probing it found.
+#[derive(Debug, Clone)]
+pub struct ToolProbe {
+    /// The tool.
+    pub tool: NativeTool,
+    /// What probing it found.
+    pub status: ToolStatus,
+}
+
 /// Finds each native tool on `PATH` and probes its version.
 #[must_use]
-pub fn probe_tools(env: &Environment) -> Vec<(NativeTool, ToolStatus)> {
+pub fn probe_tools(env: &Environment) -> Vec<ToolProbe> {
     NativeTool::ALL
         .into_iter()
-        .map(|tool| (tool, probe(tool, env)))
+        .map(|tool| ToolProbe {
+            tool,
+            status: probe(tool, env),
+        })
         .collect()
 }
 

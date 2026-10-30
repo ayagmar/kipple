@@ -13,14 +13,14 @@ use std::sync::Arc;
 use std::{mem, ptr};
 
 use kipple_core::{
-    Capabilities, Inventory, MountNamespace, Observer, Platform, ProbeError, Probed,
+    Capabilities, CommandLines, Inventory, MountNamespace, Observer, Platform, ProbeError, Probed,
     ProcessOutcome, ProcessOwner, ResolvedRoot, RootSource, Roots, SettingProblem, SymbolicRoot,
     UnresolvedRoot,
 };
 
 pub(crate) use super::unix::{
-    KIPPLE_DIRS, allocated, device, dir_access, env_name_matches, hard_link, identity,
-    is_executable, physical, process_env, raw_bytes,
+    INHERITED_VARS, KIPPLE_DIRS, allocated, device, dir_access, env_name_matches, hard_link,
+    identity, is_executable, physical, raw_bytes,
 };
 use super::unix::{env_paths, identity_of, nul_separated, owner, path_args, unread, xdg_roots};
 use crate::environment::Environment;
@@ -268,7 +268,7 @@ pub(crate) fn observer() -> Observer {
         root_dir: fs::metadata("/proc/self/root")
             .map(|meta| identity_of(&meta))
             .map_err(unread),
-        command_lines_public: true,
+        command_lines: CommandLines::Public,
         process_paths: PROCESS_PATHS,
     }
 }
@@ -525,7 +525,8 @@ mod tests {
         assert_eq!(cache(set), ["/srv/pkg", "/mnt/pkg", "/third"]);
         assert_eq!(cache("[options]\nHoldPkg = pacman\n"), [PACMAN_CACHE]);
         assert!(
-            pacman_cache(&Environment::default(), Err(io::ErrorKind::NotFound.into())).is_empty()
+            pacman_cache(&Environment::default(), Err(io::ErrorKind::NotFound.into())).is_empty(),
+            "an unread pacman.conf gives no cache"
         );
     }
 
@@ -540,7 +541,10 @@ mod tests {
         )
         .try_into()
         .unwrap();
-        assert!(denied.is_err());
+        assert!(
+            denied.is_err(),
+            "a denied pacman.conf leaves the cache unknown"
+        );
     }
 
     const PLAIN: &str = "\
@@ -576,7 +580,10 @@ mod tests {
         ] {
             assert!(partial(&proc_visibility(&remounted(options))), "{options}");
         }
-        assert!(partial(&proc_visibility("")));
+        assert!(
+            partial(&proc_visibility("")),
+            "a proc mount without options is partial"
+        );
     }
 
     /// A `status` with these `Uid:` and `CapEff:` lines, as the kernel writes them.
@@ -628,7 +635,10 @@ mod tests {
 
         assert_eq!(status_owner(&ping, Some(1000)), ProcessOwner::CurrentUser);
         assert_eq!(effective_caps(&ping).unwrap(), Capabilities(0x2000));
-        assert!(effective_caps("Name:\tx\n").is_err());
+        assert!(
+            effective_caps("Name:\tx\n").is_err(),
+            "a status without capabilities is an error"
+        );
     }
 
     #[test]
@@ -703,16 +713,19 @@ mod tests {
     fn a_kernel_thread_whose_exe_is_refused_runs_no_program() {
         let kworker = "8 (kworker/0:0H-events_highpri) I 2 0 0 0 -1 69238880 0 0 0 0";
 
-        assert!(matches!(
-            refused(Some(kworker)),
-            ProcessOutcome::NoExecutable
-        ));
+        assert!(
+            matches!(refused(Some(kworker)), ProcessOutcome::NoExecutable),
+            "a kernel thread runs no program"
+        );
     }
 
     #[test]
     fn a_refused_process_stays_denied_unless_its_stat_shows_a_kernel_thread() {
         // A `stat` that couldn't be read.
-        assert!(matches!(refused(None), ProcessOutcome::Denied(_)));
+        assert!(
+            matches!(refused(None), ProcessOutcome::Denied(_)),
+            "an unread stat stays denied"
+        );
         for stat in [
             // A root daemon: its flags lack the kernel-thread bit.
             "812 (sshd) S 1 812 812 0 -1 4194560 0 0 0 0",

@@ -7,6 +7,7 @@ use std::io::{self, Write};
 use toml_edit::{Item, TableLike, Value};
 
 use super::parse::{ParseError, Reader};
+use super::show_line;
 use crate::theme::{self, Glyphs, valid_name};
 
 /// What `[ui]` says, with its defaults filled in.
@@ -93,11 +94,11 @@ impl UiConfig {
             .theme
             .clone()
             .unwrap_or_else(|| format!("{} (default)", theme::DEFAULT));
-        writeln!(out, "{:<22}{theme}", "ui.theme")?;
-        writeln!(out, "{:<22}{}", "ui.summary", self.summary)?;
-        writeln!(out, "{:<22}{}", "ui.detail", self.detail.name())?;
-        writeln!(out, "{:<22}{}", "ui.bars", self.bars)?;
-        writeln!(out, "{:<22}{}", "ui.glyphs", glyphs_name(self.glyphs))
+        show_line(out, "ui.theme", theme)?;
+        show_line(out, "ui.summary", self.summary)?;
+        show_line(out, "ui.detail", self.detail.name())?;
+        show_line(out, "ui.bars", self.bars)?;
+        show_line(out, "ui.glyphs", glyphs_name(self.glyphs))
     }
 }
 

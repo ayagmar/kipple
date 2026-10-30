@@ -42,15 +42,15 @@ const RECENT_DAYS: Range<i64> = 0..366;
 
 /// What every rule of one pack is checked against.
 #[derive(Debug, Clone, Copy)]
-pub(super) struct RuleCx<'p> {
+pub(super) struct RuleCx<'pack> {
     /// The pack's ID, which prefixes every rule ID.
-    pub(super) pack: &'p PackId,
+    pub(super) pack: &'pack PackId,
     /// The pack's platforms, which a rule may only narrow.
-    pub(super) platforms: &'p [Platform],
+    pub(super) platforms: &'pack [Platform],
     /// Where the pack comes from.
     pub(super) origin: Origin,
     /// What the pack may reference.
-    pub(super) catalog: Catalog<'p>,
+    pub(super) catalog: Catalog<'pack>,
 }
 
 impl RuleCx<'_> {
@@ -110,7 +110,7 @@ impl RuleCx<'_> {
         if c.error_count() != before {
             return None;
         }
-        let ((root, selector), (requirements, eligibility)) = (scope?, predicates?);
+        let ((root, selector), predicates) = (scope?, predicates?);
         Some(Rule {
             id: id?,
             integration: integration?,
@@ -119,8 +119,8 @@ impl RuleCx<'_> {
             platforms: platforms?,
             root,
             selector,
-            requirements,
-            eligibility,
+            requirements: predicates.requirements,
+            eligibility: predicates.eligibility,
             operation: operation?,
             recent_days,
         })

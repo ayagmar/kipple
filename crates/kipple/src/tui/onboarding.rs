@@ -13,6 +13,7 @@ use super::keymap::{Action, Keymap, Mode};
 use super::settings::Found;
 use crate::config::{Edit, Loaded, Source, is_config_path, same_config_path, within_config_path};
 use crate::human::{escaped, homed};
+use crate::json::SizeOut;
 
 /// Whether the first run is due: no config file at the default location, in a known
 /// config directory. A file named by `--config` or `KIPPLE_CONFIG` never starts it.
@@ -47,7 +48,7 @@ pub fn level_totals<'a>(
         let size = finding
             .size
             .as_ref()
-            .map_or(0, |size| size.allocated.map_or(size.apparent.0, |a| a.0));
+            .map_or(0, |size| SizeOut::from(size).on_disk());
         match finding.verdict(&policy) {
             Some(Verdict::Safe) => totals.safe += size,
             Some(Verdict::Review(_)) => totals.review += size,
@@ -151,6 +152,13 @@ pub(crate) struct Onboarding {
     pub(crate) keymap: Keymap,
 }
 
+/// Whether a step was answered or skipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Answer {
+    Given,
+    Skipped,
+}
+
 impl Onboarding {
     /// Starts at step 1 with Balanced, the roots `app` scans and Delete preselected.
     pub(crate) fn new(app: &App) -> Self {
@@ -229,14 +237,14 @@ impl Onboarding {
         match action {
             Action::Quit => return Outcome::Quit,
             Action::Skip => {
-                self.answer(false);
+                self.answer(Answer::Skipped);
                 return self.advance();
             }
             Action::Choose if self.step == Step::Roots && self.on_add() => {
                 self.typing = Some(String::new());
             }
             Action::Choose => {
-                self.answer(true);
+                self.answer(Answer::Given);
                 return self.advance();
             }
             Action::MoveDown => self.move_by(1),
@@ -271,7 +279,8 @@ impl Onboarding {
     }
 
     /// Records the answer to this step, or that it was skipped.
-    fn answer(&mut self, given: bool) {
+    fn answer(&mut self, answer: Answer) {
+        let given = answer == Answer::Given;
         match self.step {
             Step::Level => self.chosen_level = given.then_some(self.level),
             Step::Roots => self.chosen_roots = given.then(|| self.checked_roots()),

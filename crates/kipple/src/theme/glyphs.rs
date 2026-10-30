@@ -38,6 +38,15 @@ const ASCII_LINES: line::Set<'static> = line::Set {
     cross: "+",
 };
 
+/// Whether a heading shows what is under it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fold {
+    /// It does.
+    Open,
+    /// It doesn't.
+    Collapsed,
+}
+
 impl Glyphs {
     /// The lines of a border, with round corners.
     #[must_use]
@@ -68,12 +77,12 @@ impl Glyphs {
 
     /// A heading's fold marker and its space.
     #[must_use]
-    pub const fn fold(self, collapsed: bool) -> &'static str {
-        match (self, collapsed) {
-            (Self::Unicode, false) => "▾ ",
-            (Self::Unicode, true) => "▸ ",
-            (Self::Ascii, false) => "v ",
-            (Self::Ascii, true) => "> ",
+    pub const fn fold(self, fold: Fold) -> &'static str {
+        match (self, fold) {
+            (Self::Unicode, Fold::Open) => "▾ ",
+            (Self::Unicode, Fold::Collapsed) => "▸ ",
+            (Self::Ascii, Fold::Open) => "v ",
+            (Self::Ascii, Fold::Collapsed) => "> ",
         }
     }
 

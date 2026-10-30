@@ -16,8 +16,8 @@ use std::io::{self, Write};
 use std::path::{self, Component, Path, PathBuf};
 
 use kipple_core::{
-    FileIdentity, FsProbe as _, HeldPath, Level, Lineage, Method, Policy, RootSource, Roots,
-    RuleId, RuleSettings, SymbolicRoot, is_within,
+    FileIdentity, FsProbe as _, HeldPath, Level, Lineage, Method, Policy, Resolution, RootSource,
+    Roots, RuleId, RuleSettings, SymbolicRoot, is_within,
 };
 use kipple_platform::{
     CONFIG_FILE, Environment, NoFollowFs, kipple_dirs, read_config, resolve_roots,
@@ -29,7 +29,7 @@ pub use self::keys::KeysConfig;
 pub(crate) use self::parse::position;
 pub use self::ui::{DetailPlace, UiConfig};
 use crate::human::escaped;
-use crate::setup::Builtin;
+use crate::setup::{Builtin, BuiltinRule};
 
 /// The variable naming a config file.
 pub const VAR: &str = "KIPPLE_CONFIG";
@@ -82,13 +82,46 @@ pub struct Config {
     /// `exclude.rules`.
     pub exclude_rules: Vec<RuleId>,
     /// `keep.paths`, each with its note.
-    pub keep: Vec<(String, Option<String>)>,
+    pub keep: Vec<Kept>,
     /// `rules.<id>`.
-    pub rules: Vec<(RuleId, RuleSettings)>,
+    pub rules: Vec<RuleConfig>,
     /// `[ui]`.
     pub ui: UiConfig,
     /// `[keys]`.
     pub keys: KeysConfig,
+}
+
+/// A path in `keep.paths`, as written, and its note.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Kept {
+    /// The path.
+    pub path: String,
+    /// Why it is kept.
+    pub note: Option<String>,
+}
+
+/// A `rules.<id>` table.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuleConfig {
+    /// The rule.
+    pub id: RuleId,
+    /// What the table sets for it.
+    pub settings: RuleSettings,
+}
+
+/// A place in a TOML file.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Position {
+    /// The line, from 1.
+    pub line: usize,
+    /// The column in characters, from 1.
+    pub column: usize,
+}
+
+impl fmt::Display for Position {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "line {}, column {}", self.line, self.column)
+    }
 }
 
 /// A config that loaded: where it is, whether a file was there, and what it says.
@@ -108,8 +141,8 @@ pub struct Loaded {
 pub struct ConfigError {
     /// Where the file was looked for.
     pub location: Location,
-    /// The line and column (from 1) of what is wrong, when it is inside the file.
-    pub position: Option<(usize, usize)>,
+    /// Where in the file what is wrong is, when it is inside the file.
+    pub position: Option<Position>,
     /// What is wrong.
     pub message: String,
 }
@@ -121,8 +154,8 @@ impl fmt::Display for ConfigError {
             None => write!(f, "config file")?,
         }
         write!(f, " (from {})", self.location.source)?;
-        if let Some((line, column)) = self.position {
-            write!(f, ", line {line}, column {column}")?;
+        if let Some(position) = self.position {
+            write!(f, ", {position}")?;
         }
         write!(f, ": {}", self.message)
     }
@@ -192,7 +225,7 @@ impl Settings {
             }
             (given, _) => resolve_roots(env, given),
         };
-        let (policy, warnings) = loaded.config.policy(&roots);
+        let ConfigPolicy { policy, warnings } = loaded.config.policy(&roots);
         Ok(Self {
             loaded,
             roots,
@@ -205,7 +238,10 @@ impl Settings {
 /// Every built-in rule's ID, on every platform.
 #[must_use]
 pub fn catalog(builtin: &Builtin) -> Catalog {
-    builtin.rules().map(|(_, rule)| rule.id.clone()).collect()
+    builtin
+        .rules()
+        .map(|BuiltinRule { rule, .. }| rule.id.clone())
+        .collect()
 }
 
 /// Which config file to read: `--config`, then `KIPPLE_CONFIG`, then `config.toml` in
@@ -297,7 +333,7 @@ impl Config {
     /// The policy it gives over `roots`, and a warning for each kept or excluded path that
     /// doesn't exist or can't be checked.
     #[must_use]
-    pub fn policy(&self, roots: &Roots) -> (Policy, Vec<String>) {
+    pub fn policy(&self, roots: &Roots) -> ConfigPolicy {
         let mut warnings = Vec::new();
         let mut held = |key: &str, path: &str, note: Option<&String>| {
             let entry = held_path(path, roots, note.cloned());
@@ -309,7 +345,7 @@ impl Config {
         let keep = self
             .keep
             .iter()
-            .map(|(path, note)| held("keep.paths", path, note.as_ref()))
+            .map(|kept| held("keep.paths", &kept.path, kept.note.as_ref()))
             .collect();
         let exclude = self
             .exclude_paths
@@ -322,14 +358,24 @@ impl Config {
             exclude,
             ..Policy::default()
         };
-        for (rule, settings) in &self.rules {
-            policy.rules.insert(rule.clone(), *settings);
+        for rule in &self.rules {
+            policy.rules.insert(rule.id.clone(), rule.settings);
         }
         for rule in &self.exclude_rules {
             policy.rules.entry(rule.clone()).or_default().disabled = true;
         }
-        (policy, warnings)
+        ConfigPolicy { policy, warnings }
     }
+}
+
+/// The policy a config gives, and a warning for each kept or excluded path that doesn't
+/// exist or can't be checked.
+#[derive(Debug, Clone)]
+pub struct ConfigPolicy {
+    /// The policy.
+    pub policy: Policy,
+    /// The warnings.
+    pub warnings: Vec<String>,
 }
 
 /// The resolved home directory, when it is known.
@@ -360,7 +406,7 @@ fn held_path(path: &str, roots: &Roots, note: Option<String>) -> HeldPath {
         };
     };
     let mut forms = vec![expanded.clone()];
-    for (_, resolved) in roots.iter() {
+    for Resolution { resolved, .. } in roots.iter() {
         let Ok(resolved) = resolved else { continue };
         let Some(link) = &resolved.link else { continue };
         if let Ok(rest) = expanded.strip_prefix(&link.configured) {
@@ -452,38 +498,38 @@ pub fn write_show(
         .as_ref()
         .map_or_else(|| "unknown".to_owned(), |path| path.display().to_string());
     let header = format!("{file} (from {})", location.source);
-    writeln!(out, "{:<22}{}", "config file", escaped(&header))?;
+    show_line(out, "config file", escaped(&header))?;
     let Some(loaded) = loaded else {
         return out.flush();
     };
     let config = &loaded.config;
     if !loaded.exists {
-        writeln!(out, "{:<22}not present, the defaults apply", "")?;
+        show_line(out, "", "not present, the defaults apply")?;
     }
     let level = config.level.unwrap_or(Level::Balanced);
     let method = config
         .method
         .map_or("delete (default; stored only)", |m| m.name());
-    writeln!(out, "{:<22}{level}", "care.level")?;
-    writeln!(out, "{:<22}{method}", "clean.method")?;
+    show_line(out, "care.level", level)?;
+    show_line(out, "clean.method", method)?;
     let roots = config.project_roots.as_ref().map_or_else(
         || "the defaults that exist".to_owned(),
         |roots| roots.join(", "),
     );
-    writeln!(out, "{:<22}{}", "scan.project_roots", escaped(&roots))?;
+    show_line(out, "scan.project_roots", escaped(&roots))?;
     for path in &config.exclude_paths {
-        writeln!(out, "{:<22}{}", "exclude.paths", escaped(path))?;
+        show_line(out, "exclude.paths", escaped(path))?;
     }
     for rule in &config.exclude_rules {
-        writeln!(out, "{:<22}{rule}", "exclude.rules")?;
+        show_line(out, "exclude.rules", rule)?;
     }
-    for (path, note) in &config.keep {
+    for Kept { path, note } in &config.keep {
         let line = note
             .as_ref()
             .map_or_else(|| path.clone(), |note| format!("{path}  ({note})"));
-        writeln!(out, "{:<22}{}", "keep.paths", escaped(&line))?;
+        show_line(out, "keep.paths", escaped(&line))?;
     }
-    for (rule, settings) in &config.rules {
+    for RuleConfig { id: rule, settings } in &config.rules {
         let mut parts = Vec::new();
         if settings.disabled {
             parts.push("enabled = false".to_owned());
@@ -494,9 +540,15 @@ pub fn write_show(
         if let Some(days) = settings.recent_days {
             parts.push(format!("recent_days = {days}"));
         }
-        writeln!(out, "{:<22}{}", format!("rules.{rule}"), parts.join(", "))?;
+        show_line(out, &format!("rules.{rule}"), parts.join(", "))?;
     }
     config.ui.write_show(out)?;
     config.keys.write_show(out)?;
     out.flush()
+}
+
+/// One line of `kipple config show`: the key in its column, then always a space before
+/// the value, however long the key.
+fn show_line(out: &mut dyn Write, key: &str, value: impl fmt::Display) -> io::Result<()> {
+    writeln!(out, "{key:<21} {value}")
 }

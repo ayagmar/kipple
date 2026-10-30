@@ -90,6 +90,55 @@ jobs:
       - name: Check advisories, licenses, bans and sources
         run: cargo deny check
 
+  # The workflows and shell scripts, which `cargo xtask check` doesn't read. actionlint also
+  # runs shellcheck on every `run:` block, and finds the pinned shellcheck first on PATH.
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install shellcheck and zizmor
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: shellcheck@0.11.0,zizmor@1.31.1
+
+      # Not packaged by install-action, so downloaded and checked against its SHA-256.
+      - name: Install actionlint
+        env:
+          ACTIONLINT_VERSION: 1.7.12
+          ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+        run: |
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --proto '=https' --tlsv1.2 -sSfL -o "$archive" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "$ACTIONLINT_SHA256  $archive" | sha256sum --check --strict -
+          mkdir "$RUNNER_TEMP/actionlint"
+          tar -xzf "$archive" -C "$RUNNER_TEMP/actionlint" actionlint
+          echo "$RUNNER_TEMP/actionlint" >> "$GITHUB_PATH"
+
+      - name: Lint the shell scripts
+        run: |
+          shellcheck --version
+          git ls-files -z -- '*.sh' .githooks | xargs -0 --no-run-if-empty shellcheck
+
+      - name: Lint the workflows
+        run: |
+          actionlint -version
+          actionlint
+
+      # The token lets zizmor's online audits look up the pinned actions.
+      - name: Audit the workflows and Dependabot config
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: zizmor --format github .
+
   # The vhs tapes (docs/09-site-and-docs.md §7), on `main` and on manual dispatch, until
   # the M6 site job takes them over. Not a required check. kipple runs against demo-home
   # through KIPPLE_TEST_ROOTS, and HOME and every XDG_* point at a disposable directory,

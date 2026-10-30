@@ -11,9 +11,11 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::Paragraph;
 
-use super::{Look, drawn_bar, lens_title, shelf_title, tint};
-use crate::human::{self, bytes, escaped};
-use crate::theme::Role;
+use super::layout::Bars;
+use super::{Look, drawn_bar, tint};
+use crate::human::{self, bytes, bytes_short, escaped};
+use crate::json::SizeOut;
+use crate::theme::{Fold, Role};
 use crate::tui::app::{App, Line, Node, ProjectId, Row, Shelf};
 
 /// The size column's least width, enough for `1023.9 GiB`: a lower bound (`>= `)
@@ -42,8 +44,8 @@ pub(crate) const fn offset(scroll: usize, at: usize, rows: usize, len: usize) ->
 }
 
 /// The visible tree and the cursor's line in it.
-pub(super) struct Tree<'a> {
-    lines: &'a [Line],
+pub(super) struct Tree<'lines> {
+    lines: &'lines [Line],
     at: usize,
     /// The projects whose lines show their path from home.
     clashing: BTreeSet<ProjectId>,
@@ -52,13 +54,13 @@ pub(super) struct Tree<'a> {
 }
 
 impl<'a> Tree<'a> {
-    /// `lines` of `app`, with size bars when `bars`.
-    pub(super) fn new(app: &App, lines: &'a [Line], bars: bool) -> Self {
+    /// `lines` of `app`, with size bars as `bars` says.
+    pub(super) fn new(app: &App, lines: &'a [Line], bars: Bars) -> Self {
         Self {
             at: app.cursor_index(lines),
             lines,
             clashing: app.clashing(),
-            scale: bars.then(|| scale(app, lines)),
+            scale: (bars == Bars::Shown).then(|| scale(app, lines)),
         }
     }
 
@@ -90,13 +92,13 @@ pub(super) fn render(
         .map(|(_, cells)| cells)
         .filter(|cells| !cells.sentence())
         .collect();
-    let columns = Columns::new(look, &sized, area.width, tree.scale.is_some());
+    let columns = Columns::new(look, &sized, area.width, tree.scale);
     for (y, (index, cells)) in (area.y..).zip(shown) {
         let row = Rect::new(area.x, y, area.width, 1);
         let [label, size, bar, state] = if cells.sentence() {
             [row, Rect::default(), Rect::default(), Rect::default()]
         } else {
-            columns.split(row, cells.finding)
+            columns.split(row, &cells)
         };
         let focused = index == at;
         // The cursor's style fills the whole row and wins over each span's own.
@@ -108,7 +110,7 @@ pub(super) fn render(
         let paint = |text: Text<'static>| if focused { look.cursor(text) } else { text };
         let text = fitted(look, &cells, usize::from(label.width));
         frame.render_widget(Paragraph::new(paint(text)).style(base), label);
-        let shown_size = size_text(&cells.size, columns.compact);
+        let shown_size = cells.size.text(columns.form);
         frame.render_widget(Paragraph::new(shown_size).style(base).right_aligned(), size);
         if bar.width > 0 {
             let drawn = Text::from(cells.bar);
@@ -132,12 +134,13 @@ struct Columns {
     label: u16,
     size: u16,
     bar: u16,
-    /// Whether sizes are written short (`512M`).
-    compact: bool,
+    /// How sizes are written.
+    form: Form,
 }
 
 impl Columns {
-    fn new(look: Look<'_>, shown: &[&Cells], width: u16, bars: bool) -> Self {
+    /// The columns for `shown` in `width`, with room for a bar when there is a `scale`.
+    fn new(look: Look<'_>, shown: &[&Cells], width: u16, scale: Option<u64>) -> Self {
         let width = usize::from(width);
         let widest = |of: &dyn Fn(&Cells) -> Option<usize>| {
             shown
@@ -147,16 +150,19 @@ impl Columns {
                 .unwrap_or(0)
         };
         // A space before the size, so it never touches the label.
-        let sizes = |compact: bool| {
-            let least = if compact { SHORT } else { SIZE };
-            widest(&|cells| Some(super::cols(&size_text(&cells.size, compact)))).max(least) + 1
+        let sizes = |form: Form| {
+            let least = match form {
+                Form::Short => SHORT,
+                Form::Full => SIZE,
+            };
+            widest(&|cells| Some(super::cols(&cells.size.text(form)))).max(least) + 1
         };
-        let mut size = sizes(false);
+        let mut size = sizes(Form::Full);
         let states = widest(&|cells| cells.finding.then(|| cells.state.width()));
         let hints = widest(&|cells| (!cells.finding).then(|| cells.state.width()));
         let need = widest(&|cells| Some(lead_width(cells) + super::cols(&cells.name.content)));
         let floor = widest(&|cells| Some(lead_width(cells) + least(look, cells)));
-        let mut bar = if bars { BAR } else { 0 };
+        let mut bar = if scale.is_some() { BAR } else { 0 };
         let mut state = states.max(hints.saturating_sub(bar));
         let over = |columns: [usize; 3]| need + columns.iter().sum::<usize>() > width;
         if over([size, bar, state]) {
@@ -165,9 +171,13 @@ impl Columns {
         if over([size, bar, state]) {
             bar = 0;
         }
-        let compact = over([size, bar, state]);
-        if compact {
-            size = sizes(true).min(size);
+        let form = if over([size, bar, state]) {
+            Form::Short
+        } else {
+            Form::Full
+        };
+        if form == Form::Short {
+            size = sizes(Form::Short).min(size);
         }
         // A finding's state is its hold's only label (never colour alone), so it keeps
         // its room and the path gives way below its floor first.
@@ -182,15 +192,15 @@ impl Columns {
             label: narrow(label),
             size: narrow(size),
             bar: narrow(bar),
-            compact,
+            form,
         }
     }
 
     /// `row` as its label, size, bar and state; a heading has no bar, so its state
     /// starts where the bar would.
-    fn split(&self, row: Rect, finding: bool) -> [Rect; 4] {
+    fn split(&self, row: Rect, cells: &Cells) -> [Rect; 4] {
         let at = |x: u16, width: u16| Rect::new(row.x + x, row.y, width, 1);
-        let bar = if finding { self.bar } else { 0 };
+        let bar = if cells.finding { self.bar } else { 0 };
         let state = self.label + self.size + bar;
         [
             at(0, self.label),
@@ -201,19 +211,34 @@ impl Columns {
     }
 }
 
-/// A size as the tree writes it: as given, or when `compact` with its unit's letter
-/// and no decimal from 100 on (`512.0 MiB` is `512M`, `2.5 GiB` is `2.5G`).
-fn size_text(size: &str, compact: bool) -> String {
-    let Some((number, unit)) = size.rsplit_once(' ').filter(|_| compact) else {
-        return size.to_owned();
-    };
-    let (bound, number) = number
-        .rsplit_once(' ')
-        .map_or(("", number), |(bound, number)| (bound, number));
-    let whole = number.split('.').next().unwrap_or(number);
-    let number = if whole.len() >= 3 { whole } else { number };
-    let letter = unit.chars().next().unwrap_or('B');
-    format!("{bound}{number}{letter}")
+/// How the tree writes sizes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Form {
+    Full,
+    /// Short (`512M`), when the columns don't fit in full.
+    Short,
+}
+
+/// A line's size, as the tree writes it: in full, or short (`512M`) when the columns
+/// don't fit.
+enum Size {
+    None,
+    /// A heading's total.
+    Total(u64),
+    /// A finding's size, which may be a lower bound.
+    Finding(SizeOut),
+}
+
+impl Size {
+    fn text(&self, form: Form) -> String {
+        match (self, form) {
+            (Self::None, _) => String::new(),
+            (Self::Total(total), Form::Full) => bytes(*total),
+            (Self::Total(total), Form::Short) => bytes_short(*total),
+            (Self::Finding(size), Form::Full) => human::size(Some(size)),
+            (Self::Finding(size), Form::Short) => human::size_short(Some(size)),
+        }
+    }
 }
 
 fn lead_width(cells: &Cells) -> usize {
@@ -369,7 +394,7 @@ struct Cells {
     path: bool,
     /// A finding's rule title, the first to go when there isn't room.
     title: Option<Span<'static>>,
-    size: String,
+    size: Size,
     bar: Vec<Span<'static>>,
     state: Text<'static>,
     /// Whether it is a finding's line: a heading has no bar, so its state has that room
@@ -381,7 +406,7 @@ impl Cells {
     /// Whether it is a line of words alone, with no size or state: a note or what the
     /// scan couldn't read, which has the whole row.
     fn sentence(&self) -> bool {
-        !self.finding && self.size.is_empty() && self.state.width() == 0
+        !self.finding && matches!(self.size, Size::None) && self.state.width() == 0
     }
 
     /// A heading's line: `lead`, then `name`.
@@ -391,7 +416,7 @@ impl Cells {
             name,
             path: false,
             title: None,
-            size: String::new(),
+            size: Size::None,
             bar: Vec::new(),
             state: Text::from(""),
             finding: false,
@@ -401,7 +426,14 @@ impl Cells {
 
 fn cells(app: &App, look: Look<'_>, tree: &Tree<'_>, line: Line) -> Cells {
     let indent = "  ".repeat(usize::from(line.depth));
-    let fold = |node| look.glyphs.fold(app.is_collapsed(node));
+    let fold = |node| {
+        let fold = if app.is_collapsed(node) {
+            Fold::Collapsed
+        } else {
+            Fold::Open
+        };
+        look.glyphs.fold(fold)
+    };
     let lead = |node| format!("  {indent}{}", fold(node));
     match line.node {
         Node::Finding(id) => app.row(id).map_or_else(
@@ -416,29 +448,33 @@ fn cells(app: &App, look: Look<'_>, tree: &Tree<'_>, line: Line) -> Cells {
             },
         ),
         Node::Shelf(shelf) => {
-            let (count, total) = sum(app, line.node);
+            let Sum {
+                count,
+                bytes: total,
+            } = sum(app, line.node);
+            let standing = human::standing(shelf.bucket());
             let name = Span::styled(
-                format!("{} ({count})", shelf_title(shelf)),
+                format!("{} ({count})", standing.title),
                 look.style(tint(shelf)).add_modifier(Modifier::BOLD),
             );
             Cells {
-                size: bytes(total),
-                state: Text::styled(format!(" {}", shelf_hint(shelf)), look.style(Role::Muted)),
+                size: Size::Total(total),
+                state: Text::styled(format!(" {}", standing.hint), look.style(Role::Muted)),
                 ..Cells::heading(lead(line.node), name)
             }
         }
-        Node::Group(_, lens) => heading_cells(app, line, lead(line.node), lens_title(lens)),
+        Node::Group(_, lens) => heading_cells(app, line, lead(line.node), human::lens(lens)),
         Node::Project(_, _, id) => {
             let name = project_name(app, tree, id);
             heading_cells(app, line, lead(line.node), &name)
         }
         Node::Gaps => {
             let name = Span::styled(
-                format!("Not covered ({})", app.gaps.len()),
+                format!("{} ({})", human::NOT_COVERED, app.gaps.len()),
                 look.style(Role::Warning).add_modifier(Modifier::BOLD),
             );
             Cells {
-                state: Text::styled(" so this report is partial", look.style(Role::Muted)),
+                state: Text::styled(format!(" {}", human::PARTIAL), look.style(Role::Muted)),
                 ..Cells::heading(lead(line.node), name)
             }
         }
@@ -465,9 +501,12 @@ fn cells(app: &App, look: Look<'_>, tree: &Tree<'_>, line: Line) -> Cells {
 
 /// A group's or a project's line: its name, how many findings and their total.
 fn heading_cells(app: &App, line: Line, lead: String, name: &str) -> Cells {
-    let (count, total) = sum(app, line.node);
+    let Sum {
+        count,
+        bytes: total,
+    } = sum(app, line.node);
     Cells {
-        size: bytes(total),
+        size: Size::Total(total),
         ..Cells::heading(lead, Span::raw(format!("{} ({count})", escaped(name))))
     }
 }
@@ -531,10 +570,7 @@ fn finding_cells(app: &App, look: Look<'_>, row: &Row, indent: &str, label: &str
             app.catalog.title(&row.finding.rule).to_owned(),
             look.style(Role::Muted),
         )),
-        size: row
-            .size
-            .as_ref()
-            .map_or_else(String::new, |size| human::size(Some(size))),
+        size: row.size.clone().map_or(Size::None, Size::Finding),
         bar: Vec::new(),
         state: Text::styled(format!(" {}", state(row)), look.style(role)),
         finding: true,
@@ -543,23 +579,28 @@ fn finding_cells(app: &App, look: Look<'_>, row: &Row, indent: &str, label: &str
 
 /// A row's state word: the first reason it isn't Safe, and how many more there are.
 fn state(row: &Row) -> String {
-    let reasons: Vec<&str> = match &row.verdict {
-        None => return "measuring".to_owned(),
-        Some(Verdict::Safe) => return String::new(),
-        Some(Verdict::Review(cautions)) => cautions.iter().map(|&c| human::caution(c)).collect(),
-        Some(Verdict::Protected(holds)) => holds.iter().map(|&h| human::hold(h)).collect(),
+    let Some(verdict) = &row.verdict else {
+        return human::MEASURING.to_owned();
     };
-    match reasons.as_slice() {
+    match human::reason_labels(verdict).as_slice() {
         [] => String::new(),
         [one] => (*one).to_owned(),
         [first, rest @ ..] => format!("{first} +{}", rest.len()),
     }
 }
 
+/// How many findings are under a node, and their size in bytes.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct Sum {
+    pub(super) count: usize,
+    pub(super) bytes: u64,
+}
+
 /// How many findings are under `node`, and their size.
-pub(super) fn sum(app: &App, node: Node) -> (usize, u64) {
-    app.under(node).fold((0, 0), |(count, total), row| {
-        (count + 1, total + row.bytes())
+pub(super) fn sum(app: &App, node: Node) -> Sum {
+    app.under(node).fold(Sum::default(), |sum, row| Sum {
+        count: sum.count + 1,
+        bytes: sum.bytes + row.bytes(),
     })
 }
 
@@ -582,13 +623,4 @@ pub(crate) fn slashed(path: &Path) -> String {
         .map(|part| part.as_os_str().to_string_lossy())
         .collect();
     parts.join("/")
-}
-
-const fn shelf_hint(shelf: Shelf) -> &'static str {
-    match shelf {
-        Shelf::Safe => "passes every check",
-        Shelf::Review => "loses more, or recent",
-        Shelf::Protected => "not eligible",
-        Shelf::Measuring => "not sorted yet",
-    }
 }

@@ -38,7 +38,7 @@ use std::process::ExitCode;
 use std::time::SystemTime;
 
 use clap::Parser as _;
-use kipple::theme::Themes;
+use kipple::theme::{Stdout, Themes};
 use kipple::{Cli, USAGE};
 use kipple_platform::Environment;
 
@@ -106,16 +106,16 @@ impl Demo {
     }
 }
 
-/// Runs `kipple <args>`, its stdout a terminal or not, and returns its exit code, stdout
+/// Runs `kipple <args>`, its stdout a terminal or not as `stdout` says, and returns its exit code, stdout
 /// and stderr.
 #[expect(
     clippy::unwrap_used,
     reason = "a fixture that fails to build fails the test"
 )]
-fn kipple(env: &Environment, terminal: bool, args: &[&str]) -> (ExitCode, String, String) {
+fn kipple(env: &Environment, stdout: Stdout, args: &[&str]) -> (ExitCode, String, String) {
     let cli = Cli::parse_from(std::iter::once("kipple").chain(args.iter().copied()));
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = kipple::run(&cli, env, terminal, &mut out, &mut err);
+    let code = kipple::run(&cli, env, stdout, &mut out, &mut err);
     let text = |bytes| String::from_utf8(bytes).unwrap();
     (code, text(out), text(err))
 }
@@ -141,23 +141,42 @@ fn body(text: &str) -> String {
 fn a_shown_theme_saved_as_your_own_is_the_same_theme_and_is_listed() {
     let demo = Demo::new();
     let env = demo.env(&[]);
-    let (path_code, path, _) = kipple(&env, false, &["theme", "path"]);
+    let (path_code, path, _) = kipple(&env, Stdout::Redirected, &["theme", "path"]);
     assert_eq!(path_code, ExitCode::SUCCESS);
     assert_eq!(Path::new(path.trim_end()), demo.themes());
 
-    let (show_code, shown, _) = kipple(&env, false, &["theme", "show", "kipple-dark"]);
+    let (show_code, shown, _) = kipple(&env, Stdout::Redirected, &["theme", "show", "kipple-dark"]);
     assert_eq!(show_code, ExitCode::SUCCESS);
     let file = demo.theme("copy", &shown);
-    let (_, again, _) = kipple(&env, false, &["theme", "show", "copy"]);
+    let (_, again, _) = kipple(&env, Stdout::Redirected, &["theme", "show", "copy"]);
     assert_eq!(body(&again), body(&shown));
 
-    let (list_code, list, _) = kipple(&env, false, &["theme", "list"]);
+    let (list_code, list, _) = kipple(&env, Stdout::Redirected, &["theme", "list"]);
     assert_eq!(list_code, ExitCode::SUCCESS);
     let copy = list.lines().find(|line| line.starts_with("copy ")).unwrap();
     assert!(copy.ends_with(&file.display().to_string()), "{list}");
     assert!(
         list.lines()
-            .any(|l| l.starts_with("kipple ") && l.contains("the default"))
+            .any(|l| l.starts_with("kipple ") && l.contains("the default")),
+        "the default theme is listed: {list}"
+    );
+}
+
+// Catches a theme name as wide as the name column running into what `theme list` says
+// of it.
+#[test]
+fn a_long_theme_name_is_set_apart_in_the_list() {
+    let demo = Demo::new();
+    let env = demo.env(&[]);
+    demo.theme("solarized-autumn", "version = 1\nextends = \"kipple\"\n");
+
+    let (code, list, _) = kipple(&env, Stdout::Redirected, &["theme", "list"]);
+
+    assert_eq!(code, ExitCode::SUCCESS);
+    assert!(
+        list.lines()
+            .any(|line| line.starts_with("solarized-autumn ")),
+        "{list}"
     );
 }
 
@@ -171,7 +190,7 @@ fn a_broken_theme_never_changes_scan_json() {
     fs::write(&plain, "").unwrap();
     let (code, want, _) = kipple(
         &env,
-        true,
+        Stdout::Terminal,
         &["--config", plain.to_str().unwrap(), "scan", "--json"],
     );
     assert_eq!(code, ExitCode::SUCCESS);
@@ -184,7 +203,7 @@ fn a_broken_theme_never_changes_scan_json() {
         vec!["--config", flag, "--color", "always", "scan", "--json"],
         vec!["--config", flag, "--theme", "nowhere", "scan", "--json"],
     ] {
-        let (themed, got, err) = kipple(&env, true, &args);
+        let (themed, got, err) = kipple(&env, Stdout::Terminal, &args);
         assert_eq!(themed, ExitCode::SUCCESS, "{args:?}: {err}");
         assert_eq!(err, "", "{args:?}");
         assert!(!got.contains('\x1b'), "{args:?}");
@@ -200,7 +219,11 @@ fn a_broken_theme_warns_once_in_human_output_and_kipple_draws_instead() {
     let file = demo.theme("dusk", BROKEN);
     let env = demo.env(&[]);
     let config = demo.config("dusk");
-    let (code, out, err) = kipple(&env, true, &["--config", config.to_str().unwrap(), "scan"]);
+    let (code, out, err) = kipple(
+        &env,
+        Stdout::Terminal,
+        &["--config", config.to_str().unwrap(), "scan"],
+    );
     assert_eq!(code, ExitCode::SUCCESS);
     assert_eq!(err.matches("warning: theme dusk:").count(), 1, "{err}");
     assert!(err.contains(&file.display().to_string()), "{err}");
@@ -218,28 +241,39 @@ fn colour_follows_the_flag_then_no_color_then_the_terminal() {
     let demo = Demo::new();
     let plain = demo.env(&[]);
     let no_color = demo.env(&[("NO_COLOR", "1")]);
-    let cases: [(&Environment, bool, &[&str], bool); 7] = [
-        (&plain, true, &["scan"], true),
-        (&plain, false, &["scan"], false),
-        (&no_color, true, &["scan"], false),
-        (&plain, true, &["--color", "never", "scan"], false),
-        (&plain, true, &["--no-color", "scan"], false),
-        (&plain, false, &["--color", "always", "scan"], true),
-        (&no_color, false, &["--color", "always", "rules"], true),
+    let cases: [(&Environment, Stdout, &[&str], bool); 7] = [
+        (&plain, Stdout::Terminal, &["scan"], true),
+        (&plain, Stdout::Redirected, &["scan"], false),
+        (&no_color, Stdout::Terminal, &["scan"], false),
+        (
+            &plain,
+            Stdout::Terminal,
+            &["--color", "never", "scan"],
+            false,
+        ),
+        (&plain, Stdout::Terminal, &["--no-color", "scan"], false),
+        (
+            &plain,
+            Stdout::Redirected,
+            &["--color", "always", "scan"],
+            true,
+        ),
+        (
+            &no_color,
+            Stdout::Redirected,
+            &["--color", "always", "rules"],
+            true,
+        ),
     ];
     for (env, terminal, args, coloured) in cases {
         let (code, out, err) = kipple(env, terminal, args);
         assert_eq!(code, ExitCode::SUCCESS, "{args:?}: {err}");
-        assert_eq!(
-            out.contains('\x1b'),
-            coloured,
-            "{args:?} terminal={terminal}"
-        );
+        assert_eq!(out.contains('\x1b'), coloured, "{args:?} {terminal:?}");
         // The words are the same either way.
         assert!(out.contains("System"), "{args:?}");
     }
-    let (_, coloured, _) = kipple(&plain, true, &["scan"]);
-    let (_, piped, _) = kipple(&plain, false, &["scan"]);
+    let (_, coloured, _) = kipple(&plain, Stdout::Terminal, &["scan"]);
+    let (_, piped, _) = kipple(&plain, Stdout::Redirected, &["scan"]);
     let stripped = strip_sgr(&coloured);
     assert_eq!(stripped, piped);
 }
@@ -281,7 +315,7 @@ fn the_home_screen_refuses_a_theme_it_cant_use_with_where_and_exit_2() {
         "{why_missing}"
     );
 
-    let (shown, _, why_shown) = kipple(&env, false, &["theme", "show", "dusk"]);
+    let (shown, _, why_shown) = kipple(&env, Stdout::Redirected, &["theme", "show", "dusk"]);
     assert_eq!(shown, ExitCode::from(USAGE));
     assert!(why_shown.contains("line 4, column 15"), "{why_shown}");
 }
@@ -296,7 +330,7 @@ fn ui_theme_is_checked_as_a_name_and_only_drawing_looks_it_up() {
     fs::write(&bad, "[ui]\ntheme = \"Dusk\"\n").unwrap();
     let (code, _, err) = kipple(
         &env,
-        false,
+        Stdout::Redirected,
         &["--config", bad.to_str().unwrap(), "scan", "--json"],
     );
     assert_eq!(code, ExitCode::from(USAGE));
@@ -308,7 +342,7 @@ fn ui_theme_is_checked_as_a_name_and_only_drawing_looks_it_up() {
     let missing = demo.config("nowhere");
     let (scanned, _, warned) = kipple(
         &env,
-        false,
+        Stdout::Redirected,
         &["--config", missing.to_str().unwrap(), "scan"],
     );
     assert_eq!(scanned, ExitCode::SUCCESS, "{warned}");
@@ -323,10 +357,14 @@ fn doctor_lists_a_broken_theme_and_its_json_reads_none() {
     let env = demo.env(&[]);
     let config = demo.config("dusk");
     let flag = config.to_str().unwrap();
-    let (_, out, _) = kipple(&env, false, &["--config", flag, "doctor"]);
+    let (_, out, _) = kipple(&env, Stdout::Redirected, &["--config", flag, "doctor"]);
     assert!(out.contains("dusk: can't be used"), "{out}");
     assert!(out.contains("line 4, column 15"), "{out}");
-    let (_, json, _) = kipple(&env, false, &["--config", flag, "doctor", "--json"]);
+    let (_, json, _) = kipple(
+        &env,
+        Stdout::Redirected,
+        &["--config", flag, "doctor", "--json"],
+    );
     assert!(!json.contains("dusk"), "{json}");
 }
 
@@ -341,10 +379,10 @@ fn a_theme_error_never_writes_a_control_character_to_the_terminal() {
         "version = 1\n[roles]\n\"\\u001b]52;c;cm0gLXJm\\u0007\" = {}\n",
     );
     let env = demo.env(&[]);
-    let (shown, _, show_err) = kipple(&env, false, &["theme", "show", "evil"]);
+    let (shown, _, show_err) = kipple(&env, Stdout::Redirected, &["theme", "show", "evil"]);
     let (_, _, rules_err) = kipple(
         &env,
-        false,
+        Stdout::Redirected,
         &["--color", "always", "--theme", "evil", "rules"],
     );
     let (opened, home_err) = home(&env, &["--theme", "evil"]);

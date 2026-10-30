@@ -10,9 +10,8 @@ use kipple_core::{Level, Method, RuleId, Suggestion};
 
 use super::app::{App, Key};
 use super::keymap::{Action, Mode};
-use super::ui::title_case;
 use crate::config::{Edit, same_config_path, within_config_path};
-use crate::human::{escaped, homed};
+use crate::human::{self, escaped, homed};
 
 /// One line of the panel the cursor can stand on.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -195,7 +194,7 @@ impl Panel {
                 }
                 Outcome::Save {
                     edits: vec![Edit::Level(level)],
-                    done: format!("Level set to {}.", title_case(level.name())),
+                    done: format!("Level set to {}.", human::level(level)),
                 }
             }
             Some(Item::Method) => {
@@ -338,7 +337,7 @@ fn add_root(app: &App, path: &Path) -> Outcome {
 
 /// Undoes the kept path at `index`, by the path it expands to.
 fn unkeep(app: &App, index: usize) -> Outcome {
-    let written = app.config.keep.get(index).map(|(path, _)| path.clone());
+    let written = app.config.keep.get(index).map(|kept| kept.path.clone());
     let expanded = app
         .policy
         .keep

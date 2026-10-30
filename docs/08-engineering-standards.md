@@ -1,6 +1,6 @@
 # Engineering standards
 
-Status: steps 1–10 and §2–§3 are in place and enforced. The `native` nextest profile and `cargo xtask test-native` (§5) exist since M1, and so does `cargo xtask verify-demo`, the end-to-end check of the CLI with the `test-roots` feature, which CI runs beside the gate on all three OSes. Later steps are planned.
+Status: steps 1–14, §2–§4 and §8 are in place and enforced. The `native` nextest profile and `cargo xtask test-native` (§5) exist since M1, and so does `cargo xtask verify-demo`, the end-to-end check of the CLI with the `test-roots` feature, which CI runs beside the gate on all three OSes. Later steps are planned.
 
 ## 1. One gate
 
@@ -9,7 +9,7 @@ Status: steps 1–10 and §2–§3 are in place and enforced. The `native` nexte
 | # | Step | Command run by xtask | Active from |
 | ---: | --- | --- | --- |
 | 1 | Format | `cargo fmt --all --check` | M0 |
-| 2 | Lint | `cargo clippy --workspace --all-targets --locked -- -D warnings` | M0 |
+| 2 | Lint | `cargo clippy --workspace --all-targets --locked -- -D warnings`, then the same with `--all-features`: the first lints the build that ships, the second the code behind `test-roots` | M0 |
 | 3 | Rustdoc | `cargo doc --workspace --no-deps --locked` with `RUSTDOCFLAGS=-D warnings` | M0 |
 | 4 | Tests | `cargo nextest run --workspace --locked` and `cargo test --doc --workspace --locked` | M0 |
 | 5 | Supply chain | `cargo deny check` (CI runs it as a separate job; see 10-ci-and-release.md §1) | M0 |
@@ -18,11 +18,16 @@ Status: steps 1–10 and §2–§3 are in place and enforced. The `native` nexte
 | 8 | Architecture | `cargo xtask check-arch` (see §3) | M0 |
 | 9 | Generated CLI reference | `cargo xtask gen-docs --check` for the commands that exist | M0 (only `--version` and `--help`) |
 | 10 | Generated JSON schemas and support matrix | part of `gen-docs --check` | M1 |
-| 11 | Site build, links, tapes, Lighthouse | `cargo xtask site` (separate CI job) | M6 |
+| 11 | Compatibility with the last release | `cargo xtask check-compat` (see §8) | M2 |
+| 12 | Documented commands | `cargo xtask check-docs`: every `kipple` command in a shell block of `README.md`, `docs/` and `site/src/` parses against the CLI (see the rules below) | M2 |
+| 13 | Style | `cargo xtask check-style`: the rules of §4 that clippy can't check | M2 |
+| 14 | Workflow and shell lint | `actionlint` (which runs `shellcheck` on every `run:` block), `zizmor` and `shellcheck` on `.githooks/` and `*.sh`, in CI's `lint` job only; xtask doesn't run them | M2 |
+| 15 | Site build, links, tapes, Lighthouse | `cargo xtask site` (separate CI job) | M6 |
 
 Rules:
 - A step that is not yet active doesn't exist in the code or in CI. It isn't a skipped or silently passing step. Each milestone adds its steps in the same change that introduces their inputs.
 - `gen-docs` generates only what the binary actually has. It never references future commands.
+- A fenced `sh`, `shell`, `bash` or `zsh` block, and each `$ ` line of a `console` block, shows commands that work today, and `check-docs` parses every `kipple` command in them with the CLI's own clap definition, without running anything. It finds the command after assignments, a `$ ` prompt, `env`, `sudo`, `if`, `then`, `do` and the like, inside `$(…)` and backticks (quoted or not), and as a path such as `./target/release/kipple`. A line that names `kipple` any other way, such as `nice kipple scan`, fails with "can't tell how this runs `kipple`", except as an argument of `echo` or `printf`. Planned commands, such as the full CLI surface in 03 §3, go in `text` blocks, which it skips, as it skips inline code. It fails when it finds no command at all, so it can't pass by reading nothing.
 - A milestone is done when `cargo xtask check` is green on all three OSes in CI, plus the milestone's own verification commands in [11-delivery-plan.md](11-delivery-plan.md).
 - A pre-commit hook in `.githooks/` runs the fast subset (fmt, clippy, typos).
 - We never loosen a gate to get a change through. Changing a gate is its own change, with a stated reason.
@@ -44,6 +49,7 @@ cognitive-complexity-threshold = 15
 too-many-lines-threshold = 80
 too-many-arguments-threshold = 5
 excessive-nesting-threshold = 4
+max-fn-params-bools = 0
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-indexing-slicing-in-tests = true
@@ -70,6 +76,7 @@ Limits are a smell detector, not a target. Split code by responsibility, never j
 - any kipple crate that core depends on
 - `kipple-adapters` and `kipple-platform` depending on each other
 - `#[cfg(target_os` outside `kipple-platform`
+- a module of the binary other than `human` wording a core enum that `human` words, or one worded in two frontend modules ([05-architecture.md](05-architecture.md) §4)
 
 These are cheap and deterministic, and they protect the boundaries in [05-architecture.md](05-architecture.md). We add no custom "smell score".
 
@@ -81,6 +88,16 @@ These are cheap and deterministic, and they protect the boundaries in [05-archit
 - No global state, no lazy statics holding configuration, no `std::env` reads below the composition root.
 - Pure functions for policy, planning, retention, rendering and TUI state transitions. I/O happens at the edges.
 - Early returns over nested conditionals. No dead code, commented-out code or stale TODOs.
+
+- No `bool` parameter: `run(root, true)` doesn't say what `true` means. Take a two-variant enum named for what it means there, such as `compat::run(root, Baselines::Keep)`, or split the function in two. Clippy checks it: `max-fn-params-bools = 0` makes `fn_params_excessive_bools` fail on any function with one, so it can't tell a literal call site from one that passes a named value. A trait `impl` is exempt, since the trait decides its signature.
+
+These rules are checked by `cargo xtask check-style` (gate step 13), which parses every Rust source in `crates/` and `xtask/` with `syn`. It doesn't look inside `macro_rules!` bodies or macro calls other than `assert!`.
+
+- No tuple in a signature or field other modules see: a function's parameters and return type, a trait method's, a field, an enum variant's field or a type alias, when it is `pub`, `pub(crate)`, `pub(super)` or `pub(in ...)`. That counts a tuple nested in a type, such as `Vec<(u64, u64)>` or `impl Iterator<Item = (Root, &Path)>`. Use a struct with named fields, so two values of one type can't be swapped. `()`, newtypes, private items and trait `impl`s, whose signatures the trait decides, are fine.
+- A struct's, enum's or union's lifetime is named for what it borrows, such as `Tree<'lines>`; a one-letter name fails. `'a` is fine on functions and `impl` blocks.
+- In test code (a file under `tests/`, a `tests.rs`, a `#[cfg(test)]` item or a `#[test]` function), an `assert!` or `debug_assert!` with only a condition gets a message that says what state it expects, such as `assert!(found.complete, "the search completes")`. Without one, a failure prints the expression but not why it should hold or what it was. `==` and `!=` are exempt, since clippy's `manual_assert_eq` already turns them into `assert_eq!` and `assert_ne!`, which print both sides. Every other condition (`<`, `matches!`, a method call, a negation) needs the message. Asserts outside test code state invariants and aren't checked.
+
+An item may break a rule only through an entry in the check's `EXEMPT` list, which names the item and the rule and says why. An entry that no longer matches anything fails too.
 
 ## 5. Testing philosophy
 
@@ -127,3 +144,26 @@ Fake-path tests prove logic. Only native-profile tests count as platform evidenc
 - Conventional Commits, `type(scope): summary`, imperative, lowercase, at most 72 characters. No AI attribution, `Co-authored-by` lines or emoji.
 - Each milestone ends with an independent read-only review (a separate agent in its own pane) that runs until the verdict is READY.
 - Docs change in the same commit as the behaviour they describe.
+
+## 8. Compatibility across versions
+
+Data one version of kipple writes or reads must be read by the next. Each format kipple publishes or reads has a **baseline**, the contract of the last release, in `crates/kipple/tests/compat/<format>/<version>/`. There has been no release yet, so today's baselines are the first contract, version 1 of each format.
+
+What a baseline holds:
+- `schema.json`, for a format with a JSON schema: the `kipple scan --json`, `scan --events jsonl`, `rules --json` and `doctor --json` records, the support matrix, and the theme file.
+- Sample documents, for a format kipple reads: a `config.toml`, theme files and a third-party rule pack, between them setting every key the release reads. Beside a document, a `.expected` file lists lines `kipple config show` or `kipple theme show` must print for it.
+
+**The schema check.** `cargo xtask check-compat` (gate step 11) compares each published schema with its baseline. A compatible change depends on who reads the documents:
+- **Records kipple writes** (`scan`, `event`, `rules`, `doctor`, `support-matrix`) are read by scripts. A consumer of kipple's JSON may rely on every property, type, value and variant the baseline lists, and must ignore properties it doesn't know. So a new property, optional or always present, is compatible. These break it: removing or renaming a property, a property the baseline always writes becoming optional or nullable, and any type, value or variant the baseline doesn't allow, such as a new bucket or event type. A value the schema leaves a free string, such as a hold reason or an omission kind, is outside the check.
+- **Documents kipple reads** (`theme`, and from M3 the journal, receipts and profiles) are written by people or an earlier kipple. Every document the baseline allows must still be read. A new value, a wider type, or a new optional property where the baseline refuses properties it doesn't list is compatible. These break it: removing or renaming a property, a new required property, a narrower type or enum, a tighter bound or pattern, refusing properties the baseline left open, and a new property that refuses a value the baseline left open, such as a `note` that must now be a string.
+
+The check fails, rather than passes, on a schema keyword it doesn't compare anywhere in either schema, new properties included, and on a published schema that `FORMATS` in `xtask/src/compat.rs` doesn't list. `pattern` and `format` are compared for equality. A document matching two variants of a `oneOf` matches none, so the check fails on a `oneOf` unless it can show no two variants share a document: their constants, enum values or types differ, a string `pattern` starts with other text, or a property both require can't take the same value. `--refresh` writes a first baseline only from a schema the check can judge.
+
+**The reader tests.** `crates/kipple/tests/compat.rs` reads every sample document of every version the baselines hold, so a document written for any earlier release still loads: the config with `config show` printing each line of its `.expected` file, each theme with `theme show` doing the same, and each pack validating as a third-party pack. They need the `test-roots` feature, so they run with the other end-to-end tests in `cargo xtask verify-demo`. When only the wording of `show` changes, update the `.expected` file in the same commit and say so.
+
+**A breaking change** bumps the format's version (`kipple.scan/v2`, `version = 2` in a theme) and needs a baseline for it: `cargo xtask check-compat --refresh` writes the schema of a version that has none. A reader keeps reading every older version it has a baseline for. A config file has no version, so a change that breaks a baseline config isn't allowed.
+
+**Refreshing the baseline.** At each release, `cargo xtask check-compat --refresh` makes each compatible schema its baseline, so what the release added becomes part of the contract (10-ci-and-release.md §3, Flow). Add sample documents for any key the release reads that the samples don't set yet. `--refresh` never replaces a baseline the current schema breaks.
+
+**Adding a format** is one baseline directory and one test: an entry in `FORMATS` and `--refresh` for a JSON schema, and for a format kipple reads, its sample documents and a test in `compat.rs` that reads them through kipple's public interface.
+

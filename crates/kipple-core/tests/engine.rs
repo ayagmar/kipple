@@ -13,14 +13,14 @@ use std::time::{Duration, SystemTime};
 
 use kipple_core::{
     Activity, ActivityGap, Allocated, Apparent, CancelToken, Category, Clock, Completeness,
-    Consequence, Cost, DirEntryMeta, Engine, EngineError, EntryKind, EntryMeta, EventRx, Evidence,
-    Facts, FileIdentity, FindingSink, FsProbe, Hold, Integration, IntegrationDescriptor,
-    IntegrationError, IntegrationId, Inventory, Lens, Level, Measurement, Method, Modified, Name,
-    Observer, Omission, Operation, Platform, Policy, Ports, ProbeError, ProcessOutcome,
-    ProcessProbe, ProcessRecord, ProcessSnapshot, Recovery, ResolvedRoot, RootLink, RootSource,
-    Roots, Rule, RuleId, RuleText, ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest,
-    Selector, Sizer, SpaceEstimate, SymbolicRoot, Tracked, UnresolvedRoot, Verdict, WalkGap,
-    event_channel,
+    Consequence, Cost, DirEntryMeta, Engine, EngineError, EntryKind, EntryMeta, EventChannel,
+    EventRx, Evidence, Facts, FileIdentity, FindingSink, FsProbe, Hold, Integration,
+    IntegrationDescriptor, IntegrationError, IntegrationId, Inventory, Lens, Level, Measurement,
+    Method, Modified, Name, Observer, Omission, Operation, Platform, Policy, Ports, ProbeError,
+    ProcessOutcome, ProcessProbe, ProcessRecord, ProcessSnapshot, Recovery, ResolvedRoot, RootLink,
+    RootSource, Roots, Rule, RuleId, RuleText, ScanContext, ScanEvent, ScanOutcome, ScanReport,
+    ScanRequest, Selector, Sizer, SpaceEstimate, SymbolicRoot, Tracked, UnresolvedRoot, Verdict,
+    WalkGap, event_channel,
 };
 
 /// Ten times the 100 ms cancellation budget: long enough not to flake on a loaded CI
@@ -328,7 +328,7 @@ fn spawn_scan(
     capacity: usize,
     cancel: &CancelToken,
 ) -> (EventRx, mpsc::Receiver<ScanReport>) {
-    let (events, rx) = event_channel(capacity, cancel);
+    let EventChannel { tx: events, rx } = event_channel(capacity, cancel);
     let (done, report) = mpsc::channel();
     let cancel = cancel.clone();
     thread::spawn(move || {
@@ -374,25 +374,31 @@ fn a_slow_consumer_receives_every_finding_and_size_instead_of_losing_them() {
     let mut last = None;
     for sequenced in events {
         if let ScanEvent::FindingAdded { finding } = &sequenced.event {
-            assert!(added.insert(finding.id));
+            assert!(added.insert(finding.id), "a finding is added once");
         }
         if let ScanEvent::FindingUpdated { id, .. } = &sequenced.event {
             assert!(added.contains(id), "{id} sized before it was added");
-            assert!(sized.insert(*id));
+            assert!(sized.insert(*id), "a finding is sized once");
         }
         last = Some(sequenced.event);
     }
 
     assert_eq!((added.len(), sized.len()), (count, count));
-    assert!(matches!(
-        last,
-        Some(ScanEvent::ScanCompleted {
-            outcome: ScanOutcome::Completed
-        })
-    ));
+    assert!(
+        matches!(
+            last,
+            Some(ScanEvent::ScanCompleted {
+                outcome: ScanOutcome::Completed
+            })
+        ),
+        "the last event is a completed scan"
+    );
     let report = report.recv_timeout(ACK_LIMIT).unwrap();
     assert_eq!(report.outcome, ScanOutcome::Completed);
-    assert!(report.findings.iter().all(|f| f.size == Some(SIZE)));
+    assert!(
+        report.findings.iter().all(|f| f.size == Some(SIZE)),
+        "every finding carries its size"
+    );
 }
 
 #[test]
@@ -407,7 +413,10 @@ fn a_consumer_that_goes_away_cancels_the_scan_and_keeps_the_partial_report() {
 
     let report = report.recv_timeout(ACK_LIMIT).expect("scan kept running");
     assert_eq!(report.outcome, ScanOutcome::Cancelled);
-    assert!(cancel.is_cancelled());
+    assert!(
+        cancel.is_cancelled(),
+        "a consumer that went away cancels the scan"
+    );
     // It stopped at the first finding nobody could receive.
     assert_ne!(report.findings.len(), 0);
     assert_eq!(attempts.load(Ordering::SeqCst), report.findings.len() + 1);
@@ -520,7 +529,7 @@ fn insert(roots: &mut Roots, root: SymbolicRoot, path: &str) {
 
 fn run(engine: &Engine, request: &ScanRequest) -> ScanReport {
     let cancel = CancelToken::new();
-    let (events, rx) = event_channel(1024, &cancel);
+    let EventChannel { tx: events, rx } = event_channel(1024, &cancel);
     let report = engine.scan(request, &events, &cancel);
     drop(rx);
     report
@@ -583,16 +592,19 @@ fn roots_that_cannot_be_read_are_omissions_and_are_never_handed_to_the_integrati
 
     assert_eq!(*seen.lock().unwrap(), [PathBuf::from("/home")]);
     let omissions = &report.integrations[0].omissions;
-    assert!(matches!(
-        omissions.as_slice(),
-        [
-            Omission::RootUnresolved { root: SymbolicRoot::XdgConfig, .. },
-            Omission::RootUnreadable { root: SymbolicRoot::XdgCache, error: stat },
-            Omission::RootNotDirectory { root: SymbolicRoot::XdgState, kind: EntryKind::Symlink, .. },
-            Omission::RootUnreadable { root: SymbolicRoot::LocalAppData, error: list },
-        ] if stat.io_kind() == Some(io::ErrorKind::PermissionDenied)
-            && list.io_kind() == Some(io::ErrorKind::PermissionDenied)
-    ));
+    assert!(
+        matches!(
+            omissions.as_slice(),
+            [
+                Omission::RootUnresolved { root: SymbolicRoot::XdgConfig, .. },
+                Omission::RootUnreadable { root: SymbolicRoot::XdgCache, error: stat },
+                Omission::RootNotDirectory { root: SymbolicRoot::XdgState, kind: EntryKind::Symlink, .. },
+                Omission::RootUnreadable { root: SymbolicRoot::LocalAppData, error: list },
+            ] if stat.io_kind() == Some(io::ErrorKind::PermissionDenied)
+                && list.io_kind() == Some(io::ErrorKind::PermissionDenied)
+        ),
+        "the unresolved and unreadable roots are omissions"
+    );
 }
 
 #[test]
@@ -725,10 +737,13 @@ fn the_report_is_sorted_and_keeps_what_a_crashed_integration_found_before_it_cra
     );
     let ids: Vec<_> = report.integrations.iter().map(|i| i.id.0).collect();
     assert_eq!(ids, ["alpha", "crashes", "zeta"]);
-    assert!(matches!(
-        report.integrations[1].omissions.as_slice(),
-        [Omission::Crashed]
-    ));
+    assert!(
+        matches!(
+            report.integrations[1].omissions.as_slice(),
+            [Omission::Crashed]
+        ),
+        "the crashed integration has a crash omission"
+    );
     assert_eq!(report.outcome, ScanOutcome::Completed);
 }
 
@@ -786,19 +801,22 @@ fn a_root_resolved_through_a_link_is_read_only_while_it_leads_to_the_same_direct
     );
 
     assert_eq!(*seen.lock().unwrap(), [PathBuf::from("/same")]);
-    assert!(matches!(
-        report.integrations[0].omissions.as_slice(),
-        [
-            Omission::RootChanged {
-                root: SymbolicRoot::XdgData,
-                ..
-            },
-            Omission::RootChanged {
-                root: SymbolicRoot::XdgState,
-                ..
-            },
-        ]
-    ));
+    assert!(
+        matches!(
+            report.integrations[0].omissions.as_slice(),
+            [
+                Omission::RootChanged {
+                    root: SymbolicRoot::XdgData,
+                    ..
+                },
+                Omission::RootChanged {
+                    root: SymbolicRoot::XdgState,
+                    ..
+                },
+            ]
+        ),
+        "a root leading somewhere else is an omission"
+    );
 }
 
 /// Reports every candidate of its `project-artifact` rules, with the markers beside it.
@@ -840,6 +858,29 @@ fn project_rule(integration: &'static str, marker: &str, artifact: &str) -> Rule
     rule(integration, SymbolicRoot::ProjectRoots, selector)
 }
 
+/// An engine with the cargo and node project rules over `fs`.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a fixture that fails to build fails the test"
+)]
+fn project_engine(fs: FakeFs) -> Engine {
+    let integrations: Vec<Box<dyn Integration>> = vec![
+        Box::new(ProjectFinder {
+            id: "cargo",
+            artifacts: &[],
+        }),
+        Box::new(ProjectFinder {
+            id: "node",
+            artifacts: &["node_modules"],
+        }),
+    ];
+    let rules = vec![
+        project_rule("cargo", "Cargo.toml", "target"),
+        project_rule("node", "package.json", "node_modules"),
+    ];
+    Engine::new(ports(fs, FakeSizer::default()), integrations, rules).unwrap()
+}
+
 #[test]
 fn project_artifacts_are_found_in_one_walk_that_never_looks_inside_one_or_goes_too_deep() {
     let mut fs = FakeFs::tree(&[
@@ -871,21 +912,7 @@ fn project_artifacts_are_found_in_one_walk_that_never_looks_inside_one_or_goes_t
     let listed = Arc::clone(&fs.listed);
     let mut roots = Roots::default();
     insert(&mut roots, SymbolicRoot::ProjectRoots, "/p");
-    let integrations: Vec<Box<dyn Integration>> = vec![
-        Box::new(ProjectFinder {
-            id: "cargo",
-            artifacts: &[],
-        }),
-        Box::new(ProjectFinder {
-            id: "node",
-            artifacts: &["node_modules"],
-        }),
-    ];
-    let rules = vec![
-        project_rule("cargo", "Cargo.toml", "target"),
-        project_rule("node", "package.json", "node_modules"),
-    ];
-    let engine = Engine::new(ports(fs, FakeSizer::default()), integrations, rules).unwrap();
+    let engine = project_engine(fs);
 
     let report = run(
         &engine,
@@ -922,10 +949,13 @@ fn project_artifacts_are_found_in_one_walk_that_never_looks_inside_one_or_goes_t
         );
     }
     for integration in &report.integrations {
-        assert!(matches!(
-            integration.omissions.as_slice(),
-            [Omission::Unlisted { error }] if error.io_kind() == Some(io::ErrorKind::PermissionDenied)
-        ));
+        assert!(
+            matches!(
+                integration.omissions.as_slice(),
+                [Omission::Unlisted { error }] if error.io_kind() == Some(io::ErrorKind::PermissionDenied)
+            ),
+            "a denied listing is the only omission"
+        );
     }
 }
 
@@ -937,13 +967,16 @@ fn a_rule_whose_integration_is_not_registered_is_refused_instead_of_never_runnin
         vec![any_rule("cargo"), any_rule("node")],
     );
 
-    assert!(matches!(
-        built,
-        Err(EngineError::NoIntegration {
-            integration: IntegrationId("node"),
-            ..
-        })
-    ));
+    assert!(
+        matches!(
+            built,
+            Err(EngineError::NoIntegration {
+                integration: IntegrationId("node"),
+                ..
+            })
+        ),
+        "a rule for an unregistered integration is refused"
+    );
 }
 
 /// Proposes removing each of `paths`, recognised and with a known consequence, under a
@@ -1034,45 +1067,70 @@ fn a_git_directory_in_or_above_a_finding_leaves_what_it_tracks_unknown() {
     let facts = facts(ports(fs, FakeSizer::default()), proposer);
 
     let tracked = |path: &str| &facts[Path::new(path)].tracked;
-    assert!(matches!(
-        tracked("/found/repo/target"),
-        Tracked::InsideRepository { work_tree } if work_tree == Path::new("/found/repo")
-    ));
-    assert!(matches!(
-        tracked("/found/self"),
-        Tracked::InsideRepository { work_tree } if work_tree == Path::new("/found/self")
-    ));
-    assert!(matches!(
-        tracked("/found/locked/target"),
-        Tracked::Unchecked(error) if error.io_kind() == Some(io::ErrorKind::PermissionDenied)
-    ));
-    assert!(matches!(
-        tracked("/found/plain/target"),
-        Tracked::NoRepository
-    ));
+    assert!(
+        matches!(
+            tracked("/found/repo/target"),
+            Tracked::InsideRepository { work_tree } if work_tree == Path::new("/found/repo")
+        ),
+        "a target inside a repository is tracked by its work tree"
+    );
+    assert!(
+        matches!(
+            tracked("/found/self"),
+            Tracked::InsideRepository { work_tree } if work_tree == Path::new("/found/self")
+        ),
+        "a repository found as itself is tracked by its own work tree"
+    );
+    assert!(
+        matches!(
+            tracked("/found/locked/target"),
+            Tracked::Unchecked(error) if error.io_kind() == Some(io::ErrorKind::PermissionDenied)
+        ),
+        "an unreadable git directory leaves tracking unchecked"
+    );
+    assert!(
+        matches!(tracked("/found/plain/target"), Tracked::NoRepository),
+        "a target with no git directory has no repository"
+    );
+}
+
+/// A process the probe identified as running `path`.
+fn identified(pid: u32, path: &str) -> ProcessRecord {
+    let outcome = ProcessOutcome::Identified {
+        path: PathBuf::from(path),
+        identity: FileIdentity {
+            volume: 1,
+            file: u64::from(pid),
+        },
+        deleted: false,
+    };
+    // Everything else it could show is read too, since the proposer declares no
+    // narrower evidence: it was started by its own path.
+    ProcessRecord {
+        cwd: Ok(PathBuf::from("/")),
+        argv: Ok(vec![path.into()]),
+        env_paths: Ok(Vec::new()),
+        mapped_files: Ok(Vec::new()),
+        ..ProcessRecord::new(pid, outcome)
+    }
+}
+
+/// The activity of a finding at `/found/app/target` among `processes`.
+fn activity(processes: FakeProcesses) -> Option<Activity> {
+    let ports = Ports {
+        processes: Box::new(processes),
+        ..ports(FakeFs::default(), FakeSizer::default())
+    };
+    let proposer = Proposer {
+        paths: &["/found/app/target"],
+    };
+    facts(ports, proposer)
+        .remove(Path::new("/found/app/target"))
+        .map(|facts| facts.activity)
 }
 
 #[test]
 fn a_program_running_from_a_finding_marks_it_in_use_and_any_unidentified_one_unknown() {
-    let identified = |pid, path: &str| {
-        let outcome = ProcessOutcome::Identified {
-            path: PathBuf::from(path),
-            identity: FileIdentity {
-                volume: 1,
-                file: u64::from(pid),
-            },
-            deleted: false,
-        };
-        // Everything else it could show is read too, since the proposer declares no
-        // narrower evidence: it was started by its own path.
-        ProcessRecord {
-            cwd: Ok(PathBuf::from("/")),
-            argv: Ok(vec![path.into()]),
-            env_paths: Ok(Vec::new()),
-            mapped_files: Ok(Vec::new()),
-            ..ProcessRecord::new(pid, outcome)
-        }
-    };
     let denied = ProcessRecord::new(
         1,
         ProcessOutcome::Denied(Arc::new(io::ErrorKind::PermissionDenied.into())),
@@ -1083,18 +1141,6 @@ fn a_program_running_from_a_finding_marks_it_in_use_and_any_unidentified_one_unk
             inventory,
             observer: Observer::PLAIN,
         }))
-    };
-    let activity = |processes: FakeProcesses| {
-        let ports = Ports {
-            processes: Box::new(processes),
-            ..ports(FakeFs::default(), FakeSizer::default())
-        };
-        let proposer = Proposer {
-            paths: &["/found/app/target"],
-        };
-        facts(ports, proposer)
-            .remove(Path::new("/found/app/target"))
-            .map(|facts| facts.activity)
     };
     let running = vec![
         identified(7, "/usr/bin/cargo"),
@@ -1109,29 +1155,44 @@ fn a_program_running_from_a_finding_marks_it_in_use_and_any_unidentified_one_unk
         io::ErrorKind::PermissionDenied.into(),
     )));
 
-    assert!(matches!(
-        activity(snapshot(running, Inventory::Complete)),
-        Some(Activity::InUse { pid: 4121, .. })
-    ));
-    assert!(matches!(
-        activity(snapshot(
-            vec![identified(7, "/usr/bin/cargo")],
-            Inventory::Complete
-        )),
-        Some(Activity::Idle)
-    ));
-    assert!(matches!(
-        activity(snapshot(vec![denied], Inventory::Complete)),
-        Some(Activity::Unknown(ActivityGap::Uninspected(1)))
-    ));
-    assert!(matches!(
-        activity(snapshot(Vec::new(), partial)),
-        Some(Activity::Unknown(ActivityGap::Partial(_)))
-    ));
-    assert!(matches!(
-        activity(unlisted),
-        Some(Activity::Unknown(ActivityGap::NoListing(_)))
-    ));
+    assert!(
+        matches!(
+            activity(snapshot(running, Inventory::Complete)),
+            Some(Activity::InUse { pid: 4121, .. })
+        ),
+        "a program running from the finding marks it in use"
+    );
+    assert!(
+        matches!(
+            activity(snapshot(
+                vec![identified(7, "/usr/bin/cargo")],
+                Inventory::Complete
+            )),
+            Some(Activity::Idle)
+        ),
+        "a program running from elsewhere leaves the finding idle"
+    );
+    assert!(
+        matches!(
+            activity(snapshot(vec![denied], Inventory::Complete)),
+            Some(Activity::Unknown(ActivityGap::Uninspected(1)))
+        ),
+        "a denied process leaves the finding unknown"
+    );
+    assert!(
+        matches!(
+            activity(snapshot(Vec::new(), partial)),
+            Some(Activity::Unknown(ActivityGap::Partial(_)))
+        ),
+        "a partial inventory leaves the finding unknown"
+    );
+    assert!(
+        matches!(
+            activity(unlisted),
+            Some(Activity::Unknown(ActivityGap::NoListing(_)))
+        ),
+        "a process listing that failed leaves the finding unknown"
+    );
 }
 
 #[test]
@@ -1211,27 +1272,36 @@ fn a_checkout_inside_a_finding_holds_it_and_an_incomplete_walk_cant_rule_one_out
         ..SIZE
     });
 
-    assert!(matches!(
-        tracked(editable),
-        Some(Tracked::HoldsRepository { work_tree }) if work_tree == Path::new("/found/.venv/src/pkg")
-    ));
+    assert!(
+        matches!(
+            tracked(editable),
+            Some(Tracked::HoldsRepository { work_tree }) if work_tree == Path::new("/found/.venv/src/pkg")
+        ),
+        "a checkout inside the finding holds it"
+    );
     // A walk that met a checkout before an unreadable entry shows the specific reason.
     let unreadable_after_checkout = Measurement {
         repository: Some(PathBuf::from("/found/.venv/src/pkg")),
         ..unreadable
     };
-    assert!(matches!(
-        tracked(unreadable_after_checkout),
-        Some(Tracked::HoldsRepository { .. })
-    ));
-    assert!(matches!(
-        tracked(unreadable),
-        Some(Tracked::Unwalked(WalkGap::Unread))
-    ));
-    assert!(matches!(
-        tracked(measured(SIZE)),
-        Some(Tracked::NoRepository)
-    ));
+    assert!(
+        matches!(
+            tracked(unreadable_after_checkout),
+            Some(Tracked::HoldsRepository { .. })
+        ),
+        "a checkout met before an unreadable entry still holds the finding"
+    );
+    assert!(
+        matches!(
+            tracked(unreadable),
+            Some(Tracked::Unwalked(WalkGap::Unread))
+        ),
+        "an unread walk leaves tracking unwalked"
+    );
+    assert!(
+        matches!(tracked(measured(SIZE)), Some(Tracked::NoRepository)),
+        "a complete walk without a checkout finds no repository"
+    );
 }
 
 #[test]
@@ -1261,18 +1331,24 @@ fn a_mount_the_walk_skipped_inside_a_finding_holds_it_for_git_and_last_change() 
         .unwrap();
 
     // The reason names the mount, not an unreadable entry.
-    assert!(matches!(
-        facts.tracked,
-        Tracked::Unwalked(WalkGap::OtherFileSystem)
-    ));
+    assert!(
+        matches!(facts.tracked, Tracked::Unwalked(WalkGap::OtherFileSystem)),
+        "a skipped mount leaves tracking unwalked for that reason"
+    );
     assert_eq!(facts.modified, Modified::Unknown(WalkGap::OtherFileSystem));
     let rule = RuleId("test.found".to_owned());
     let at = Path::new("/found/target");
     let Verdict::Protected(holds) = Policy::at(Level::Balanced).verdict(&rule, at, &facts) else {
         panic!("a finding with a skipped mount is never Safe or Review");
     };
-    assert!(holds.contains(&Hold::UnknownGit));
-    assert!(holds.contains(&Hold::UnknownModified));
+    assert!(
+        holds.contains(&Hold::UnknownGit),
+        "a skipped mount holds the finding for git"
+    );
+    assert!(
+        holds.contains(&Hold::UnknownModified),
+        "a skipped mount holds the finding for last change"
+    );
 }
 
 #[test]
@@ -1298,6 +1374,9 @@ fn a_complete_walk_with_an_entry_without_a_time_leaves_only_the_last_change_unkn
         .remove(Path::new("/found/target"))
         .unwrap();
 
-    assert!(matches!(facts.tracked, Tracked::NoRepository));
+    assert!(
+        matches!(facts.tracked, Tracked::NoRepository),
+        "a complete walk finds no repository even without an entry time"
+    );
     assert_eq!(facts.modified, Modified::Unknown(WalkGap::Untimed));
 }

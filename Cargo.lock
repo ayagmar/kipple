@@ -1278,6 +1278,7 @@ dependencies = [
  "ratatui",
  "serde",
  "serde_json",
+ "syn 3.0.9",
  "tempfile",
 ]
 

@@ -14,11 +14,20 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 
 use super::{PACMAN, colour, home, probe, styled};
-use crate::config::{self, Catalog, Config, Edit, Loaded, Location, Settings, Source};
+use crate::config::{
+    self, Catalog, Config, ConfigPolicy, Edit, Loaded, Location, Settings, Source,
+};
 use crate::theme::Look;
 use crate::tui::app::{App, Effect, Key, Msg, Saved};
 use crate::tui::onboarding::{self, Onboarding, Outcome, Step};
 use crate::tui::settings::Found;
+
+/// Whether a config file is there.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum File {
+    Exists,
+    Missing,
+}
 
 /// A temp dir with a home directory holding `projects` and `code`, which kipple found as
 /// project roots, and no config file at the default location yet.
@@ -73,12 +82,12 @@ impl Disk {
         }
     }
 
-    fn settings(&self, exists: bool, config: Config) -> Settings {
-        let (policy, warnings) = config.policy(&self.roots);
+    fn settings(&self, file: File, config: Config) -> Settings {
+        let ConfigPolicy { policy, warnings } = config.policy(&self.roots);
         Settings {
             loaded: Loaded {
                 location: self.location(),
-                exists,
+                exists: file == File::Exists,
                 config,
             },
             roots: self.roots.clone(),
@@ -90,7 +99,7 @@ impl Disk {
     /// The home screen as it opens without a config file, with `demo-home`-like findings.
     fn first_run(&self) -> (App, Onboarding) {
         let mut app = home();
-        app.configure(Saved::of(&self.settings(false, Config::default())));
+        app.configure(Saved::of(&self.settings(File::Missing, Config::default())));
         let onboarding = Onboarding::new(&app);
         (app, onboarding)
     }
@@ -107,7 +116,7 @@ impl Disk {
             };
             let written = config::write(&self.location(), &edits, &self.roots, &self.catalog);
             app.update(match written {
-                Ok(config) => Msg::Saved(Box::new(Saved::of(&self.settings(true, config)))),
+                Ok(config) => Msg::Saved(Box::new(Saved::of(&self.settings(File::Exists, config)))),
                 Err(error) => Msg::NotSaved(error.to_string()),
             });
         }
@@ -193,7 +202,7 @@ fn skipping_every_step_writes_only_care_level_balanced() {
     assert_eq!(edits, [Edit::Level(Level::Balanced)]);
     assert_eq!(disk.finish(&mut app, edits), []);
     let written = config::load(&disk.location(), &disk.catalog).unwrap();
-    assert!(written.exists);
+    assert!(written.exists, "skipping every step still writes a config");
     assert_eq!(
         written.config,
         Config {
@@ -287,10 +296,13 @@ fn quitting_at_any_step_even_while_typing_writes_nothing() {
 
     let (_, mut first) = disk.first_run();
     answer(&mut first, &[Key::Enter, Key::Down, Key::Down, Key::Enter]);
-    assert!(first.typing.is_some());
+    assert!(first.typing.is_some(), "the root step is typing");
     assert_eq!(first.key(Key::Char('q')), Outcome::Stay, "q is typed");
     assert_eq!(first.key(Key::Interrupt), Outcome::Quit);
-    assert!(!disk.file().exists());
+    assert!(
+        !disk.file().exists(),
+        "quitting while typing writes no config"
+    );
 }
 
 // Catches a change of project roots that the home screen doesn't scan, or that writes
@@ -365,7 +377,7 @@ fn a_relative_root_is_refused_while_typing_and_can_be_corrected() {
     answer(&mut first, &[Key::Enter]);
 
     assert!(first.typing.is_some(), "a relative path was taken");
-    assert!(first.notice.is_some());
+    assert!(first.notice.is_some(), "a relative root shows a notice");
     assert_eq!(first.roots.len(), 0, "{:?}", first.roots);
 }
 
@@ -397,19 +409,23 @@ fn the_first_run_is_due_only_without_a_file_at_a_known_default_location() {
         config: Config::default(),
     };
 
-    assert!(onboarding::due(&loaded(
-        Source::Default,
-        Some(disk.file()),
-        false
-    )));
-    assert!(!onboarding::due(&loaded(
-        Source::Default,
-        Some(disk.file()),
-        true
-    )));
-    assert!(!onboarding::due(&loaded(Source::Default, None, false)));
+    assert!(
+        onboarding::due(&loaded(Source::Default, Some(disk.file()), false)),
+        "the first run is due without a file at the default location"
+    );
+    assert!(
+        !onboarding::due(&loaded(Source::Default, Some(disk.file()), true)),
+        "a file at the default location means the first run isn't due"
+    );
+    assert!(
+        !onboarding::due(&loaded(Source::Default, None, false)),
+        "an unknown default location means the first run isn't due"
+    );
     for named in [Source::Flag, Source::Env] {
-        assert!(!onboarding::due(&loaded(named, Some(disk.file()), true)));
+        assert!(
+            !onboarding::due(&loaded(named, Some(disk.file()), true)),
+            "a named config means the first run isn't due"
+        );
     }
 }
 
@@ -499,7 +515,7 @@ fn steps_1_to_4_at_160_by_48_in_colour() {
     let mut first = Onboarding::new(&app);
     app.start_search();
     let paths = [PathBuf::from("/home/ada/notes")];
-    suggest(&mut app, &mut first, &paths, false);
+    suggest(&mut app, &mut first, &paths, Search::Stopped);
     let mut shown = vec![styled(&drawn(&first, &app, 160, 48))];
     let mut probed = vec![in_roles(&first, &app)];
     for keys in [&[Key::Enter, Key::Down][..], &[Key::Enter], &[Key::Enter]] {
@@ -530,9 +546,16 @@ fn step_4_says_when_no_tip_is_known() {
     assert!(text.contains("knows no retention setting"), "{text}");
 }
 
+/// Whether the root search went through the whole home folder.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Search {
+    Complete,
+    Stopped,
+}
+
 /// The search ending with `paths` suggested, each holding one project, as the loop
 /// passes it to both the questions and the home screen.
-fn suggest(app: &mut App, first: &mut Onboarding, paths: &[PathBuf], complete: bool) {
+fn suggest(app: &mut App, first: &mut Onboarding, paths: &[PathBuf], search: Search) {
     let found = Found {
         suggestions: paths
             .iter()
@@ -541,7 +564,7 @@ fn suggest(app: &mut App, first: &mut Onboarding, paths: &[PathBuf], complete: b
                 projects: vec![path.join("app")],
             })
             .collect(),
-        complete,
+        complete: search == Search::Complete,
         unreadable: 0,
     };
     first.suggested(&found);
@@ -556,9 +579,12 @@ fn suggestions_start_unchecked_and_finishing_without_one_writes_as_before() {
     let (mut app, mut first) = disk.first_run();
     app.start_search();
     let documents = disk.home().join("Documents");
-    suggest(&mut app, &mut first, &[documents], true);
+    suggest(&mut app, &mut first, &[documents], Search::Complete);
 
-    assert!(first.offers.iter().all(|offer| !offer.checked));
+    assert!(
+        first.offers.iter().all(|offer| !offer.checked),
+        "every suggestion starts unchecked"
+    );
     let edits = finished(answer(
         &mut first,
         &[Key::Enter, Key::Enter, Key::Tab, Key::Tab],
@@ -581,7 +607,12 @@ fn a_checked_suggestion_is_written_once_with_the_other_roots() {
     let disk = Disk::new();
     let (mut app, mut first) = disk.first_run();
     let documents = disk.home().join("Documents");
-    suggest(&mut app, &mut first, std::slice::from_ref(&documents), true);
+    suggest(
+        &mut app,
+        &mut first,
+        std::slice::from_ref(&documents),
+        Search::Complete,
+    );
     answer(&mut first, &[Key::Enter]);
 
     // projects, code, "add another", then the suggestion.
@@ -589,7 +620,7 @@ fn a_checked_suggestion_is_written_once_with_the_other_roots() {
         &mut first,
         &[Key::Down, Key::Down, Key::Down, Key::Char(' ')],
     );
-    assert!(first.offers[0].checked);
+    assert!(first.offers[0].checked, "space checks the first suggestion");
     // Typing it as well is refused: it is in the list.
     answer(&mut first, &[Key::Up, Key::Enter]);
     for c in documents.display().to_string().chars() {
@@ -626,7 +657,12 @@ fn a_checked_suggestion_inside_a_typed_root_is_not_written() {
     let disk = Disk::new();
     let (mut app, mut first) = disk.first_run();
     let uni = disk.home().join("Documents").join("uni");
-    suggest(&mut app, &mut first, std::slice::from_ref(&uni), true);
+    suggest(
+        &mut app,
+        &mut first,
+        std::slice::from_ref(&uni),
+        Search::Complete,
+    );
     answer(&mut first, &[Key::Enter]);
 
     // projects, code, "add another", then the suggestion.
@@ -634,7 +670,7 @@ fn a_checked_suggestion_inside_a_typed_root_is_not_written() {
         &mut first,
         &[Key::Down, Key::Down, Key::Down, Key::Char(' ')],
     );
-    assert!(first.offers[0].checked);
+    assert!(first.offers[0].checked, "space checks the first suggestion");
     answer(&mut first, &[Key::Up, Key::Enter]);
     for c in "~/Documents".chars() {
         first.key(Key::Char(c));
@@ -660,14 +696,22 @@ fn a_checked_suggestion_inside_a_typed_root_is_not_written() {
 fn quitting_with_a_checked_suggestion_writes_nothing() {
     let disk = Disk::new();
     let (mut app, mut first) = disk.first_run();
-    suggest(&mut app, &mut first, &[disk.home().join("Documents")], true);
+    suggest(
+        &mut app,
+        &mut first,
+        &[disk.home().join("Documents")],
+        Search::Complete,
+    );
     answer(
         &mut first,
         &[Key::Enter, Key::Down, Key::Down, Key::Down, Key::Char(' ')],
     );
 
     assert_eq!(answer(&mut first, &[Key::Char('q')]), Outcome::Quit);
-    assert!(!disk.file().exists());
+    assert!(
+        !disk.file().exists(),
+        "quitting with a checked suggestion writes no config"
+    );
 }
 
 #[test]
@@ -686,7 +730,7 @@ fn step_2_with_suggestions_at_80_by_24() {
         PathBuf::from("/home/ada/Documents/uni"),
         PathBuf::from("/home/ada/notes"),
     ];
-    suggest(&mut app, &mut first, &paths, false);
+    suggest(&mut app, &mut first, &paths, Search::Stopped);
     answer(&mut first, &[Key::Down, Key::Down, Key::Char(' ')]);
     let shown = screen(&first, &app, 80, 24);
     // The roots and the suggestions read from `~` (F1).
@@ -705,7 +749,7 @@ fn step_2_with_suggestions_at_160_by_48() {
         PathBuf::from("/home/ada/Documents/uni"),
         PathBuf::from("/home/ada/notes"),
     ];
-    suggest(&mut app, &mut first, &paths, true);
+    suggest(&mut app, &mut first, &paths, Search::Complete);
     answer(&mut first, &[Key::Enter, Key::Down, Key::Down]);
     insta::assert_snapshot!(screen(&first, &app, 160, 48));
 }

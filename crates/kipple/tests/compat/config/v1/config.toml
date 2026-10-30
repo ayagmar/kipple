@@ -1,0 +1,44 @@
+# A config.toml as the first release reads it, with every key it reads set, none to its
+# default. Its `.expected` holds what `kipple config show` prints for it.
+# Every path starts with `~`: a path like `/srv/work` is not absolute on Windows, which
+# refuses the file.
+
+[care]
+level = "careful"
+
+[clean]
+method = "trash"
+
+[scan]
+project_roots = ["~/projects", "~/srv/work"]
+
+[exclude]
+paths = ["~/projects/keep-this/target"]
+rules = ["builtin.node.node-modules"]
+
+[rules."builtin.cargo.target"]
+level = "thorough"
+recent_days = 30
+
+[rules."builtin.python.bytecode"]
+enabled = false
+
+[keep]
+paths = [
+  { path = "~/projects/demo/target", note = "benchmark baseline" },
+  "~/projects/other/.venv",
+]
+
+[ui]
+theme = "kipple-dark"
+summary = false
+detail = "bottom"
+bars = false
+glyphs = "ascii"
+
+[keys]
+select = ["s", "space"]
+quit = ["q", "Q"]
+settings = ["S"]
+move-down = ["j", "down", "pagedown"]
+page-down = []

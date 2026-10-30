@@ -13,10 +13,13 @@ use kipple_core::{
 use ratatui::style::Color;
 
 use super::{
-    CARGO, DAY, NODE, colour, draw, focus, found, home, look, measured, press, probe, safe, screen,
-    selected, styled, to, typed,
+    CARGO, DAY, NODE, Paint, colour, draw, focus, found, home, look, measured, press, probe, safe,
+    screen, selected, styled, to, typed,
 };
-use crate::config::{self, Catalog, Config, Loaded, Location, Settings, Source};
+use crate::config::{
+    self, Catalog, Config, ConfigPolicy, Kept, Loaded, Location, Settings, Source,
+};
+use crate::theme::Glyphs;
 use crate::tui::app::{App, Effect, Key, Mode, Msg, Node, Saved, Shelf};
 use crate::tui::settings::{Found, Search};
 
@@ -74,7 +77,7 @@ impl Disk {
 
     /// What `config` gives over these roots, as the loop has it after a write.
     fn saved(&self, config: Config) -> Saved {
-        let (policy, warnings) = config.policy(&self.roots);
+        let ConfigPolicy { policy, warnings } = config.policy(&self.roots);
         let settings = Settings {
             loaded: Loaded {
                 location: self.location(),
@@ -176,11 +179,11 @@ fn p_keeps_the_focused_finding_with_its_note_once_the_config_file_says_so() {
     press(&mut app, &[Key::Enter]);
 
     assert!(app.selected.is_empty(), "a kept finding stayed selected");
-    assert_eq!(shelf(&app, 1), Shelf::Safe, "kept before it was written");
+    assert_eq!(shelf(&app, 1), Shelf::SAFE, "kept before it was written");
     assert_eq!(disk.run(&mut app), []);
 
     assert_eq!(verdict(&app, 1), Verdict::Protected(vec![Hold::Kept]));
-    assert_eq!(shelf(&app, 2), Shelf::Safe);
+    assert_eq!(shelf(&app, 2), Shelf::SAFE);
     let text = disk.text();
     assert!(text.contains("note = \"baseline\""), "{text}");
     assert!(
@@ -205,7 +208,7 @@ fn a_keep_the_file_refuses_shows_why_and_changes_nothing() {
     press(&mut app, &[Key::Char('p'), Key::Enter]);
     disk.run(&mut app);
 
-    assert_eq!(shelf(&app, 1), Shelf::Safe);
+    assert_eq!(shelf(&app, 1), Shelf::SAFE);
     assert_eq!(app.policy.keep, []);
     assert_eq!(disk.text(), broken);
     let notice = app.notice.as_deref().unwrap();
@@ -243,7 +246,7 @@ fn a_finding_whose_path_isnt_utf8_is_refused_with_a_message_and_nothing_is_writt
     press(&mut app, &[Key::Char('p'), Key::Enter]);
     disk.run(&mut app);
 
-    assert_eq!(shelf(&app, 1), Shelf::Safe);
+    assert_eq!(shelf(&app, 1), Shelf::SAFE);
     let notice = app.notice.as_deref().unwrap();
     assert!(notice.contains("isn't valid UTF-8"), "{notice}");
     assert!(disk.files().is_empty(), "{:?}", disk.files());
@@ -269,7 +272,7 @@ fn shift_p_turns_the_rule_off_which_keeps_and_unselects_every_finding_of_it() {
     for id in [1, 3] {
         assert_eq!(verdict(&app, id), Verdict::Protected(vec![Hold::Disabled]));
     }
-    assert_eq!(shelf(&app, 2), Shelf::Safe);
+    assert_eq!(shelf(&app, 2), Shelf::SAFE);
     let text = disk.text();
     assert!(text.contains("enabled = false"), "{text}");
 }
@@ -287,21 +290,21 @@ fn settings_undo_a_kept_item_and_a_turned_off_rule() {
     to(&mut app, 2);
     press(&mut app, &[Key::Char('P')]);
     disk.run(&mut app);
-    assert_eq!(shelf(&app, 1), Shelf::Protected);
-    assert_eq!(shelf(&app, 2), Shelf::Protected);
+    assert_eq!(shelf(&app, 1), Shelf::PROTECTED);
+    assert_eq!(shelf(&app, 2), Shelf::PROTECTED);
 
     // No project roots: the level, the theme, add another, the method, then the kept item and the
     // rule.
     settings_at(&mut app, 4);
     press(&mut app, &[Key::Char('d')]);
     disk.run(&mut app);
-    assert_eq!(shelf(&app, 1), Shelf::Safe);
+    assert_eq!(shelf(&app, 1), Shelf::SAFE);
     assert_eq!(app.config.keep, []);
 
     settings_at(&mut app, 4);
     press(&mut app, &[Key::Char('d')]);
     disk.run(&mut app);
-    assert_eq!(shelf(&app, 2), Shelf::Safe);
+    assert_eq!(shelf(&app, 2), Shelf::SAFE);
     let text = disk.text();
     assert!(!text.contains("enabled"), "{text}");
     assert!(!text.contains("target"), "{text}");
@@ -353,9 +356,12 @@ fn a_level_switch_rebuckets_in_place_and_takes_out_only_what_the_selection_rules
         disk.run(&mut app);
     }
     assert_eq!(app.policy.level, Level::Thorough);
-    assert_eq!(shelf(&app, 4), Shelf::Safe);
+    assert_eq!(shelf(&app, 4), Shelf::SAFE);
     assert_eq!(selected(&app), [1, 3], "a finding joined the selection");
-    assert!(disk.text().contains("level = \"thorough\""));
+    assert!(
+        disk.text().contains("level = \"thorough\""),
+        "the file holds the new level"
+    );
 }
 
 // Catches a root change that keeps the old scan's findings or selection, whose IDs mean
@@ -378,7 +384,10 @@ fn adding_or_removing_a_project_root_rescans_and_says_the_selection_was_cleared(
     let effects = disk.run(&mut app);
 
     assert_eq!(effects, [Effect::Rescan]);
-    assert!(app.rows.is_empty() && app.selected.is_empty());
+    assert!(
+        app.rows.is_empty() && app.selected.is_empty(),
+        "a rescan clears the rows and the selection"
+    );
     assert_eq!(
         app.roots,
         [PathBuf::from("~/projects"), PathBuf::from("~/work")]
@@ -431,7 +440,10 @@ fn the_default_method_is_stored() {
     disk.run(&mut app);
 
     assert_eq!(app.config.method, Some(Method::Trash));
-    assert!(disk.text().contains("method = \"trash\""));
+    assert!(
+        disk.text().contains("method = \"trash\""),
+        "the file holds the method"
+    );
 }
 
 // Catches esc in the note prompt keeping the finding anyway.
@@ -441,7 +453,7 @@ fn the_default_method_is_stored() {
 fn a_finding_kept_into_a_folded_bucket_leaves_the_cursor_on_the_finding_before_it() {
     let disk = Disk::new();
     let mut app = screen_on(&disk, Config::default());
-    let protected = Some(Node::Shelf(Shelf::Protected));
+    let protected = Some(Node::Shelf(Shelf::PROTECTED));
     for _ in 0..app.lines().len() {
         if focus(&app) != protected {
             press(&mut app, &[Key::Down]);
@@ -454,7 +466,7 @@ fn a_finding_kept_into_a_folded_bucket_leaves_the_cursor_on_the_finding_before_i
     press(&mut app, &[Key::Char('p'), Key::Enter]);
     assert_eq!(disk.run(&mut app), []);
 
-    assert_eq!(shelf(&app, 2), Shelf::Protected);
+    assert_eq!(shelf(&app, 2), Shelf::PROTECTED);
     assert_eq!(focus(&app), Some(Node::Finding(kipple_core::FindingId(1))));
 }
 
@@ -469,7 +481,7 @@ fn esc_at_the_note_keeps_nothing_and_writes_nothing() {
 
     assert_eq!(disk.run(&mut app), []);
     assert_eq!(disk.files(), Vec::<PathBuf>::new());
-    assert_eq!(shelf(&app, 1), Shelf::Safe);
+    assert_eq!(shelf(&app, 1), Shelf::SAFE);
 }
 
 /// The home of the main tests, with settings written in every section.
@@ -478,10 +490,10 @@ fn configured(width: u16, height: u16) -> App {
     let config = Config {
         method: Some(Method::Trash),
         project_roots: Some(vec!["~/projects".to_owned(), "~/work".to_owned()]),
-        keep: vec![(
-            "~/projects/api/target".to_owned(),
-            Some("benchmark baseline".to_owned()),
-        )],
+        keep: vec![Kept {
+            path: "~/projects/api/target".to_owned(),
+            note: Some("benchmark baseline".to_owned()),
+        }],
         ..Config::default()
     };
     let mut policy = app.policy.clone();
@@ -571,7 +583,7 @@ fn a_leaves_recent_findings_out() {
     let review = app
         .lines()
         .iter()
-        .position(|line| line.node == Node::Shelf(Shelf::Review))
+        .position(|line| line.node == Node::Shelf(Shelf::REVIEW))
         .unwrap();
     press(&mut app, &vec![Key::Down; review]);
     press(&mut app, &[Key::Char('a')]);
@@ -588,7 +600,7 @@ fn a_leaves_recent_findings_out() {
 fn settings_under_no_color_and_ascii_use_only_ascii_and_the_terminals_colours() {
     for (width, height) in [(80, 24), (160, 48)] {
         let app = configured(width, height);
-        let plain = look(false, true);
+        let plain = look(Paint::Mono, Glyphs::Ascii);
         let buffer = draw(&app, plain, width, height);
 
         for cell in &buffer.content {
@@ -671,7 +683,10 @@ fn the_root_search_starts_on_the_first_opening_only_and_its_result_stays() {
     let mut app = screen_on(&disk, Config::default());
     press(&mut app, &[Key::Char(',')]);
     assert_eq!(app.take_effect(), Some(Effect::Search));
-    assert!(matches!(app.search, Search::Running));
+    assert!(
+        matches!(app.search, Search::Running),
+        "opening the settings starts the root search"
+    );
     let text = screen(&app, colour(), 160, 48);
     assert!(text.contains("looking for projects…"), "{text}");
 
@@ -863,11 +878,15 @@ fn a_theme_that_cant_be_used_is_listed_but_never_drawn_or_kept() {
     assert!(row.contains("aaa  6 of 6, can't be used:"), "{row}");
     press(&mut app, &[Key::Enter]);
     assert_eq!(disk.run(&mut app), []);
-    assert!(!disk.file().exists());
+    assert!(
+        !disk.file().exists(),
+        "a theme that can't be used is never kept"
+    );
     assert!(
         app.notice
             .as_deref()
             .unwrap_or_default()
-            .contains("aaa can't be used")
+            .contains("aaa can't be used"),
+        "the notice says the theme can't be used"
     );
 }

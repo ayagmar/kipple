@@ -6,14 +6,14 @@ use std::path::PathBuf;
 use kipple_core::{Consequence, Cost, Facts, FindingId, Level, Modified, WalkGap};
 
 use super::{
-    CARGO, DAY, NODE, PACMAN, PYTHON, colour, finished, focus, found, look, measured, opened,
-    press, recent, safe, screen, selected, to, typed, unknown_layout,
+    CARGO, DAY, NODE, PACMAN, PYTHON, Paint, colour, finished, focus, found, look, measured,
+    opened, press, recent, safe, screen, selected, to, typed, unknown_layout,
 };
-use crate::theme::Look;
+use crate::theme::{Glyphs, Look};
 use crate::tui::app::{App, Effect, Key, Msg, Node, Order, Shelf};
 
 fn ascii() -> Look<'static> {
-    look(false, true)
+    look(Paint::Mono, Glyphs::Ascii)
 }
 
 /// Eligible, not recent, but costly to bring back: Review at every level.
@@ -121,7 +121,9 @@ fn outline(app: &App) -> Vec<String> {
         .iter()
         .map(|line| {
             let what = match line.node {
-                Node::Shelf(shelf) => format!("{shelf:?}"),
+                Node::Shelf(shelf) => shelf
+                    .bucket()
+                    .map_or_else(|| "Measuring".to_owned(), |bucket| format!("{bucket:?}")),
                 Node::Group(_, lens) => format!("{lens:?}"),
                 Node::Project(_, _, id) => format!("project {}", app.project(id).unwrap().name),
                 Node::Finding(id) => format!("finding {}", id.0),
@@ -200,7 +202,7 @@ fn a_project_gets_a_line_only_in_a_group_where_it_has_two_findings() {
 #[test]
 fn a_folded_project_hides_its_findings_and_a_on_it_adds_only_what_a_group_would() {
     let mut app = projects();
-    let review = project_line(&app, Shelf::Review, "api");
+    let review = project_line(&app, Shelf::REVIEW, "api");
     go(&mut app, review);
 
     press(&mut app, &[Key::Char('h')]);
@@ -216,7 +218,7 @@ fn a_folded_project_hides_its_findings_and_a_on_it_adds_only_what_a_group_would(
         "{notice}"
     );
 
-    let protected = project_line(&app, Shelf::Protected, "api");
+    let protected = project_line(&app, Shelf::PROTECTED, "api");
     go(&mut app, protected);
     press(&mut app, &[Key::Char('a')]);
     assert_eq!(selected(&app), [4], "a Protected finding was added");
@@ -237,13 +239,19 @@ fn a_folded_project_hides_its_findings_and_a_on_it_adds_only_what_a_group_would(
 #[test]
 fn s_on_a_project_line_selects_nothing_as_on_a_group() {
     let mut app = projects();
-    let safe = project_line(&app, Shelf::Safe, "api");
+    let safe = project_line(&app, Shelf::SAFE, "api");
     go(&mut app, safe);
 
     press(&mut app, &[Key::Char('s')]);
 
-    assert!(app.selected.is_empty());
-    assert!(app.notice.as_deref().unwrap().contains("press a"));
+    assert!(
+        app.selected.is_empty(),
+        "s on a project line selects nothing"
+    );
+    assert!(
+        app.notice.as_deref().unwrap().contains("press a"),
+        "the notice says which key selects a project"
+    );
 }
 
 /// Four Safe Dev findings in four projects, each a different size, age and name.
@@ -384,7 +392,10 @@ fn a_finding_belongs_to_the_project_below_the_deepest_root_holding_it() {
     measured(&mut app, 1, 10, safe());
     measured(&mut app, 2, 20, safe());
 
-    assert!(!outline(&app).iter().any(|line| line.contains("project")));
+    assert!(
+        !outline(&app).iter().any(|line| line.contains("project")),
+        "no project line is shown for findings below the deepest root"
+    );
     let shown = screen(&app, colour(), 160, 48);
     assert!(shown.contains("acme/target"), "{shown}");
     assert!(shown.contains("zeta/target"), "{shown}");
@@ -529,7 +540,7 @@ fn the_sort_order_keeps_its_place_in_the_header_before_the_roots() {
 fn without_colour_the_current_level_is_still_named() {
     let mut app = rooted();
     app.policy.level = Level::Thorough;
-    let plain = look(false, false);
+    let plain = look(Paint::Mono, Glyphs::Unicode);
 
     let line = header(&app, plain, 80);
 
@@ -575,7 +586,7 @@ fn projects_by_last_change_at_80_by_24() {
 fn a_project_line_details_its_path_and_its_findings_in_every_bucket() {
     let mut app = projects();
     finished(&mut app);
-    let api = project_line(&app, Shelf::Safe, "api");
+    let api = project_line(&app, Shelf::SAFE, "api");
     go(&mut app, api);
 
     // It shows from `~` below home (F1).
@@ -599,7 +610,7 @@ fn a_project_line_details_its_path_and_its_findings_in_every_bucket() {
 fn y_on_a_project_line_sends_the_projects_path() {
     let mut app = projects();
     finished(&mut app);
-    let api = project_line(&app, Shelf::Safe, "api");
+    let api = project_line(&app, Shelf::SAFE, "api");
     go(&mut app, api);
 
     press(&mut app, &[Key::Char('y')]);

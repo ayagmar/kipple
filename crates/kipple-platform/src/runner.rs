@@ -55,10 +55,14 @@ pub(crate) fn run(
         .args(args)
         .env_clear()
         .env("LC_ALL", "C")
-        .envs(os::process_env(env))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    for name in os::INHERITED_VARS {
+        if let Some(value) = env.get(name) {
+            command.env(name, value);
+        }
+    }
     let mut child = command.spawn().map_err(|e| ToolError::Start(Arc::new(e)))?;
     let started = Instant::now();
     // `sender` lives until `wait` returns, so `outputs` never disconnects early.
@@ -150,6 +154,9 @@ mod tests {
             matches!(result, Err(ToolError::TimedOut { .. })),
             "{result:?}"
         );
-        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the hung tool is stopped well before 5 seconds"
+        );
     }
 }

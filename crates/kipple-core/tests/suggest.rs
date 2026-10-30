@@ -46,7 +46,10 @@ fn a_project_directly_in_home_is_suggested_as_itself_never_home() {
             suggestion("notes", &["notes"]),
         ]
     );
-    assert!(found.iter().all(|s| s.path != Path::new(HOME)));
+    assert!(
+        found.iter().all(|s| s.path != Path::new(HOME)),
+        "home itself is never suggested"
+    );
 }
 
 // Catches each project of one folder being offered as a root of its own.

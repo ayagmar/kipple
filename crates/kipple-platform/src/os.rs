@@ -18,3 +18,10 @@ pub(crate) use macos::*;
 pub(crate) use unix::{create_private_dir, create_private_file, sync_dir};
 #[cfg(windows)]
 pub(crate) use windows::*;
+
+/// A file with more than one name: its identity, and how many names it has.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct HardLink {
+    pub(crate) identity: kipple_core::FileIdentity,
+    pub(crate) names: u64,
+}

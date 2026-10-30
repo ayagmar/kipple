@@ -1,0 +1,22 @@
+text = { fg = "white" }
+muted = { fg = "bright-black" }
+accent = { fg = "#CA8848" }
+border = { fg = 240, bg = "reset" }
+title = { fg = "#F4EADE", bold = true }
+label = { fg = "bright-white", bold = true }
+cursor = { bg = 236 }
+selected = { fg = "cyan", reversed = true }
+safe = { fg = "green" }
+review = { fg = "yellow", italic = true }
+protected = { fg = "blue", underline = true }
+warning = { fg = "bright-yellow" }
+error = { fg = "red", bold = true }
+"bar.safe" = { fg = "bright-green" }
+"bar.review" = { fg = "bright-red" }
+"bar.protected" = { fg = "bright-blue" }
+"bar.track" = { bg = "black" }
+key = { fg = "magenta", dim = true }
+"key.label" = { fg = "bright-magenta" }
+"level.current" = { fg = "bright-cyan", bold = true }
+"level.other" = { fg = 8 }
+kept = {}

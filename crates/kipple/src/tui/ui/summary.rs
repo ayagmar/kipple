@@ -8,9 +8,9 @@ use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::Paragraph;
 
 use super::frame::vertical;
-use super::layout::Areas;
+use super::layout::{Areas, Band, Bars};
 use super::{Look, drawn_bar, tint};
-use crate::human::bytes;
+use crate::human::{self, bytes};
 use crate::theme::Role;
 use crate::tui::app::{App, Progress, Shelf};
 
@@ -27,7 +27,7 @@ struct Bucket {
 
 /// The three buckets, then Measuring while anything is.
 fn buckets(app: &App) -> Vec<Bucket> {
-    let mut buckets: Vec<Bucket> = [Shelf::Safe, Shelf::Review, Shelf::Protected]
+    let mut buckets: Vec<Bucket> = Shelf::SORTED
         .into_iter()
         .map(|shelf| Bucket {
             shelf,
@@ -67,9 +67,25 @@ enum Squeeze {
     Tight,
 }
 
+/// Where the band says a scan is partial.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Partial {
+    /// In each empty bucket's card.
+    InEachCard,
+    /// Once, at the end of the one-line band.
+    AtTheEnd,
+}
+
+/// How a bucket's name is written.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Case {
+    Upper,
+    AsIs,
+}
+
 /// What a bucket says after its name. An empty bucket of a partial scan says the scan
-/// is partial when `whole`; the one-line band says it once at its end instead.
-fn amount(app: &App, look: Look<'_>, bucket: Bucket, whole: bool, squeeze: Squeeze) -> String {
+/// is partial if `partial` says so in each card.
+fn amount(app: &App, look: Look<'_>, bucket: Bucket, partial: Partial, squeeze: Squeeze) -> String {
     if bucket.shelf == Shelf::Measuring {
         return bucket.count.to_string();
     }
@@ -89,7 +105,7 @@ fn amount(app: &App, look: Look<'_>, bucket: Bucket, whole: bool, squeeze: Squee
     }
     // An empty bucket of a scan that couldn't read everything says so: it doesn't mean
     // there is nothing there.
-    if !app.gaps.is_empty() && whole {
+    if !app.gaps.is_empty() && partial == Partial::InEachCard {
         "none found, scan partial".to_owned()
     } else if !app.gaps.is_empty() {
         "none found".to_owned()
@@ -100,14 +116,9 @@ fn amount(app: &App, look: Look<'_>, bucket: Bucket, whole: bool, squeeze: Squee
     }
 }
 
-fn name(look: Look<'_>, bucket: Bucket, upper: bool) -> Span<'static> {
-    let name = match bucket.shelf {
-        Shelf::Safe => "Safe",
-        Shelf::Review => "Review",
-        Shelf::Protected => "Protected",
-        Shelf::Measuring => "Measuring",
-    };
-    let name = if upper {
+fn name(look: Look<'_>, bucket: Bucket, case: Case) -> Span<'static> {
+    let name = human::standing(bucket.shelf.bucket()).name;
+    let name = if case == Case::Upper {
         name.to_uppercase()
     } else {
         name.to_owned()
@@ -124,7 +135,7 @@ fn name(look: Look<'_>, bucket: Bucket, upper: bool) -> Span<'static> {
 /// Draws the band where `areas` puts it, if anywhere: one card per bucket and one for
 /// the totals, each with a bar unless bars are off, or one line.
 pub(super) fn render(app: &App, look: Look<'_>, areas: &Areas, frame: &mut Frame<'_>) {
-    let Some((area, cards)) = areas.band else {
+    let Some(Band { area, cards }) = areas.band else {
         return;
     };
     let buckets = buckets(app);
@@ -177,7 +188,9 @@ pub(super) fn render(app: &App, look: Look<'_>, areas: &Areas, frame: &mut Frame
     let mut x = band.x;
     for (&bucket, &width) in buckets.iter().zip(&widths) {
         let card = Rect::new(x, band.y, width, band.height).inner(Margin::new(1, 0));
-        let bar = bar.filter(|_| areas.bars).map(|bar| (bar, found));
+        let bar = bar
+            .filter(|_| areas.bars == Bars::Shown)
+            .map(|bar| (bar, found));
         let text = card_lines(app, look, bucket, bar, usize::from(card.width));
         frame.render_widget(Paragraph::new(text), card);
         x += width;
@@ -264,8 +277,8 @@ fn card_lines(
     bar: Option<(u16, u64)>,
     width: usize,
 ) -> Vec<Text<'static>> {
-    let name = name(look, bucket, true);
-    let amount = amount(app, look, bucket, true, Squeeze::None);
+    let name = name(look, bucket, Case::Upper);
+    let amount = amount(app, look, bucket, Partial::InEachCard, Squeeze::None);
     let fits = |lines: &[Text<'static>]| lines.iter().all(|line| line.width() <= width);
     if bucket.shelf == Shelf::Measuring {
         let amount = Span::styled(format!(" {amount}"), look.style(Role::Muted));
@@ -329,8 +342,11 @@ fn line_in(app: &App, look: Look<'_>, buckets: &[Bucket], squeeze: Squeeze) -> T
         if index > 0 {
             spans.push(Span::raw(gap));
         }
-        spans.push(name(look, bucket, false));
-        let amount = Span::raw(format!(" {}", amount(app, look, bucket, false, squeeze)));
+        spans.push(name(look, bucket, Case::AsIs));
+        let amount = Span::raw(format!(
+            " {}",
+            amount(app, look, bucket, Partial::AtTheEnd, squeeze)
+        ));
         spans.push(if bucket.shelf == Shelf::Measuring {
             amount.style(look.style(Role::Muted))
         } else {

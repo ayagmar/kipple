@@ -335,25 +335,34 @@ impl Default for Keymap {
     }
 }
 
+/// An entry of `[keys]`: an action and the keys that replace its defaults.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct UserKeys {
+    pub(crate) action: Action,
+    pub(crate) keys: Vec<Key>,
+}
+
+/// A line of help: the keys, then what they do.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct HelpLine {
+    pub(crate) keys: String,
+    pub(crate) what: &'static str,
+}
+
 impl Keymap {
     /// The keymap `user` gives, each entry an action and the keys that replace its
     /// defaults. A key a user entry takes is removed from the defaults of every other
     /// action in the same mode; a fixed key is left out. [`Keymap::check`] tells whether
     /// `user` is usable.
-    pub(crate) fn build(user: &[(Action, Vec<Key>)]) -> Self {
+    pub(crate) fn build(user: &[UserKeys]) -> Self {
         let mut bindings = Vec::new();
         for action in Action::ALL {
-            let mine = user.iter().find(|(a, _)| *a == action);
+            let mine = user.iter().find(|entry| entry.action == action);
             for &mode in action.modes() {
-                let keys = match mine {
-                    Some((_, keys)) => keys.clone(),
-                    None => action
-                        .defaults()
-                        .iter()
-                        .copied()
-                        .filter(|&key| taker(user, mode, key).is_none())
-                        .collect(),
-                };
+                let keys = mine.map_or_else(
+                    || defaults_left(user, action, mode),
+                    |entry| entry.keys.clone(),
+                );
                 let keys = keys.into_iter().filter(|&key| !mode.fixed(key)).collect();
                 bindings.push(Binding { mode, action, keys });
             }
@@ -363,8 +372,9 @@ impl Keymap {
 
     /// Whether `user` is usable: no entry binds esc, no two entries take one key in one
     /// mode, and every action that needs a key keeps one.
-    pub(crate) fn check(user: &[(Action, Vec<Key>)]) -> Result<(), Conflict> {
-        let keyed = user.iter().enumerate().flat_map(|(entry, (action, keys))| {
+    pub(crate) fn check(user: &[UserKeys]) -> Result<(), Conflict> {
+        let keyed = user.iter().enumerate().flat_map(|(entry, user_keys)| {
+            let UserKeys { action, keys } = user_keys;
             keys.iter()
                 .enumerate()
                 .map(move |(at, &key)| (entry, *action, at, key))
@@ -382,14 +392,14 @@ impl Keymap {
     }
 
     /// An action that needs a key and has none, blamed on the entry that left it so.
-    fn every_needed_key(&self, user: &[(Action, Vec<Key>)]) -> Result<(), Conflict> {
+    fn every_needed_key(&self, user: &[UserKeys]) -> Result<(), Conflict> {
         let bare = self.bindings.iter().find(|binding| {
             !binding.action.optional() && binding.mode != Mode::FilterNav && binding.keys.is_empty()
         });
         let Some(&Binding { mode, action, .. }) = bare else {
             return Ok(());
         };
-        let own = user.iter().position(|(a, _)| *a == action);
+        let own = user.iter().position(|entry| entry.action == action);
         let took = || {
             action
                 .defaults()
@@ -472,7 +482,7 @@ impl Keymap {
 
     /// Help's lines: the keys of each, then what they do. The keyboard's own home, end
     /// and page keys are listed only for an action that has no other key.
-    pub(crate) fn help(&self) -> Vec<(String, &'static str)> {
+    pub(crate) fn help(&self) -> Vec<HelpLine> {
         HELP.iter()
             .filter_map(|(actions, what)| {
                 let keys: Vec<Vec<Key>> = actions
@@ -489,7 +499,10 @@ impl Keymap {
                         column.join(" ")
                     })
                     .collect();
-                (!columns.is_empty()).then(|| (columns.join("  "), *what))
+                (!columns.is_empty()).then(|| HelpLine {
+                    keys: columns.join("  "),
+                    what,
+                })
             })
             .collect()
     }
@@ -573,7 +586,7 @@ fn listed(keys: &[Key]) -> Vec<Key> {
 
 /// Why `action` can't have `key`, if it can't: esc is fixed, or an entry of `earlier`
 /// takes it where `action` is read too.
-fn refused(earlier: &[(Action, Vec<Key>)], action: Action, key: Key) -> Option<String> {
+fn refused(earlier: &[UserKeys], action: Action, key: Key) -> Option<String> {
     if key == Key::Esc {
         return Some("esc always goes back or closes; it can't be bound".to_owned());
     }
@@ -586,21 +599,36 @@ fn refused(earlier: &[(Action, Vec<Key>)], action: Action, key: Key) -> Option<S
     ))
 }
 
+/// The defaults of `action` in `mode` that no entry of `user` takes.
+fn defaults_left(user: &[UserKeys], action: Action, mode: Mode) -> Vec<Key> {
+    action
+        .defaults()
+        .iter()
+        .copied()
+        .filter(|&key| taker(user, mode, key).is_none())
+        .collect()
+}
+
 /// The first user entry that takes `key` in `mode`, by its index.
-fn taker(user: &[(Action, Vec<Key>)], mode: Mode, key: Key) -> Option<usize> {
+fn taker(user: &[UserKeys], mode: Mode, key: Key) -> Option<usize> {
     user.iter()
-        .position(|(action, keys)| action.modes().contains(&mode) && keys.contains(&key))
+        .position(|UserKeys { action, keys }| action.modes().contains(&mode) && keys.contains(&key))
 }
 
 /// An entry of `earlier` that takes `key` in a mode `action` is read in too, and that
 /// mode. In the filter, keys that type don't count: they type there.
-fn claimed(earlier: &[(Action, Vec<Key>)], action: Action, key: Key) -> Option<(Action, Mode)> {
-    earlier.iter().find_map(|(other, keys)| {
-        let mode = action.modes().iter().find(|&&mode| {
-            !mode.fixed(key) && other.modes().contains(&mode) && keys.contains(&key)
-        })?;
-        Some((*other, *mode))
-    })
+fn claimed(earlier: &[UserKeys], action: Action, key: Key) -> Option<(Action, Mode)> {
+    earlier.iter().find_map(
+        |UserKeys {
+             action: other,
+             keys,
+         }| {
+            let mode = action.modes().iter().find(|&&mode| {
+                !mode.fixed(key) && other.modes().contains(&mode) && keys.contains(&key)
+            })?;
+            Some((*other, *mode))
+        },
+    )
 }
 
 fn quoted(key: Key) -> String {
