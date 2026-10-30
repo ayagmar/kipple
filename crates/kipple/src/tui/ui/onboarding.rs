@@ -177,10 +177,7 @@ fn method_lines(onboarding: &Onboarding, look: Look<'_>) -> Vec<Line<'static>> {
         look,
     );
     for &method in Method::ALL {
-        let about = match method {
-            Method::Delete => "frees the space at once",
-            Method::Trash => "can be put back, but frees nothing until the Trash is emptied",
-        };
+        let about = human::method_about(method);
         lines.push(choice(
             look,
             method,

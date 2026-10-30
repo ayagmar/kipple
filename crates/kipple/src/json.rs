@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use kipple_core::format::base64;
 use kipple_core::{
     Activity, ActivityGap, Advice, Bucket, Completeness, Consequence, Evidence, Finding,
     IntegrationId, IntegrationReport, Lens, Omission, Policy, ScanOutcome, ScanReport, Seen,
@@ -24,6 +25,8 @@ pub const RULES: &str = "kipple.rules/v1";
 pub const DOCTOR: &str = "kipple.doctor/v1";
 /// The schema of the generated support matrix.
 pub const SUPPORT_MATRIX: &str = "kipple.support-matrix/v1";
+/// The formats of runs and plans, which the core writes and reads.
+pub use kipple_core::format::{APPLY_EVENT, HISTORY, JOURNAL, PLAN, RECEIPT, STORED_PLAN};
 
 /// kipple's version, in every envelope.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
@@ -48,29 +51,6 @@ impl PathOut {
             raw: raw_path(path).map(|bytes| base64(&bytes)),
         }
     }
-}
-
-/// Standard base64 with padding.
-fn base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let n = chunk
-            .iter()
-            .enumerate()
-            .fold(0u32, |n, (i, &b)| n | u32::from(b) << (16 - 8 * i));
-        for i in 0..4 {
-            if i <= chunk.len() {
-                let index = (n >> (18 - 6 * i)) & 63;
-                out.push(char::from(
-                    ALPHABET.get(index as usize).copied().unwrap_or(b'='),
-                ));
-            } else {
-                out.push('=');
-            }
-        }
-    }
-    out
 }
 
 /// Whether a scan ran to the end.
@@ -694,6 +674,13 @@ pub fn schemas() -> Vec<NamedSchema> {
         ),
         named("theme", crate::theme::schema()),
     ]
+    .into_iter()
+    .chain(
+        kipple_core::format::schemas()
+            .into_iter()
+            .map(|format| named(format.name, format.schema)),
+    )
+    .collect()
 }
 
 /// `count`, unless it is 0.

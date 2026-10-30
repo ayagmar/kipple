@@ -35,10 +35,10 @@ use std::time::SystemTime;
 
 use kipple_adapters::builtin;
 use kipple_core::{
-    Advice, Apparent, CancelToken, Clock, Completeness, DirEntryMeta, Engine, EntryKind, EntryMeta,
-    EventChannel, Evidence, FsProbe, Inventory, Measurement, Observer, Ports, ProbeError,
-    ProcessProbe, ProcessSnapshot, ResolvedRoot, RootSource, Roots, ScanReport, ScanRequest, Sizer,
-    SpaceEstimate, SymbolicRoot, event_channel,
+    Advice, Anchor, Apparent, CancelToken, Clock, Completeness, DirEntryMeta, Engine, EntryKind,
+    EntryMeta, EventChannel, Evidence, FrozenTree, FsProbe, GitGap, Inventory, Measurement, NodeId,
+    Observer, Ports, ProbeError, ProcessProbe, ProcessSnapshot, ResolvedRoot, RootSource, Roots,
+    ScanReport, ScanRequest, Sizer, SpaceEstimate, SymbolicRoot, TrackedQuery, event_channel,
 };
 use tree::FixtureTree;
 
@@ -123,6 +123,26 @@ impl Sizer for NoSizer {
 #[derive(Debug)]
 struct NoProcesses;
 
+/// No git: the fixtures hold no repository, so it is never asked.
+#[derive(Debug)]
+struct NoGit;
+
+impl TrackedQuery for NoGit {
+    fn count(&self, _: &Path, _: &Path, _: &CancelToken) -> Result<u64, GitGap> {
+        Err(GitGap::Unsupported)
+    }
+
+    fn entries(
+        &self,
+        _: &Path,
+        _: &Anchor,
+        _: &FrozenTree,
+        _: &CancelToken,
+    ) -> Result<Vec<NodeId>, GitGap> {
+        Err(GitGap::Unsupported)
+    }
+}
+
 impl ProcessProbe for NoProcesses {
     fn snapshot(&self) -> Result<ProcessSnapshot, ProbeError> {
         Ok(ProcessSnapshot {
@@ -174,6 +194,7 @@ fn scan_built(temp: tempfile::TempDir) -> (tempfile::TempDir, ScanReport) {
         sizer: Box::new(NoSizer),
         processes: Box::new(NoProcesses),
         clock: Box::new(Epoch),
+        tracked: Box::new(NoGit),
     };
     let engine = Engine::new(ports, builtin::integrations(), rules).unwrap();
     let cancel = CancelToken::new();

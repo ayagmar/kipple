@@ -152,6 +152,12 @@ pub trait EffectSink {
 ///   failure that makes the rest unknown (the root or the target changed, a mount, an
 ///   unsupported file system) stops the run with an error.
 /// - `cancel` is checked between entries.
+/// - **Durable before returning.** On every path that removed something, `Ok`, `Err` or
+///   cancelled, the removals are synced before the call returns: `fsync` of the item's
+///   directory and of each directory that had an entry removed, never a whole-file-system
+///   sync. The journal records the outcome only after that. A sync that fails makes the
+///   run return [`ErrorCode::Unsynced`](crate::ErrorCode::Unsynced), and the item's
+///   outcome is `indeterminate`: never done for removals a power loss could undo.
 ///
 /// [`EntrySnapshot::drift`]: crate::EntrySnapshot::drift
 pub trait Executor: fmt::Debug + Send + Sync {

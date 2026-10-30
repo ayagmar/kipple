@@ -1,0 +1,1438 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HistoryOut",
+  "description": "Every run kept.",
+  "type": "object",
+  "properties": {
+    "runs": {
+      "description": "Every run, oldest first.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RunOut"
+      }
+    },
+    "schema": {
+      "description": "`kipple.history/v1`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "runs"
+  ],
+  "$defs": {
+    "Caution": {
+      "type": "string",
+      "enum": [
+        "recent",
+        "recovery",
+        "loss",
+        "high-cost"
+      ]
+    },
+    "CompletenessOut": {
+      "description": "How a finding's size was measured.",
+      "oneOf": [
+        {
+          "description": "Every entry was read.",
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "complete"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ]
+        },
+        {
+          "description": "Some weren't.",
+          "type": "object",
+          "properties": {
+            "skipped_mounts": {
+              "description": "Mounts inside that weren't entered.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "state": {
+              "type": "string",
+              "const": "incomplete"
+            },
+            "unreadable": {
+              "description": "Entries that couldn't be read.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "unreadable",
+            "skipped_mounts"
+          ]
+        },
+        {
+          "description": "The measurement was cancelled.",
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "cancelled"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ]
+        }
+      ]
+    },
+    "ConflictKind": {
+      "type": "string",
+      "enum": [
+        "overlap",
+        "method",
+        "scope"
+      ]
+    },
+    "EffectOut": {
+      "description": "What a run of an item did.",
+      "type": "object",
+      "properties": {
+        "excluded": {
+          "description": "Entries the plan left out from the start, kept as reviewed.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "left": {
+          "description": "The reviewed entries it didn't remove, by reason.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/LeftOut"
+          }
+        },
+        "removed": {
+          "description": "What it removed.",
+          "$ref": "#/$defs/RemovedOut"
+        },
+        "trashed": {
+          "description": "Where it moved the item, for a trash item that moved.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SlotOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "removed",
+        "left",
+        "excluded"
+      ]
+    },
+    "ErrorCode": {
+      "type": "string",
+      "enum": [
+        "root-changed",
+        "root-unreadable",
+        "target-missing",
+        "target-changed",
+        "parent-changed",
+        "parent-missing",
+        "through-link",
+        "mount-boundary",
+        "unsupported-file-system",
+        "unknown-entry",
+        "unreadable",
+        "too-large",
+        "unsupported",
+        "cross-file-system",
+        "destination-exists",
+        "trash-missing",
+        "trash-changed",
+        "stranded",
+        "unauthorized",
+        "journal",
+        "unsynced",
+        "cancelled",
+        "io"
+      ]
+    },
+    "ErrorOut": {
+      "description": "What went wrong: kipple's code and the OS error, never the OS's message.",
+      "type": "object",
+      "properties": {
+        "at": {
+          "description": "Where below the target, as components, if it is about one entry.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/TextOut"
+          }
+        },
+        "code": {
+          "description": "kipple's code.",
+          "$ref": "#/$defs/ErrorCode"
+        },
+        "os_code": {
+          "description": "The OS's own number for it, where it has one.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "os_kind": {
+          "description": "The OS error's kind, if one caused it.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OsErrorKind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "code"
+      ]
+    },
+    "EstimateOut": {
+      "description": "What the scan estimated removing an item frees.",
+      "type": "object",
+      "properties": {
+        "allocated_bytes": {
+          "description": "Allocated storage, where the platform reports it.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "apparent_bytes": {
+          "description": "Total file length.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "completeness": {
+          "description": "How much was measured.",
+          "$ref": "#/$defs/CompletenessOut"
+        },
+        "unique_bytes": {
+          "description": "Allocated storage only this item holds.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "apparent_bytes",
+        "completeness"
+      ]
+    },
+    "FileIdentity": {
+      "type": "string",
+      "pattern": "^[0-9]+:[0-9]+$"
+    },
+    "FoundOut": {
+      "description": "What reconciliation found of an item a crash interrupted.",
+      "oneOf": [
+        {
+          "description": "Nothing authorized was removed.",
+          "type": "object",
+          "properties": {
+            "found": {
+              "type": "string",
+              "const": "unchanged"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "found"
+          ]
+        },
+        {
+          "description": "The target is gone.",
+          "type": "object",
+          "properties": {
+            "found": {
+              "type": "string",
+              "const": "gone"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "found"
+          ]
+        },
+        {
+          "description": "Another file is at the target.",
+          "type": "object",
+          "properties": {
+            "found": {
+              "type": "string",
+              "const": "replaced"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "found"
+          ]
+        },
+        {
+          "description": "Some of its entries are gone.",
+          "type": "object",
+          "properties": {
+            "found": {
+              "type": "string",
+              "const": "partly-gone"
+            },
+            "gone": {
+              "description": "How many reviewed entries are gone.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "of": {
+              "description": "Of how many.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "found",
+            "gone",
+            "of"
+          ]
+        },
+        {
+          "description": "It is in the trash, at its journalled slot.",
+          "type": "object",
+          "properties": {
+            "found": {
+              "type": "string",
+              "const": "trashed"
+            },
+            "slot": {
+              "description": "Where.",
+              "$ref": "#/$defs/SlotOut"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "found",
+            "slot"
+          ]
+        },
+        {
+          "description": "It couldn't be checked.",
+          "type": "object",
+          "properties": {
+            "error": {
+              "description": "Why.",
+              "$ref": "#/$defs/ErrorOut"
+            },
+            "found": {
+              "type": "string",
+              "const": "unreadable"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "found",
+            "error"
+          ]
+        },
+        {
+          "description": "The run's change couldn't be made durable.",
+          "type": "object",
+          "properties": {
+            "error": {
+              "description": "Why.",
+              "$ref": "#/$defs/ErrorOut"
+            },
+            "found": {
+              "type": "string",
+              "const": "unsynced"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "found",
+            "error"
+          ]
+        },
+        {
+          "description": "Not reconciled yet: running, or interrupted.",
+          "type": "object",
+          "properties": {
+            "found": {
+              "type": "string",
+              "const": "pending"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "found"
+          ]
+        }
+      ]
+    },
+    "GitGap": {
+      "type": "string",
+      "enum": [
+        "git-missing",
+        "git-too-old",
+        "git-failed",
+        "git-truncated",
+        "git-other-work-tree",
+        "git-unplaced",
+        "git-unpassable",
+        "nested-repository",
+        "git-unsupported"
+      ]
+    },
+    "Hold": {
+      "type": "string",
+      "enum": [
+        "disabled",
+        "kept",
+        "excluded",
+        "report-only",
+        "advice",
+        "unknown-layout",
+        "unknown-consequence",
+        "unknown-git",
+        "holds-repository",
+        "in-use",
+        "unknown-activity",
+        "unknown-modified"
+      ]
+    },
+    "JudgementField": {
+      "type": "string",
+      "enum": [
+        "rule",
+        "level",
+        "recent-window",
+        "method",
+        "held",
+        "policy"
+      ]
+    },
+    "LeftOut": {
+      "description": "Reviewed entries left for one reason.",
+      "type": "object",
+      "properties": {
+        "count": {
+          "description": "How many.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "reason": {
+          "description": "Why.",
+          "$ref": "#/$defs/LeftReason"
+        },
+        "sample": {
+          "description": "At most ten of their paths below the target, as components, in canonical order.",
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/TextOut"
+            }
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "reason",
+        "count",
+        "sample"
+      ]
+    },
+    "LeftReason": {
+      "type": "string",
+      "enum": [
+        "gone",
+        "replaced",
+        "changed",
+        "excluded",
+        "not-empty",
+        "denied",
+        "busy",
+        "unsupported",
+        "failed",
+        "not-reached"
+      ]
+    },
+    "Method": {
+      "type": "string",
+      "enum": [
+        "delete",
+        "trash"
+      ]
+    },
+    "OsErrorKind": {
+      "type": "string",
+      "enum": [
+        "not-found",
+        "permission-denied",
+        "already-exists",
+        "directory-not-empty",
+        "busy",
+        "read-only",
+        "crosses-devices",
+        "not-a-directory",
+        "invalid-name",
+        "unsupported",
+        "storage-full",
+        "interrupted",
+        "other"
+      ]
+    },
+    "OutcomeOut": {
+      "description": "What happened to one item.",
+      "oneOf": [
+        {
+          "description": "Every reviewed entry was removed, or the item moved to the trash.",
+          "type": "object",
+          "properties": {
+            "effect": {
+              "description": "What it did.",
+              "$ref": "#/$defs/EffectOut"
+            },
+            "status": {
+              "type": "string",
+              "const": "done"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "effect"
+          ]
+        },
+        {
+          "description": "It ran to the end but left reviewed entries.",
+          "type": "object",
+          "properties": {
+            "effect": {
+              "description": "What it did.",
+              "$ref": "#/$defs/EffectOut"
+            },
+            "status": {
+              "type": "string",
+              "const": "partial"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "effect"
+          ]
+        },
+        {
+          "description": "It was dropped before anything of it was touched.",
+          "type": "object",
+          "properties": {
+            "skip": {
+              "description": "Why.",
+              "$ref": "#/$defs/SkipOut"
+            },
+            "status": {
+              "type": "string",
+              "const": "skipped"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "skip"
+          ]
+        },
+        {
+          "description": "It stopped on an error; what it removed until then counts.",
+          "type": "object",
+          "properties": {
+            "effect": {
+              "description": "What it did until then.",
+              "$ref": "#/$defs/EffectOut"
+            },
+            "error": {
+              "description": "The error.",
+              "$ref": "#/$defs/ErrorOut"
+            },
+            "status": {
+              "type": "string",
+              "const": "failed"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "error",
+            "effect"
+          ]
+        },
+        {
+          "description": "The apply was cancelled during it.",
+          "type": "object",
+          "properties": {
+            "effect": {
+              "description": "What it did until then.",
+              "$ref": "#/$defs/EffectOut"
+            },
+            "status": {
+              "type": "string",
+              "const": "cancelled"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "effect"
+          ]
+        },
+        {
+          "description": "A crash interrupted it.",
+          "type": "object",
+          "properties": {
+            "found": {
+              "description": "What reconciliation found.",
+              "$ref": "#/$defs/FoundOut"
+            },
+            "status": {
+              "type": "string",
+              "const": "indeterminate"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "status",
+            "found"
+          ]
+        }
+      ]
+    },
+    "Protection": {
+      "type": "string",
+      "enum": [
+        "file-system-root",
+        "home",
+        "subresource"
+      ]
+    },
+    "ReceiptItemOut": {
+      "description": "One item of a receipt.",
+      "type": "object",
+      "properties": {
+        "estimate": {
+          "description": "What the scan estimated removing it frees.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EstimateOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "item": {
+          "description": "Its place in the plan, from 0.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "method": {
+          "description": "How it was to be removed.",
+          "$ref": "#/$defs/Method"
+        },
+        "outcome": {
+          "description": "What happened.",
+          "$ref": "#/$defs/OutcomeOut"
+        },
+        "path": {
+          "description": "The finding's path, as shown.",
+          "$ref": "#/$defs/TextOut"
+        },
+        "restored": {
+          "description": "How its last restore ended, if it was restored.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RestoreOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "item",
+        "path",
+        "method",
+        "outcome"
+      ]
+    },
+    "RemovedOut": {
+      "description": "What an item removed.",
+      "type": "object",
+      "properties": {
+        "estimated_bytes": {
+          "description": "Estimated allocated bytes removed, an upper bound.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "names": {
+          "description": "Names removed, confirmed.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "shared": {
+          "description": "Removed names whose file kept another name.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "unmeasured": {
+          "description": "Removed names whose allocation wasn't known.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "names",
+        "estimated_bytes",
+        "shared",
+        "unmeasured"
+      ]
+    },
+    "RestoreOut": {
+      "description": "How a restore ended.",
+      "oneOf": [
+        {
+          "description": "The item is back.",
+          "type": "object",
+          "properties": {
+            "result": {
+              "type": "string",
+              "const": "restored"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "result"
+          ]
+        },
+        {
+          "description": "It was refused or failed.",
+          "type": "object",
+          "properties": {
+            "error": {
+              "description": "Why.",
+              "$ref": "#/$defs/ErrorOut"
+            },
+            "result": {
+              "type": "string",
+              "const": "failed"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "error"
+          ]
+        },
+        {
+          "description": "A crash interrupted it.",
+          "type": "object",
+          "properties": {
+            "found": {
+              "description": "What reconciliation found.",
+              "$ref": "#/$defs/FoundOut"
+            },
+            "result": {
+              "type": "string",
+              "const": "indeterminate"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "result",
+            "found"
+          ]
+        }
+      ]
+    },
+    "RunOut": {
+      "description": "One run of the history.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Its ID.",
+          "type": "string"
+        },
+        "items": {
+          "description": "Its items, as recorded; none when it never started or can't be read.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ReceiptItemOut"
+          }
+        },
+        "state": {
+          "description": "Where it stands.",
+          "$ref": "#/$defs/RunState"
+        },
+        "totals": {
+          "description": "Their totals.",
+          "$ref": "#/$defs/TotalsOut"
+        }
+      },
+      "required": [
+        "id",
+        "state",
+        "items",
+        "totals"
+      ]
+    },
+    "RunState": {
+      "type": "string",
+      "enum": [
+        "complete",
+        "running",
+        "interrupted",
+        "never-started",
+        "unreadable"
+      ]
+    },
+    "SkipOut": {
+      "description": "Why an item was dropped before anything of it was touched.",
+      "oneOf": [
+        {
+          "description": "The authorization isn't for this plan.",
+          "type": "object",
+          "properties": {
+            "skip": {
+              "type": "string",
+              "const": "not-reviewed"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip"
+          ]
+        },
+        {
+          "description": "Something it was judged under changed.",
+          "type": "object",
+          "properties": {
+            "field": {
+              "description": "What.",
+              "$ref": "#/$defs/JudgementField"
+            },
+            "skip": {
+              "type": "string",
+              "const": "rejudged"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip",
+            "field"
+          ]
+        },
+        {
+          "description": "It is Protected now.",
+          "type": "object",
+          "properties": {
+            "holds": {
+              "description": "Why.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Hold"
+              }
+            },
+            "skip": {
+              "type": "string",
+              "const": "protected"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip",
+            "holds"
+          ]
+        },
+        {
+          "description": "It carries cautions it wasn't authorized with.",
+          "type": "object",
+          "properties": {
+            "cautions": {
+              "description": "Which.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Caution"
+              }
+            },
+            "skip": {
+              "type": "string",
+              "const": "riskier"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip",
+            "cautions"
+          ]
+        },
+        {
+          "description": "Its rule doesn't offer its method any more.",
+          "type": "object",
+          "properties": {
+            "method": {
+              "description": "The method.",
+              "$ref": "#/$defs/Method"
+            },
+            "skip": {
+              "type": "string",
+              "const": "method-not-offered"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip",
+            "method"
+          ]
+        },
+        {
+          "description": "The fresh freeze failed.",
+          "type": "object",
+          "properties": {
+            "error": {
+              "description": "Why.",
+              "$ref": "#/$defs/ErrorOut"
+            },
+            "skip": {
+              "type": "string",
+              "const": "freeze"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip",
+            "error"
+          ]
+        },
+        {
+          "description": "The executor or the trash refused it before touching anything.",
+          "type": "object",
+          "properties": {
+            "error": {
+              "description": "Why.",
+              "$ref": "#/$defs/ErrorOut"
+            },
+            "skip": {
+              "type": "string",
+              "const": "refused"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip",
+            "error"
+          ]
+        },
+        {
+          "description": "It is on a file system kipple doesn't change.",
+          "type": "object",
+          "properties": {
+            "skip": {
+              "type": "string",
+              "const": "file-system"
+            },
+            "why": {
+              "description": "Why not.",
+              "$ref": "#/$defs/UnsupportedOut"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip",
+            "why"
+          ]
+        },
+        {
+          "description": "Revalidation dropped every reviewed entry.",
+          "type": "object",
+          "properties": {
+            "left": {
+              "description": "What it dropped, by reason.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/LeftOut"
+              }
+            },
+            "skip": {
+              "type": "string",
+              "const": "all-dropped"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip",
+            "left"
+          ]
+        },
+        {
+          "description": "A trash move needs a whole-directory review automation doesn't have.",
+          "type": "object",
+          "properties": {
+            "skip": {
+              "type": "string",
+              "const": "whole-not-reviewed"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip"
+          ]
+        },
+        {
+          "description": "A trash move needs every entry still authorized.",
+          "type": "object",
+          "properties": {
+            "excluded": {
+              "description": "How many entries the plan left out.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "left": {
+              "description": "What revalidation dropped, by reason.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/LeftOut"
+              }
+            },
+            "skip": {
+              "type": "string",
+              "const": "not-whole"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip",
+            "left",
+            "excluded"
+          ]
+        },
+        {
+          "description": "The apply stopped before it started.",
+          "type": "object",
+          "properties": {
+            "skip": {
+              "type": "string",
+              "const": "not-started"
+            },
+            "stop": {
+              "description": "Why.",
+              "$ref": "#/$defs/Stop"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip",
+            "stop"
+          ]
+        },
+        {
+          "description": "Its root isn't the directory the scan opened.",
+          "type": "object",
+          "properties": {
+            "skip": {
+              "type": "string",
+              "const": "root-changed"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip"
+          ]
+        },
+        {
+          "description": "It can't be judged now.",
+          "type": "object",
+          "properties": {
+            "skip": {
+              "type": "string",
+              "const": "unjudged"
+            },
+            "why": {
+              "description": "Why.",
+              "$ref": "#/$defs/Unjudged"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip",
+            "why"
+          ]
+        },
+        {
+          "description": "The host protects it.",
+          "type": "object",
+          "properties": {
+            "protection": {
+              "description": "What protects it.",
+              "$ref": "#/$defs/Protection"
+            },
+            "skip": {
+              "type": "string",
+              "const": "host-protected"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip",
+            "protection"
+          ]
+        },
+        {
+          "description": "It holds another finding that is Protected or unmeasured.",
+          "type": "object",
+          "properties": {
+            "holds": {
+              "description": "What holds it; none when it wasn't measured.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Hold"
+              }
+            },
+            "path": {
+              "description": "That finding.",
+              "$ref": "#/$defs/TextOut"
+            },
+            "skip": {
+              "type": "string",
+              "const": "holds-protected"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip",
+            "path",
+            "holds"
+          ]
+        },
+        {
+          "description": "Its rule is a third-party rule that isn't granted.",
+          "type": "object",
+          "properties": {
+            "skip": {
+              "type": "string",
+              "const": "not-granted"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip"
+          ]
+        },
+        {
+          "description": "It conflicts with another selected item.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "description": "How.",
+              "$ref": "#/$defs/ConflictKind"
+            },
+            "skip": {
+              "type": "string",
+              "const": "conflict"
+            },
+            "with": {
+              "description": "The other item's finding, by its ID in the scan planned from.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip",
+            "with",
+            "kind"
+          ]
+        },
+        {
+          "description": "No trash can take it.",
+          "type": "object",
+          "properties": {
+            "error": {
+              "description": "Why.",
+              "$ref": "#/$defs/ErrorOut"
+            },
+            "skip": {
+              "type": "string",
+              "const": "trash-unavailable"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip",
+            "error"
+          ]
+        },
+        {
+          "description": "git couldn't say in full what it tracks inside it.",
+          "type": "object",
+          "properties": {
+            "gap": {
+              "description": "Why.",
+              "$ref": "#/$defs/GitGap"
+            },
+            "skip": {
+              "type": "string",
+              "const": "git"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip",
+            "gap"
+          ]
+        }
+      ]
+    },
+    "SlotOut": {
+      "description": "A trash slot: the trash directory and the item's name there.",
+      "type": "object",
+      "properties": {
+        "identity": {
+          "description": "Its identity.",
+          "$ref": "#/$defs/FileIdentity"
+        },
+        "name": {
+          "description": "The item's name in it.",
+          "$ref": "#/$defs/TextOut"
+        },
+        "trash": {
+          "description": "The trash directory's path.",
+          "$ref": "#/$defs/TextOut"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "trash",
+        "identity",
+        "name"
+      ]
+    },
+    "Stop": {
+      "type": "string",
+      "enum": [
+        "cancelled",
+        "journal-failed",
+        "interrupted"
+      ]
+    },
+    "TextOut": {
+      "description": "A name or a path, exactly: its text when it is valid Unicode, else the OS's own form.",
+      "anyOf": [
+        {
+          "description": "The text.",
+          "type": "string"
+        },
+        {
+          "description": "Not valid Unicode.",
+          "type": "object",
+          "properties": {
+            "raw": {
+              "description": "Base64 of the bytes (Unix) or UTF-16LE code units (Windows).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "raw"
+          ]
+        }
+      ]
+    },
+    "TotalsOut": {
+      "description": "A receipt's totals.",
+      "type": "object",
+      "properties": {
+        "removed": {
+          "description": "What every item removed, as each run reported it.",
+          "$ref": "#/$defs/RemovedOut"
+        },
+        "statuses": {
+          "description": "How many items ended in each status.",
+          "type": "object",
+          "properties": {
+            "cancelled": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "done": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "failed": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "indeterminate": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "partial": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "skipped": {
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "trashed_allocated_bytes": {
+          "description": "Their allocated size, where every one of them had one.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "trashed_apparent_bytes": {
+          "description": "Their apparent size, as the scan estimated it.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "trashed_items": {
+          "description": "Items moved to the trash.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "removed",
+        "trashed_items",
+        "trashed_apparent_bytes",
+        "statuses"
+      ]
+    },
+    "Unjudged": {
+      "type": "string",
+      "enum": [
+        "not-found",
+        "unmeasured",
+        "unanchored"
+      ]
+    },
+    "UnsupportedOut": {
+      "description": "Why kipple doesn't change a file system.",
+      "oneOf": [
+        {
+          "description": "A network file system.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "network"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "A user-space file system.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "user-space"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "One without POSIX delete semantics.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "no-posix-delete"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "One kipple doesn't recognise.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "unrecognised"
+            },
+            "name": {
+              "description": "What the OS calls it: its file system type name, letters, digits and `._+-`\nonly, at most 64 of them.",
+              "type": "string",
+              "pattern": "^[A-Za-z0-9._+-]{0,64}$"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kind",
+            "name"
+          ]
+        }
+      ]
+    }
+  }
+}

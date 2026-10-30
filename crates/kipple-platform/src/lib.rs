@@ -21,6 +21,7 @@ mod runner;
 #[cfg(feature = "test-roots")]
 mod test_host;
 mod trash;
+mod unbuilt;
 mod walk;
 
 pub use capabilities::{ToolProbe, probe_tools};
@@ -36,6 +37,7 @@ pub use roots::{
     resolve_roots_from,
 };
 pub use trash::ConfinedTrash;
+pub use unbuilt::{NoGit, NoRunStore};
 pub use walk::Walker;
 
 /// The operating system kipple was built for.

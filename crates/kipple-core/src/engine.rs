@@ -1,6 +1,10 @@
 //! The engine every frontend calls (`docs/05-architecture.md` §2). Scanning is
 //! read-only: integrations propose findings, the engine sizes them and reports.
 
+mod rescan;
+
+pub use rescan::{EngineRescan, FRESH, Rescan};
+
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
@@ -15,7 +19,7 @@ use crate::activity::{Processes, Scope, Subject};
 use crate::cancel::CancelToken;
 use crate::discovery::{WalkPlan, Walks};
 use crate::event::{EventTx, ScanEvent, Stopped};
-use crate::facts::Repositories;
+use crate::facts::{Above, Repositories};
 use crate::integration::{
     ActivityEvidence, Advice, Evidence, FindingSink, Integration, IntegrationDescriptor,
     IntegrationError, IntegrationId, ScanContext,
@@ -28,6 +32,7 @@ use crate::process::ProcessProbe;
 use crate::root::{ResolvedRoot, Roots, SymbolicRoot, UnresolvedRoot};
 use crate::rule::{Category, Lens, Operation, Rule, RuleId};
 use crate::size::{Completeness, Measurement, SpaceEstimate};
+use crate::tracked::TrackedQuery;
 
 /// A finding's ID within one scan. IDs are references, never authorization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -233,6 +238,8 @@ pub struct Ports {
     pub processes: Box<dyn ProcessProbe>,
     /// The current time.
     pub clock: Box<dyn Clock>,
+    /// Asks git what it tracks inside a finding in a repository.
+    pub tracked: Box<dyn TrackedQuery>,
 }
 
 /// Runs scans over the registered integrations, through the injected ports.
@@ -574,7 +581,7 @@ impl Engine {
                 }
             };
             let size = measurement.as_ref().map(|m| m.size);
-            let facts = self.facts(&one, measurement, owner, shared);
+            let facts = self.facts(&one, measurement.as_ref(), owner, shared);
             let mut finding = one.finding;
             finding.size = size;
             finding.facts = Some(facts.clone());
@@ -596,13 +603,13 @@ impl Engine {
     fn facts(
         &self,
         found: &Found,
-        measurement: Option<Measurement>,
+        measurement: Option<&Measurement>,
         owner: Owner<'_>,
         shared: Shared<'_>,
     ) -> Facts {
         let path = &found.finding.path;
-        let gap = measurement.as_ref().map_or(Some(WalkGap::Unread), walk_gap);
-        let modified = match (gap, measurement.as_ref().and_then(|m| m.modified)) {
+        let gap = measurement.map_or(Some(WalkGap::Unread), walk_gap);
+        let modified = match (gap, measurement.and_then(|m| m.modified)) {
             (None, Some(at)) => {
                 let age = self.ports.clock.now().duration_since(at);
                 Modified::Ago(age.unwrap_or_default())
@@ -610,18 +617,7 @@ impl Engine {
             (None, None) => Modified::Unknown(WalkGap::Untimed),
             (Some(gap), _) => Modified::Unknown(gap),
         };
-        let above = shared.repositories.tracked(self.ports.fs.as_ref(), path);
-        let tracked = if matches!(above, Tracked::NoRepository) {
-            match measurement {
-                Some(Measurement {
-                    repository: Some(work_tree),
-                    ..
-                }) => Tracked::HoldsRepository { work_tree },
-                _ => gap.map_or(Tracked::NoRepository, Tracked::Unwalked),
-            }
-        } else {
-            above
-        };
+        let tracked = self.tracked(path, measurement, gap, shared);
         let rule = owner.rule(&found.finding.rule);
         let layout_verified = found
             .finding
@@ -650,6 +646,45 @@ impl Engine {
             modified,
             recent_days: rule.and_then(|rule| rule.recent_days),
             lineage,
+        }
+    }
+}
+
+impl Engine {
+    /// Whether a repository could track files inside the finding at `path`. A checkout
+    /// inside it, or a walk that didn't see everything inside, holds it before git is
+    /// asked; only a repository above it is asked about, and only git's full answer
+    /// leaves it unheld (D-066).
+    fn tracked(
+        &self,
+        path: &Path,
+        measurement: Option<&Measurement>,
+        gap: Option<WalkGap>,
+        shared: Shared<'_>,
+    ) -> Tracked {
+        let above = shared.repositories.above(self.ports.fs.as_ref(), path);
+        if let Above::Unchecked(error) = above {
+            return Tracked::Unchecked(error);
+        }
+        if let Some(work_tree) = measurement.and_then(|m| m.repository.clone()) {
+            return Tracked::HoldsRepository { work_tree };
+        }
+        if let Some(gap) = gap {
+            return Tracked::Unwalked(gap);
+        }
+        let Above::Repository(work_tree) = above else {
+            return Tracked::NoRepository;
+        };
+        // Its own `.git`: a checkout lives in it, whatever the walk reported.
+        if work_tree == path {
+            return Tracked::HoldsRepository { work_tree };
+        }
+        match self.ports.tracked.count(&work_tree, path, shared.cancel) {
+            Ok(tracked) => Tracked::Asked { work_tree, tracked },
+            Err(why) => Tracked::InsideRepository {
+                work_tree,
+                gap: why,
+            },
         }
     }
 }
@@ -709,26 +744,9 @@ impl<'a> Owner<'a> {
         self.registered.rules.iter().find(|rule| &rule.id == id)
     }
 
-    /// The directory of `finding`'s project: where the marker beside it sits, or, when no
-    /// marker names one, the whole root it was found under.
+    /// The directory of `finding`'s project.
     fn project(&self, finding: &Finding) -> PathBuf {
-        let path = &finding.path;
-        let marked = finding
-            .evidence
-            .iter()
-            .any(|evidence| matches!(evidence, Evidence::Marker(_)));
-        let root = self
-            .roots
-            .iter()
-            .map(|root| &root.path)
-            .filter(|root| path.starts_with(root))
-            .max_by_key(|root| root.components().count());
-        let project = if marked {
-            path.parent()
-        } else {
-            root.map(PathBuf::as_path)
-        };
-        project.or_else(|| path.parent()).unwrap_or(path).to_owned()
+        project_dir(finding, self.roots.iter().map(|root| root.path.as_path()))
     }
 
     /// What `rule` proposes: a report rule of an integration that gave advice points to
@@ -740,6 +758,21 @@ impl<'a> Owner<'a> {
             Some(Operation::Report) | None => Proposal::Report,
         }
     }
+}
+
+/// The directory of `finding`'s project: where the marker beside it sits, or, when no
+/// marker names one, the deepest of `roots` it was found under.
+fn project_dir<'root>(finding: &Finding, roots: impl Iterator<Item = &'root Path>) -> PathBuf {
+    let path = &finding.path;
+    let marked = finding
+        .evidence
+        .iter()
+        .any(|evidence| matches!(evidence, Evidence::Marker(_)));
+    let root = roots
+        .filter(|root| path.starts_with(root))
+        .max_by_key(|root| root.components().count());
+    let project = if marked { path.parent() } else { root };
+    project.or_else(|| path.parent()).unwrap_or(path).to_owned()
 }
 
 /// A finding as its integration added it, with the consequence it verified.

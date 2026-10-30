@@ -509,6 +509,9 @@ name = "kipple-core"
 version = "0.0.0"
 dependencies = [
  "crossbeam-channel",
+ "schemars",
+ "serde",
+ "serde_json",
  "thiserror",
 ]
 

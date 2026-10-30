@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use crate::probe::{FileIdentity, ProbeError};
 use crate::rule::{Method, RuleId};
+use crate::tracked::GitGap;
 
 named! {
     /// How a removed finding comes back.
@@ -137,10 +138,21 @@ pub enum Tracked {
     /// or anywhere inside it, and every one of them could be checked: nothing inside is
     /// tracked.
     NoRepository,
-    /// A repository holds it: whether it tracks anything inside is not known yet.
+    /// A repository holds it, and git answered: it tracks `tracked` paths at or inside
+    /// it. Nothing is held for that: planning and apply leave the tracked entries out of
+    /// the item (D-066).
+    Asked {
+        /// The directory holding `.git`.
+        work_tree: PathBuf,
+        /// How many paths git tracks at or inside it.
+        tracked: u64,
+    },
+    /// A repository holds it, and git couldn't say what it tracks inside.
     InsideRepository {
         /// The directory holding `.git`.
         work_tree: PathBuf,
+        /// Why git couldn't say.
+        gap: GitGap,
     },
     /// A directory above it couldn't be checked for `.git`.
     Unchecked(ProbeError),
@@ -562,7 +574,7 @@ fn fact_holds(facts: &Facts) -> Vec<Hold> {
         holds.push(Hold::UnknownConsequence);
     }
     match facts.tracked {
-        Tracked::NoRepository => {}
+        Tracked::NoRepository | Tracked::Asked { .. } => {}
         Tracked::HoldsRepository { .. } => holds.push(Hold::HoldsRepository),
         Tracked::InsideRepository { .. } | Tracked::Unchecked(_) | Tracked::Unwalked(_) => {
             holds.push(Hold::UnknownGit);

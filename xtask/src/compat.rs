@@ -79,6 +79,37 @@ const FORMATS: &[Format] = &[
         version: "v1",
         read_by: ReadBy::Kipple,
     },
+    Format {
+        name: "apply-event",
+        version: kipple::json::APPLY_EVENT,
+        read_by: ReadBy::Others,
+    },
+    Format {
+        name: "history",
+        version: kipple::json::HISTORY,
+        read_by: ReadBy::Others,
+    },
+    Format {
+        name: "receipt",
+        version: kipple::json::RECEIPT,
+        read_by: ReadBy::Others,
+    },
+    // kipple reads what it stored, and what `plan -o` wrote, across versions.
+    Format {
+        name: "journal",
+        version: kipple::json::JOURNAL,
+        read_by: ReadBy::Kipple,
+    },
+    Format {
+        name: "plan",
+        version: kipple::json::PLAN,
+        read_by: ReadBy::Kipple,
+    },
+    Format {
+        name: "stored-plan",
+        version: kipple::json::STORED_PLAN,
+        read_by: ReadBy::Kipple,
+    },
 ];
 
 /// What `run` does with the baselines.
@@ -1194,13 +1225,13 @@ mod tests {
             .copied()
             .filter(|n| *n != "theme")
             .collect();
-        changed.push("journal");
+        changed.push("ledger");
 
         let found = unlisted(&changed);
 
         assert_eq!(found.len(), 2, "{found:?}");
         assert!(
-            found[0].starts_with("journal: published but not in FORMATS"),
+            found[0].starts_with("ledger: published but not in FORMATS"),
             "{found:?}"
         );
         assert!(

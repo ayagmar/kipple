@@ -22,6 +22,7 @@
 
 use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
+use std::path::PathBuf;
 
 use super::{
     BadName, Component, FrozenTree, Mark, NO_BIRTH, NONE, Node, Scope, Unauthorized, Volume,
@@ -42,6 +43,10 @@ pub trait NameCodec: std::fmt::Debug {
     /// refuses a name holding `:`, which an NT-relative open reads as a stream of
     /// another entry ([`Component`]).
     fn decode(&self, bytes: &[u8]) -> Option<OsString>;
+
+    /// The path `bytes` store, as [`encode`](Self::encode) gave them for a whole path.
+    /// Unlike a name it holds separators, and on Windows its prefix holds a `:`.
+    fn decode_path(&self, bytes: &[u8]) -> Option<PathBuf>;
 }
 
 /// Why stored bytes aren't a frozen tree.
