@@ -1,6 +1,6 @@
 care.level            careful
 clean.method          trash
-scan.project_roots    ~/projects, /srv/work
+scan.project_roots    ~/projects, ~/srv/work
 exclude.paths         ~/projects/keep-this/target
 exclude.rules         builtin.node.node-modules
 keep.paths            ~/projects/demo/target  (benchmark baseline)

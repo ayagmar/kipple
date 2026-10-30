@@ -1,5 +1,7 @@
 # A config.toml as the first release reads it, with every key it reads set, none to its
 # default. Its `.expected` holds what `kipple config show` prints for it.
+# Every path starts with `~`: a path like `/srv/work` is not absolute on Windows, which
+# refuses the file.
 
 [care]
 level = "careful"
@@ -8,7 +10,7 @@ level = "careful"
 method = "trash"
 
 [scan]
-project_roots = ["~/projects", "/srv/work"]
+project_roots = ["~/projects", "~/srv/work"]
 
 [exclude]
 paths = ["~/projects/keep-this/target"]
