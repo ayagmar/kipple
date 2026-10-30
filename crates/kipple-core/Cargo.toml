@@ -8,6 +8,11 @@ license.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[features]
+# `DeleteOp::for_platform_tests`, for the platform's native executor tests. Only ever a
+# dev-dependency feature: `cargo xtask check-arch` fails on any other use.
+platform-tests = []
+
 [dependencies]
 crossbeam-channel.workspace = true
 thiserror.workspace = true

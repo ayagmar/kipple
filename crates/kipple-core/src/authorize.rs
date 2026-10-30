@@ -111,6 +111,23 @@ impl DeleteOp {
     pub const fn target(&self) -> &Authorized {
         &self.0
     }
+
+    /// A delete of `tree` at `anchor`, with what `marks` authorize, made without a plan,
+    /// a review or revalidation. Only for the platform's native tests of its executor,
+    /// which must hand it operations the apply loop would never make (a tree frozen
+    /// before a test changes the disk). The `platform-tests` feature is only ever enabled
+    /// by a dev-dependency (`cargo xtask check-arch`).
+    #[cfg(feature = "platform-tests")]
+    #[must_use]
+    pub fn for_platform_tests(anchor: Anchor, tree: FrozenTree, marks: Marks) -> Self {
+        Self(Authorized {
+            item: ItemId(0),
+            anchor,
+            digest: tree.digest_with(&marks),
+            tree: Arc::new(tree),
+            marks,
+        })
+    }
 }
 
 impl TrashOp {
