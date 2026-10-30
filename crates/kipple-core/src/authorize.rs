@@ -170,23 +170,24 @@ pub(crate) struct Recheck<'facts> {
     pub(crate) freeze: Freeze,
 }
 
-/// Authorizes `entry` of `plan`, or says why not. Only ever subtracts: an item survives
+/// Authorizes `item` of `plan`, or says why not. Only ever subtracts: an item survives
 /// only if every check passes, and its tree only with what the fresh freeze confirms.
 ///
-/// In order: the authorization must be for this plan, and Safe-only only for a Safe item
-/// removed by a delete; the
-/// item must be judged under the same policy, rule, level, recent window, method and
-/// kept and excluded paths; it must not be Protected now; its bucket must still be one it
-/// was authorized in (a Safe item stays Safe, a Review item gains no caution, and under
-/// Safe-only it is Safe); its rule must still offer its method; its file system must be
-/// supported; the fresh freeze must confirm at least one reviewed entry; and a trash move
-/// needs every entry of the tree confirmed, nothing left out.
+/// In order: the item must be in the plan and the authorization for this plan, and
+/// Safe-only only for a Safe item removed by a delete; the item must be judged under the
+/// same policy, rule, level, recent window, method and kept and excluded paths; it must
+/// not be Protected now; its bucket must still be one it was authorized in (a Safe item
+/// stays Safe, a Review item gains no caution, and under Safe-only it is Safe); its rule
+/// must still offer its method; its file system must be supported; the fresh freeze must
+/// confirm at least one reviewed entry; and a trash move needs every entry of the tree
+/// confirmed, nothing left out.
 pub(crate) fn admit(
     plan: &Plan,
-    entry: &PlanEntry,
+    item: ItemId,
     authorization: Authorization,
     recheck: Recheck<'_>,
 ) -> Result<AuthorizedOp, Skip> {
+    let entry = plan.entry(item).ok_or(Skip::NotReviewed)?;
     authorized_for(plan, entry, authorization)?;
     if let Some(field) = entry.judgement.first_difference(recheck.judgement) {
         return Err(Skip::Rejudged(field));

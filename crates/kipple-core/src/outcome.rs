@@ -157,7 +157,7 @@ pub struct Effect {
 /// Why an item was dropped before anything of it was touched.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Skip {
-    /// The authorization isn't for this plan.
+    /// The authorization isn't for this plan, or the item isn't in it.
     NotReviewed,
     /// Something it was judged under changed since the plan (D-063): the policy, its
     /// rule, level, recent window, method or the kept and excluded paths.

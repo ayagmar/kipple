@@ -360,6 +360,14 @@ impl Plan {
         &self.entries
     }
 
+    /// Its item `item`, if it has one.
+    #[must_use]
+    pub fn entry(&self, item: ItemId) -> Option<&PlanEntry> {
+        self.entries
+            .get(item.0 as usize)
+            .filter(|entry| entry.item == item)
+    }
+
     /// The digest of everything it authorizes. A reviewed authorization names it, so a
     /// plan other than the one shown can't be applied with it.
     #[must_use]

@@ -14,7 +14,9 @@ use crate::frozen::{
 };
 use crate::mutation::{FileSystemClass, Freeze, LocalFileSystem, Unsupported};
 use crate::outcome::{LeftReason, Skip};
-use crate::plan::{Anchor, Judgement, JudgementField, Plan, PlanEntry, Standing, VerifiedRoot};
+use crate::plan::{
+    Anchor, ItemId, Judgement, JudgementField, Plan, PlanEntry, Standing, VerifiedRoot,
+};
 use crate::policy::{Caution, Hold, Level, Proposal, Verdict};
 use crate::probe::{EntryKind, FileIdentity};
 use crate::root::SymbolicRoot;
@@ -85,7 +87,7 @@ fn entry(method: Method, standing: Standing, tree: FrozenTree) -> PlanEntry {
         parent: Some(PARENT),
     };
     PlanEntry {
-        item: crate::plan::ItemId(0),
+        item: ItemId(0),
         finding: FindingId(4),
         path: anchor.path(),
         anchor,
@@ -136,8 +138,16 @@ fn admit_now(
     authorization: Option<Authorization>,
     now: Now,
 ) -> Result<AuthorizedOp, Skip> {
+    admit_item(entry, ItemId(0), authorization, now)
+}
+
+fn admit_item(
+    entry: &PlanEntry,
+    item: ItemId,
+    authorization: Option<Authorization>,
+    now: Now,
+) -> Result<AuthorizedOp, Skip> {
     let plan = Plan::new(vec![entry.clone()]);
-    let planned = &plan.entries()[0];
     let authorization = authorization.unwrap_or_else(|| Authorization::Reviewed {
         plan: plan.digest(),
     });
@@ -147,7 +157,7 @@ fn admit_now(
         judgement: &now.judgement,
         freeze: now.freeze,
     };
-    admit(&plan, planned, authorization, recheck)
+    admit(&plan, item, authorization, recheck)
 }
 
 fn review(cautions: &[Caution]) -> Standing {
@@ -168,6 +178,14 @@ fn a_review_of_another_plan_authorizes_nothing() {
     let entry = entry(Method::Delete, Standing::Safe, tree(1));
     let other = Authorization::Reviewed { plan: Digest(9) };
     let skip = admit_now(&entry, Some(other), Now::same_as(&entry)).unwrap_err();
+    assert_eq!(skip, Skip::NotReviewed);
+}
+
+/// Catches authorizing an item the reviewed plan doesn't hold.
+#[test]
+fn an_item_outside_the_plan_authorizes_nothing() {
+    let entry = entry(Method::Delete, Standing::Safe, tree(1));
+    let skip = admit_item(&entry, ItemId(1), None, Now::same_as(&entry)).unwrap_err();
     assert_eq!(skip, Skip::NotReviewed);
 }
 
