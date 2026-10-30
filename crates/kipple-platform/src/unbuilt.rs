@@ -1,32 +1,9 @@
-//! Ports M3b's store and git cards build, until they do. Each refuses or answers unknown,
-//! so nothing is judged safe and nothing is stored on their account.
-
-use std::path::Path;
+//! The port M3b's store card builds, until it does. It refuses, so nothing is stored on
+//! its account.
 
 use kipple_core::{
-    Anchor, ApplyError, CancelToken, ErrorCode, FrozenTree, GitGap, LockState, Locked, NodeId,
-    RunId, RunStore, StoreRefusal, TrackedQuery,
+    ApplyError, CancelToken, ErrorCode, LockState, Locked, RunId, RunStore, StoreRefusal,
 };
-
-/// The git query, unbuilt: every item inside a repository is held as unknown.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct NoGit;
-
-impl TrackedQuery for NoGit {
-    fn count(&self, _: &Path, _: &Path, _: &CancelToken) -> Result<u64, GitGap> {
-        Err(GitGap::Unsupported)
-    }
-
-    fn entries(
-        &self,
-        _: &Path,
-        _: &Anchor,
-        _: &FrozenTree,
-        _: &CancelToken,
-    ) -> Result<Vec<NodeId>, GitGap> {
-        Err(GitGap::Unsupported)
-    }
-}
 
 /// The run store, unbuilt: it refuses every mutating command and holds no runs.
 #[derive(Debug, Clone, Copy, Default)]

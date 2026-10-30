@@ -53,7 +53,7 @@ use crate::os::handle_identity;
 pub(crate) type Name = Vec<u16>;
 
 /// `name` as the OS takes it. A name holding `:` would open a stream of another entry.
-pub(super) fn name(name: &OsStr) -> io::Result<Name> {
+pub(crate) fn name(name: &OsStr) -> io::Result<Name> {
     let wide: Name = name.encode_wide().collect();
     if wide.contains(&u16::from(b':')) || wide.len() > usize::from(u16::MAX / 2) {
         return Err(io::ErrorKind::InvalidInput.into());
@@ -112,7 +112,7 @@ impl Victim {
 
 impl Dir {
     /// The directory at `path`, opened as itself if it is a reparse point.
-    pub(super) fn open_root(path: &Path) -> io::Result<Self> {
+    pub(crate) fn open_root(path: &Path) -> io::Result<Self> {
         let file = std::fs::OpenOptions::new()
             .access_mode(DIR_ACCESS)
             .share_mode(SHARE_ALL)
@@ -122,17 +122,17 @@ impl Dir {
     }
 
     /// The directory `name` in this one, opened as itself if it is a reparse point.
-    pub(super) fn open_dir(&self, name: &Name) -> io::Result<Self> {
+    pub(crate) fn open_dir(&self, name: &Name) -> io::Result<Self> {
         open_at(self, name, DIR_ACCESS, FILE_DIRECTORY_FILE).map(Self)
     }
 
     /// What this directory is, from its handle.
-    pub(super) fn seen(&self) -> io::Result<Seen> {
+    pub(crate) fn seen(&self) -> io::Result<Seen> {
         seen(&self.0)
     }
 
     /// What `name` in this directory is, read from a handle that opens it as itself.
-    pub(super) fn stat(&self, name: &Name) -> io::Result<Seen> {
+    pub(crate) fn stat(&self, name: &Name) -> io::Result<Seen> {
         seen(&open_at(self, name, FILE_READ_ATTRIBUTES | SYNCHRONIZE, 0)?)
     }
 
