@@ -190,10 +190,12 @@ pub(super) fn move_whole(
         // The item is in the trash though the move isn't durable: its record stays, so
         // the trash lists it and it can be restored.
         Err(error) if shifted.arrival == Arrival::Arrived => Err(error),
-        Err(error) => {
-            record.undo();
-            Err(error)
-        }
+        Err(error) => match record.undo() {
+            Ok(()) => Err(error),
+            // A record that a power loss could bring back would list an item that never
+            // moved.
+            Err(undo) => Err(ApplyError::io(ErrorCode::Unsynced, undo)),
+        },
     }
 }
 
@@ -261,7 +263,7 @@ pub(super) fn restore(
     if let (Some(info), Ok(described)) = (&opened.info, info_name(&slot.name)) {
         // The item is back; a `.trashinfo` left behind would only list it in the trash
         // without anything there.
-        info.unlink(&described, 0).ok();
+        forget(info, &described).ok();
     }
     Ok(())
 }
@@ -647,18 +649,26 @@ impl<'opened> Record<'opened> {
             .and_then(|()| file.sync_all())
             .and_then(|()| info.sync());
         if let Err(error) = written {
-            record.undo();
+            record.undo().ok();
             return Err(io(error));
         }
         Ok(record)
     }
 
-    /// Removes the `.trashinfo` written, after a move that didn't happen.
-    fn undo(self) {
-        if let Some((info, name)) = self.written {
-            info.unlink(&name, 0).ok();
+    /// Removes the `.trashinfo` written, after a move that didn't happen, and syncs its
+    /// directory.
+    fn undo(self) -> io::Result<()> {
+        match self.written {
+            Some((info, name)) => forget(info, &name),
+            None => Ok(()),
         }
     }
+}
+
+/// Removes the `.trashinfo` `name` from `info`, durably.
+fn forget(info: &Dir, name: &Name) -> io::Result<()> {
+    info.unlink(name, 0)?;
+    info.sync()
 }
 
 /// A freedesktop `.trashinfo`: the item's absolute path, escaped as a URI path, and when
@@ -790,6 +800,26 @@ mod tests {
             assert!(
                 fs::symlink_metadata(site.record(&slot)).is_ok(),
                 "its record stays"
+            );
+        }
+
+        /// Catches a refused move whose record removal isn't made durable: a power loss
+        /// would bring the record back, listing an item that never moved. When syncing
+        /// `info/` after removing it fails, the move is unsynced, not refused.
+        #[test]
+        fn a_refused_move_whose_record_removal_isnt_synced_is_unsynced() {
+            let site = Site::new();
+            let slot = site.trash.destination(&site.op).unwrap();
+            // Something takes the slot after it was chosen, so the rename refuses.
+            fs::write(slot.trash.path.join(slot.name.as_os_str()), b"taken").unwrap();
+            let _failing = fail_syncs_after(1);
+
+            let moved = site.trash.move_whole(&site.op, &slot, &CancelToken::new());
+
+            assert_eq!(moved.map_err(|error| error.code), Err(ErrorCode::Unsynced));
+            assert!(
+                fs::symlink_metadata(site.at("root/target/a")).is_ok(),
+                "the item stays"
             );
         }
     }
