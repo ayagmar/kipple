@@ -596,7 +596,7 @@ mod unix {
 fn the_recycle_bin_is_never_used() {
     use std::sync::Arc;
 
-    use kipple_core::{CancelToken, ErrorCode, Marks, TrashBackend as _, TrashOp};
+    use kipple_core::{ErrorCode, Marks, TrashBackend as _, TrashOp};
     use kipple_platform::{ConfinedTrash, SystemClock};
 
     use crate::executor::support::{Site, freeze, present, write};
