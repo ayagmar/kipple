@@ -39,7 +39,7 @@ impl FsProbe for Disk {
             kind: EntryKind::Dir,
             identity: Some(FileIdentity {
                 volume: 1,
-                file: hasher.finish(),
+                file: u128::from(hasher.finish()),
             }),
         })
     }

@@ -1100,7 +1100,7 @@ fn identified(pid: u32, path: &str) -> ProcessRecord {
         path: PathBuf::from(path),
         identity: FileIdentity {
             volume: 1,
-            file: u64::from(pid),
+            file: u128::from(pid),
         },
         deleted: false,
     };

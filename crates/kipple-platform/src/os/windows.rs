@@ -213,7 +213,7 @@ fn file_identity(path: &Path) -> io::Result<FileIdentity> {
     }
     Ok(FileIdentity {
         volume: u64::from(info.dwVolumeSerialNumber),
-        file: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+        file: (u128::from(info.nFileIndexHigh) << 32) | u128::from(info.nFileIndexLow),
     })
 }
 
