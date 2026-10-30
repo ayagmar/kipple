@@ -110,7 +110,7 @@ impl Dir {
     /// The names in this directory, without `.` and `..`. Fails rather than return part
     /// of a listing.
     #[expect(unsafe_code, reason = "libc's directory stream calls are raw")]
-    pub(super) fn names(&self) -> io::Result<Vec<OsString>> {
+    pub(crate) fn names(&self) -> io::Result<Vec<OsString>> {
         // SAFETY: duplicating an open descriptor; the copy is owned by the stream below.
         let copy = unsafe { libc::fcntl(self.0.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
         if copy < 0 {
@@ -236,7 +236,7 @@ impl Dir {
 }
 
 /// Renames `name` in `from` to `into` in `to`, failing if anything is at `into`: the
-/// trash's moves.
+/// trash's moves and the run store's one rename.
 #[cfg(target_os = "linux")]
 #[expect(unsafe_code, reason = "libc's renameat2 is a raw call")]
 #[expect(
@@ -261,7 +261,7 @@ pub(crate) fn no_replace(from: &Dir, name: &Name, to: &Dir, into: &Name) -> io::
 }
 
 /// Renames `name` in `from` to `into` in `to`, failing if anything is at `into`: the
-/// trash's moves.
+/// trash's moves and the run store's one rename.
 #[cfg(target_os = "macos")]
 #[expect(unsafe_code, reason = "libc's renameatx_np is a raw call")]
 #[expect(
