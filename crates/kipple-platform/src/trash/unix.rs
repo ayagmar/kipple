@@ -4,10 +4,8 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
-use std::fs::File;
 use std::io::{self, Write as _};
 use std::mem::MaybeUninit;
-use std::os::fd::{FromRawFd as _, OwnedFd};
 use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -20,7 +18,7 @@ use kipple_core::{
 
 use super::ConfinedTrash;
 use super::verify::verify;
-use crate::executor::sys::{self, Dir, Name};
+use crate::executor::sys::{self, Dir, Name, no_replace};
 use crate::executor::{Reached, reach};
 
 /// Whether the trash is freedesktop's (Linux): trashed items in `files`, each described
@@ -467,6 +465,9 @@ fn same(now: &EntrySnapshot, then: &EntrySnapshot) -> bool {
 /// checks what arrived is `expected`. Something else, swapped in between the check and
 /// the rename, is moved back and the move refused; when it can't be moved back, the
 /// error is [`ErrorCode::Stranded`], and the caller says where it is.
+///
+/// Once anything moved, both directories are synced before it returns. A sync that
+/// fails makes it [`ErrorCode::Unsynced`]: a power loss could undo the move.
 fn shift(rename: &Move<'_>, expected: &EntrySnapshot, codes: Codes) -> Result<(), ApplyError> {
     let missing = |error: io::Error| {
         let code = if error.kind() == io::ErrorKind::NotFound {
@@ -483,13 +484,20 @@ fn shift(rename: &Move<'_>, expected: &EntrySnapshot, codes: Codes) -> Result<()
     no_replace(rename.from, rename.name, rename.to, rename.into)
         .map_err(|error| refused(error, codes))?;
     let arrived = rename.to.stat(rename.into);
-    if arrived.is_ok_and(|seen| same(&seen.snapshot, expected)) {
-        return Ok(());
-    }
-    // The rename moved what was there by then. Put it back where it was found.
-    match no_replace(rename.to, rename.into, rename.from, rename.name) {
-        Ok(()) => Err(ApplyError::new(codes.changed)),
-        Err(error) => Err(ApplyError::io(ErrorCode::Stranded, error)),
+    let moved = if arrived.is_ok_and(|seen| same(&seen.snapshot, expected)) {
+        Ok(())
+    } else {
+        // The rename moved what was there by then. Put it back where it was found.
+        match no_replace(rename.to, rename.into, rename.from, rename.name) {
+            Ok(()) => Err(ApplyError::new(codes.changed)),
+            Err(error) => Err(ApplyError::io(ErrorCode::Stranded, error)),
+        }
+    };
+    let synced = [rename.from, rename.to].map(Dir::sync);
+    match (moved, synced) {
+        (Err(error), _) if error.code == ErrorCode::Stranded => Err(error),
+        (_, [Err(error), _] | [_, Err(error)]) => Err(ApplyError::io(ErrorCode::Unsynced, error)),
+        (moved, _) => moved,
     }
 }
 
@@ -503,54 +511,6 @@ fn refused(error: io::Error, codes: Codes) -> ApplyError {
         _ => ErrorCode::Io,
     };
     ApplyError::io(code, error)
-}
-
-/// Renames `name` in `from` to `into` in `to`, failing if anything is at `into`.
-#[cfg(target_os = "linux")]
-#[expect(unsafe_code, reason = "libc's renameat2 is a raw call")]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the trash's one move, between checked directories, never replacing"
-)]
-fn no_replace(from: &Dir, name: &Name, to: &Dir, into: &Name) -> io::Result<()> {
-    // SAFETY: both descriptors are open and both names are NUL-terminated.
-    let done = unsafe {
-        libc::renameat2(
-            from.fd(),
-            name.as_ptr(),
-            to.fd(),
-            into.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        )
-    };
-    if done != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
-
-/// Renames `name` in `from` to `into` in `to`, failing if anything is at `into`.
-#[cfg(target_os = "macos")]
-#[expect(unsafe_code, reason = "libc's renameatx_np is a raw call")]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the trash's one move, between checked directories, never replacing"
-)]
-fn no_replace(from: &Dir, name: &Name, to: &Dir, into: &Name) -> io::Result<()> {
-    // SAFETY: both descriptors are open and both names are NUL-terminated.
-    let done = unsafe {
-        libc::renameatx_np(
-            from.fd(),
-            name.as_ptr(),
-            to.fd(),
-            into.as_ptr(),
-            libc::RENAME_EXCL,
-        )
-    };
-    if done != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
 }
 
 /// The name an item gets in the trash: its own, cut to leave room, then `.` and eight hex
@@ -627,7 +587,8 @@ impl<'opened> Record<'opened> {
         let io = |error: io::Error| ApplyError::io(ErrorCode::Io, error);
         let name = info_name(slot).map_err(io)?;
         let contents = trash_info(original, now).map_err(io)?;
-        let mut file = create(info, &name).map_err(|error| {
+        let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL;
+        let mut file = info.open_file(&name, flags).map_err(|error| {
             if error.kind() == io::ErrorKind::AlreadyExists {
                 ApplyError::io(ErrorCode::DestinationExists, error)
             } else {
@@ -637,7 +598,12 @@ impl<'opened> Record<'opened> {
         let record = Self {
             written: Some((info, name)),
         };
-        if let Err(error) = file.write_all(&contents) {
+        // Durable before the move, so a crash after it leaves the item listed.
+        let written = file
+            .write_all(&contents)
+            .and_then(|()| file.sync_all())
+            .and_then(|()| info.sync());
+        if let Err(error) = written {
             record.undo();
             return Err(io(error));
         }
@@ -650,19 +616,6 @@ impl<'opened> Record<'opened> {
             info.unlink(&name, 0).ok();
         }
     }
-}
-
-/// A new file `name` in `dir`, for writing. Fails if anything has that name.
-#[expect(unsafe_code, reason = "libc's openat is a raw call")]
-fn create(dir: &Dir, name: &Name) -> io::Result<File> {
-    let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC;
-    // SAFETY: the descriptor is open and `name` is NUL-terminated.
-    let fd = unsafe { libc::openat(dir.fd(), name.as_ptr(), flags, 0o600 as libc::c_uint) };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: `openat` returned a new descriptor that nothing else owns.
-    Ok(File::from(unsafe { OwnedFd::from_raw_fd(fd) }))
 }
 
 /// A freedesktop `.trashinfo`: the item's absolute path, escaped as a URI path, and when

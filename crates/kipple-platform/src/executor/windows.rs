@@ -182,6 +182,28 @@ impl Dir {
         }
     }
 
+    /// Nothing: Windows has no directory sync a process can rely on. A removal is in
+    /// NTFS's and `ReFS`'s metadata log, which a later write-through on the volume forces
+    /// to disk (D-065).
+    #[expect(
+        clippy::unnecessary_wraps,
+        clippy::unused_self,
+        reason = "the Unix version can fail, and callers share one signature"
+    )]
+    pub(crate) const fn sync(&self) -> io::Result<()> {
+        Ok(())
+    }
+
+    /// Nothing, as [`sync`](Self::sync).
+    #[expect(
+        clippy::unnecessary_wraps,
+        clippy::unused_self,
+        reason = "the Unix version can fail, and callers share one signature"
+    )]
+    pub(super) const fn sync_named(&self, _: &Name, _: FileIdentity) -> io::Result<()> {
+        Ok(())
+    }
+
     /// `name`, opened for removal and read on that handle.
     pub(super) fn take(&self, name: &Name) -> io::Result<Victim> {
         let handle = open_at(self, name, REMOVE_ACCESS, 0)?;
