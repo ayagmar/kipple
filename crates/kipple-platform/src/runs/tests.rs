@@ -292,3 +292,37 @@ fn the_runs_files_are_written_through() {
         "a file appended to"
     );
 }
+
+/// Catches a store file opened by a rebuilt path after its directory was checked (pinned
+/// 10): a run directory swapped for another after it was opened would take the append.
+/// Every name is opened relative to the checked directory, so the append lands in it,
+/// wherever it was moved.
+#[test]
+fn a_run_directory_swapped_after_it_was_opened_keeps_its_journal() {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test plays a process that swaps the run directory"
+    )]
+    fn swap(from: &Path, to: &Path) {
+        fs::rename(from, to).unwrap();
+    }
+
+    let temp = tempfile::TempDir::new().unwrap();
+    let (run, moved) = (temp.path().join("run"), temp.path().join("moved"));
+    fs::create_dir(&run).unwrap();
+    fs::write(run.join(JOURNAL), b"").unwrap();
+    let folder = Folder::open(&run).unwrap();
+    swap(&run, &moved);
+    fs::create_dir(&run).unwrap();
+    fs::write(run.join(JOURNAL), b"").unwrap();
+
+    let mut journal = folder.write(JOURNAL).unwrap();
+    append_at(&mut journal, 0, b"{\"one\":1}\n").unwrap();
+
+    assert_eq!(fs::read(moved.join(JOURNAL)).unwrap(), b"{\"one\":1}\n");
+    assert_eq!(
+        fs::read(run.join(JOURNAL)).unwrap(),
+        b"",
+        "the stand-in is untouched"
+    );
+}

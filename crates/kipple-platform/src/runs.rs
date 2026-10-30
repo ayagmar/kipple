@@ -8,10 +8,9 @@
 //! directory and each file in it are opened without following a link. The store moves
 //! bytes; the core decides what they say.
 //!
-//! Every write is durable before it returns. Linux and macOS sync each file and each
-//! directory that gained a name (`fsync`, `F_FULLFSYNC` on macOS). Windows writes files
-//! through (`FILE_FLAG_WRITE_THROUGH`) and renames with `MOVEFILE_WRITE_THROUGH`; it has
-//! no directory sync, and NTFS's metadata log stands for one.
+//! Every write is durable before it returns: each file and each directory that gained a
+//! name is synced (`fsync`, `F_FULLFSYNC` on macOS). Windows writes files through
+//! (`FILE_WRITE_THROUGH`) and flushes each directory as the executor does.
 
 #[cfg(unix)]
 mod unix;
