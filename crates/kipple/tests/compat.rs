@@ -13,7 +13,7 @@ use std::process::ExitCode;
 
 use clap::Parser as _;
 use kipple::Cli;
-use kipple::theme::Themes;
+use kipple::theme::{Stdout, Themes};
 use kipple_adapters::builtin;
 use kipple_adapters::pack::{self, Catalog, Origin};
 use kipple_platform::Environment;
@@ -70,7 +70,7 @@ fn host(temp: &Path) -> Environment {
 fn kipple(env: &Environment, args: &[&str]) -> (ExitCode, String, String) {
     let cli = Cli::parse_from(std::iter::once("kipple").chain(args.iter().copied()));
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = kipple::run(&cli, env, false, &mut out, &mut err);
+    let code = kipple::run(&cli, env, Stdout::Redirected, &mut out, &mut err);
     let text = |bytes| String::from_utf8(bytes).unwrap();
     (code, text(out), text(err))
 }

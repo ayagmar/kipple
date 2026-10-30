@@ -12,13 +12,14 @@ use std::time::SystemTime;
 
 use kipple_core::{
     Activity, ActivityEvidence, ActivityGap, Apparent, CancelToken, Capabilities, Category, Clock,
-    Completeness, Consequence, Cost, DirAccess, DirEntryMeta, Engine, EntryKind, EntryMeta,
-    EnvPath, EventChannel, Evidence, FileIdentity, FileSystem, FindingSink, FsProbe, Integration,
-    IntegrationDescriptor, IntegrationError, IntegrationId, Inventory, Lens, Measurement, Method,
-    MountNamespace, Observer, Operation, Platform, Ports, ProbeError, Probed, ProcessOutcome,
-    ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Recovery, ResolvedRoot, RootLink,
-    RootSource, Roots, Rule, RuleId, RuleText, ScanContext, ScanReport, ScanRequest, Seen,
-    Selector, Sizer, SpaceEstimate, SymbolicRoot, Unread, UserId, census, event_channel,
+    CommandLines, Completeness, Consequence, Cost, DirAccess, DirEntryMeta, Engine, EntryKind,
+    EntryMeta, EnvPath, EventChannel, Evidence, FileIdentity, FileSystem, FindingSink, FsProbe,
+    Integration, IntegrationDescriptor, IntegrationError, IntegrationId, Inventory, Lens,
+    Measurement, Method, MountNamespace, Observer, Operation, Platform, Ports, ProbeError, Probed,
+    ProcessOutcome, ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Recovery,
+    ResolvedRoot, RootLink, RootSource, Roots, Rule, RuleId, RuleText, ScanContext, ScanReport,
+    ScanRequest, Seen, Selector, Sizer, SpaceEstimate, SymbolicRoot, Unread, UserId, census,
+    event_channel,
 };
 
 /// `path` as the host takes it: one starting with `/` is made absolute, since Windows takes
@@ -72,6 +73,15 @@ struct Disk {
     symlinks: Vec<PathBuf>,
 }
 
+/// Who may enter the home directory.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Home {
+    /// Only the current user.
+    Private,
+    /// Everyone.
+    Open,
+}
+
 impl Disk {
     fn identity(&self, path: &Path) -> FileIdentity {
         let mut hasher = DefaultHasher::new();
@@ -95,13 +105,13 @@ impl Disk {
         }
     }
 
-    /// Every directory from `dir` up to the home directory, private to the current user
-    /// or open to everyone.
-    fn with_home(mut self, private: bool) -> Self {
+    /// Every directory from `dir` up to the home directory, open to everyone but home,
+    /// which is as `home` says.
+    fn with_home(mut self, home: Home) -> Self {
         for dir in [HOME, CODE, "/home/u/code/app", VENV, TARGET] {
             let access = DirAccess {
                 owned_by_current_user: true,
-                open_to_others: !(private && dir == HOME),
+                open_to_others: !(home == Home::Private && dir == HOME),
                 acl: false,
                 file_system: FileSystem::Local,
             };
@@ -267,11 +277,11 @@ impl Host {
     fn new(processes: Vec<ProcessRecord>) -> Self {
         Self {
             home: Some(HOME),
-            disk: Disk::default().with_home(true),
+            disk: Disk::default().with_home(Home::Private),
             observer: Observer {
                 mount_namespace: Ok(OUR_NAMESPACE),
                 root_dir: Ok(Disk::default().identity(&abs("/"))),
-                command_lines_public: true,
+                command_lines: CommandLines::Public,
                 process_paths: true,
             },
             inventory: Inventory::Complete,
@@ -711,7 +721,7 @@ fn another_users_process_counts_unless_a_private_directory_above_shuts_it_out() 
     let process = || uninspectable(3, other_user(), &["/usr/bin/colord"]);
     let private = Host::new(vec![process()]);
     let mut open = private.clone();
-    open.disk = Disk::default().with_home(false);
+    open.disk = Disk::default().with_home(Home::Open);
     let mut acl = private.clone();
     let home = acl.disk.access.get_mut(&abs(HOME)).unwrap();
     home.acl = true;
@@ -837,7 +847,7 @@ fn sandbox_disk() -> Disk {
             (abs(SANDBOX_ENTRY), abs(SANDBOX)),
             (abs("/proc/7/root/app"), abs("/home/u/code/app")),
         ],
-        ..Disk::default().with_home(true)
+        ..Disk::default().with_home(Home::Private)
     }
 }
 
@@ -1115,7 +1125,7 @@ fn with_roots_reach(argv: &[&str]) -> [(&'static str, Host); 2] {
             "capable"
         };
         let mut host = Host::new(vec![process]);
-        host.disk = Disk::default().with_home(false);
+        host.disk = Disk::default().with_home(Home::Open);
         (name, host)
     })
 }

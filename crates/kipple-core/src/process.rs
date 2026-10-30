@@ -193,6 +193,16 @@ pub enum Inventory {
     },
 }
 
+/// Who the OS shows a process's command line to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommandLines {
+    /// Every user, as Linux does. Then a root process whose command line couldn't be
+    /// read is not one kipple may leave out.
+    Public,
+    /// Only its own user and the administrator.
+    Private,
+}
+
 /// How kipple itself sees files, which the paths a process shows are compared with.
 #[derive(Debug, Clone)]
 pub struct Observer {
@@ -202,9 +212,8 @@ pub struct Observer {
     /// The identity of kipple's own root directory (Linux). A process with another one,
     /// in a chroot, names files by other paths too.
     pub root_dir: Probed<FileIdentity>,
-    /// Whether the OS shows every user's command line to every user, as Linux does. Then
-    /// a root process whose command line couldn't be read is not one kipple may leave out.
-    pub command_lines_public: bool,
+    /// Who the OS shows a process's command line to.
+    pub command_lines: CommandLines,
     /// Whether kipple reads each process's working directory, arguments, environment and
     /// mapped files at all. Windows doesn't in M2, so no process there can show an
     /// interpreted layout in use.
@@ -217,7 +226,7 @@ impl Observer {
     pub const PLAIN: Self = Self {
         mount_namespace: Err(Unread::Unsupported),
         root_dir: Err(Unread::Unsupported),
-        command_lines_public: false,
+        command_lines: CommandLines::Private,
         process_paths: true,
     };
 }

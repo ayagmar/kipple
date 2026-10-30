@@ -108,9 +108,9 @@ pub(crate) fn run(root: &Path, skip: &[Skip]) -> Result<()> {
     announce("architecture")?;
     arch::run(root)?;
     announce("generated docs")?;
-    gen_docs::run(root, true)?;
+    gen_docs::run(root, gen_docs::Committed::Check)?;
     announce("compatibility")?;
-    compat::run(root, false)?;
+    compat::run(root, compat::Baselines::Keep)?;
     announce("documented commands")?;
     docs_cmds::run(root)?;
     announce("style")?;
@@ -118,10 +118,19 @@ pub(crate) fn run(root: &Path, skip: &[Skip]) -> Result<()> {
     announce("all checks passed")
 }
 
+/// The machine xtask runs on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Host {
+    /// A CI runner or a throwaway VM: `KIPPLE_TEST_DISPOSABLE_HOST=1`.
+    Disposable,
+    /// Anything else, such as someone's own machine.
+    Precious,
+}
+
 /// Runs the `native` nextest profile, which reads real OS state (the process table,
 /// Known Folders). Only on a disposable host: a CI runner or a throwaway VM.
-pub(crate) fn test_native(root: &Path, disposable_host: bool) -> Result<()> {
-    if !disposable_host {
+pub(crate) fn test_native(root: &Path, host: Host) -> Result<()> {
+    if host != Host::Disposable {
         bail!(
             "the native tests read real OS state; run them only on a disposable host \
              (a CI runner or a throwaway VM) with KIPPLE_TEST_DISPOSABLE_HOST=1"

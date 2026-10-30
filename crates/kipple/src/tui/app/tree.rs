@@ -11,7 +11,7 @@ use std::time::Duration;
 use kipple_core::{Lens, Modified};
 
 use super::super::ui;
-use super::{App, Line, Node, Row, Shelf};
+use super::{App, Extent, Line, Node, Row, Shelf};
 
 /// A project, by the order it was first seen in this session.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -138,9 +138,9 @@ pub(super) struct Group {
 }
 
 impl App {
-    /// The lines of `group` holding `rows`, sorted, below its heading; `whole` unfolds
-    /// every project.
-    pub(super) fn group_lines(&self, group: Group, rows: Vec<&Row>, whole: bool) -> Vec<Line> {
+    /// The lines of `group` holding `rows`, sorted, below its heading; the whole tree
+    /// unfolds every project.
+    pub(super) fn group_lines(&self, group: Group, rows: Vec<&Row>, extent: Extent) -> Vec<Line> {
         let mut projects: BTreeMap<ProjectId, Vec<&Row>> = BTreeMap::new();
         let mut entries = Vec::new();
         for row in rows {
@@ -163,7 +163,7 @@ impl App {
                 node: entry.node,
                 depth: 2,
             });
-            if !whole && self.is_collapsed(entry.node) {
+            if extent == Extent::Shown && self.is_collapsed(entry.node) {
                 continue;
             }
             entry

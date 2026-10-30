@@ -13,12 +13,13 @@ use kipple_core::{
 use ratatui::style::Color;
 
 use super::{
-    CARGO, DAY, NODE, colour, draw, focus, found, home, look, measured, press, probe, safe, screen,
-    selected, styled, to, typed,
+    CARGO, DAY, NODE, Paint, colour, draw, focus, found, home, look, measured, press, probe, safe,
+    screen, selected, styled, to, typed,
 };
 use crate::config::{
     self, Catalog, Config, ConfigPolicy, Kept, Loaded, Location, Settings, Source,
 };
+use crate::theme::Glyphs;
 use crate::tui::app::{App, Effect, Key, Mode, Msg, Node, Saved, Shelf};
 use crate::tui::settings::{Found, Search};
 
@@ -590,7 +591,7 @@ fn a_leaves_recent_findings_out() {
 fn settings_under_no_color_and_ascii_use_only_ascii_and_the_terminals_colours() {
     for (width, height) in [(80, 24), (160, 48)] {
         let app = configured(width, height);
-        let plain = look(false, true);
+        let plain = look(Paint::Mono, Glyphs::Ascii);
         let buffer = draw(&app, plain, width, height);
 
         for cell in &buffer.content {

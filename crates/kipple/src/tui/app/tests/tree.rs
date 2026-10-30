@@ -6,14 +6,14 @@ use std::path::PathBuf;
 use kipple_core::{Consequence, Cost, Facts, FindingId, Level, Modified, WalkGap};
 
 use super::{
-    CARGO, DAY, NODE, PACMAN, PYTHON, colour, finished, focus, found, look, measured, opened,
-    press, recent, safe, screen, selected, to, typed, unknown_layout,
+    CARGO, DAY, NODE, PACMAN, PYTHON, Paint, colour, finished, focus, found, look, measured,
+    opened, press, recent, safe, screen, selected, to, typed, unknown_layout,
 };
-use crate::theme::Look;
+use crate::theme::{Glyphs, Look};
 use crate::tui::app::{App, Effect, Key, Msg, Node, Order, Shelf};
 
 fn ascii() -> Look<'static> {
-    look(false, true)
+    look(Paint::Mono, Glyphs::Ascii)
 }
 
 /// Eligible, not recent, but costly to bring back: Review at every level.
@@ -531,7 +531,7 @@ fn the_sort_order_keeps_its_place_in_the_header_before_the_roots() {
 fn without_colour_the_current_level_is_still_named() {
     let mut app = rooted();
     app.policy.level = Level::Thorough;
-    let plain = look(false, false);
+    let plain = look(Paint::Mono, Glyphs::Unicode);
 
     let line = header(&app, plain, 80);
 

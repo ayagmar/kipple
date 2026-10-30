@@ -5,8 +5,9 @@
 
 use std::fs;
 
-use super::{focus, home, look, press, screen, selected, to, typed};
+use super::{Paint, focus, home, look, press, screen, selected, to, typed};
 use crate::config::{self, Config, Location, Source};
+use crate::theme::Glyphs;
 use crate::tui::app::{App, Key, Mode};
 use crate::tui::keymap::{self, Action};
 
@@ -32,7 +33,7 @@ fn home_with(text: &str) -> App {
 
 fn help(app: &mut App) -> String {
     press(app, &[Key::Char('?')]);
-    let text = screen(app, look(false, false), 160, 48);
+    let text = screen(app, look(Paint::Mono, Glyphs::Unicode), 160, 48);
     press(app, &[Key::Esc]);
     text
 }
@@ -49,7 +50,7 @@ fn a_rebound_key_does_its_action_and_help_and_the_key_bar_name_it() {
     press(&mut app, &[Key::Char('s')]);
     assert_eq!(selected(&app), [1], "s no longer selects");
 
-    let bar = screen(&app, look(false, false), 160, 48);
+    let bar = screen(&app, look(Paint::Mono, Glyphs::Unicode), 160, 48);
     assert!(bar.contains("x select"), "{bar}");
     let help = help(&mut app);
     assert!(
@@ -77,7 +78,7 @@ fn a_key_taken_from_another_action_leaves_it_only_in_that_mode() {
     let before = focus(&app);
     press(&mut app, &[Key::Down]);
     assert_ne!(focus(&app), before, "down still moves");
-    let bar = screen(&app, look(false, false), 160, 48);
+    let bar = screen(&app, look(Paint::Mono, Glyphs::Unicode), 160, 48);
     assert!(bar.contains("↓/k move"), "{bar}");
 
     press(&mut app, &[Key::Char(','), Key::Char('j')]);
@@ -150,17 +151,17 @@ fn the_screens_words_name_the_keys_as_bound_or_none() {
         width: 80,
         height: 24,
     });
-    let bucket = screen(&app, look(false, false), 80, 24);
+    let bucket = screen(&app, look(Paint::Mono, Glyphs::Unicode), 80, 24);
     assert!(bucket.contains("x selects all of it."), "{bucket}");
     assert!(!bucket.contains("c selects"), "{bucket}");
 
     to(&mut app, 1);
-    let finding = screen(&app, look(false, false), 80, 24);
+    let finding = screen(&app, look(Paint::Mono, Glyphs::Unicode), 80, 24);
     assert!(finding.contains("n/m scroll"), "{finding}");
     assert!(!finding.contains("J/K"), "{finding}");
 
     press(&mut app, &[Key::Char(',')]);
-    let settings = screen(&app, look(false, false), 160, 48);
+    let settings = screen(&app, look(Paint::Mono, Glyphs::Unicode), 160, 48);
     assert!(
         settings.contains("nothing yet: z keeps a finding"),
         "{settings}"

@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::{mem, ptr};
 
 use kipple_core::{
-    Capabilities, Inventory, MountNamespace, Observer, Platform, ProbeError, Probed,
+    Capabilities, CommandLines, Inventory, MountNamespace, Observer, Platform, ProbeError, Probed,
     ProcessOutcome, ProcessOwner, ResolvedRoot, RootSource, Roots, SettingProblem, SymbolicRoot,
     UnresolvedRoot,
 };
@@ -268,7 +268,7 @@ pub(crate) fn observer() -> Observer {
         root_dir: fs::metadata("/proc/self/root")
             .map(|meta| identity_of(&meta))
             .map_err(unread),
-        command_lines_public: true,
+        command_lines: CommandLines::Public,
         process_paths: PROCESS_PATHS,
     }
 }

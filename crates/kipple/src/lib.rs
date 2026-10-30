@@ -30,7 +30,7 @@ use kipple_platform::Environment;
 use crate::config::{ConfigError, Settings};
 use crate::json::{EventBody, ScanOut};
 use crate::setup::{Builtin, BuiltinRule};
-use crate::theme::{ColorChoice, Colours, Glyphs, Ink, Theme, Themes};
+use crate::theme::{ColorChoice, Colours, Glyphs, Ink, Stdout, Theme, Themes};
 
 /// Command-line arguments for `kipple`.
 #[derive(Debug, Parser)]
@@ -218,11 +218,11 @@ pub const CANCELLED: u8 = 130;
 pub const USAGE: u8 = 2;
 
 /// Runs `cli`, writing data to `stdout` and diagnostics to `stderr`. Human output is in
-/// colour when `--color` says so, or by default when `stdout` is a `terminal`.
+/// colour when `--color` says so, or by default when `goes_to` is a terminal.
 pub fn run(
     cli: &Cli,
     env: &Environment,
-    terminal: bool,
+    goes_to: Stdout,
     stdout: &mut dyn Write,
     stderr: &mut dyn Write,
 ) -> ExitCode {
@@ -241,7 +241,7 @@ pub fn run(
         env,
         config: cli.config.as_deref(),
         theme: cli.theme.as_deref(),
-        colours: Colours::detect(cli.colour_choice(), env, terminal),
+        colours: Colours::detect(cli.colour_choice(), env, goes_to),
     };
     match &cli.command {
         None => summary(&host, stdout, stderr),
@@ -287,7 +287,7 @@ pub fn home(cli: &Cli, env: &Environment, stderr: &mut dyn Write) -> ExitCode {
         env,
         config: cli.config.as_deref(),
         theme: cli.theme.as_deref(),
-        colours: Colours::detect(cli.colour_choice(), env, true),
+        colours: Colours::detect(cli.colour_choice(), env, Stdout::Terminal),
     };
     let settings = match host.settings(&[], stderr) {
         Ok(settings) => settings,

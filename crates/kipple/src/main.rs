@@ -4,6 +4,7 @@ use std::io::{self, IsTerminal as _};
 use std::process::ExitCode;
 
 use clap::Parser as _;
+use kipple::theme::Stdout;
 use kipple_platform::Environment;
 
 fn main() -> ExitCode {
@@ -11,14 +12,18 @@ fn main() -> ExitCode {
     // The one read of the environment: everything below works from this snapshot.
     let env = Environment::from_vars(std::env::vars_os());
     // Only a terminal gets the home screen; anything else gets the printed summary.
-    let terminal = io::stdout().is_terminal();
-    if cli.command.is_none() && terminal {
+    let stdout = if io::stdout().is_terminal() {
+        Stdout::Terminal
+    } else {
+        Stdout::Redirected
+    };
+    if cli.command.is_none() && stdout == Stdout::Terminal {
         return kipple::home(&cli, &env, &mut io::stderr().lock());
     }
     kipple::run(
         &cli,
         &env,
-        terminal,
+        stdout,
         &mut io::stdout().lock(),
         &mut io::stderr().lock(),
     )

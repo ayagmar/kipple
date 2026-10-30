@@ -25,8 +25,8 @@ use ratatui::style::Style;
 
 use crate::config::Position;
 
-pub use self::colour::{ColorChoice, Colours, Depth};
-pub use self::glyphs::Glyphs;
+pub use self::colour::{ColorChoice, Colours, Depth, Stdout};
+pub use self::glyphs::{Fold, Glyphs};
 pub use self::ink::Ink;
 pub use self::role::Role;
 pub(crate) use self::schema::schema;

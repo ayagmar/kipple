@@ -39,7 +39,7 @@ fn is_id_part(part: &str) -> bool {
 
 /// A literal name: one pattern component without wildcards.
 pub(super) fn name(text: &str) -> Result<Name, String> {
-    component(text, false)?;
+    component(text, Wildcards::Refused)?;
     Ok(Name(text.to_owned()))
 }
 
@@ -53,7 +53,7 @@ pub(super) fn pattern(text: &str) -> Result<Pattern, String> {
         return Err(format!("a pattern has at most {MAX_COMPONENTS} components"));
     }
     for part in &components {
-        component(part, true)?;
+        component(part, Wildcards::Allowed)?;
     }
     Ok(Pattern(components.into_iter().map(str::to_owned).collect()))
 }
@@ -63,10 +63,17 @@ pub(super) fn is_literal(component: &str) -> bool {
     !component.contains(['*', '?'])
 }
 
+/// Whether a component may hold `*` and `?`: a pattern's may, a name's may not.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Wildcards {
+    Allowed,
+    Refused,
+}
+
 /// One component: 1 to 64 characters from `[A-Za-z0-9._@+-]` (plus `*` and `?` in a
 /// pattern), and not `.` or `..`. So absolute paths, empty components, `\`, `:` (drives
 /// and alternate streams) and control characters are all refused.
-fn component(text: &str, wildcards: bool) -> Result<(), String> {
+fn component(text: &str, wildcards: Wildcards) -> Result<(), String> {
     if text.is_empty() {
         return Err(
             "empty component: a pattern is relative, with no leading, trailing or doubled `/`"
@@ -87,7 +94,7 @@ fn component(text: &str, wildcards: bool) -> Result<(), String> {
     let allowed = |c: char| {
         c.is_ascii_alphanumeric()
             || matches!(c, '.' | '_' | '@' | '+' | '-')
-            || (wildcards && matches!(c, '*' | '?'))
+            || (wildcards == Wildcards::Allowed && matches!(c, '*' | '?'))
     };
     text.chars()
         .find(|&c| !allowed(c))

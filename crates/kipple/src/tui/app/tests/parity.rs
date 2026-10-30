@@ -11,13 +11,13 @@ use kipple_core::{
 };
 
 use super::{
-    CARGO, MIB, NODE, PACMAN, PYTHON, advice, catalog, look, recent, safe, screen, size,
+    CARGO, MIB, NODE, PACMAN, PYTHON, Paint, advice, catalog, look, recent, safe, screen, size,
     unknown_layout,
 };
 use crate::config::DetailPlace;
 use crate::json::ScanOut;
 use crate::scan::{write_human, write_summary};
-use crate::theme::Ink;
+use crate::theme::{Glyphs, Ink};
 use crate::tui::app::{App, Msg};
 
 const WIDTH: u16 = 200;
@@ -158,7 +158,7 @@ fn home(report: &ScanReport) -> String {
         report: Box::new(report.clone()),
         elapsed: Duration::from_millis(900),
     });
-    screen(&app, look(false, true), WIDTH, HEIGHT)
+    screen(&app, look(Paint::Mono, Glyphs::Ascii), WIDTH, HEIGHT)
 }
 
 fn line_with<'a>(text: &'a str, wanted: &str) -> &'a str {

@@ -2,6 +2,7 @@ cognitive-complexity-threshold = 15
 too-many-lines-threshold = 80
 too-many-arguments-threshold = 5
 excessive-nesting-threshold = 4
+max-fn-params-bools = 0
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-indexing-slicing-in-tests = true

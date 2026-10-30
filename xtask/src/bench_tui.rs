@@ -414,10 +414,17 @@ impl Backend for Timed {
 mod tests {
     use super::*;
 
-    /// A one-project tree with both hot spots, carrying the sentinel when `generated`.
-    fn tree(generated: bool) -> tempfile::TempDir {
+    /// Whether a tree carries the sentinel `bench-tree` writes.
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    enum Sentinel {
+        With,
+        Without,
+    }
+
+    /// A one-project tree with both hot spots, carrying the sentinel as `sentinel` says.
+    fn tree(sentinel: Sentinel) -> tempfile::TempDir {
         let dir = tempfile::tempdir().unwrap();
-        if generated {
+        if sentinel == Sentinel::With {
             fs::write(dir.path().join(bench_tree::SENTINEL), "sentinel\n").unwrap();
         }
         let project = dir.path().join("project-0000");
@@ -443,7 +450,7 @@ mod tests {
 
     #[test]
     fn refuses_a_tree_without_the_sentinel_and_writes_nothing() {
-        let dir = tree(false);
+        let dir = tree(Sentinel::Without);
         fs::write(
             dir.path().join("project-0000").join("keep.txt"),
             "user data",
@@ -459,7 +466,7 @@ mod tests {
 
     #[test]
     fn existing_manifests_survive_marking_byte_for_byte() {
-        let dir = tree(true);
+        let dir = tree(Sentinel::With);
         let project = dir.path().join("project-0000");
         let cargo = b"[package]\nname = \"mine\"\nversion = \"1.2.3\"\n";
         let package = b"{\"name\": \"mine\", \"private\": true}\n";
@@ -476,7 +483,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_manifest_linked_outside_the_tree_is_not_followed() {
-        let dir = tree(true);
+        let dir = tree(Sentinel::With);
         let outside = tempfile::tempdir().unwrap();
         let victim = outside.path().join("Cargo.toml");
         fs::write(&victim, "precious\n").unwrap();

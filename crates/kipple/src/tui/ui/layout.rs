@@ -65,8 +65,15 @@ pub(super) struct Areas {
     pub(super) keybar: Rect,
     /// The rows of the rules that cross the whole frame.
     pub(super) rules: Vec<u16>,
-    pub(super) bars: bool,
+    pub(super) bars: Bars,
     pub(super) totals: Totals,
+}
+
+/// Whether findings and the band's cards have size bars.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum Bars {
+    Shown,
+    Hidden,
 }
 
 /// The parts of `screen` on `area`, as `ui` sets them out.
@@ -78,7 +85,12 @@ pub(super) fn layout(area: Rect, ui: &UiConfig, screen: Screen) -> Areas {
     } else {
         Totals::KeyBar
     };
-    let mut rows = rows(area, banded, totals);
+    let summary = if banded {
+        SummaryBand::Shown
+    } else {
+        SummaryBand::Hidden
+    };
+    let mut rows = rows(area, summary, totals);
     let beside = match (screen, ui.detail) {
         (Screen::Panel, _) | (Screen::Home, DetailPlace::Off) => None,
         (Screen::Home, DetailPlace::Right) => Some(true),
@@ -120,13 +132,24 @@ pub(super) fn layout(area: Rect, ui: &UiConfig, screen: Screen) -> Areas {
             }
         },
         rules: rows.rules,
-        bars: ui.bars && wide,
+        bars: if ui.bars && wide {
+            Bars::Shown
+        } else {
+            Bars::Hidden
+        },
         totals,
     }
 }
 
-/// The frame's rows, top to bottom: the band when `banded`, the body, the key bar (two
-/// lines when it shows the `totals`), and the rules between them.
+/// Whether the summary band is drawn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SummaryBand {
+    Shown,
+    Hidden,
+}
+
+/// The frame's rows, top to bottom: the band when it is shown, the body, the key bar
+/// (two lines when it shows the `totals`), and the rules between them.
 struct Rows {
     band: Option<Rect>,
     body: Rect,
@@ -134,7 +157,7 @@ struct Rows {
     rules: Vec<u16>,
 }
 
-fn rows(area: Rect, banded: bool, totals: Totals) -> Rows {
+fn rows(area: Rect, summary: SummaryBand, totals: Totals) -> Rows {
     let wide = area.width >= WIDE;
     let inner = area.inner(Margin::new(1, 1));
     let mut rules = Vec::new();
@@ -145,7 +168,7 @@ fn rows(area: Rect, banded: bool, totals: Totals) -> Rows {
     let mut bottom = inner.bottom().saturating_sub(keybar_rows).max(inner.y);
     let keybar = Rect::new(inner.x, bottom, inner.width, keybar_rows.min(inner.height));
     let mut top = inner.y;
-    let band = banded.then(|| {
+    let band = (summary == SummaryBand::Shown).then(|| {
         let height = if wide { 2 } else { 1 };
         let band = Rect::new(inner.x, top, inner.width, height);
         rules.push(top + height);

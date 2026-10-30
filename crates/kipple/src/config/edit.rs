@@ -131,7 +131,14 @@ fn apply(document: &mut DocumentMut, edit: &Edit, home: Option<&Path>) -> Result
                 kept.retain(|entry| !names(entry, path, home));
             }
         }
-        Edit::RuleEnabled { rule, enabled } => set_enabled(root, rule, *enabled)?,
+        Edit::RuleEnabled {
+            rule,
+            enabled: false,
+        } => disable(root, rule)?,
+        Edit::RuleEnabled {
+            rule,
+            enabled: true,
+        } => enable(root, rule),
         Edit::Theme(name) => {
             table(root, "ui")?.insert("theme", value(name.as_str()));
         }
@@ -139,12 +146,16 @@ fn apply(document: &mut DocumentMut, edit: &Edit, home: Option<&Path>) -> Result
     Ok(())
 }
 
-fn set_enabled(root: &mut Table, rule: &RuleId, enabled: bool) -> Result<(), ParseError> {
-    if !enabled {
-        let rules = table(root, "rules")?;
-        table(rules, &rule.0)?.insert("enabled", value(false));
-        return Ok(());
-    }
+/// Turns `rule` off in its own table.
+fn disable(root: &mut Table, rule: &RuleId) -> Result<(), ParseError> {
+    let rules = table(root, "rules")?;
+    table(rules, &rule.0)?.insert("enabled", value(false));
+    Ok(())
+}
+
+/// Turns `rule` back on: its `enabled` and its `exclude.rules` entry go, and so does a
+/// table that leaves empty.
+fn enable(root: &mut Table, rule: &RuleId) {
     if let Some(rules) = root.get_mut("rules").and_then(Item::as_table_like_mut) {
         if let Some(own) = rules.get_mut(&rule.0).and_then(Item::as_table_like_mut) {
             own.remove("enabled");
@@ -164,7 +175,6 @@ fn set_enabled(root: &mut Table, rule: &RuleId, enabled: bool) -> Result<(), Par
     {
         excluded.retain(|id| id.as_str() != Some(rule.0.as_str()));
     }
-    Ok(())
 }
 
 /// The table `name` of `parent`, created when missing. A table that only holds others

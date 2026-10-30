@@ -17,8 +17,8 @@ use crate::integration::ActivityEvidence;
 use crate::policy::{Activity, ActivityGap, Lineage, Seen};
 use crate::probe::{DirAccess, EntryKind, FileIdentity, FileSystem, FsProbe, ProbeError};
 use crate::process::{
-    EnvPath, Inventory, Observer, Probed, ProcessClass, ProcessOutcome, ProcessOwner, ProcessProbe,
-    ProcessRecord, ProcessSnapshot, Unread,
+    CommandLines, EnvPath, Inventory, Observer, Probed, ProcessClass, ProcessOutcome, ProcessOwner,
+    ProcessProbe, ProcessRecord, ProcessSnapshot, Unread,
 };
 
 /// `CAP_DAC_OVERRIDE` and `CAP_DAC_READ_SEARCH`: a process with either reads past the
@@ -156,11 +156,12 @@ impl View {
     /// and `SYSTEM` themselves, and, on an OS that shows every command line, root's rights
     /// taken by the current user, or another user's process that reads past the mode
     /// bits.
-    fn roots_reach(&self, command_lines_public: bool) -> bool {
+    fn roots_reach(&self, command_lines: CommandLines) -> bool {
+        let public = command_lines == CommandLines::Public;
         match self.owner {
             ProcessOwner::Root | ProcessOwner::System => true,
-            ProcessOwner::Elevated => command_lines_public,
-            ProcessOwner::OtherUser(_) => command_lines_public && self.modes == Modes::ReadsPast,
+            ProcessOwner::Elevated => public,
+            ProcessOwner::OtherUser(_) => public && self.modes == Modes::ReadsPast,
             ProcessOwner::CurrentUser | ProcessOwner::Unknown => false,
         }
     }
@@ -220,8 +221,8 @@ struct Index {
     by_path: HashMap<Vec<String>, Vec<usize>>,
     by_identity: HashMap<FileIdentity, Vec<usize>>,
     partial: Option<String>,
-    /// Whether the OS shows every user's command line.
-    command_lines_public: bool,
+    /// Who the OS shows a process's command line to.
+    command_lines: CommandLines,
     /// Whether the OS shows any path of a process besides its executable.
     process_paths: bool,
 }
@@ -241,7 +242,7 @@ impl Index {
                 Inventory::Complete => None,
                 Inventory::Partial { reason } => Some(reason.clone()),
             },
-            command_lines_public: snapshot.observer.command_lines_public,
+            command_lines: snapshot.observer.command_lines,
             process_paths: snapshot.observer.process_paths,
         };
         for process in snapshot.processes.iter().filter(|p| running(p)) {
@@ -379,7 +380,12 @@ impl Paths {
     fn arguments(&mut self, args: &[OsString], cwd: Option<&PathBuf>, env: &[EnvPath]) -> bool {
         let mut placed = true;
         for (i, arg) in args.iter().enumerate() {
-            if !self.token(i == 0, arg, cwd, env) {
+            let slot = if i == 0 {
+                Slot::Program
+            } else {
+                Slot::Argument
+            };
+            if !self.token(slot, arg, cwd, env) {
                 placed = false;
                 self.unread.insert(Kind::Argument);
             }
@@ -390,29 +396,31 @@ impl Paths {
     /// Adds the paths every reading of one token gives, and whether it could be placed:
     /// by each of its words when it holds whitespace, since any one of them may be a path,
     /// or else whole. Every name is added, whether or not one before it could be placed.
-    fn token(&mut self, first: bool, arg: &OsStr, cwd: Option<&PathBuf>, env: &[EnvPath]) -> bool {
+    fn token(&mut self, slot: Slot, arg: &OsStr, cwd: Option<&PathBuf>, env: &[EnvPath]) -> bool {
         let (whole, words) = readings(arg);
-        let whole = self.argument(first, whole, cwd, env);
+        let whole = self.argument(slot, whole, cwd, env);
         let Some(words) = words else {
             return whole;
         };
         words
             .into_iter()
-            .map(|word| self.argument(first, word, cwd, env))
+            .map(|word| self.argument(slot, word, cwd, env))
             .fold(true, |all, placed| all & placed)
     }
 
     /// Adds the path one name on a command line gives, and whether it could be placed.
     fn argument(
         &mut self,
-        first: bool,
+        slot: Slot,
         name: &OsStr,
         cwd: Option<&PathBuf>,
         env: &[EnvPath],
     ) -> bool {
         let named = Path::new(name);
         if !name.to_string_lossy().contains(is_separator) {
-            let path = env.iter().filter(|e| first && e.var == "PATH");
+            let path = env
+                .iter()
+                .filter(|e| slot == Slot::Program && e.var == "PATH");
             for entry in path {
                 self.add_named(Kind::Argument, entry.path.join(named));
             }
@@ -425,6 +433,16 @@ impl Paths {
         }
         true
     }
+}
+
+/// Where a token is on a command line: a bare name is looked up on `PATH` only as the
+/// program.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Slot {
+    /// The first token, the program.
+    Program,
+    /// Any token after it.
+    Argument,
 }
 
 /// The readings of one command-line token: the name it gives whole, and when it holds
@@ -540,7 +558,7 @@ fn view(process: &ProcessRecord, observer: &Observer, fs: &dyn FsProbe) -> (View
     if argv.is_none() {
         paths.unread.insert(Kind::Argument);
     }
-    let placed = argv.map_or(!observer.command_lines_public, |args| {
+    let placed = argv.map_or(observer.command_lines == CommandLines::Private, |args| {
         paths.arguments(args, cwd, env)
     });
     let first = argv.and_then(|args| args.first()).map(Path::new);
@@ -779,13 +797,14 @@ pub fn census(snapshot: &ProcessSnapshot, fs: &dyn FsProbe) -> ProcessCensus {
         by_command_line: 0,
         counted: 0,
     };
-    let public = snapshot.observer.command_lines_public;
+    let command_lines = snapshot.observer.command_lines;
+    let public = command_lines == CommandLines::Public;
     for process in snapshot.processes.iter().filter(|p| running(p)) {
         let (view, _) = view(process, &snapshot.observer, fs);
         if view.inspected(&EVERY_KIND) {
             continue;
         }
-        if view.roots_reach(public) && view.command_line_placed {
+        if view.roots_reach(command_lines) && view.command_line_placed {
             census.unchecked_system += 1;
             continue;
         }
@@ -920,9 +939,9 @@ impl Processes {
                 counted += 1;
                 continue;
             }
-            let public = index.command_lines_public;
+            let public = index.command_lines == CommandLines::Public;
             let counts = match &view.owner {
-                _ if view.roots_reach(public) => {
+                _ if view.roots_reach(index.command_lines) => {
                     excused
                         .system
                         .extend(view.command_line_placed.then_some(view.pid));

@@ -40,7 +40,7 @@ use std::time::SystemTime;
 use clap::Parser as _;
 use kipple::config::{self, DetailPlace, Edit, Location, Source};
 use kipple::setup::Builtin;
-use kipple::theme::Glyphs;
+use kipple::theme::{Glyphs, Stdout};
 use kipple::{Cli, USAGE};
 use kipple_core::{Level, Roots, RuleId, SymbolicRoot};
 use kipple_platform::Environment;
@@ -124,7 +124,7 @@ impl Demo {
 fn kipple(env: &Environment, args: &[&str]) -> (ExitCode, String, String) {
     let cli = Cli::parse_from(std::iter::once("kipple").chain(args.iter().copied()));
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = kipple::run(&cli, env, false, &mut out, &mut err);
+    let code = kipple::run(&cli, env, Stdout::Redirected, &mut out, &mut err);
     let text = |bytes| String::from_utf8(bytes).unwrap();
     (code, text(out), text(err))
 }

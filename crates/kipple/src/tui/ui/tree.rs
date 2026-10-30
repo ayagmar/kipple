@@ -11,10 +11,11 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::Paragraph;
 
+use super::layout::Bars;
 use super::{Look, drawn_bar, tint};
 use crate::human::{self, bytes, bytes_short, escaped};
 use crate::json::SizeOut;
-use crate::theme::Role;
+use crate::theme::{Fold, Role};
 use crate::tui::app::{App, Line, Node, ProjectId, Row, Shelf};
 
 /// The size column's least width, enough for `1023.9 GiB`: a lower bound (`>= `)
@@ -53,13 +54,13 @@ pub(super) struct Tree<'lines> {
 }
 
 impl<'a> Tree<'a> {
-    /// `lines` of `app`, with size bars when `bars`.
-    pub(super) fn new(app: &App, lines: &'a [Line], bars: bool) -> Self {
+    /// `lines` of `app`, with size bars as `bars` says.
+    pub(super) fn new(app: &App, lines: &'a [Line], bars: Bars) -> Self {
         Self {
             at: app.cursor_index(lines),
             lines,
             clashing: app.clashing(),
-            scale: bars.then(|| scale(app, lines)),
+            scale: (bars == Bars::Shown).then(|| scale(app, lines)),
         }
     }
 
@@ -91,13 +92,13 @@ pub(super) fn render(
         .map(|(_, cells)| cells)
         .filter(|cells| !cells.sentence())
         .collect();
-    let columns = Columns::new(look, &sized, area.width, tree.scale.is_some());
+    let columns = Columns::new(look, &sized, area.width, tree.scale);
     for (y, (index, cells)) in (area.y..).zip(shown) {
         let row = Rect::new(area.x, y, area.width, 1);
         let [label, size, bar, state] = if cells.sentence() {
             [row, Rect::default(), Rect::default(), Rect::default()]
         } else {
-            columns.split(row, cells.finding)
+            columns.split(row, &cells)
         };
         let focused = index == at;
         // The cursor's style fills the whole row and wins over each span's own.
@@ -109,7 +110,7 @@ pub(super) fn render(
         let paint = |text: Text<'static>| if focused { look.cursor(text) } else { text };
         let text = fitted(look, &cells, usize::from(label.width));
         frame.render_widget(Paragraph::new(paint(text)).style(base), label);
-        let shown_size = cells.size.text(columns.compact);
+        let shown_size = cells.size.text(columns.form);
         frame.render_widget(Paragraph::new(shown_size).style(base).right_aligned(), size);
         if bar.width > 0 {
             let drawn = Text::from(cells.bar);
@@ -133,12 +134,13 @@ struct Columns {
     label: u16,
     size: u16,
     bar: u16,
-    /// Whether sizes are written short (`512M`).
-    compact: bool,
+    /// How sizes are written.
+    form: Form,
 }
 
 impl Columns {
-    fn new(look: Look<'_>, shown: &[&Cells], width: u16, bars: bool) -> Self {
+    /// The columns for `shown` in `width`, with room for a bar when there is a `scale`.
+    fn new(look: Look<'_>, shown: &[&Cells], width: u16, scale: Option<u64>) -> Self {
         let width = usize::from(width);
         let widest = |of: &dyn Fn(&Cells) -> Option<usize>| {
             shown
@@ -148,16 +150,19 @@ impl Columns {
                 .unwrap_or(0)
         };
         // A space before the size, so it never touches the label.
-        let sizes = |compact: bool| {
-            let least = if compact { SHORT } else { SIZE };
-            widest(&|cells| Some(super::cols(&cells.size.text(compact)))).max(least) + 1
+        let sizes = |form: Form| {
+            let least = match form {
+                Form::Short => SHORT,
+                Form::Full => SIZE,
+            };
+            widest(&|cells| Some(super::cols(&cells.size.text(form)))).max(least) + 1
         };
-        let mut size = sizes(false);
+        let mut size = sizes(Form::Full);
         let states = widest(&|cells| cells.finding.then(|| cells.state.width()));
         let hints = widest(&|cells| (!cells.finding).then(|| cells.state.width()));
         let need = widest(&|cells| Some(lead_width(cells) + super::cols(&cells.name.content)));
         let floor = widest(&|cells| Some(lead_width(cells) + least(look, cells)));
-        let mut bar = if bars { BAR } else { 0 };
+        let mut bar = if scale.is_some() { BAR } else { 0 };
         let mut state = states.max(hints.saturating_sub(bar));
         let over = |columns: [usize; 3]| need + columns.iter().sum::<usize>() > width;
         if over([size, bar, state]) {
@@ -166,9 +171,13 @@ impl Columns {
         if over([size, bar, state]) {
             bar = 0;
         }
-        let compact = over([size, bar, state]);
-        if compact {
-            size = sizes(true).min(size);
+        let form = if over([size, bar, state]) {
+            Form::Short
+        } else {
+            Form::Full
+        };
+        if form == Form::Short {
+            size = sizes(Form::Short).min(size);
         }
         // A finding's state is its hold's only label (never colour alone), so it keeps
         // its room and the path gives way below its floor first.
@@ -183,15 +192,15 @@ impl Columns {
             label: narrow(label),
             size: narrow(size),
             bar: narrow(bar),
-            compact,
+            form,
         }
     }
 
     /// `row` as its label, size, bar and state; a heading has no bar, so its state
     /// starts where the bar would.
-    fn split(&self, row: Rect, finding: bool) -> [Rect; 4] {
+    fn split(&self, row: Rect, cells: &Cells) -> [Rect; 4] {
         let at = |x: u16, width: u16| Rect::new(row.x + x, row.y, width, 1);
-        let bar = if finding { self.bar } else { 0 };
+        let bar = if cells.finding { self.bar } else { 0 };
         let state = self.label + self.size + bar;
         [
             at(0, self.label),
@@ -200,6 +209,14 @@ impl Columns {
             at(state, row.width.saturating_sub(state)),
         ]
     }
+}
+
+/// How the tree writes sizes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Form {
+    Full,
+    /// Short (`512M`), when the columns don't fit in full.
+    Short,
 }
 
 /// A line's size, as the tree writes it: in full, or short (`512M`) when the columns
@@ -213,13 +230,13 @@ enum Size {
 }
 
 impl Size {
-    fn text(&self, compact: bool) -> String {
-        match (self, compact) {
+    fn text(&self, form: Form) -> String {
+        match (self, form) {
             (Self::None, _) => String::new(),
-            (Self::Total(total), false) => bytes(*total),
-            (Self::Total(total), true) => bytes_short(*total),
-            (Self::Finding(size), false) => human::size(Some(size)),
-            (Self::Finding(size), true) => human::size_short(Some(size)),
+            (Self::Total(total), Form::Full) => bytes(*total),
+            (Self::Total(total), Form::Short) => bytes_short(*total),
+            (Self::Finding(size), Form::Full) => human::size(Some(size)),
+            (Self::Finding(size), Form::Short) => human::size_short(Some(size)),
         }
     }
 }
@@ -409,7 +426,14 @@ impl Cells {
 
 fn cells(app: &App, look: Look<'_>, tree: &Tree<'_>, line: Line) -> Cells {
     let indent = "  ".repeat(usize::from(line.depth));
-    let fold = |node| look.glyphs.fold(app.is_collapsed(node));
+    let fold = |node| {
+        let fold = if app.is_collapsed(node) {
+            Fold::Collapsed
+        } else {
+            Fold::Open
+        };
+        look.glyphs.fold(fold)
+    };
     let lead = |node| format!("  {indent}{}", fold(node));
     match line.node {
         Node::Finding(id) => app.row(id).map_or_else(

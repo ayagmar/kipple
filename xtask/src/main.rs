@@ -117,18 +117,36 @@ fn main() -> Result<()> {
         Task::Check { skip } => check::run(root, &skip),
         Task::Fix => check::fix(root),
         Task::CheckArch => arch::run(root),
-        Task::CheckCompat { refresh } => compat::run(root, refresh),
+        Task::CheckCompat { refresh } => {
+            let baselines = if refresh {
+                compat::Baselines::Refresh
+            } else {
+                compat::Baselines::Keep
+            };
+            compat::run(root, baselines)
+        }
         Task::CheckDocs => docs_cmds::run(root),
         Task::CheckStyle => style::run(root),
         Task::BenchTree { dir, entries } => bench_tree::run(&dir, entries),
         Task::BenchTui { tree } => bench_tui::run(root, tree.as_deref()),
         Task::TestNative => {
-            let disposable =
-                std::env::var_os("KIPPLE_TEST_DISPOSABLE_HOST").is_some_and(|v| v == "1");
-            check::test_native(root, disposable)
+            let host = if std::env::var_os("KIPPLE_TEST_DISPOSABLE_HOST").is_some_and(|v| v == "1")
+            {
+                check::Host::Disposable
+            } else {
+                check::Host::Precious
+            };
+            check::test_native(root, host)
         }
         Task::DemoHome { dir } => demo::build(&dir),
         Task::VerifyDemo => demo::verify(root),
-        Task::GenDocs { check } => gen_docs::run(root, check),
+        Task::GenDocs { check } => {
+            let committed = if check {
+                gen_docs::Committed::Check
+            } else {
+                gen_docs::Committed::Rewrite
+            };
+            gen_docs::run(root, committed)
+        }
     }
 }

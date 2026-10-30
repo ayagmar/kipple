@@ -7,10 +7,11 @@ use std::path::PathBuf;
 use kipple_core::{Omission, ProbeError, ScanEvent};
 
 use super::{
-    CARGO, colour, finished, found, home, look, measured, opened, press, recent, safe, screen,
-    sized, typed, unknown_layout,
+    CARGO, Paint, colour, finished, found, home, look, measured, opened, press, recent, safe,
+    screen, sized, typed, unknown_layout,
 };
 use crate::config::DetailPlace;
+use crate::theme::Glyphs;
 use crate::tui::app::{App, Key, Msg};
 
 /// The sizes the dashboard is drawn at: the smallest it must work at, the breakpoint
@@ -33,10 +34,10 @@ fn partial(app: &mut App) {
 fn the_dashboard_at_every_size_in_unicode_and_ascii() {
     for (width, height) in SIZES {
         let app = sized(width, height);
-        for (name, ascii) in [("unicode", false), ("ascii", true)] {
+        for (name, glyphs) in [("unicode", Glyphs::Unicode), ("ascii", Glyphs::Ascii)] {
             insta::assert_snapshot!(
                 format!("dashboard_{width}x{height}_{name}"),
-                screen(&app, look(true, ascii), width, height)
+                screen(&app, look(Paint::Colour, glyphs), width, height)
             );
         }
     }
@@ -318,12 +319,12 @@ fn the_tree_gives_a_findings_path_its_room_before_anything_else() {
         "bunapp/node_modules",
         "pacman/pkg",
     ];
-    for ascii in [false, true] {
-        let shown = screen(&sized(120, 40), look(true, ascii), 120, 40);
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let shown = screen(&sized(120, 40), look(Paint::Colour, glyphs), 120, 40);
         for path in paths {
             assert!(shown.contains(&format!("{path} ")), "{path}: {shown}");
         }
-        let wide = screen(&sized(160, 48), look(true, ascii), 160, 48);
+        let wide = screen(&sized(160, 48), look(Paint::Colour, glyphs), 160, 48);
         for title in [
             "api/target  Cargo build output",
             "web/node_modules  Node dependencies",
@@ -354,8 +355,8 @@ fn a_path_too_long_for_the_tree_keeps_its_last_component() {
 fn a_findings_state_shows_whole_however_narrow_the_tree() {
     let mut app = sized(80, 24);
     app.config.ui.detail = DetailPlace::Right;
-    for ascii in [false, true] {
-        let shown = screen(&app, look(true, ascii), 80, 24);
+    for glyphs in [Glyphs::Unicode, Glyphs::Ascii] {
+        let shown = screen(&app, look(Paint::Colour, glyphs), 80, 24);
         assert!(shown.contains("layout not recognised +1"), "{shown}");
     }
 }

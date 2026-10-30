@@ -12,9 +12,18 @@ use clap::error::ErrorKind;
 /// Where the generated docs live until the site exists (`docs/09-site-and-docs.md` §9).
 const GENERATED: &str = "site/src/generated";
 
-/// Writes the CLI reference, the JSON schemas and the support matrix, or with `check`
-/// fails if a committed one is stale.
-pub(crate) fn run(root: &Path, check: bool) -> Result<()> {
+/// What `run` does with the committed docs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Committed {
+    /// Writes them afresh.
+    Rewrite,
+    /// Fails if one is stale.
+    Check,
+}
+
+/// Writes the CLI reference, the JSON schemas and the support matrix, or checks the
+/// committed ones, as `committed` says.
+pub(crate) fn run(root: &Path, committed: Committed) -> Result<()> {
     let builtin = kipple::setup::Builtin::load().map_err(anyhow::Error::msg)?;
     let mut files = vec![("cli.md".to_owned(), cli_reference()?)];
     for kipple::json::NamedSchema { name, schema } in kipple::json::schemas() {
@@ -25,10 +34,10 @@ pub(crate) fn run(root: &Path, check: bool) -> Result<()> {
     for (name, fresh) in files {
         let relative = format!("{GENERATED}/{name}");
         let path = root.join(&relative);
-        if check {
-            let committed =
+        if committed == Committed::Check {
+            let written =
                 fs::read_to_string(&path).with_context(|| format!("could not read {relative}"))?;
-            if committed != fresh {
+            if written != fresh {
                 bail!("{relative} is out of date; run `cargo xtask gen-docs`");
             }
             continue;

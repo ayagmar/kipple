@@ -132,6 +132,15 @@ pub(crate) enum Node {
     Notice(usize),
 }
 
+/// How much of the tree its lines cover.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Extent {
+    /// What is shown now: filtered, without what is collapsed.
+    Shown,
+    /// Every finding, unfiltered and unfolded.
+    Whole,
+}
+
 /// A visible line and how deep it sits in the tree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct Line {
@@ -386,12 +395,12 @@ impl App {
     /// The tree as it is shown now: filtered, grouped and sorted, without what is
     /// collapsed.
     pub(crate) fn lines(&self) -> Vec<Line> {
-        self.tree(false)
+        self.tree(Extent::Shown)
     }
 
-    /// The tree's lines: as shown, or `whole`, with every finding, unfiltered and
-    /// unfolded.
-    fn tree(&self, whole: bool) -> Vec<Line> {
+    /// The tree's lines, as far as `extent` says.
+    fn tree(&self, extent: Extent) -> Vec<Line> {
+        let whole = extent == Extent::Whole;
         let mut groups: BTreeMap<(Node, Node), Vec<&Row>> = BTreeMap::new();
         for top in Self::tops() {
             groups.entry((top, top)).or_default();
@@ -420,7 +429,7 @@ impl App {
                 continue;
             }
             if let Node::Group(shelf, lens) = group {
-                lines.extend(self.group_lines(Group { shelf, lens }, rows, whole));
+                lines.extend(self.group_lines(Group { shelf, lens }, rows, extent));
             }
         }
         self.gap_lines(&mut lines);
@@ -958,7 +967,11 @@ impl App {
     fn nearest(&self, gone: Node, lines: &[Line]) -> Option<Node> {
         let finding = |node: &Node| matches!(node, Node::Finding(_));
         let shown: BTreeSet<Node> = lines.iter().map(|line| line.node).filter(finding).collect();
-        let whole: Vec<Node> = self.tree(true).iter().map(|line| line.node).collect();
+        let whole: Vec<Node> = self
+            .tree(Extent::Whole)
+            .iter()
+            .map(|line| line.node)
+            .collect();
         let here: Vec<Node> = lines.iter().map(|line| line.node).collect();
         let (order, at) = whole
             .iter()

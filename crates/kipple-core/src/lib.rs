@@ -80,7 +80,7 @@ pub use probe::{
     ProbeError, Sizer,
 };
 pub use process::{
-    Capabilities, EnvPath, Inventory, MountNamespace, Observer, Probed, ProcessClass,
+    Capabilities, CommandLines, EnvPath, Inventory, MountNamespace, Observer, Probed, ProcessClass,
     ProcessOutcome, ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Unread, UserId,
 };
 pub use root::{

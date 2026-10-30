@@ -43,7 +43,7 @@ use std::time::{Duration, SystemTime};
 use clap::Parser as _;
 use kipple::config::{self, Settings};
 use kipple::setup::Builtin;
-use kipple::theme::{Catalog, Colours, Glyphs};
+use kipple::theme::{Catalog, Colours, Glyphs, Stdout};
 use kipple::tui::Appearance;
 use kipple::tui::{self, Input, Key, Keys, LevelTotals, first_run_due, level_totals};
 use kipple::{Cli, USAGE};
@@ -143,7 +143,7 @@ fn json_totals(env: &Environment, dir: &Path, level: Level) -> LevelTotals {
         "--json",
     ]);
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = kipple::run(&cli, env, false, &mut out, &mut err);
+    let code = kipple::run(&cli, env, Stdout::Redirected, &mut out, &mut err);
     assert_eq!(code, ExitCode::SUCCESS, "{}", String::from_utf8_lossy(&err));
     let report: Value = serde_json::from_slice(&out).unwrap();
     let mut totals = LevelTotals::default();

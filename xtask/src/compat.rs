@@ -81,9 +81,19 @@ const FORMATS: &[Format] = &[
     },
 ];
 
-/// Fails when a published schema breaks its baseline or has none. With `refresh`, a
-/// schema that is compatible, or whose version has no baseline yet, becomes its baseline.
-pub(crate) fn run(root: &Path, refresh: bool) -> Result<()> {
+/// What `run` does with the baselines.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Baselines {
+    /// Only compares.
+    Keep,
+    /// Makes a schema that is compatible, or whose version has no baseline yet, its
+    /// baseline.
+    Refresh,
+}
+
+/// Fails when a published schema breaks its baseline or has none, after the baselines
+/// are refreshed if `baselines` says so.
+pub(crate) fn run(root: &Path, baselines: Baselines) -> Result<()> {
     let schemas = kipple::json::schemas();
     let names: Vec<&str> = schemas.iter().map(|s| s.name).collect();
     let mut problems = unlisted(&names);
@@ -91,7 +101,9 @@ pub(crate) fn run(root: &Path, refresh: bool) -> Result<()> {
         let Some(format) = FORMATS.iter().find(|f| f.name == *name) else {
             continue;
         };
-        let written = refresh.then(|| gen_docs::pretty(schema)).transpose()?;
+        let written = (baselines == Baselines::Refresh)
+            .then(|| gen_docs::pretty(schema))
+            .transpose()?;
         problems.extend(check(root, format, schema.as_value(), written.as_deref())?);
     }
     if problems.is_empty() {
@@ -1169,10 +1181,10 @@ mod tests {
     #[test]
     fn refresh_adds_missing_baselines_but_never_blesses_a_break() {
         let root = tempfile::tempdir().unwrap();
-        assert!(run(root.path(), false).is_err());
+        assert!(run(root.path(), Baselines::Keep).is_err());
 
-        run(root.path(), true).unwrap();
-        run(root.path(), false).unwrap();
+        run(root.path(), Baselines::Refresh).unwrap();
+        run(root.path(), Baselines::Keep).unwrap();
 
         let scan = root.path().join(BASELINES).join("scan/v1/schema.json");
         let mut baseline: Value =
@@ -1181,7 +1193,7 @@ mod tests {
         let broken = gen_docs::pretty(&baseline).unwrap();
         fs::write(&scan, &broken).unwrap();
 
-        assert!(run(root.path(), true).is_err());
+        assert!(run(root.path(), Baselines::Refresh).is_err());
         assert_eq!(fs::read_to_string(&scan).unwrap(), broken);
     }
 

@@ -65,8 +65,10 @@ fn question(text: &str, about: &str, look: Look<'_>) -> Vec<Line<'static>> {
     ]
 }
 
-/// A choice line: a marker, and the cursor's style when the cursor is on it.
-fn choice(look: Look<'_>, focused: bool, text: &str) -> Line<'static> {
+/// The line of the choice `this`: a marker, and the cursor's style when `cursor` is on
+/// it.
+fn choice<T: PartialEq + Copy>(look: Look<'_>, this: T, cursor: T, text: &str) -> Line<'static> {
+    let focused = this == cursor;
     let line = Line::from(format!("{}{text}", if focused { "> " } else { "  " }));
     if focused { look.cursor(line) } else { line }
 }
@@ -84,7 +86,7 @@ fn level_lines(onboarding: &Onboarding, app: &App, look: Look<'_>) -> Vec<Line<'
         if level == Level::Balanced {
             name.push_str(" (the default)");
         }
-        lines.push(choice(look, level == onboarding.level, &name));
+        lines.push(choice(look, level, onboarding.level, &name));
         lines.push(Line::styled(
             format!("    {}", human::level_about(level)),
             look.style(Role::Muted),
@@ -121,7 +123,8 @@ fn root_lines(onboarding: &Onboarding, app: &App, look: Look<'_>) -> Vec<Line<'s
         let path = escaped(&homed(&root.path, app.home.as_deref()));
         lines.push(choice(
             look,
-            index == onboarding.root_cursor,
+            index,
+            onboarding.root_cursor,
             &format!("{mark} {path}"),
         ));
     }
@@ -129,7 +132,9 @@ fn root_lines(onboarding: &Onboarding, app: &App, look: Look<'_>) -> Vec<Line<'s
         || "+ add another".to_owned(),
         |typed| format!("+ {}_", escaped(typed)),
     );
-    lines.push(choice(look, onboarding.on_add(), &add));
+    // "Add another" comes after the roots.
+    let add_at = onboarding.roots.len();
+    lines.push(choice(look, add_at, onboarding.root_cursor, &add));
     suggestion_lines(onboarding, app, look, &mut lines);
     if let Some(notice) = &onboarding.notice {
         lines.push(Line::from(""));
@@ -156,7 +161,7 @@ fn suggestion_lines(onboarding: &Onboarding, app: &App, look: Look<'_>, lines: &
             "{mark} {}",
             describe(&offer.suggestion, app.home.as_deref(), look)
         );
-        lines.push(choice(look, onboarding.root_cursor == first + index, &text));
+        lines.push(choice(look, first + index, onboarding.root_cursor, &text));
     }
     lines.extend(
         notes
@@ -178,7 +183,8 @@ fn method_lines(onboarding: &Onboarding, look: Look<'_>) -> Vec<Line<'static>> {
         };
         lines.push(choice(
             look,
-            method == onboarding.method,
+            method,
+            onboarding.method,
             &format!("{:<8}{about}", title_case(method.name())),
         ));
     }

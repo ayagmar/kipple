@@ -8,7 +8,7 @@ use kipple_platform::Environment;
 use ratatui::style::Color;
 
 use super::{draw, home, screen, styled};
-use crate::theme::{ColorChoice, Colours, Depth, Glyphs, Look, Theme};
+use crate::theme::{ColorChoice, Colours, Depth, Glyphs, Look, Stdout, Theme};
 
 /// Whether a terminal can show a colour.
 type Fits = fn(Color) -> bool;
@@ -58,7 +58,7 @@ fn a_24_bit_theme_draws_in_256_or_16_colours_when_the_terminal_says_so() {
     ];
     for (var, value, fits) in cases {
         let env = Environment::from_vars([(OsString::from(var), OsString::from(value))]);
-        let colours = Colours::detect(ColorChoice::Auto, &env, true);
+        let colours = Colours::detect(ColorChoice::Auto, &env, Stdout::Terminal);
         let theme = drawn("kipple-dark", colours);
         let buffer = draw(&app, look(&theme), 120, 40);
         assert!(

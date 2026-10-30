@@ -152,6 +152,13 @@ pub(crate) struct Onboarding {
     pub(crate) keymap: Keymap,
 }
 
+/// Whether a step was answered or skipped.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Answer {
+    Given,
+    Skipped,
+}
+
 impl Onboarding {
     /// Starts at step 1 with Balanced, the roots `app` scans and Delete preselected.
     pub(crate) fn new(app: &App) -> Self {
@@ -230,14 +237,14 @@ impl Onboarding {
         match action {
             Action::Quit => return Outcome::Quit,
             Action::Skip => {
-                self.answer(false);
+                self.answer(Answer::Skipped);
                 return self.advance();
             }
             Action::Choose if self.step == Step::Roots && self.on_add() => {
                 self.typing = Some(String::new());
             }
             Action::Choose => {
-                self.answer(true);
+                self.answer(Answer::Given);
                 return self.advance();
             }
             Action::MoveDown => self.move_by(1),
@@ -272,7 +279,8 @@ impl Onboarding {
     }
 
     /// Records the answer to this step, or that it was skipped.
-    fn answer(&mut self, given: bool) {
+    fn answer(&mut self, answer: Answer) {
+        let given = answer == Answer::Given;
         match self.step {
             Step::Level => self.chosen_level = given.then_some(self.level),
             Step::Roots => self.chosen_roots = given.then(|| self.checked_roots()),

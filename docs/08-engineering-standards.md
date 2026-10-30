@@ -49,6 +49,7 @@ cognitive-complexity-threshold = 15
 too-many-lines-threshold = 80
 too-many-arguments-threshold = 5
 excessive-nesting-threshold = 4
+max-fn-params-bools = 0
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-indexing-slicing-in-tests = true
@@ -87,6 +88,8 @@ These are cheap and deterministic, and they protect the boundaries in [05-archit
 - No global state, no lazy statics holding configuration, no `std::env` reads below the composition root.
 - Pure functions for policy, planning, retention, rendering and TUI state transitions. I/O happens at the edges.
 - Early returns over nested conditionals. No dead code, commented-out code or stale TODOs.
+
+- No `bool` parameter: `run(root, true)` doesn't say what `true` means. Take a two-variant enum named for what it means there, such as `compat::run(root, Baselines::Keep)`, or split the function in two. Clippy checks it: `max-fn-params-bools = 0` makes `fn_params_excessive_bools` fail on any function with one, so it can't tell a literal call site from one that passes a named value. A trait `impl` is exempt, since the trait decides its signature.
 
 These rules are checked by `cargo xtask check-style` (gate step 13), which parses every Rust source in `crates/` and `xtask/` with `syn`. It doesn't look inside `macro_rules!` bodies or macro calls.
 

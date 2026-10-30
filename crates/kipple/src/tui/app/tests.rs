@@ -650,18 +650,24 @@ fn q_and_ctrl_c_quit_and_any_key_closes_help() {
     assert!(typing.quit);
 }
 
-/// The default theme, or `mono` without colour, with Unicode or ASCII symbols.
-fn look(colour: bool, ascii: bool) -> Look<'static> {
+/// Whether a test draws in colour.
+#[derive(Clone, Copy)]
+enum Paint {
+    /// The default theme.
+    Colour,
+    /// `mono`, without colour.
+    Mono,
+}
+
+/// The theme `paint` says, with `glyphs`.
+fn look(paint: Paint, glyphs: Glyphs) -> Look<'static> {
     static KIPPLE: LazyLock<Theme> = LazyLock::new(|| Theme::builtin("kipple").unwrap());
     static MONO: LazyLock<Theme> = LazyLock::new(|| Theme::builtin("mono").unwrap());
-    Look {
-        theme: if colour { &KIPPLE } else { &MONO },
-        glyphs: if ascii {
-            Glyphs::Ascii
-        } else {
-            Glyphs::Unicode
-        },
-    }
+    let theme = match paint {
+        Paint::Colour => &KIPPLE,
+        Paint::Mono => &MONO,
+    };
+    Look { theme, glyphs }
 }
 
 /// The probe theme, which draws each role in its own colour, with Unicode symbols.
@@ -674,7 +680,7 @@ fn probe() -> Look<'static> {
 }
 
 fn colour() -> Look<'static> {
-    look(true, false)
+    look(Paint::Colour, Glyphs::Unicode)
 }
 
 /// `app` drawn on a `width` by `height` terminal, as text. Paths shown from `~` are
@@ -895,7 +901,7 @@ fn help_at_80_by_24_in_ascii() {
         height: 24,
     });
     press(&mut app, &[Key::Char('?')]);
-    let look = look(false, true);
+    let look = look(Paint::Mono, Glyphs::Ascii);
     insta::assert_snapshot!(screen(&app, look, 80, 24));
 }
 
@@ -904,7 +910,7 @@ fn no_color_draws_every_cell_in_the_terminals_own_colours_and_ascii_only_ascii()
     for (width, height) in [(80, 24), (160, 48)] {
         let mut app = sized(width, height);
         press(&mut app, &[Key::Char('?')]);
-        let plain = look(false, true);
+        let plain = look(Paint::Mono, Glyphs::Ascii);
         let buffer = draw(&app, plain, width, height);
 
         for cell in &buffer.content {

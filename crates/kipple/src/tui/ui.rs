@@ -19,8 +19,8 @@ use ratatui::Frame;
 use ratatui::text::{Line as Text, Span};
 
 pub(crate) use self::detail::detail_end;
+use self::layout::Screen;
 pub(crate) use self::layout::list_rows;
-use self::layout::{Screen, Totals};
 pub(crate) use self::tree::{offset, slashed, tail};
 use super::app::{App, Mode, Shelf};
 use crate::theme::{Look, Role};
@@ -94,13 +94,7 @@ pub(crate) fn render(app: &App, look: Look<'_>, frame: &mut Frame<'_>) {
     };
     let areas = layout::layout(frame.area(), &app.config.ui, screen);
     frame::outline(look, areas.outer, &areas.rules, frame);
-    keybar::render(
-        app,
-        look,
-        areas.keybar,
-        areas.totals == Totals::KeyBar,
-        frame,
-    );
+    keybar::render(app, look, areas.keybar, areas.totals, frame);
     let width = areas.outer.width.saturating_sub(4);
     let title = frame::header(app, look, width);
     if screen == Screen::Panel {
