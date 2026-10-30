@@ -59,6 +59,10 @@ disallowed-methods = [
   { path = "std::fs::remove_dir",       reason = "mutation goes through kipple-platform's confined executor" },
   { path = "std::fs::remove_dir_all",   reason = "mutation goes through kipple-platform's confined executor" },
   { path = "std::fs::rename",           reason = "mutation goes through kipple-platform's confined executor" },
+  # The raw calls the executor removes with, so its call sites carry the same expectation.
+  # Only kipple-platform links libc and windows-sys, hence `allow-invalid` elsewhere.
+  { path = "libc::unlinkat",            reason = "mutation goes through kipple-platform's confined executor", allow-invalid = true },
+  { path = "windows_sys::Win32::Storage::FileSystem::SetFileInformationByHandle", reason = "mutation goes through kipple-platform's confined executor", allow-invalid = true },
   { path = "std::process::Command::new", reason = "native commands go through the platform runner (identity, deadline, env)" },
   { path = "std::env::var",             reason = "read environment once in the composition root and inject it" },
   { path = "std::env::set_var",         reason = "process-global mutation" },
@@ -66,7 +70,7 @@ disallowed-methods = [
 ]
 ```
 
-The executor and the runner each carry one `#[expect(clippy::disallowed_methods, reason = ...)]` at the single call site that is allowed. Grep for that expectation and you have the complete mutation surface.
+The runner and each OS's executor carry one `#[expect(clippy::disallowed_methods, reason = ...)]` at the single call site that is allowed. Grep for that expectation and you have the complete mutation surface.
 
 Limits are a smell detector, not a target. Split code by responsibility, never just to get under a number. If a limit is wrong for one function, use `#[expect]` with a reason.
 

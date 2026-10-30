@@ -13,8 +13,8 @@ use crate::size::Measurement;
 /// A file's identity: device and inode on Unix; on Windows a volume serial and a file ID.
 ///
 /// The file ID is 128 bits wide because `ReFS` needs `FILE_ID_INFO`'s (a 64-bit file index
-/// doesn't identify a file there). Today's Windows probe still fills them from the 32-bit
-/// `dwVolumeSerialNumber` and the 64-bit `nFileIndex`; M3a-exec moves it to `FILE_ID_INFO`.
+/// doesn't identify a file there). The Windows probes and freezer both fill it from
+/// `FILE_ID_INFO`, so a scan's identities and a freeze's compare.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FileIdentity {
     /// Device or volume serial.
