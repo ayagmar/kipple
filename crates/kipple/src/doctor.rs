@@ -275,7 +275,7 @@ impl Report {
                     found(meta)
                 ),
             };
-            writeln!(out, "  {:<22}{}", check.root.name(), escaped(&line))?;
+            writeln!(out, "  {:<21} {}", check.root.name(), escaped(&line))?;
         }
         Ok(())
     }

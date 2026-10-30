@@ -132,6 +132,23 @@ fn a_root_resolved_through_a_link_shows_the_link_and_where_it_leads() {
     assert!(output.contains(&shown), "{output}");
 }
 
+// Catches the longest root name filling its column and running into what is said of it.
+#[test]
+fn a_root_name_as_wide_as_its_column_is_set_apart_from_its_state() {
+    let mut report = report(io::ErrorKind::NotFound);
+    report.roots = vec![RootCheck {
+        root: SymbolicRoot::RoamingAppData,
+        status: Err(UnresolvedRoot::NotSet { var: "APPDATA" }),
+    }];
+
+    let output = printed(&report);
+
+    assert!(
+        output.contains("\n  known.roaming-app-data unknown: "),
+        "{output}"
+    );
+}
+
 #[test]
 fn each_integration_is_listed_with_the_roots_it_reads_in_its_own_column() {
     let mut report = report(io::ErrorKind::NotFound);
