@@ -11,11 +11,11 @@
 
 kipple finds what your tools leave behind, explains what each thing is and what you lose by removing it, and removes what is safe to remove, with a record of everything it did. It is a fast, cross-platform CLI and TUI written in Rust for Linux, macOS and Windows. It knows the footprint of coding agents (Claude Code, Codex, Pi, Cursor) and developer toolchains, and you can extend it with declarative rule packs.
 
-**Status: M1 (core model and read-only scan) complete; M2 (TUI home) in progress.** `kipple` in a terminal opens the home screen: findings stream into Safe, Review and Protected (at the level in your config, Balanced by default), grouped by project, with size bars and a sort order (`o`), each with a detail pane saying what it is, why it's here, why it's in its bucket, what you lose and how it comes back. The first run asks how careful to be and where your projects are, and suggests folders that hold projects outside the usual places. Selecting removes nothing yet. `kipple scan` finds and sizes Cargo `target`, Node `node_modules`, Python `.venv` and `__pycache__`, the trash, and on Linux the pacman cache and the persistent journal, with the evidence for each, and shows retention advice for pacman, journald and Claude Code. It changes nothing. `kipple rules` lists what kipple knows, `kipple explain` says why, `kipple doctor` shows where kipple looks and what it can read, and `kipple config path|show` shows the config file, which sets the level, the project roots and the paths and rules to keep or exclude. `scan`, `rules` and `doctor` have `--json`, and `scan` streams `--events jsonl`. The docs below are the plan, with a status line on each.
+**Status: M1 (core model and read-only scan) complete; M2 (TUI home) in progress.** `kipple` in a terminal opens the home screen: findings stream into Safe, Review and Protected (at the level in your config, Balanced by default), grouped by project, with size bars and a sort order (`o`), each with a detail pane saying what it is, why it's here, why it's in its bucket, what you lose and how it comes back. The first run asks how careful to be and where your projects are, and suggests folders that hold projects outside the usual places. Selecting removes nothing yet. `kipple scan` finds and sizes Cargo `target`, Node `node_modules`, Python `.venv` and `__pycache__`, the trash, and on Linux the pacman cache and the persistent journal, with the evidence for each, and shows retention advice for pacman, journald and Claude Code. It changes nothing. `kipple rules` lists what kipple knows, `kipple explain` says why, `kipple doctor` shows where kipple looks and what it can read, and `kipple config path|show` shows the config file, which sets the level, the project roots and the paths and rules to keep or exclude. `kipple clean` removes Safe findings once you say yes on a terminal (or with `--yes` for the rules `--only` names), by deleting them or, on Linux and macOS, moving them to the trash, and keeps a record of each run; `kipple plan -o FILE` and `kipple apply FILE` split that in two, `kipple history` lists the runs and `kipple restore` moves trashed items back. Review findings wait for the TUI's review. `scan`, `rules`, `doctor`, `clean`, `apply` and `history` have `--json`, and `scan`, `clean` and `apply` stream `--events jsonl`. The docs below are the plan, with a status line on each.
 
 ## Try it
 
-Every command here only reads. `kipple --help` lists them all.
+These only read. `kipple --help` lists every command.
 
 ```sh
 kipple                               # the home screen; a summary when piped
@@ -24,6 +24,15 @@ kipple scan --root ~/code --json     # with ~/code as the only project root, as 
 kipple explain builtin.cargo.target  # what a rule selects, why, and what is lost
 kipple doctor                        # where kipple looks and what it can read
 kipple config show                   # the settings in effect
+```
+
+These change things, and ask first on a terminal:
+
+```sh
+kipple clean                                  # show the Safe findings, ask, then remove them
+kipple clean --only builtin.cargo.target --yes  # no question: delete only the Safe Cargo targets
+kipple clean --method trash                   # move them to the trash instead (Linux, macOS)
+kipple history                                # every run, with what happened to each item
 ```
 
 ## Development

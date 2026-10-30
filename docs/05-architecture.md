@@ -1,6 +1,6 @@
 # Architecture
 
-Status: partly built. The core ports, `Engine::scan` with its events and the shared project walk (§2, §3), the platform's root resolution, probes, walker and capability probes (§1, §3), the built-in integrations, and the `scan`, `rules`, `explain` and `doctor` commands exist since M1. The core's mutation contract (§2, the mutation contract), with planning, apply and reconciliation, and the platform's `ConfinedFs` and `ConfinedTrash`, which implement its `Freezer`, `Executor` and `TrashBackend`, exist since M3a; no command calls them yet. The Rust in §2 shows the signatures as they are, and items marked *planned* are sketches that have not been compiled. Nothing is frozen yet.
+Status: partly built. The core ports, `Engine::scan` with its events and the shared project walk (§2, §3), the platform's root resolution, probes, walker and capability probes (§1, §3), the built-in integrations, and the `scan`, `rules`, `explain` and `doctor` commands exist since M1. The core's mutation contract (§2, the mutation contract), with planning, apply and reconciliation, and the platform's `ConfinedFs` and `ConfinedTrash`, which implement its `Freezer`, `Executor` and `TrashBackend`, exist since M3a, and the `clean`, `plan`, `apply`, `history` and `restore` commands call them since M3b, with the platform's `FileRunStore` keeping runs under kipple's data directory. The Rust in §2 shows the signatures as they are, and items marked *planned* are sketches that have not been compiled. Nothing is frozen yet.
 
 ## 1. Workspace
 

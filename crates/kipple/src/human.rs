@@ -625,11 +625,7 @@ fn idle_except(unchecked: usize, by_command_line: usize) -> String {
         .join("; ")
 }
 
-#[expect(
-    dead_code,
-    reason = "the M3b CLI card renders apply's outcomes; until then only the scan's git \
-              line and the tests read these"
-)]
 pub(crate) mod outcome;
+pub(crate) mod receipt;
 #[cfg(test)]
 mod tests;

@@ -49,5 +49,9 @@ required-features = ["test-roots"]
 name = "compat"
 required-features = ["test-roots"]
 
+[[test]]
+name = "clean"
+required-features = ["test-roots"]
+
 [lints]
 workspace = true

@@ -405,6 +405,16 @@ fn held_path(path: &str, roots: &Roots, note: Option<String>) -> HeldPath {
             ..HeldPath::default()
         };
     };
+    HeldPath {
+        note,
+        ..held_at(&expanded, roots)
+    }
+}
+
+/// `path` held in every form a finding may take: as given, and below the directory a
+/// linked root leads to, with the identities of what is there and above it.
+pub(crate) fn held_at(path: &Path, roots: &Roots) -> HeldPath {
+    let expanded = path.to_owned();
     let mut forms = vec![expanded.clone()];
     for Resolution { resolved, .. } in roots.iter() {
         let Ok(resolved) = resolved else { continue };
@@ -417,7 +427,7 @@ fn held_path(path: &str, roots: &Roots, note: Option<String>) -> HeldPath {
     HeldPath {
         forms,
         lineage,
-        note,
+        note: None,
     }
 }
 

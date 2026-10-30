@@ -39,8 +39,7 @@ use std::process::ExitCode;
 use std::time::SystemTime;
 
 use clap::Parser as _;
-use kipple::theme::Stdout;
-use kipple::{CANCELLED, Cli, USAGE};
+use kipple::{CANCELLED, Cli, Io, USAGE};
 use kipple_platform::Environment;
 use serde_json::Value;
 
@@ -77,7 +76,7 @@ fn demo() -> (tempfile::TempDir, Environment) {
 fn kipple(env: &Environment, args: &[&str]) -> (ExitCode, String, String) {
     let cli = Cli::parse_from(std::iter::once("kipple").chain(args.iter().copied()));
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = kipple::run(&cli, env, Stdout::Redirected, &mut out, &mut err);
+    let code = kipple::run(&cli, env, Io::redirected(&mut out, &mut err));
     let text = |bytes| String::from_utf8(bytes).unwrap();
     (code, text(out), text(err))
 }
@@ -101,7 +100,7 @@ fn a_closed_stdout_cancels_the_event_stream_and_exits_130_saying_nothing_more() 
     let cli = Cli::parse_from(["kipple", "scan", "--events", "jsonl"]);
     let mut stderr = Vec::new();
 
-    let code = kipple::run(&cli, &env, Stdout::Redirected, &mut ClosedPipe, &mut stderr);
+    let code = kipple::run(&cli, &env, Io::redirected(&mut ClosedPipe, &mut stderr));
 
     assert_eq!(code, ExitCode::from(CANCELLED));
     assert_eq!(String::from_utf8(stderr).unwrap(), "");
