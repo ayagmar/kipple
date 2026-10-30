@@ -8,6 +8,7 @@ mod check;
 mod cmd;
 mod compat;
 mod demo;
+mod docs_cmds;
 mod gen_docs;
 
 // The demo tree, built from the same fixtures as the integration tests.
@@ -69,6 +70,8 @@ enum Task {
         #[arg(long)]
         refresh: bool,
     },
+    /// Fail on a `kipple` command in a shell block of the docs that the CLI doesn't accept.
+    CheckDocs,
     /// Build a benchmark reference tree. The references are 100000 and 1000000 entries.
     BenchTree {
         /// Where to build it. Must be missing or empty.
@@ -112,6 +115,7 @@ fn main() -> Result<()> {
         Task::Fix => check::fix(root),
         Task::CheckArch => arch::run(root),
         Task::CheckCompat { refresh } => compat::run(root, refresh),
+        Task::CheckDocs => docs_cmds::run(root),
         Task::BenchTree { dir, entries } => bench_tree::run(&dir, entries),
         Task::BenchTui { tree } => bench_tui::run(root, tree.as_deref()),
         Task::TestNative => {

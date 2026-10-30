@@ -1,6 +1,6 @@
 # Engineering standards
 
-Status: steps 1–11 and §2–§3 and §8 are in place and enforced. The `native` nextest profile and `cargo xtask test-native` (§5) exist since M1, and so does `cargo xtask verify-demo`, the end-to-end check of the CLI with the `test-roots` feature, which CI runs beside the gate on all three OSes. Later steps are planned.
+Status: steps 1–12, §2–§3 and §8 are in place and enforced. The `native` nextest profile and `cargo xtask test-native` (§5) exist since M1, and so does `cargo xtask verify-demo`, the end-to-end check of the CLI with the `test-roots` feature, which CI runs beside the gate on all three OSes. Later steps are planned.
 
 ## 1. One gate
 
@@ -18,12 +18,14 @@ Status: steps 1–11 and §2–§3 and §8 are in place and enforced. The `nativ
 | 8 | Architecture | `cargo xtask check-arch` (see §3) | M0 |
 | 9 | Generated CLI reference | `cargo xtask gen-docs --check` for the commands that exist | M0 (only `--version` and `--help`) |
 | 10 | Generated JSON schemas and support matrix | part of `gen-docs --check` | M1 |
-| 11 | Compatibility with the last release | `cargo xtask check-compat` (see §8) | M3 |
-| 12 | Site build, links, tapes, Lighthouse | `cargo xtask site` (separate CI job) | M6 |
+| 11 | Compatibility with the last release | `cargo xtask check-compat` (see §8) | M2 |
+| 12 | Documented commands | `cargo xtask check-docs`: every `kipple` command in a shell block of `README.md`, `docs/` and `site/src/` parses against the CLI (see the rules below) | M2 |
+| 13 | Site build, links, tapes, Lighthouse | `cargo xtask site` (separate CI job) | M6 |
 
 Rules:
 - A step that is not yet active doesn't exist in the code or in CI. It isn't a skipped or silently passing step. Each milestone adds its steps in the same change that introduces their inputs.
 - `gen-docs` generates only what the binary actually has. It never references future commands.
+- A fenced `sh`, `shell`, `bash` or `zsh` block, and each `$ ` line of a `console` block, shows commands that work today, and `check-docs` parses every `kipple` command in them with the CLI's own clap definition, without running anything. Planned commands, such as the full CLI surface in 03 §3, go in `text` blocks, which it skips, as it skips inline code. It fails when it finds no command at all, so it can't pass by reading nothing.
 - A milestone is done when `cargo xtask check` is green on all three OSes in CI, plus the milestone's own verification commands in [11-delivery-plan.md](11-delivery-plan.md).
 - A pre-commit hook in `.githooks/` runs the fast subset (fmt, clippy, typos).
 - We never loosen a gate to get a change through. Changing a gate is its own change, with a stated reason.

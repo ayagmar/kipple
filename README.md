@@ -13,6 +13,19 @@ kipple finds what your tools leave behind, explains what each thing is and what 
 
 **Status: M1 (core model and read-only scan) complete; M2 (TUI home) in progress.** `kipple` in a terminal opens the home screen: findings stream into Safe, Review and Protected (at the level in your config, Balanced by default), grouped by project, with size bars and a sort order (`o`), each with a detail pane saying what it is, why it's here, why it's in its bucket, what you lose and how it comes back. The first run asks how careful to be and where your projects are, and suggests folders that hold projects outside the usual places. Selecting removes nothing yet. `kipple scan` finds and sizes Cargo `target`, Node `node_modules`, Python `.venv` and `__pycache__`, the trash, and on Linux the pacman cache and the persistent journal, with the evidence for each, and shows retention advice for pacman, journald and Claude Code. It changes nothing. `kipple rules` lists what kipple knows, `kipple explain` says why, `kipple doctor` shows where kipple looks and what it can read, and `kipple config path|show` shows the config file, which sets the level, the project roots and the paths and rules to keep or exclude. `scan`, `rules` and `doctor` have `--json`, and `scan` streams `--events jsonl`. The docs below are the plan, with a status line on each.
 
+## Try it
+
+Every command here only reads. `kipple --help` lists them all.
+
+```sh
+kipple                               # the home screen; a summary when piped
+kipple scan                          # what was found, with the evidence for each
+kipple scan --root ~/code --json     # only this project root, as one JSON envelope
+kipple explain builtin.cargo.target  # what a rule selects, why, and what is lost
+kipple doctor                        # where kipple looks and what it can read
+kipple config show                   # the settings in effect
+```
+
 ## Development
 
 Install the gate tools at the versions pinned in [Decisions](docs/decisions.md) §2 (`cargo-nextest`, `cargo-deny`, `cargo-machete`, `typos-cli`), then:
@@ -21,6 +34,7 @@ Install the gate tools at the versions pinned in [Decisions](docs/decisions.md) 
 cargo xtask check                    # the gate: green here is green
 cargo xtask fix                      # clippy fixes, then rustfmt
 cargo xtask check-arch               # crate boundaries only
+cargo xtask check-docs               # the kipple commands in shell blocks parse
 cargo xtask gen-docs                 # regenerate the CLI reference
 cargo xtask bench-tree <dir> --entries 100000  # benchmark reference tree
 cargo xtask bench-tui                # home screen keypress-to-frame p95 on the 1M tree
