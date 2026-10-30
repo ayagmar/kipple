@@ -13,6 +13,7 @@ mod config_file;
 mod environment;
 mod executor;
 mod fs_probe;
+mod git;
 mod host;
 mod os;
 mod process;
@@ -23,7 +24,6 @@ mod runs;
 #[cfg(feature = "test-roots")]
 mod test_host;
 mod trash;
-mod unbuilt;
 mod walk;
 
 pub use capabilities::{ToolProbe, probe_tools};
@@ -31,6 +31,7 @@ pub use config_file::{WriteError, read_config, write_config};
 pub use environment::Environment;
 pub use executor::{ConfinedFs, OsNames};
 pub use fs_probe::NoFollowFs;
+pub use git::GitQuery;
 pub use host::{SystemClock, clock, processes};
 pub use process::OsProcesses;
 pub use project_search::{ProjectSearch, ProjectsFound, SearchLimits, search_projects};
@@ -40,7 +41,6 @@ pub use roots::{
 };
 pub use runs::FileRunStore;
 pub use trash::ConfinedTrash;
-pub use unbuilt::NoGit;
 pub use walk::Walker;
 
 /// The operating system kipple was built for.

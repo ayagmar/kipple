@@ -1,8 +1,6 @@
 //! Mutating commands end to end through `run_clean`, `run_restore` and their events
 //! (spec M3b pinned 1, 3, 4, 10, 12, 17; D-067).
 
-use std::path::Path;
-
 use kipple_core::format::{decode_plan_file, encode_plan_file};
 use kipple_core::{
     Activity, ActivityGap, Answer, ApplyEvent, ApplyPorts, CancelToken, CleanRequest, Confirm,
@@ -14,7 +12,9 @@ use kipple_core::{ApplyFile, Dropped, ImportedPlan, PlanMode, run_apply};
 
 use super::codec::TestCodec;
 use super::world::{Crash, Rescanned, World};
-use super::{Config, everything, plan_all, ports, project, rel, rescanned, scan_of, world_of};
+use super::{
+    Config, everything, home, plan_all, ports, project, rel, rescanned, scan_of, world_of,
+};
 
 /// Answers every prompt with its answer, keeping the digest of each plan shown.
 struct Person {
@@ -319,7 +319,7 @@ fn a_restore_moves_an_item_back_once() {
             .world
             .state()
             .targets
-            .contains_key(Path::new("/home/u/p0/target")),
+            .contains_key(&home("p0/target")),
         "the item is back at its place"
     );
     let RunRead::Read(stored) = read_run(&machine.world, &run, Depth::Headers, &TestCodec) else {
@@ -383,7 +383,7 @@ fn a_reconciled_trash_move_restores() {
             .world
             .state()
             .targets
-            .contains_key(Path::new("/home/u/p0/target")),
+            .contains_key(&home("p0/target")),
         "the item is back at its place"
     );
 }
@@ -474,10 +474,8 @@ fn activity_and_git_are_asked_again_at_apply() {
     }
     {
         let mut state = tracked.world.state();
-        state.git.insert("/home/u/p0/target".into(), Ok(Vec::new()));
-        state
-            .git
-            .insert("/home/u/p1/target".into(), Err(GitGap::Failed));
+        state.git.insert(home("p0/target"), Ok(Vec::new()));
+        state.git.insert(home("p1/target"), Err(GitGap::Failed));
     }
     let planned = plan_all(
         &tracked.scan,
@@ -490,7 +488,7 @@ fn activity_and_git_are_asked_again_at_apply() {
         .world
         .state()
         .git
-        .insert("/home/u/p0/target".into(), Ok(vec![rel("debug/b")]));
+        .insert(home("p0/target"), Ok(vec![rel("debug/b")]));
     let finished = tracked.clean(Consent::Yes, &mut Events::default(), &CancelToken::new());
     let outcome = &finished.receipt.items[0].outcome;
     assert_eq!(outcome.status(), Status::Done, "{outcome:?}");
@@ -500,7 +498,7 @@ fn activity_and_git_are_asked_again_at_apply() {
         "the entry git tracks now is left out"
     );
     let state = tracked.world.state();
-    let left = &state.targets[Path::new("/home/u/p0/target")];
+    let left = &state.targets[&home("p0/target")];
     assert!(
         left.entries.contains_key(&rel("debug/b")),
         "what git tracks now stays"

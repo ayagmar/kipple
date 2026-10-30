@@ -33,10 +33,15 @@ use kipple_core::{
     ScanOutcome, ScanReport, Scope, Selection, Selector, Skip, SpaceEstimate, Stamp, Standing,
     Status, Stop, SymbolicRoot, Tracked, Unjudged, Unsupported, apply, plan, reconcile,
 };
-use kipple_core::{ApplyPorts, Depth, Reconciled, Recorders, RunId, RunRead, StoredRun, read_run};
+use kipple_core::{ApplyPorts, Depth, Reconciled, Recorders, RunRead, StoredRun, read_run};
 use world::{Crash, Crashed, Record, Rescanned, Target, World};
 
+/// The home directory the scenarios run in: absolute on the OS the tests run on, as a
+/// stored plan's root path must be.
+#[cfg(unix)]
 const HOME: &str = "/home/u";
+#[cfg(windows)]
+const HOME: &str = "C:/home/u";
 const FS_ROOT: FileIdentity = id(1);
 const HOME_PARENT: FileIdentity = id(2);
 const HOME_ID: FileIdentity = id(3);
@@ -88,6 +93,11 @@ fn snapshot(kind: EntryKind, file: u128, changed: i64, links: u64) -> EntrySnaps
     }
 }
 
+/// `rest` below the home directory.
+fn home(rest: &str) -> PathBuf {
+    Path::new(HOME).join(rest)
+}
+
 fn rel(text: &str) -> RelPath {
     RelPath::of(Path::new(text)).unwrap()
 }
@@ -116,7 +126,7 @@ impl Item {
 /// directory) with identities from `base`.
 fn project(n: u128, base: u128, entries: &[&str]) -> (Item, Target) {
     let item = Item {
-        path: PathBuf::from(format!("{HOME}/p{n}/target")),
+        path: home(&format!("p{n}/target")),
         rule: rule_id("builtin.cargo.target"),
         integration: CARGO,
         own: id(base),
@@ -503,7 +513,7 @@ fn layout_and_activity_are_judged_again_at_apply() {
             Skip::Unjudged(Unjudged::Unmeasured),
         ),
         (
-            |finding| finding.path = PathBuf::from("/home/u/p0/elsewhere"),
+            |finding| finding.path = home("p0/elsewhere"),
             Skip::Unjudged(Unjudged::NotFound),
         ),
     ];
@@ -521,7 +531,7 @@ fn layout_and_activity_are_judged_again_at_apply() {
 fn in_use() -> Activity {
     Activity::InUse {
         pid: 42,
-        seen: kipple_core::Seen::Executable(PathBuf::from("/home/u/p0/target/debug/app")),
+        seen: kipple_core::Seen::Executable(home("p0/target/debug/app")),
     }
 }
 
@@ -624,7 +634,7 @@ fn config_changes() -> [(Edit<Config>, JudgementField); 8] {
         (
             |config| {
                 config.policy.keep.push(HeldPath {
-                    forms: vec![PathBuf::from("/home/u/p9")],
+                    forms: vec![home("p9")],
                     lineage: Lineage(vec![Some(id(9000))]),
                     note: None,
                 });
@@ -1030,14 +1040,18 @@ fn a_crash_after_a_trash_move_keeps_the_restore_handle() {
 }
 
 /// The baseline run a crash interrupted between a trash move and its outcome, as an
-/// earlier release stored it (`crates/kipple/tests/compat/`).
+/// earlier release stored it (`crates/kipple/tests/compat/`). The baselines were written
+/// on Unix, so their paths and names are Unix ones.
+#[cfg(unix)]
 const BASELINE_PLAN: &[u8] =
     include_bytes!("../../kipple/tests/compat/stored-plan/v1/interrupted-trash.plan");
+#[cfg(unix)]
 const BASELINE_JOURNAL: &[u8] =
     include_bytes!("../../kipple/tests/compat/journal/v1/interrupted-trash.journal");
 
 /// The world the baseline run was made in: one project's `target/`, planned for the
 /// trash, crashed after the move and before its outcome.
+#[cfg(unix)]
 fn baseline_world() -> (World, Plan) {
     let (item, target) = project(0, 100, TARGET);
     let world = world_of(&[(item.clone(), target)]);
@@ -1052,10 +1066,11 @@ fn baseline_world() -> (World, Plan) {
 /// Catches a run an earlier kipple left pending that no longer reconciles after an
 /// upgrade, so its trashed item loses its restore handle (pinned 9, 18): the baseline's
 /// intent matches its plan by the digests stored, and the item is found in the trash.
+#[cfg(unix)]
 #[test]
 fn a_baseline_run_with_a_pending_trash_move_reconciles_to_trashed() {
     let (world, _) = baseline_world();
-    let id = RunId::at(std::time::UNIX_EPOCH, 0);
+    let id = kipple_core::RunId::at(std::time::UNIX_EPOCH, 0);
     let files = world::Files {
         plan: Some(BASELINE_PLAN.to_vec()),
         journal: BASELINE_JOURNAL.to_vec(),
@@ -1080,6 +1095,7 @@ fn a_baseline_run_with_a_pending_trash_move_reconciles_to_trashed() {
 /// Catches the `kipple.frozen-tree` v1 encoding changing for the same tree, which would
 /// make every stored tree's digest disagree with the tree a run reads back: the baseline
 /// holds the bytes this tree encoded to.
+#[cfg(unix)]
 #[test]
 fn a_frozen_tree_encodes_to_the_baseline_bytes() {
     let (_, plan) = baseline_world();
@@ -1096,9 +1112,9 @@ fn a_frozen_tree_encodes_to_the_baseline_bytes() {
 }
 
 /// A finding at `path`, with `own` its identity and `lineage` the rest.
-fn at(path: &str, own: FileIdentity, above: &[FileIdentity]) -> Item {
+fn at(path: &Path, own: FileIdentity, above: &[FileIdentity]) -> Item {
     Item {
-        path: PathBuf::from(path),
+        path: path.to_owned(),
         rule: rule_id("builtin.cargo.target"),
         integration: CARGO,
         own,
@@ -1119,18 +1135,19 @@ fn refusals(planned: &Planned) -> Vec<(FindingId, Skip)> {
 /// pinned 12).
 #[test]
 fn the_host_protects_home_roots_and_subresources_before_anything_is_frozen() {
-    let mut home = finding(0, &at(HOME, HOME_ID, &[]));
-    home.facts.as_mut().unwrap().lineage =
+    let home_dir = Path::new(HOME);
+    let mut itself = finding(0, &at(home_dir, HOME_ID, &[]));
+    itself.facts.as_mut().unwrap().lineage =
         Lineage(vec![Some(HOME_ID), Some(HOME_PARENT), Some(FS_ROOT)]);
-    let mut above = finding(1, &at("/home", HOME_PARENT, &[]));
+    let mut above = finding(1, &at(home_dir.parent().unwrap(), HOME_PARENT, &[]));
     above.facts.as_mut().unwrap().lineage = Lineage(vec![Some(HOME_PARENT), Some(FS_ROOT)]);
-    let mut root = finding(2, &at("/", FS_ROOT, &[]));
+    let mut root = finding(2, &at(home_dir.ancestors().last().unwrap(), FS_ROOT, &[]));
     root.facts.as_mut().unwrap().lineage = Lineage(vec![Some(FS_ROOT)]);
     let (item, target) = project(0, 100, TARGET);
     let inside = finding(3, &item);
     let world = world_of(&[(item, target)]);
     let mut scan = scan_of(&[]);
-    scan.findings = vec![home, above, root, inside];
+    scan.findings = vec![itself, above, root, inside];
     scan.integrations = vec![IntegrationReport {
         id: CARGO,
         omissions: Vec::new(),
@@ -1139,7 +1156,7 @@ fn the_host_protects_home_roots_and_subresources_before_anything_is_frozen() {
     }];
     let mut config = Config::new();
     config.protections.subresources.push(HeldPath {
-        forms: vec![PathBuf::from("/home/u/p0")],
+        forms: vec![home("p0")],
         lineage: Lineage(vec![Some(id(99))]),
         note: None,
     });
@@ -1174,7 +1191,7 @@ fn the_host_protects_home_roots_and_subresources_before_anything_is_frozen() {
 #[test]
 fn a_parent_and_a_child_selected_together_conflict_until_one_is_left_out() {
     let (parent, target) = project(0, 100, TARGET);
-    let child = at("/home/u/p0/target/debug", id(103), &[id(100), id(99)]);
+    let child = at(&home("p0/target/debug"), id(103), &[id(100), id(99)]);
     let mut world_targets = vec![(parent.clone(), target.clone())];
     let mut debug = BTreeMap::new();
     for (path, entry) in &target.entries {
@@ -1213,13 +1230,13 @@ fn a_parent_and_a_child_selected_together_conflict_until_one_is_left_out() {
 #[test]
 fn an_overlap_holds_whatever_the_aliases_on_either_side_do() {
     let (world, item, alias) = aliases();
-    let child = at("/home/u/p0/target/debug", id(103), &[id(100), id(99)]);
+    let child = at(&home("p0/target/debug"), id(103), &[id(100), id(99)]);
     let parent_aliases = scan_of(&[item.clone(), alias, child.clone()]);
     let parents = plan_all(&parent_aliases, &Config::new(), &world, PlanMode::Review);
     assert!(parents.plan.entries().is_empty(), "nothing is planned");
     assert_eq!(parents.refused.len(), 3);
     let child_alias = Item {
-        path: PathBuf::from("/home/u/link/target/debug"),
+        path: home("link/target/debug"),
         rule: rule_id("builtin.other.build"),
         integration: OTHER,
         own: id(103),
@@ -1250,7 +1267,7 @@ fn an_overlap_holds_whatever_the_aliases_on_either_side_do() {
 fn aliases() -> (World, Item, Item) {
     let (item, target) = project(0, 100, TARGET);
     let alias = Item {
-        path: PathBuf::from("/home/u/link/target"),
+        path: home("link/target"),
         rule: rule_id("builtin.other.build"),
         integration: OTHER,
         own: id(100),
@@ -1325,7 +1342,7 @@ fn an_unselected_alias_keeps_its_protection() {
     );
     let mut config = Config::new();
     config.protections.subresources.push(HeldPath {
-        forms: vec![PathBuf::from("/home/u/link")],
+        forms: vec![home("link")],
         lineage: Lineage(vec![Some(id(55))]),
         note: None,
     });
@@ -1341,7 +1358,7 @@ fn an_unselected_alias_keeps_its_protection() {
 fn a_protected_finding_inside_an_item_holds_it() {
     let (item, target) = project(0, 100, TARGET);
     let tool = at(
-        "/home/u/p0/target/debug/tool",
+        &home("p0/target/debug/tool"),
         id(300),
         &[id(103), id(100), id(99)],
     );
@@ -1393,7 +1410,7 @@ fn automation_plans_only_safe_deletes() {
 fn a_finding_in_review_inside_an_item_makes_it_review() {
     let (item, target) = project(0, 100, TARGET);
     let tool = at(
-        "/home/u/p0/target/debug/tool",
+        &home("p0/target/debug/tool"),
         id(300),
         &[id(103), id(100), id(99)],
     );

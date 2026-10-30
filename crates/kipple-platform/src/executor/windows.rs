@@ -38,12 +38,13 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_BASIC_INFO, FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
     FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX, FILE_FLAG_BACKUP_SEMANTICS,
     FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_EXTD_DIR_INFO, FILE_INFO_BY_HANDLE_CLASS,
-    FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_RENAME_INFO, FILE_SHARE_DELETE,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_TRAVERSE, FILE_WRITE_DATA,
-    FileAttributeTagInfo, FileBasicInfo, FileDispositionInfoEx, FileIdExtdDirectoryInfo,
-    FileIdExtdDirectoryRestartInfo, FileRenameInfo, FileStandardInfo, FlushFileBuffers,
-    GetFileInformationByHandleEx, GetVolumeInformationByHandleW, MAXIMUM_REPARSE_DATA_BUFFER_SIZE,
-    SYNCHRONIZE, SetFileInformationByHandle,
+    FILE_LIST_DIRECTORY, FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES, FILE_RENAME_INFO,
+    FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_TRAVERSE,
+    FILE_WRITE_DATA, FileAttributeTagInfo, FileBasicInfo, FileDispositionInfoEx,
+    FileIdExtdDirectoryInfo, FileIdExtdDirectoryRestartInfo, FileRenameInfo, FileStandardInfo,
+    FlushFileBuffers, GetFileInformationByHandleEx, GetFinalPathNameByHandleW,
+    GetVolumeInformationByHandleW, MAXIMUM_REPARSE_DATA_BUFFER_SIZE, SYNCHRONIZE,
+    SetFileInformationByHandle, VOLUME_NAME_NONE,
 };
 use windows_sys::Win32::System::IO::{DeviceIoControl, IO_STATUS_BLOCK};
 use windows_sys::Win32::System::Ioctl::{FILE_DEVICE_NETWORK_FILE_SYSTEM, FSCTL_GET_REPARSE_POINT};
@@ -173,7 +174,7 @@ impl Dir {
     }
 
     /// What `name` in this directory is, read from a handle that opens it as itself.
-    pub(super) fn stat(&self, name: &Name) -> io::Result<Seen> {
+    pub(crate) fn stat(&self, name: &Name) -> io::Result<Seen> {
         seen(&open_at(self, name, FILE_READ_ATTRIBUTES | SYNCHRONIZE, 0)?)
     }
 
@@ -183,6 +184,37 @@ impl Dir {
             return Ok(FileSystemClass::Unsupported(Unsupported::Network));
         }
         Ok(classify(&volume_type(&self.0)?))
+    }
+
+    /// The name this directory is stored under in its parent, as the file system's
+    /// normalized path gives it: the long name, never an 8.3 short one, in its stored case.
+    #[expect(
+        unsafe_code,
+        reason = "windows-sys exposes GetFinalPathNameByHandleW as a raw call"
+    )]
+    pub(crate) fn stored_name(&self) -> io::Result<OsString> {
+        // The longest path Windows has, in UTF-16 units, with its NUL.
+        let mut path = vec![0_u16; 32_768];
+        let capacity = u32::try_from(path.len()).map_err(io::Error::other)?;
+        // SAFETY: the handle is open and `path` is writable for `capacity` units.
+        let written = unsafe {
+            GetFinalPathNameByHandleW(
+                self.0.as_raw_handle(),
+                path.as_mut_ptr(),
+                capacity,
+                FILE_NAME_NORMALIZED | VOLUME_NAME_NONE,
+            )
+        };
+        let written = usize::try_from(written).map_err(io::Error::other)?;
+        if written == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let path = path.get(..written).ok_or(io::ErrorKind::InvalidData)?;
+        let last = path.rsplit(|unit| *unit == u16::from(b'\\')).next();
+        match last {
+            Some(name) if !name.is_empty() => Ok(OsString::from_wide(name)),
+            _ => Err(io::ErrorKind::InvalidData.into()),
+        }
     }
 
     /// The names in this directory, without `.` and `..`. Fails rather than return part

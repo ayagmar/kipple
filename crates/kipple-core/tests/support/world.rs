@@ -355,7 +355,7 @@ fn freed(snapshot: &EntrySnapshot) -> Freed {
 /// The world's trash directory.
 pub(crate) fn trash_dir() -> TrashDir {
     TrashDir {
-        path: PathBuf::from("/home/u/.local/share/Trash/files"),
+        path: super::home(".local/share/Trash/files"),
         identity: FileIdentity {
             volume: 7,
             file: 900,
