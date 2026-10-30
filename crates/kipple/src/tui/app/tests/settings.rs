@@ -16,7 +16,9 @@ use super::{
     CARGO, DAY, NODE, colour, draw, focus, found, home, look, measured, press, probe, safe, screen,
     selected, styled, to, typed,
 };
-use crate::config::{self, Catalog, Config, Loaded, Location, Settings, Source};
+use crate::config::{
+    self, Catalog, Config, ConfigPolicy, Kept, Loaded, Location, Settings, Source,
+};
 use crate::tui::app::{App, Effect, Key, Mode, Msg, Node, Saved, Shelf};
 use crate::tui::settings::{Found, Search};
 
@@ -74,7 +76,7 @@ impl Disk {
 
     /// What `config` gives over these roots, as the loop has it after a write.
     fn saved(&self, config: Config) -> Saved {
-        let (policy, warnings) = config.policy(&self.roots);
+        let ConfigPolicy { policy, warnings } = config.policy(&self.roots);
         let settings = Settings {
             loaded: Loaded {
                 location: self.location(),
@@ -478,10 +480,10 @@ fn configured(width: u16, height: u16) -> App {
     let config = Config {
         method: Some(Method::Trash),
         project_roots: Some(vec!["~/projects".to_owned(), "~/work".to_owned()]),
-        keep: vec![(
-            "~/projects/api/target".to_owned(),
-            Some("benchmark baseline".to_owned()),
-        )],
+        keep: vec![Kept {
+            path: "~/projects/api/target".to_owned(),
+            note: Some("benchmark baseline".to_owned()),
+        }],
         ..Config::default()
     };
     let mut policy = app.policy.clone();

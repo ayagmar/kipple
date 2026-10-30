@@ -337,7 +337,7 @@ fn add_root(app: &App, path: &Path) -> Outcome {
 
 /// Undoes the kept path at `index`, by the path it expands to.
 fn unkeep(app: &App, index: usize) -> Outcome {
-    let written = app.config.keep.get(index).map(|(path, _)| path.clone());
+    let written = app.config.keep.get(index).map(|kept| kept.path.clone());
     let expanded = app
         .policy
         .keep

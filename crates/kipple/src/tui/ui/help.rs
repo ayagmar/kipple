@@ -9,13 +9,14 @@ use super::Look;
 use super::layout::WIDE;
 use crate::theme::Role;
 use crate::tui::app::App;
+use crate::tui::keymap::HelpLine;
 
 pub(super) fn render(app: &App, look: Look<'_>, frame: &mut Frame<'_>) {
     let mut lines: Vec<Text<'static>> = app
         .keymap()
         .help()
         .into_iter()
-        .map(|(keys, what)| {
+        .map(|HelpLine { keys, what }| {
             let keys = look.glyphs.keys(&keys);
             Text::from(vec![
                 Span::styled(format!("{keys:<10} "), look.style(Role::Key)),

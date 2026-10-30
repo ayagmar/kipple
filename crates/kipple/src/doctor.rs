@@ -5,12 +5,12 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use kipple_core::{
-    EntryKind, EntryMeta, FsProbe as _, IntegrationId, Inventory, Lens, NativeTool, ProbeError,
-    ProcessClass, ProcessProbe as _, ProcessSnapshot, ResolvedRoot, RootSource, SymbolicRoot,
+    EntryKind, EntryMeta, FsProbe as _, IntegrationId, Inventory, Lens, ProbeError, ProcessClass,
+    ProcessProbe as _, ProcessSnapshot, Resolution, ResolvedRoot, RootSource, SymbolicRoot,
     ToolStatus, UnresolvedRoot, census,
 };
 use kipple_platform::{
-    Environment, KippleDir, KippleDirs, NoFollowFs, OsProcesses, PLATFORM, kipple_dirs,
+    Environment, KippleDir, KippleDirs, NoFollowFs, OsProcesses, PLATFORM, ToolProbe, kipple_dirs,
     permission_hint, probe_tools, resolve_roots,
 };
 use schemars::JsonSchema;
@@ -19,7 +19,7 @@ use serde::Serialize;
 use crate::config::{self, ConfigError, Settings, Source};
 use crate::human::escaped;
 use crate::json::{DOCTOR, LensOut, PathOut, VERSION};
-use crate::setup::Builtin;
+use crate::setup::{Builtin, BuiltinRule};
 use crate::theme::{Catalog, Ink, Origin, Role};
 
 /// Everything `doctor` found.
@@ -29,7 +29,7 @@ pub struct Report {
     pub dirs: KippleDirs,
     /// The config file and what is there, unless it is the default one and the config
     /// directory is unknown.
-    pub config_file: Option<(PathBuf, Result<EntryMeta, ProbeError>)>,
+    pub config_file: Option<Probed<PathBuf>>,
     /// Where the config comes from, and whether it can be used.
     pub config: ConfigStatus,
     /// Every root on this platform.
@@ -37,7 +37,7 @@ pub struct Report {
     /// Every built-in integration and the roots it reads.
     pub integrations: Vec<IntegrationRoots>,
     /// Every native tool kipple knows.
-    pub tools: Vec<(NativeTool, ToolStatus)>,
+    pub tools: Vec<ToolProbe>,
     /// The process table, or why it could not be read.
     pub processes: Result<ProcessSnapshot, ProbeError>,
     /// What to suggest when a permission failure was diagnosed.
@@ -61,7 +61,16 @@ pub struct RootCheck {
     /// The root.
     pub root: SymbolicRoot,
     /// Where it resolved and what a no-follow probe found there, or why it has no path.
-    pub status: Result<(ResolvedRoot, Result<EntryMeta, ProbeError>), UnresolvedRoot>,
+    pub status: Result<Probed<ResolvedRoot>, UnresolvedRoot>,
+}
+
+/// A path, or a root resolved to one, and what a no-follow probe found there.
+#[derive(Debug)]
+pub struct Probed<T> {
+    /// The path, or the root.
+    pub at: T,
+    /// What is there.
+    pub meta: Result<EntryMeta, ProbeError>,
 }
 
 /// A built-in integration and the roots it reads: its own and its rules'.
@@ -83,9 +92,9 @@ pub struct IntegrationRoots {
 pub fn gather(env: &Environment, flag: Option<&Path>, builtin: &Builtin) -> Report {
     let upstream = resolve_roots(env, &[]);
     let location = config::locate(env, flag, &upstream);
-    let config_file = location.path.as_ref().map(|file| {
-        let meta = NoFollowFs.metadata(file);
-        (file.clone(), meta)
+    let config_file = location.path.as_ref().map(|file| Probed {
+        at: file.clone(),
+        meta: NoFollowFs.metadata(file),
     });
     let (roots, config) = match Settings::load(env, flag, &[], &config::catalog(builtin)) {
         Ok(settings) => {
@@ -108,11 +117,11 @@ pub fn gather(env: &Environment, flag: Option<&Path>, builtin: &Builtin) -> Repo
     let dirs = kipple_dirs(&roots);
     let checks = roots
         .iter()
-        .map(|(root, resolution)| RootCheck {
+        .map(|Resolution { root, resolved }| RootCheck {
             root,
-            status: resolution.clone().map(|resolved| {
-                let meta = NoFollowFs.metadata(&resolved.path);
-                (resolved, meta)
+            status: resolved.clone().map(|resolved| Probed {
+                meta: NoFollowFs.metadata(&resolved.path),
+                at: resolved,
             }),
         })
         .collect();
@@ -134,7 +143,7 @@ fn integration_roots(builtin: &Builtin) -> Vec<IntegrationRoots> {
         .iter()
         .map(|descriptor| {
             let mut roots = descriptor.roots.to_vec();
-            let rules = builtin.rules().map(|(_, rule)| rule);
+            let rules = builtin.rules().map(|BuiltinRule { rule, .. }| rule);
             let own = rules.filter(|rule| {
                 rule.integration == descriptor.id && rule.platforms.contains(&PLATFORM)
             });
@@ -237,7 +246,7 @@ impl Report {
         ] {
             writeln!(out, "  {name:<13}{}", escaped(&dir_line(dir)))?;
         }
-        if let Some((file, meta)) = &self.config_file {
+        if let Some(Probed { at: file, meta }) = &self.config_file {
             let state = match meta {
                 Ok(_) => "present".to_owned(),
                 Err(e) if e.io_kind() == Some(io::ErrorKind::NotFound) => match self.config.error {
@@ -268,7 +277,7 @@ impl Report {
         for check in &self.roots {
             let line = match &check.status {
                 Err(unresolved) => format!("unknown: {unresolved}"),
-                Ok((resolved, meta)) => format!(
+                Ok(Probed { at: resolved, meta }) => format!(
                     "{}  ({}): {}",
                     location(resolved),
                     source(resolved.source),
@@ -296,7 +305,7 @@ impl Report {
 
     fn write_tools(&self, out: &mut dyn Write, ink: &Ink) -> io::Result<()> {
         heading(out, ink, "Native tools")?;
-        for (tool, status) in &self.tools {
+        for ToolProbe { tool, status } in &self.tools {
             let line = match status {
                 ToolStatus::NotFound => "not found on PATH".to_owned(),
                 ToolStatus::Found {
@@ -382,13 +391,15 @@ impl Report {
             meta.as_ref()
                 .is_err_and(|e| e.io_kind() == Some(io::ErrorKind::PermissionDenied))
         };
-        self.roots
-            .iter()
-            .any(|check| check.status.as_ref().is_ok_and(|(_, meta)| denied(meta)))
-            || self
-                .config_file
+        self.roots.iter().any(|check| {
+            check
+                .status
                 .as_ref()
-                .is_some_and(|(_, meta)| denied(meta))
+                .is_ok_and(|probed| denied(&probed.meta))
+        }) || self
+            .config_file
+            .as_ref()
+            .is_some_and(|probed| denied(&probed.meta))
     }
 }
 
@@ -606,7 +617,7 @@ impl Report {
             config_file: self
                 .config_file
                 .as_ref()
-                .map(|(path, meta)| entry(path, meta)),
+                .map(|probed| entry(&probed.at, &probed.meta)),
             config: ConfigOut {
                 source: self.config.source.map(|source| match source {
                     Source::Flag => "--config",
@@ -644,7 +655,7 @@ fn entry(path: &Path, meta: &Result<EntryMeta, ProbeError>) -> EntryOut {
 
 fn root_out(check: &RootCheck) -> RootOut {
     match &check.status {
-        Ok((resolved, meta)) => RootOut {
+        Ok(Probed { at: resolved, meta }) => RootOut {
             root: check.root.name(),
             configured: resolved
                 .link
@@ -673,7 +684,7 @@ fn integration_out(integration: &IntegrationRoots) -> IntegrationRootsOut {
     }
 }
 
-fn tool_out((tool, status): &(NativeTool, ToolStatus)) -> ToolOut {
+fn tool_out(ToolProbe { tool, status }: &ToolProbe) -> ToolOut {
     let (path, version, problem) = match status {
         ToolStatus::NotFound => (None, None, None),
         ToolStatus::Found { path, version } => (

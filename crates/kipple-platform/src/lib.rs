@@ -19,7 +19,7 @@ mod runner;
 mod test_host;
 mod walk;
 
-pub use capabilities::probe_tools;
+pub use capabilities::{ToolProbe, probe_tools};
 pub use config_file::{WriteError, read_config, write_config};
 pub use environment::Environment;
 pub use fs_probe::NoFollowFs;

@@ -16,6 +16,7 @@ use kipple_core::{
 };
 
 use crate::environment::Environment;
+use crate::os::HardLink;
 use crate::roots::{absolute, under};
 
 /// kipple's own directories: under the XDG roots on Linux and macOS alike (D-015).
@@ -97,18 +98,19 @@ pub(crate) fn allocated(meta: &fs::Metadata) -> Option<u64> {
 }
 
 /// A file (not a directory) with more than one name, and how many it has.
-pub(crate) fn hard_link(meta: &fs::Metadata) -> Option<(FileIdentity, u64)> {
-    (!meta.is_dir() && meta.nlink() > 1).then(|| (identity_of(meta), meta.nlink()))
+pub(crate) fn hard_link(meta: &fs::Metadata) -> Option<HardLink> {
+    (!meta.is_dir() && meta.nlink() > 1).then(|| HardLink {
+        identity: identity_of(meta),
+        names: meta.nlink(),
+    })
 }
 
 pub(crate) fn is_executable(meta: &fs::Metadata) -> bool {
     meta.permissions().mode() & 0o111 != 0
 }
 
-/// Nothing beyond `LC_ALL=C` is needed to start a process.
-pub(crate) const fn process_env(_: &Environment) -> Vec<(&'static str, OsString)> {
-    Vec::new()
-}
+/// The variables a process is started with besides `LC_ALL=C`: none is needed.
+pub(crate) const INHERITED_VARS: &[&str] = &[];
 
 /// A read that failed, kept as unknown.
 pub(crate) fn unread(error: io::Error) -> Unread {

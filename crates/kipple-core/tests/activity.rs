@@ -13,7 +13,7 @@ use std::time::SystemTime;
 use kipple_core::{
     Activity, ActivityEvidence, ActivityGap, Apparent, CancelToken, Capabilities, Category, Clock,
     Completeness, Consequence, Cost, DirAccess, DirEntryMeta, Engine, EntryKind, EntryMeta,
-    EnvPath, Evidence, FileIdentity, FileSystem, FindingSink, FsProbe, Integration,
+    EnvPath, EventChannel, Evidence, FileIdentity, FileSystem, FindingSink, FsProbe, Integration,
     IntegrationDescriptor, IntegrationError, IntegrationId, Inventory, Lens, Measurement, Method,
     MountNamespace, Observer, Operation, Platform, Ports, ProbeError, Probed, ProcessOutcome,
     ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Recovery, ResolvedRoot, RootLink,
@@ -335,7 +335,7 @@ impl Host {
             exclude: Vec::new(),
         };
         let cancel = CancelToken::new();
-        let (tx, rx) = event_channel(1024, &cancel);
+        let EventChannel { tx, rx } = event_channel(1024, &cancel);
         let drain = std::thread::spawn(move || rx.into_iter().count());
         let report = engine.scan(&request, &tx, &cancel);
         drop(tx);

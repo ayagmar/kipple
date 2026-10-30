@@ -150,11 +150,11 @@ fn hints_line(look: Look<'_>, hints: &str, room: usize) -> Text<'static> {
         }
     }
     // A hint is its keys, joined by `/`, then what they do.
-    let shown: Vec<(String, String)> = shown
+    let shown: Vec<Hint> = shown
         .iter()
         .map(|hint| {
             let (keys, what) = hint.split_once(' ').unwrap_or((hint, ""));
-            (keys.to_owned(), what.to_owned())
+            Hint::new(keys.to_owned(), what.to_owned())
         })
         .collect();
     joined(look, &shown, "  ")
@@ -174,12 +174,24 @@ fn always(hint: &str) -> bool {
     ALWAYS.iter().any(|what| hint.ends_with(what))
 }
 
+/// A key hint: the keys, then what they do.
+pub(super) struct Hint {
+    keys: String,
+    what: String,
+}
+
+impl Hint {
+    pub(super) const fn new(keys: String, what: String) -> Self {
+        Self { keys, what }
+    }
+}
+
 /// `hints` joined by `between`, each its keys in the key role and what they do in the
 /// key label role.
-pub(super) fn joined(look: Look<'_>, hints: &[(String, String)], between: &str) -> Text<'static> {
+pub(super) fn joined(look: Look<'_>, hints: &[Hint], between: &str) -> Text<'static> {
     let label = look.style(Role::KeyLabel);
     let mut spans = Vec::new();
-    for (index, (keys, what)) in hints.iter().enumerate() {
+    for (index, Hint { keys, what }) in hints.iter().enumerate() {
         if index > 0 {
             spans.push(Span::styled(between.to_owned(), label));
         }

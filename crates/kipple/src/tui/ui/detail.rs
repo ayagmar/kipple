@@ -9,8 +9,8 @@ use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::Paragraph;
 
 use super::layout::{Screen, layout};
-use super::tree::sum;
-use super::wrap::wrap;
+use super::tree::{Sum, sum};
+use super::wrap::{Hung, wrap};
 use super::{Look, tint};
 use crate::human::{self, bytes, escaped, homed};
 use crate::theme::{Glyphs, Role, Theme};
@@ -19,9 +19,6 @@ use crate::tui::keymap::{Action, Mode};
 
 /// The labels' column: as wide as the longest, `Why it's here`, and a space.
 const LABEL: usize = 14;
-
-/// A line of the pane and where its wrapped rows start.
-type Entry = (Text<'static>, usize);
 
 /// The detail pane for `focus` in `area`, from the line `App::detail_first` says. When
 /// more follows than fits, its last line says so.
@@ -78,7 +75,7 @@ pub(crate) fn detail_end(app: &App, node: Node) -> usize {
     rows.saturating_sub(usize::from(area.height))
 }
 
-fn detail(app: &App, look: Look<'_>, node: Node) -> Vec<Entry> {
+fn detail(app: &App, look: Look<'_>, node: Node) -> Vec<Hung> {
     match node {
         Node::Finding(id) => app
             .row(id)
@@ -112,25 +109,30 @@ fn detail(app: &App, look: Look<'_>, node: Node) -> Vec<Entry> {
     }
 }
 
-const fn plain(line: Text<'static>) -> Entry {
-    (line, 0)
+const fn plain(line: Text<'static>) -> Hung {
+    Hung { line, hang: 0 }
 }
 
-fn blank() -> Entry {
+fn blank() -> Hung {
     plain(Text::from(""))
 }
 
-fn heading(look: Look<'_>, text: &str) -> Entry {
+fn heading(look: Look<'_>, text: &str) -> Hung {
     plain(Text::styled(text.to_owned(), look.style(Role::Title)))
 }
 
 /// `text` under `label`, its wrapped rows under its first.
-fn labelled(look: Look<'_>, label: &str, text: String) -> Entry {
+fn labelled(look: Look<'_>, label: &str, text: String) -> Hung {
     let line = Text::from(vec![
         Span::styled(format!("{label:<LABEL$}"), look.style(Role::Label)),
         Span::raw(text),
     ]);
-    (line, LABEL)
+    under_label(line)
+}
+
+/// `line`, its wrapped rows under the labelled values.
+const fn under_label(line: Text<'static>) -> Hung {
+    Hung { line, hang: LABEL }
 }
 
 /// A path as the screen shows it: from `~` below home.
@@ -138,7 +140,7 @@ fn shown(app: &App, path: &std::path::Path) -> String {
     escaped(&homed(path, app.home.as_deref()))
 }
 
-fn finding_detail(app: &App, look: Look<'_>, row: &Row) -> Vec<Entry> {
+fn finding_detail(app: &App, look: Look<'_>, row: &Row) -> Vec<Hung> {
     let finding = &row.finding;
     let text = app.catalog.rules.get(&finding.rule);
     let level = app.policy.level_of(&finding.rule);
@@ -170,8 +172,8 @@ fn finding_detail(app: &App, look: Look<'_>, row: &Row) -> Vec<Entry> {
         human::why(row.verdict.as_ref(), level),
     ));
     let mut take = |label: &str| {
-        let at = facts.iter().position(|(name, _)| *name == label)?;
-        Some(facts.remove(at).1)
+        let at = facts.iter().position(|fact| fact.label == label)?;
+        Some(facts.remove(at).text)
     };
     // The loss in the rule's own words, which say more than the verified one.
     let verified = take("You lose");
@@ -192,7 +194,7 @@ fn finding_detail(app: &App, look: Look<'_>, row: &Row) -> Vec<Entry> {
         }
     }
     // Any other fact, so none is ever left out.
-    for (label, value) in facts {
+    for human::Fact { label, text: value } in facts {
         lines.push(labelled(look, label, value));
     }
     if let Some(size) = &row.size {
@@ -202,7 +204,7 @@ fn finding_detail(app: &App, look: Look<'_>, row: &Row) -> Vec<Entry> {
     lines.push(labelled(look, "Rule", finding.rule.0.clone()));
     if let Some(kept) = kept {
         let mut line = labelled(look, "Kept note", String::new());
-        line.0
+        line.line
             .spans
             .push(Span::styled(kept, look.style(Role::Kept)));
         lines.push(line);
@@ -215,7 +217,7 @@ fn finding_detail(app: &App, look: Look<'_>, row: &Row) -> Vec<Entry> {
                 .snippets
                 .iter()
                 .flat_map(|s| human::snippet_lines(s))
-                .map(|line| (Text::raw(format!("{indent}{line}")), LABEL)),
+                .map(|line| under_label(Text::raw(format!("{indent}{line}")))),
         );
     }
     lines
@@ -223,7 +225,7 @@ fn finding_detail(app: &App, look: Look<'_>, row: &Row) -> Vec<Entry> {
 
 /// A project's line: its path, then its findings in each bucket with their totals,
 /// as the filter and lens show them.
-fn project_detail(app: &App, look: Look<'_>, id: ProjectId) -> Vec<Entry> {
+fn project_detail(app: &App, look: Look<'_>, id: ProjectId) -> Vec<Hung> {
     let Some(project) = app.project(id) else {
         return Vec::new();
     };
@@ -274,8 +276,11 @@ fn verdict_span(look: Look<'_>, row: &Row, level: Level) -> Span<'static> {
     )
 }
 
-fn shelf_detail(app: &App, look: Look<'_>, node: Node, shelf: Shelf) -> Vec<Entry> {
-    let (count, total) = sum(app, node);
+fn shelf_detail(app: &App, look: Look<'_>, node: Node, shelf: Shelf) -> Vec<Hung> {
+    let Sum {
+        count,
+        bytes: total,
+    } = sum(app, node);
     let standing = human::standing(shelf.bucket());
     let safe = app
         .keymap()

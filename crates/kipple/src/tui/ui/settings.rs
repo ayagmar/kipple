@@ -11,11 +11,13 @@ use ratatui::widgets::Paragraph;
 
 use super::Look;
 use super::tree::offset;
+use crate::config::Kept;
 use crate::human::{self, escaped, homed};
 use crate::theme::{Colours, Role};
 use crate::tui::app::App;
 use crate::tui::keymap::{Action, Mode};
 use crate::tui::settings::{self, Item, Search};
+use crate::tui::themes::Place;
 
 /// The settings panel in place of the tree and the detail pane. Every line says its
 /// value in words, so the cursor and the current level read without colour.
@@ -126,7 +128,7 @@ fn settings_head(app: &App, look: Look<'_>, panel: &mut PanelLines<'_>) {
 
 /// The kept paths and the rules turned off, each undone with `d`.
 fn settings_lists(app: &App, look: Look<'_>, panel: &mut PanelLines<'_>) {
-    for (index, (path, note)) in app.config.keep.iter().enumerate() {
+    for (index, Kept { path, note }) in app.config.keep.iter().enumerate() {
         let label = if index == 0 { "Kept" } else { "" };
         let mut value = vec![Span::raw(escaped(path))];
         if let Some(note) = note {
@@ -173,7 +175,7 @@ fn theme_spans(app: &App, look: Look<'_>) -> Vec<Span<'static>> {
     let Some(choice) = app.themes.shown() else {
         return Vec::new();
     };
-    let (at, count) = app.themes.place();
+    let Place { shown: at, count } = app.themes.place();
     let about = match &choice.drawn {
         Err(error) => format!("{at} of {count}, can't be used: {}", escaped(error)),
         Ok(_) if app.themes.previewing() => {

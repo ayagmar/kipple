@@ -29,7 +29,7 @@ use kipple_platform::Environment;
 
 use crate::config::{ConfigError, Settings};
 use crate::json::{EventBody, ScanOut};
-use crate::setup::Builtin;
+use crate::setup::{Builtin, BuiltinRule};
 use crate::theme::{ColorChoice, Colours, Glyphs, Ink, Theme, Themes};
 
 /// Command-line arguments for `kipple`.
@@ -412,7 +412,7 @@ fn summary(host: &Host<'_>, stdout: &mut dyn Write, stderr: &mut dyn Write) -> E
         Ok(engine) => engine,
         Err(message) => return fail(stderr, &message),
     };
-    let (report, _) = scan::run(&engine, &settings, None, &mut |_| Ok(()));
+    let report = scan::run(&engine, &settings, None, &mut |_| Ok(())).report;
     let out = ScanOut::new(&report, &host.builtin.lenses(), &settings.policy);
     exit_code(scan::write_summary(stdout, &out, &host.ink(stderr)), stderr)
 }
@@ -443,7 +443,7 @@ fn scan(
         policy: &settings.policy,
         found: HashMap::new(),
     };
-    let (report, streamed) = scan::run(&engine, &settings, lens, &mut |event| {
+    let scan::Scanned { report, streamed } = scan::run(&engine, &settings, lens, &mut |event| {
         last_seq = Some(event.seq);
         match args.events {
             Some(EventsFormat::Jsonl) => scan::write_event(stdout, &event, &mut stream),
@@ -477,7 +477,7 @@ fn explain(
     stderr: &mut dyn Write,
 ) -> ExitCode {
     let builtin = host.builtin;
-    if let Some((pack, rule)) = explain::find_rule(builtin, target) {
+    if let Some(BuiltinRule { pack, rule }) = explain::find_rule(builtin, target) {
         let ink = host.ink(stderr);
         let written =
             explain::write_rule(stdout, &ink, builtin, pack, rule).and_then(|()| stdout.flush());
@@ -498,7 +498,7 @@ fn explain(
         Ok(engine) => engine,
         Err(message) => return fail(stderr, &message),
     };
-    let (report, _) = scan::run(&engine, &settings, None, &mut |_| Ok(()));
+    let report = scan::run(&engine, &settings, None, &mut |_| Ok(())).report;
     let path = PathBuf::from(target);
     let ink = host.ink(stderr);
     let judged = explain::Judged {

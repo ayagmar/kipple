@@ -17,7 +17,7 @@ const GENERATED: &str = "site/src/generated";
 pub(crate) fn run(root: &Path, check: bool) -> Result<()> {
     let builtin = kipple::setup::Builtin::load().map_err(anyhow::Error::msg)?;
     let mut files = vec![("cli.md".to_owned(), cli_reference()?)];
-    for (name, schema) in kipple::json::schemas() {
+    for kipple::json::NamedSchema { name, schema } in kipple::json::schemas() {
         files.push((format!("schema/{name}.json"), pretty(&schema)?));
     }
     let matrix = kipple::support::SupportMatrixOut::new(&builtin);

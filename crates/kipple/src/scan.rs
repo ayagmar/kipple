@@ -7,8 +7,8 @@ use std::path::PathBuf;
 use std::thread;
 
 use kipple_core::{
-    Bucket, CancelToken, Engine, FindingId, IntegrationId, Lens, Policy, RuleId, ScanEvent,
-    ScanReport, ScanRequest, Sequenced, event_channel,
+    Bucket, CancelToken, Engine, EventChannel, FindingId, IntegrationId, Lens, Policy, RuleId,
+    ScanEvent, ScanReport, ScanRequest, Sequenced, event_channel,
 };
 
 use crate::config::Settings;
@@ -22,6 +22,14 @@ use crate::theme::{Ink, Role};
 /// How many undelivered events the stream holds before the scan waits.
 const STREAM_CAPACITY: usize = 256;
 
+/// A scan's report, and whether every event was passed on.
+#[derive(Debug)]
+pub(crate) struct Scanned {
+    pub(crate) report: ScanReport,
+    /// The error passing an event on, which cancelled the scan.
+    pub(crate) streamed: io::Result<()>,
+}
+
 /// Runs a scan of the roots of `settings` over `engine`, never entering a path the config
 /// excludes, passing each event to `on_event` as it arrives. When `on_event` fails, the
 /// scan is cancelled and its error returned with the partial report.
@@ -30,14 +38,17 @@ pub(crate) fn run(
     settings: &Settings,
     lens: Option<Lens>,
     on_event: &mut dyn FnMut(Sequenced) -> io::Result<()>,
-) -> (ScanReport, io::Result<()>) {
+) -> Scanned {
     let request = ScanRequest {
         roots: settings.roots.clone(),
         lens,
         exclude: settings.policy.exclude.clone(),
     };
     let cancel = CancelToken::new();
-    let (events, mut received) = event_channel(STREAM_CAPACITY, &cancel);
+    let EventChannel {
+        tx: events,
+        rx: mut received,
+    } = event_channel(STREAM_CAPACITY, &cancel);
     thread::scope(|scope| {
         let scan = scope.spawn(|| {
             let events = events;
@@ -59,7 +70,10 @@ pub(crate) fn run(
             unchecked_system: 0,
             by_command_line: 0,
         });
-        (report, delivered)
+        Scanned {
+            report,
+            streamed: delivered,
+        }
     })
 }
 
@@ -69,7 +83,14 @@ pub(crate) fn run(
 pub(crate) struct Stream<'policy> {
     pub(crate) lenses: &'policy BTreeMap<IntegrationId, Lens>,
     pub(crate) policy: &'policy Policy,
-    pub(crate) found: HashMap<FindingId, (RuleId, PathBuf)>,
+    pub(crate) found: HashMap<FindingId, FoundAt>,
+}
+
+/// The rule that found a finding, and its path.
+#[derive(Debug)]
+pub(crate) struct FoundAt {
+    pub(crate) rule: RuleId,
+    pub(crate) path: PathBuf,
 }
 
 /// Writes each event as one JSONL record.
@@ -94,7 +115,10 @@ pub(crate) fn write_event(
             path: PathOut::new(path),
         },
         ScanEvent::FindingAdded { finding } => {
-            let place = (finding.rule.clone(), finding.path.clone());
+            let place = FoundAt {
+                rule: finding.rule.clone(),
+                path: finding.path.clone(),
+            };
             stream.found.insert(finding.id, place);
             EventBody::FindingAdded {
                 id: finding.id.0,
@@ -107,7 +131,7 @@ pub(crate) fn write_event(
         }
         ScanEvent::FindingUpdated { id, size, facts } => {
             // The engine adds every finding before it updates it.
-            let (rule, path) = stream.found.get(id).ok_or_else(|| {
+            let FoundAt { rule, path } = stream.found.get(id).ok_or_else(|| {
                 io::Error::other(format!("finding {id} was updated before it was added"))
             })?;
             let verdict = VerdictOut::from(&stream.policy.verdict(rule, path, facts));

@@ -14,7 +14,9 @@ use ratatui::backend::TestBackend;
 use ratatui::buffer::Buffer;
 
 use super::{PACMAN, colour, home, probe, styled};
-use crate::config::{self, Catalog, Config, Edit, Loaded, Location, Settings, Source};
+use crate::config::{
+    self, Catalog, Config, ConfigPolicy, Edit, Loaded, Location, Settings, Source,
+};
 use crate::theme::Look;
 use crate::tui::app::{App, Effect, Key, Msg, Saved};
 use crate::tui::onboarding::{self, Onboarding, Outcome, Step};
@@ -74,7 +76,7 @@ impl Disk {
     }
 
     fn settings(&self, exists: bool, config: Config) -> Settings {
-        let (policy, warnings) = config.policy(&self.roots);
+        let ConfigPolicy { policy, warnings } = config.policy(&self.roots);
         Settings {
             loaded: Loaded {
                 location: self.location(),

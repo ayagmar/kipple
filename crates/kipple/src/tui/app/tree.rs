@@ -130,15 +130,17 @@ struct Entry<'rows> {
     rows: Vec<&'rows Row>,
 }
 
+/// A lens within a bucket, as the tree groups findings.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Group {
+    pub(super) shelf: Shelf,
+    pub(super) lens: Lens,
+}
+
 impl App {
-    /// The lines of the group `(bucket, lens)` holding `rows`, sorted, below its heading;
-    /// `whole` unfolds every project.
-    pub(super) fn group_lines(
-        &self,
-        group: (Shelf, Lens),
-        rows: Vec<&Row>,
-        whole: bool,
-    ) -> Vec<Line> {
+    /// The lines of `group` holding `rows`, sorted, below its heading; `whole` unfolds
+    /// every project.
+    pub(super) fn group_lines(&self, group: Group, rows: Vec<&Row>, whole: bool) -> Vec<Line> {
         let mut projects: BTreeMap<ProjectId, Vec<&Row>> = BTreeMap::new();
         let mut entries = Vec::new();
         for row in rows {
@@ -280,13 +282,13 @@ impl App {
 /// A project's line in the group `(bucket, lens)`: its total, its oldest finding and
 /// its name.
 fn project_entry<'a>(
-    (bucket, lens): (Shelf, Lens),
+    Group { shelf, lens }: Group,
     id: ProjectId,
     project: &'a Project,
     rows: Vec<&'a Row>,
 ) -> Entry<'a> {
     Entry {
-        node: Node::Project(bucket, lens, id),
+        node: Node::Project(shelf, lens, id),
         key: Key {
             bytes: rows.iter().map(|row| row.bytes()).sum(),
             age: rows.iter().filter_map(|row| age(row)).max(),

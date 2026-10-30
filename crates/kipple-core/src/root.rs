@@ -236,11 +236,21 @@ impl Roots {
     }
 
     /// Every root on this platform, in a fixed order.
-    pub fn iter(
-        &self,
-    ) -> impl Iterator<Item = (SymbolicRoot, &Result<ResolvedRoot, UnresolvedRoot>)> {
-        self.0
-            .iter()
-            .flat_map(|(root, resolutions)| resolutions.iter().map(move |r| (*root, r)))
+    pub fn iter(&self) -> impl Iterator<Item = Resolution<'_>> {
+        self.0.iter().flat_map(|(root, resolutions)| {
+            resolutions.iter().map(move |resolved| Resolution {
+                root: *root,
+                resolved,
+            })
+        })
     }
+}
+
+/// How one path of a symbolic root resolved.
+#[derive(Debug, Clone, Copy)]
+pub struct Resolution<'roots> {
+    /// The root.
+    pub root: SymbolicRoot,
+    /// Its path, or why it has none.
+    pub resolved: &'roots Result<ResolvedRoot, UnresolvedRoot>,
 }

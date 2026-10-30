@@ -8,7 +8,7 @@ use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::Paragraph;
 
 use super::frame::vertical;
-use super::layout::Areas;
+use super::layout::{Areas, Band};
 use super::{Look, drawn_bar, tint};
 use crate::human::{self, bytes};
 use crate::theme::Role;
@@ -119,7 +119,7 @@ fn name(look: Look<'_>, bucket: Bucket, upper: bool) -> Span<'static> {
 /// Draws the band where `areas` puts it, if anywhere: one card per bucket and one for
 /// the totals, each with a bar unless bars are off, or one line.
 pub(super) fn render(app: &App, look: Look<'_>, areas: &Areas, frame: &mut Frame<'_>) {
-    let Some((area, cards)) = areas.band else {
+    let Some(Band { area, cards }) = areas.band else {
         return;
     };
     let buckets = buckets(app);

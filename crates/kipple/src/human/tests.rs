@@ -12,12 +12,12 @@ use std::time::SystemTime;
 
 use kipple_core::{
     ActivityEvidence, Apparent, CancelToken, Category, Clock, Completeness, Consequence, Cost,
-    DirAccess, DirEntryMeta, Engine, EntryKind, EntryMeta, Evidence, FileIdentity, FindingSink,
-    FsProbe, Integration, IntegrationDescriptor, IntegrationError, IntegrationId, Inventory, Lens,
-    Measurement, Method, Observer, Operation, Platform, Policy, Ports, ProbeError, ProcessOutcome,
-    ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Recovery, ResolvedRoot, RootSource,
-    Roots, Rule, RuleId, RuleText, ScanContext, ScanRequest, Selector, Sizer, SpaceEstimate,
-    SymbolicRoot, event_channel,
+    DirAccess, DirEntryMeta, Engine, EntryKind, EntryMeta, EventChannel, Evidence, FileIdentity,
+    FindingSink, FsProbe, Integration, IntegrationDescriptor, IntegrationError, IntegrationId,
+    Inventory, Lens, Measurement, Method, Observer, Operation, Platform, Policy, Ports, ProbeError,
+    ProcessOutcome, ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Recovery,
+    ResolvedRoot, RootSource, Roots, Rule, RuleId, RuleText, ScanContext, ScanRequest, Selector,
+    Sizer, SpaceEstimate, SymbolicRoot, event_channel,
 };
 
 use crate::json::{CompletenessOut, FindingOut, SizeOut};
@@ -210,7 +210,7 @@ fn a_secret_in_a_process_title_never_reaches_json_or_the_detail_lines() {
             exclude: Vec::new(),
         };
         let cancel = CancelToken::new();
-        let (tx, rx) = event_channel(1024, &cancel);
+        let EventChannel { tx, rx } = event_channel(1024, &cancel);
         let drain = std::thread::spawn(move || rx.into_iter().count());
         let report = engine.scan(&request, &tx, &cancel);
         drop(tx);
@@ -220,7 +220,11 @@ fn a_secret_in_a_process_title_never_reaches_json_or_the_detail_lines() {
 
         let json = serde_json::to_string(&FindingOut::new(finding, Lens::Dev, &policy)).unwrap();
         let lines = super::facts(finding, &policy);
-        let (_, in_use) = lines.iter().find(|(label, _)| *label == "In use").unwrap();
+        let in_use = &lines
+            .iter()
+            .find(|fact| fact.label == "In use")
+            .unwrap()
+            .text;
 
         assert!(json.contains("\"in-use\""), "{json}");
         assert!(in_use.starts_with("process 9 was started with"), "{in_use}");

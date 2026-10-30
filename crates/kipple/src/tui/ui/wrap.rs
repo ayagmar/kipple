@@ -5,17 +5,23 @@ use ratatui::text::{Line as Text, Span};
 
 use super::cols;
 
+/// A line, and how many columns in its rows after the first start.
+pub(super) struct Hung {
+    pub(super) line: Text<'static>,
+    pub(super) hang: usize,
+}
+
 /// `lines` broken into rows of at most `width` columns: between words where it can, a
 /// word longer than a row wherever it must. A break swallows the space it falls on.
 /// Each line's rows after its first start `hang` columns in, under its value, unless
 /// that leaves less than half the row.
-pub(super) fn wrap(lines: Vec<(Text<'static>, usize)>, width: u16) -> Vec<Text<'static>> {
+pub(super) fn wrap(lines: Vec<Hung>, width: u16) -> Vec<Text<'static>> {
     let width = usize::from(width);
     if width == 0 {
         return Vec::new();
     }
     let mut rows = Vec::new();
-    for (line, hang) in lines {
+    for Hung { line, hang } in lines {
         let hang = if hang * 2 <= width { hang } else { 0 };
         let mut filling = Filling::new(line.style, width, hang);
         for (word, space) in words(&line) {

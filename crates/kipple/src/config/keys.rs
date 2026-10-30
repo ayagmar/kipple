@@ -6,18 +6,18 @@ use std::ops::Range;
 
 use toml_edit::{Array, Item, TableLike};
 
-use super::parse::{ParseError, Reader, entries};
+use super::parse::{Entry, ParseError, Reader, entries};
 use super::show_line;
 use crate::human::escaped;
 use crate::tui::Key;
-use crate::tui::keymap::{Action, Keymap, key_name, key_named};
+use crate::tui::keymap::{Action, Keymap, UserKeys, key_name, key_named};
 
 /// What `[keys]` says, as the keymap it gives.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct KeysConfig {
     keymap: Keymap,
     /// The entries, each an action and the keys that replace its defaults.
-    user: Vec<(Action, Vec<Key>)>,
+    user: Vec<UserKeys>,
 }
 
 impl KeysConfig {
@@ -29,7 +29,7 @@ impl KeysConfig {
     /// Each entry whose keys aren't its action's defaults, in one fixed order.
     fn changed(&self) -> impl Iterator<Item = (Action, &[Key])> {
         Action::ALL.into_iter().filter_map(|action| {
-            let (_, keys) = self.user.iter().find(|(a, _)| *a == action)?;
+            let UserKeys { keys, .. } = self.user.iter().find(|entry| entry.action == action)?;
             (keys.as_slice() != action.defaults()).then_some((action, keys.as_slice()))
         })
     }
@@ -63,12 +63,12 @@ impl Reader<'_> {
     pub(super) fn keys(&self, table: &dyn TableLike) -> Result<KeysConfig, ParseError> {
         let mut user = Vec::new();
         let mut spans: Vec<Spans> = Vec::new();
-        for (name, key, item) in entries(table) {
+        for Entry { name, key, item } in entries(table) {
             let Some(action) = Action::from_name(name) else {
                 return Err(self.error_at(key.span(), format!("unknown key keys.{name}")));
             };
             let (keys, at) = self.key_list(name, item)?.into_iter().unzip();
-            user.push((action, keys));
+            user.push(UserKeys { action, keys });
             spans.push((key.span(), at));
         }
         Keymap::check(&user).map_err(|conflict| {
@@ -79,7 +79,7 @@ impl Reader<'_> {
             );
             let name = user
                 .get(conflict.entry)
-                .map_or("", |(action, _)| action.name());
+                .map_or("", |named| named.action.name());
             self.error_at(span, format!("keys.{name}: {}", conflict.message))
         })?;
         Ok(KeysConfig {

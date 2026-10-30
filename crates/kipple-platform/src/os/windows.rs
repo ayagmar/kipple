@@ -42,6 +42,7 @@ use windows_sys::Win32::UI::Shell::{
 use windows_sys::core::{GUID, PWSTR};
 
 use crate::environment::Environment;
+use crate::os::HardLink;
 use crate::process::Context;
 
 pub(crate) const PLATFORM: Platform = Platform::Windows;
@@ -227,7 +228,7 @@ pub(crate) const fn allocated(_: &fs::Metadata) -> Option<u64> {
 }
 
 /// Link counts need a handle per file, which a scan can't afford.
-pub(crate) const fn hard_link(_: &fs::Metadata) -> Option<(FileIdentity, u64)> {
+pub(crate) const fn hard_link(_: &fs::Metadata) -> Option<HardLink> {
     None
 }
 
@@ -236,13 +237,9 @@ pub(crate) const fn is_executable(_: &fs::Metadata) -> bool {
     true
 }
 
+/// The variables a process is started with besides `LC_ALL=C`, where they are set.
 /// Processes fail in odd ways without `SystemRoot`.
-pub(crate) fn process_env(env: &Environment) -> Vec<(&'static str, OsString)> {
-    env.get("SystemRoot")
-        .map(|root| ("SystemRoot", root.to_owned()))
-        .into_iter()
-        .collect()
-}
+pub(crate) const INHERITED_VARS: &[&str] = &["SystemRoot"];
 
 #[expect(
     unsafe_code,

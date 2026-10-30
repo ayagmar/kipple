@@ -670,19 +670,29 @@ pub enum EventBody {
     },
 }
 
-/// Every published schema, by the file name the docs give it.
+/// A published schema, by the file name the docs give it.
+#[derive(Debug, Clone)]
+pub struct NamedSchema {
+    /// The file name, without `.json`.
+    pub name: &'static str,
+    /// The schema.
+    pub schema: schemars::Schema,
+}
+
+/// Every published schema.
 #[must_use]
-pub fn schemas() -> Vec<(&'static str, schemars::Schema)> {
+pub fn schemas() -> Vec<NamedSchema> {
+    let named = |name, schema| NamedSchema { name, schema };
     vec![
-        ("doctor", schemars::schema_for!(crate::doctor::DoctorOut)),
-        ("event", schemars::schema_for!(EventOut)),
-        ("rules", schemars::schema_for!(crate::rules::RulesOut)),
-        ("scan", schemars::schema_for!(ScanOut)),
-        (
+        named("doctor", schemars::schema_for!(crate::doctor::DoctorOut)),
+        named("event", schemars::schema_for!(EventOut)),
+        named("rules", schemars::schema_for!(crate::rules::RulesOut)),
+        named("scan", schemars::schema_for!(ScanOut)),
+        named(
             "support-matrix",
             schemars::schema_for!(crate::support::SupportMatrixOut),
         ),
-        ("theme", crate::theme::schema()),
+        named("theme", crate::theme::schema()),
     ]
 }
 

@@ -110,7 +110,7 @@ impl RuleCx<'_> {
         if c.error_count() != before {
             return None;
         }
-        let ((root, selector), (requirements, eligibility)) = (scope?, predicates?);
+        let ((root, selector), predicates) = (scope?, predicates?);
         Some(Rule {
             id: id?,
             integration: integration?,
@@ -119,8 +119,8 @@ impl RuleCx<'_> {
             platforms: platforms?,
             root,
             selector,
-            requirements,
-            eligibility,
+            requirements: predicates.requirements,
+            eligibility: predicates.eligibility,
             operation: operation?,
             recent_days,
         })

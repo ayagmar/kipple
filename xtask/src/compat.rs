@@ -9,6 +9,8 @@ use std::path::Path;
 use anyhow::{Context as _, Result, bail};
 use serde_json::{Map, Value};
 
+use kipple::json::NamedSchema;
+
 use crate::gen_docs;
 
 /// Where the baselines live: `<format>/<version>/`, holding `schema.json` and the sample
@@ -83,9 +85,9 @@ const FORMATS: &[Format] = &[
 /// schema that is compatible, or whose version has no baseline yet, becomes its baseline.
 pub(crate) fn run(root: &Path, refresh: bool) -> Result<()> {
     let schemas = kipple::json::schemas();
-    let names: Vec<&str> = schemas.iter().map(|(name, _)| *name).collect();
+    let names: Vec<&str> = schemas.iter().map(|s| s.name).collect();
     let mut problems = unlisted(&names);
-    for (name, schema) in &schemas {
+    for NamedSchema { name, schema } in &schemas {
         let Some(format) = FORMATS.iter().find(|f| f.name == *name) else {
             continue;
         };
@@ -1111,7 +1113,7 @@ mod tests {
     // the event union's variants would never be paired.
     #[test]
     fn every_published_schema_is_compatible_with_itself_and_a_new_bucket_is_found() {
-        for (name, schema) in kipple::json::schemas() {
+        for NamedSchema { name, schema } in kipple::json::schemas() {
             let format = FORMATS.iter().find(|f| f.name == name).unwrap();
             let schema = schema.as_value();
             assert_eq!(
@@ -1119,10 +1121,11 @@ mod tests {
                 Vec::<String>::new()
             );
         }
-        let (_, scan) = kipple::json::schemas()
+        let scan = kipple::json::schemas()
             .into_iter()
-            .find(|(name, _)| *name == "scan")
-            .unwrap();
+            .find(|s| s.name == "scan")
+            .unwrap()
+            .schema;
         let fewer = edited(scan.as_value().clone(), |s| {
             s["$defs"]["BucketOut"]["oneOf"]
                 .as_array_mut()

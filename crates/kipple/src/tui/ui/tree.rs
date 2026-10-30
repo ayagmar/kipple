@@ -424,7 +424,10 @@ fn cells(app: &App, look: Look<'_>, tree: &Tree<'_>, line: Line) -> Cells {
             },
         ),
         Node::Shelf(shelf) => {
-            let (count, total) = sum(app, line.node);
+            let Sum {
+                count,
+                bytes: total,
+            } = sum(app, line.node);
             let standing = human::standing(shelf.bucket());
             let name = Span::styled(
                 format!("{} ({count})", standing.title),
@@ -474,7 +477,10 @@ fn cells(app: &App, look: Look<'_>, tree: &Tree<'_>, line: Line) -> Cells {
 
 /// A group's or a project's line: its name, how many findings and their total.
 fn heading_cells(app: &App, line: Line, lead: String, name: &str) -> Cells {
-    let (count, total) = sum(app, line.node);
+    let Sum {
+        count,
+        bytes: total,
+    } = sum(app, line.node);
     Cells {
         size: Size::Total(total),
         ..Cells::heading(lead, Span::raw(format!("{} ({count})", escaped(name))))
@@ -559,10 +565,18 @@ fn state(row: &Row) -> String {
     }
 }
 
+/// How many findings are under a node, and their size in bytes.
+#[derive(Debug, Clone, Copy, Default)]
+pub(super) struct Sum {
+    pub(super) count: usize,
+    pub(super) bytes: u64,
+}
+
 /// How many findings are under `node`, and their size.
-pub(super) fn sum(app: &App, node: Node) -> (usize, u64) {
-    app.under(node).fold((0, 0), |(count, total), row| {
-        (count + 1, total + row.bytes())
+pub(super) fn sum(app: &App, node: Node) -> Sum {
+    app.under(node).fold(Sum::default(), |sum, row| Sum {
+        count: sum.count + 1,
+        bytes: sum.bytes + row.bytes(),
     })
 }
 

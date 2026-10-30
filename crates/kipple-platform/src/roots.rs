@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use kipple_core::{
-    LinkProblem, ResolvedRoot, RootLink, RootSource, Roots, SymbolicRoot, UnresolvedRoot,
+    LinkProblem, Resolution, ResolvedRoot, RootLink, RootSource, Roots, SymbolicRoot,
+    UnresolvedRoot,
 };
 
 use crate::environment::Environment;
@@ -109,7 +110,11 @@ pub(crate) fn in_physical_parent(path: &Path) -> io::Result<PathBuf> {
 /// link's identity check when either has one.
 fn each_path_once(roots: &Roots) -> Roots {
     let mut kept: Vec<(SymbolicRoot, Result<ResolvedRoot, UnresolvedRoot>)> = Vec::new();
-    for (root, resolution) in roots.iter() {
+    for Resolution {
+        root,
+        resolved: resolution,
+    } in roots.iter()
+    {
         if let Ok(resolved) = resolution {
             let earlier = kept.iter_mut().find_map(|(r, k)| {
                 k.as_mut()
@@ -254,8 +259,8 @@ pub(crate) fn absolute(
 #[must_use]
 pub fn follow_root_links(roots: &Roots) -> Roots {
     let mut followed = Roots::default();
-    for (root, resolution) in roots.iter() {
-        followed.add(root, resolution.clone().and_then(follow_link));
+    for Resolution { root, resolved } in roots.iter() {
+        followed.add(root, resolved.clone().and_then(follow_link));
     }
     followed
 }

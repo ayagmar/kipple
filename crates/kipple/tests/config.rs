@@ -946,7 +946,7 @@ fn an_edit_keeps_comments_and_every_other_key_and_survives_an_editors_change() {
         written
             .rules
             .iter()
-            .any(|(rule, s)| rule.0 == "builtin.node.node-modules" && s.disabled)
+            .any(|rule| rule.id.0 == "builtin.node.node-modules" && rule.settings.disabled)
     );
     assert_eq!(written.keep.len(), 1);
     assert_eq!(config::load(&at, &catalog()).unwrap().config, written);
@@ -1095,7 +1095,11 @@ fn undoing_a_keep_removes_only_the_entry_chosen_not_one_differing_by_case() {
     )
     .unwrap();
 
-    let left: Vec<&Path> = undone.keep.iter().map(|(p, _)| Path::new(p)).collect();
+    let left: Vec<&Path> = undone
+        .keep
+        .iter()
+        .map(|kept| Path::new(&kept.path))
+        .collect();
     assert_eq!(left.len(), 1, "{left:?}");
     assert!(left[0].ends_with("p/Target"), "{left:?}");
 }

@@ -41,14 +41,21 @@ pub(super) enum Totals {
     KeyBar,
 }
 
+/// Where the band's text goes, and whether it shows one card per bucket.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct Band {
+    pub(super) area: Rect,
+    pub(super) cards: bool,
+}
+
 /// Where each part of the screen goes. Every area but `outer` is inside the frame,
 /// and the text areas keep a column clear on each side.
 #[derive(Debug, Clone)]
 pub(super) struct Areas {
     /// The whole screen: the frame is drawn on its edge.
     pub(super) outer: Rect,
-    /// The band's text, and whether it shows one card per bucket.
-    pub(super) band: Option<(Rect, bool)>,
+    /// The band's text.
+    pub(super) band: Option<Band>,
     /// Between the band's rule and the key bar's: where a panel goes.
     pub(super) body: Rect,
     pub(super) list: Rect,
@@ -94,7 +101,10 @@ pub(super) fn layout(area: Rect, ui: &UiConfig, screen: Screen) -> Areas {
     let keybar = rows.keybar;
     Areas {
         outer: area,
-        band: rows.band.map(|band| (padded(band), wide)),
+        band: rows.band.map(|band| Band {
+            area: padded(band),
+            cards: wide,
+        }),
         body,
         list: padded(list),
         detail: detail.map(padded),

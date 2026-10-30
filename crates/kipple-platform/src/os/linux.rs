@@ -19,8 +19,8 @@ use kipple_core::{
 };
 
 pub(crate) use super::unix::{
-    KIPPLE_DIRS, allocated, device, dir_access, env_name_matches, hard_link, identity,
-    is_executable, physical, process_env, raw_bytes,
+    INHERITED_VARS, KIPPLE_DIRS, allocated, device, dir_access, env_name_matches, hard_link,
+    identity, is_executable, physical, raw_bytes,
 };
 use super::unix::{env_paths, identity_of, nul_separated, owner, path_args, unread, xdg_roots};
 use crate::environment::Environment;

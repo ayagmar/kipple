@@ -17,7 +17,7 @@ use kipple_core::{
 };
 
 pub(crate) use self::keep::{Effect, Saved};
-use self::tree::Spot;
+use self::tree::{Group, Spot};
 pub(crate) use self::tree::{Order, ProjectId};
 use super::filter;
 use super::keymap::{self, Action, Keymap};
@@ -25,7 +25,7 @@ use super::settings::{Found, Outcome, Panel, Search};
 use super::themes::Picker;
 use crate::config::Config;
 use crate::json::{OmissionOut, SizeOut};
-use crate::setup::Builtin;
+use crate::setup::{Builtin, BuiltinRule};
 
 /// A key, as the home screen reads it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -224,7 +224,7 @@ impl Catalog {
     pub(crate) fn new(builtin: &Builtin) -> Self {
         let rules = builtin
             .rules()
-            .map(|(_, rule)| (rule.id.clone(), rule.text.clone()))
+            .map(|BuiltinRule { rule, .. }| (rule.id.clone(), rule.text.clone()))
             .collect();
         Self {
             rules,
@@ -420,7 +420,7 @@ impl App {
                 continue;
             }
             if let Node::Group(shelf, lens) = group {
-                lines.extend(self.group_lines((shelf, lens), rows, whole));
+                lines.extend(self.group_lines(Group { shelf, lens }, rows, whole));
             }
         }
         self.gap_lines(&mut lines);

@@ -13,14 +13,14 @@ use std::time::{Duration, SystemTime};
 
 use kipple_core::{
     Activity, ActivityGap, Allocated, Apparent, CancelToken, Category, Clock, Completeness,
-    Consequence, Cost, DirEntryMeta, Engine, EngineError, EntryKind, EntryMeta, EventRx, Evidence,
-    Facts, FileIdentity, FindingSink, FsProbe, Hold, Integration, IntegrationDescriptor,
-    IntegrationError, IntegrationId, Inventory, Lens, Level, Measurement, Method, Modified, Name,
-    Observer, Omission, Operation, Platform, Policy, Ports, ProbeError, ProcessOutcome,
-    ProcessProbe, ProcessRecord, ProcessSnapshot, Recovery, ResolvedRoot, RootLink, RootSource,
-    Roots, Rule, RuleId, RuleText, ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest,
-    Selector, Sizer, SpaceEstimate, SymbolicRoot, Tracked, UnresolvedRoot, Verdict, WalkGap,
-    event_channel,
+    Consequence, Cost, DirEntryMeta, Engine, EngineError, EntryKind, EntryMeta, EventChannel,
+    EventRx, Evidence, Facts, FileIdentity, FindingSink, FsProbe, Hold, Integration,
+    IntegrationDescriptor, IntegrationError, IntegrationId, Inventory, Lens, Level, Measurement,
+    Method, Modified, Name, Observer, Omission, Operation, Platform, Policy, Ports, ProbeError,
+    ProcessOutcome, ProcessProbe, ProcessRecord, ProcessSnapshot, Recovery, ResolvedRoot, RootLink,
+    RootSource, Roots, Rule, RuleId, RuleText, ScanContext, ScanEvent, ScanOutcome, ScanReport,
+    ScanRequest, Selector, Sizer, SpaceEstimate, SymbolicRoot, Tracked, UnresolvedRoot, Verdict,
+    WalkGap, event_channel,
 };
 
 /// Ten times the 100 ms cancellation budget: long enough not to flake on a loaded CI
@@ -328,7 +328,7 @@ fn spawn_scan(
     capacity: usize,
     cancel: &CancelToken,
 ) -> (EventRx, mpsc::Receiver<ScanReport>) {
-    let (events, rx) = event_channel(capacity, cancel);
+    let EventChannel { tx: events, rx } = event_channel(capacity, cancel);
     let (done, report) = mpsc::channel();
     let cancel = cancel.clone();
     thread::spawn(move || {
@@ -520,7 +520,7 @@ fn insert(roots: &mut Roots, root: SymbolicRoot, path: &str) {
 
 fn run(engine: &Engine, request: &ScanRequest) -> ScanReport {
     let cancel = CancelToken::new();
-    let (events, rx) = event_channel(1024, &cancel);
+    let EventChannel { tx: events, rx } = event_channel(1024, &cancel);
     let report = engine.scan(request, &events, &cancel);
     drop(rx);
     report

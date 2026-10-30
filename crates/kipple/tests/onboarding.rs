@@ -47,7 +47,7 @@ use kipple::theme::{Catalog, Colours, Glyphs};
 use kipple::tui::Appearance;
 use kipple::tui::{self, Input, Key, Keys, LevelTotals, first_run_due, level_totals};
 use kipple::{Cli, USAGE};
-use kipple_core::{CancelToken, Finding, Level, ScanRequest, event_channel};
+use kipple_core::{CancelToken, EventChannel, Finding, Level, ScanRequest, event_channel};
 use kipple_platform::Environment;
 use ratatui::Terminal;
 use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
@@ -113,7 +113,10 @@ fn scan(env: &Environment, builtin: &Builtin, settings: &Settings) -> Vec<Findin
         exclude: settings.policy.exclude.clone(),
     };
     let cancel = CancelToken::new();
-    let (events, received) = event_channel(256, &cancel);
+    let EventChannel {
+        tx: events,
+        rx: received,
+    } = event_channel(256, &cancel);
     thread::scope(|scope| {
         let scan = scope.spawn(|| {
             let events = events;

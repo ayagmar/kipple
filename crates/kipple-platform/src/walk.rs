@@ -16,7 +16,7 @@ use kipple_core::{
 };
 
 use crate::fs_probe::exact;
-use crate::os;
+use crate::os::{self, HardLink};
 
 /// Sizes trees on its own bounded thread pool. It reads no ignore file or git config,
 /// skips nothing hidden, never follows a link or junction, and stays on the file system
@@ -159,13 +159,13 @@ impl Counts {
         let allocated = os::allocated(meta);
         self.allocation_unknown |= allocated.is_none();
         let allocated = allocated.unwrap_or(0);
-        let Some((identity, links)) = os::hard_link(meta) else {
+        let Some(HardLink { identity, names }) = os::hard_link(meta) else {
             self.apparent += apparent;
             self.allocated += allocated;
             return;
         };
         let linked = Linked {
-            links,
+            links: names,
             names_seen: 1,
             apparent,
             allocated,

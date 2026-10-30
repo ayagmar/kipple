@@ -7,7 +7,7 @@ use ratatui::layout::{Constraint, Layout, Margin};
 use ratatui::text::Line;
 use ratatui::widgets::{Paragraph, Wrap};
 
-use super::keybar::joined;
+use super::keybar::{Hint, joined};
 use super::settings::{describe, search_notes};
 use super::{Look, title_case};
 use crate::human::{self, bytes, escaped, homed};
@@ -222,7 +222,8 @@ fn keys(onboarding: &Onboarding, look: Look<'_>) -> Paragraph<'static> {
             .iter()
             .filter_map(|&action| onboarding.keymap.first(Mode::Onboarding, action))
             .collect();
-        (!keys.is_empty()).then(|| (look.glyphs.keys(&keys.join(between)), what.to_owned()))
+        (!keys.is_empty())
+            .then(|| Hint::new(look.glyphs.keys(&keys.join(between)), what.to_owned()))
     };
     let choose = match onboarding.step {
         Step::Tips => "finish",
@@ -237,9 +238,9 @@ fn keys(onboarding: &Onboarding, look: Look<'_>) -> Paragraph<'static> {
     }
     hints.push(hint(&[Action::Skip], "", "skip"));
     if onboarding.step != Step::Level {
-        hints.push(Some(("esc".to_owned(), "back".to_owned())));
+        hints.push(Some(Hint::new("esc".to_owned(), "back".to_owned())));
     }
     hints.push(hint(&[Action::Quit], "", "quit, saving nothing"));
-    let hints: Vec<(String, String)> = hints.into_iter().flatten().collect();
+    let hints: Vec<Hint> = hints.into_iter().flatten().collect();
     Paragraph::new(joined(look, &hints, look.glyphs.dot()))
 }

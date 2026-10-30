@@ -38,6 +38,13 @@ impl Default for Picker {
     }
 }
 
+/// Which theme the settings row shows, from 1, of how many.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct Place {
+    pub(crate) shown: usize,
+    pub(crate) count: usize,
+}
+
 impl Picker {
     /// The themes of `catalog` drawn with `colours`, `active` in force.
     ///
@@ -89,9 +96,12 @@ impl Picker {
         self.choices.get(self.preview.unwrap_or(self.active))
     }
 
-    /// Which theme the row shows, from 1, and how many there are.
-    pub(crate) fn place(&self) -> (usize, usize) {
-        (self.preview.unwrap_or(self.active) + 1, self.choices.len())
+    /// Which theme the row shows, and how many there are.
+    pub(crate) fn place(&self) -> Place {
+        Place {
+            shown: self.preview.unwrap_or(self.active) + 1,
+            count: self.choices.len(),
+        }
     }
 
     /// Whether the row shows a theme other than the one in force.

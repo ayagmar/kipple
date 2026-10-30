@@ -14,7 +14,7 @@ use serde::Serialize;
 
 use crate::human::escaped;
 use crate::json::{LensOut, RULES, VERSION};
-use crate::setup::Builtin;
+use crate::setup::{Builtin, BuiltinRule};
 use crate::theme::{Ink, Role};
 
 /// `kipple rules --json`.
@@ -158,7 +158,7 @@ impl RulesOut {
         let integrations = builtin.descriptors.iter().map(integration).collect();
         let rules = builtin
             .rules()
-            .map(|(pack, rule)| rule_out(pack, rule))
+            .map(|BuiltinRule { pack, rule }| rule_out(pack, rule))
             .collect();
         Self {
             schema: RULES,

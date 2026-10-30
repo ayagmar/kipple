@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use kipple_core::{EntryKind, FsProbe as _};
 use kipple_platform::{Environment, NoFollowFs, kipple_dirs, read_config, resolve_roots};
 
+use super::parse::Extends;
 use super::{BUILTIN, DEFAULT, Theme, ThemeError, builtin_text, parse, valid_name};
 use crate::human::escaped;
 
@@ -251,7 +252,7 @@ impl Themes {
     ) -> Result<Theme, ThemeError> {
         let file = origin.path();
         let parsed = parse::parse(text).map_err(|e| e.in_file(file))?;
-        let Some((base, at)) = &parsed.extends else {
+        let Some(Extends { name: base, at }) = &parsed.extends else {
             return Ok(parsed.over(Theme::default()));
         };
         chain.push(name.to_owned());
@@ -291,6 +292,7 @@ mod tests {
     use ratatui::style::{Color, Style};
 
     use super::*;
+    use crate::config::Position;
     use crate::theme::Role;
 
     fn themes(files: &[(&str, &str)]) -> (tempfile::TempDir, Themes) {
@@ -378,14 +380,26 @@ mod tests {
             error.file.as_deref(),
             Some(temp.path().join("b.toml").as_path())
         );
-        assert_eq!(error.position, Some((3, 11)));
+        assert_eq!(
+            error.position,
+            Some(Position {
+                line: 3,
+                column: 11
+            })
+        );
         assert!(error.message.contains("a -> b -> a"), "{error}");
 
         let itself = themes.resolve("self").unwrap_err();
         assert!(itself.message.contains("cycle"), "{itself}");
 
         let orphan = themes.resolve("orphan").unwrap_err();
-        assert_eq!(orphan.position, Some((2, 11)));
+        assert_eq!(
+            orphan.position,
+            Some(Position {
+                line: 2,
+                column: 11
+            })
+        );
         assert!(orphan.message.contains("no theme nowhere"), "{orphan}");
     }
 
@@ -400,7 +414,13 @@ mod tests {
         let error = themes.resolve("dusk").unwrap_err();
         let file = temp.path().join("dusk.toml");
         assert_eq!(error.file.as_deref(), Some(file.as_path()));
-        assert_eq!(error.position, Some((3, 15)));
+        assert_eq!(
+            error.position,
+            Some(Position {
+                line: 3,
+                column: 15
+            })
+        );
         let shown = error.to_string();
         assert!(
             shown.contains("line 3, column 15: safe.fg: expected"),

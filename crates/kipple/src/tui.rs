@@ -21,8 +21,8 @@ use std::thread::{self, Scope, ScopedJoinHandle};
 use std::time::{Duration, Instant};
 
 use kipple_core::{
-    CancelToken, Engine, EventRx, ScanOutcome, ScanReport, ScanRequest, Selector, SymbolicRoot,
-    event_channel, suggest,
+    CancelToken, Engine, EventChannel, EventRx, ScanOutcome, ScanReport, ScanRequest, Selector,
+    SymbolicRoot, event_channel, suggest,
 };
 use kipple_platform::{
     Environment, ProjectSearch, SearchLimits, SystemClock, kipple_dirs, search_projects,
@@ -38,7 +38,7 @@ use self::onboarding::{Onboarding, Outcome};
 use self::settings::Found;
 use self::themes::Picker;
 use crate::config::{self, Edit, Loaded, Settings};
-use crate::setup::Builtin;
+use crate::setup::{Builtin, BuiltinRule};
 use crate::theme::{self, Colours, Glyphs, Look, ThemeError};
 
 /// How long the loop waits for a key while the scan streams: one frame at 60 Hz.
@@ -304,7 +304,10 @@ where
             exclude: settings.policy.exclude.clone(),
         };
         let cancel = CancelToken::new();
-        let (events, received) = event_channel(STREAM_CAPACITY, &cancel);
+        let EventChannel {
+            tx: events,
+            rx: received,
+        } = event_channel(STREAM_CAPACITY, &cancel);
         let engine = self.engine;
         let token = cancel.clone();
         let report = self
@@ -514,7 +517,7 @@ fn base64(bytes: &[u8]) -> String {
 fn markers(builtin: &Builtin) -> Vec<OsString> {
     let mut markers: Vec<OsString> = builtin
         .rules()
-        .filter_map(|(_, rule)| match &rule.selector {
+        .filter_map(|BuiltinRule { rule, .. }| match &rule.selector {
             Selector::ProjectArtifact { markers, .. } => Some(markers),
             Selector::DirsMatching { .. }
             | Selector::FilesMatching { .. }

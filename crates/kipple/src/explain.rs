@@ -10,12 +10,12 @@ use kipple_platform::PLATFORM;
 
 use crate::human::{self, bytes, escaped, size};
 use crate::json::{EvidenceOut, FindingOut};
-use crate::setup::Builtin;
+use crate::setup::{Builtin, BuiltinRule};
 use crate::theme::{Ink, Role};
 
 /// The rule called `id`, with its pack.
-pub(crate) fn find_rule<'b>(builtin: &'b Builtin, id: &str) -> Option<(&'b Pack, &'b Rule)> {
-    builtin.rules().find(|(_, rule)| rule.id.0 == id)
+pub(crate) fn find_rule<'b>(builtin: &'b Builtin, id: &str) -> Option<BuiltinRule<'b>> {
+    builtin.rules().find(|found| found.rule.id.0 == id)
 }
 
 /// Writes what `rule` selects and why.
@@ -181,12 +181,12 @@ pub(crate) fn write_path(
         };
         writeln!(out, "  {} {line}", label(ink, "Bucket"))?;
     }
-    for (name, text) in human::facts(finding, policy) {
+    for human::Fact { label: name, text } in human::facts(finding, policy) {
         writeln!(out, "  {} {text}", label(ink, name))?;
     }
     writeln!(out)?;
     match find_rule(builtin, &finding.rule.0) {
-        Some((pack, rule)) => write_rule(out, ink, builtin, pack, rule),
+        Some(BuiltinRule { pack, rule }) => write_rule(out, ink, builtin, pack, rule),
         None => writeln!(out, "Found by {}.", finding.rule),
     }
 }

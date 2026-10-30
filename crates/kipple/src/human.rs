@@ -389,22 +389,41 @@ pub(crate) fn homed(path: &Path, home: Option<&Path>) -> String {
     }
 }
 
+/// A labelled line of a detail view.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Fact {
+    pub(crate) label: &'static str,
+    pub(crate) text: String,
+}
+
+impl Fact {
+    const fn new(label: &'static str, text: String) -> Self {
+        Self { label, text }
+    }
+}
+
 /// What kipple established about a finding, as labelled lines for a detail view: the
 /// note it is kept with, what comes back and what is lost, then each check its bucket
 /// rests on. Nothing until it is measured.
-pub(crate) fn facts(finding: &Finding, policy: &Policy) -> Vec<(&'static str, String)> {
+pub(crate) fn facts(finding: &Finding, policy: &Policy) -> Vec<Fact> {
     let mut lines = Vec::new();
     let Some(facts) = &finding.facts else {
         return lines;
     };
     if let Some(kept) = policy.kept(&finding.path, &facts.lineage) {
         let note = kept.note.as_deref().unwrap_or("in the config's keep.paths");
-        lines.push(("Kept", escaped(note)));
+        lines.push(Fact::new("Kept", escaped(note)));
     }
     if let Some(consequence) = &facts.consequence {
-        lines.push(("Comes back", recovery(consequence.recovery).to_owned()));
-        lines.push(("You lose", losses(consequence.loss)));
-        lines.push(("Restore cost", restore_cost(consequence.cost).to_owned()));
+        lines.push(Fact::new(
+            "Comes back",
+            recovery(consequence.recovery).to_owned(),
+        ));
+        lines.push(Fact::new("You lose", losses(consequence.loss)));
+        lines.push(Fact::new(
+            "Restore cost",
+            restore_cost(consequence.cost).to_owned(),
+        ));
     }
     let proposal = match &facts.proposal {
         Proposal::Report => "report only: kipple never changes it".to_owned(),
@@ -414,14 +433,14 @@ pub(crate) fn facts(finding: &Finding, policy: &Policy) -> Vec<(&'static str, St
             format!("remove ({})", names.join(" or "))
         }
     };
-    lines.push(("Proposes", proposal));
+    lines.push(Fact::new("Proposes", proposal));
     if !matches!(facts.proposal, Proposal::Remove(_)) {
         return lines;
     }
-    lines.push(("Git", tracked(&facts.tracked)));
-    lines.push(("In use", activity(&facts.activity)));
+    lines.push(Fact::new("Git", tracked(&facts.tracked)));
+    lines.push(Fact::new("In use", activity(&facts.activity)));
     let window = policy.recent_window_days(&finding.rule, facts);
-    lines.push(("Last change", modified(facts, window)));
+    lines.push(Fact::new("Last change", modified(facts, window)));
     lines
 }
 

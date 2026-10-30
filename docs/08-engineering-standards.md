@@ -90,7 +90,10 @@ These are cheap and deterministic, and they protect the boundaries in [05-archit
 
 These rules are checked by `cargo xtask check-style` (gate step 13), which parses every Rust source in `crates/` and `xtask/` with `syn`. It doesn't look inside `macro_rules!` bodies or macro calls.
 
+- No tuple in a signature or field other modules see: a function's parameters and return type, a trait method's, a field, an enum variant's field or a type alias, when it is `pub`, `pub(crate)`, `pub(super)` or `pub(in ...)`. That counts a tuple nested in a type, such as `Vec<(u64, u64)>` or `impl Iterator<Item = (Root, &Path)>`. Use a struct with named fields, so two values of one type can't be swapped. `()`, newtypes, private items and trait `impl`s, whose signatures the trait decides, are fine.
 - A struct's, enum's or union's lifetime is named for what it borrows, such as `Tree<'lines>`; a one-letter name fails. `'a` is fine on functions and `impl` blocks.
+
+An item may break a rule only through an entry in the check's `EXEMPT` list, which names the item and the rule and says why. An entry that no longer matches anything fails too.
 
 ## 5. Testing philosophy
 

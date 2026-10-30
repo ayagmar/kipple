@@ -6,7 +6,7 @@ use std::ops::Range;
 use kipple_core::{Level, Method, RuleId, RuleSettings};
 use toml_edit::{Document, Item, Key, TableLike, Value};
 
-use super::{Catalog, Config, is_config_path};
+use super::{Catalog, Config, Kept, Position, RuleConfig, is_config_path};
 
 /// Keys `docs/03-functional-spec.md` §6 lists that kipple doesn't read yet.
 const LATER: &[&str] = &["review", "retention"];
@@ -14,7 +14,7 @@ const LATER: &[&str] = &["review", "retention"];
 /// What is wrong with the file, and where.
 #[derive(Debug)]
 pub(super) struct ParseError {
-    pub(super) position: Option<(usize, usize)>,
+    pub(super) position: Option<Position>,
     pub(super) message: String,
 }
 
@@ -31,13 +31,13 @@ pub(super) fn parse(text: &str, catalog: &Catalog) -> Result<Config, ParseError>
     Reader { catalog, at: &at }.config(document.as_table())
 }
 
-/// The line and column, from 1, of byte `offset` in `text`.
-pub(crate) fn position(text: &str, offset: usize) -> (usize, usize) {
+/// Where byte `offset` is in `text`.
+pub(crate) fn position(text: &str, offset: usize) -> Position {
     let before = text.get(..offset).unwrap_or(text);
     let line = before.matches('\n').count() + 1;
     let start = before.rfind('\n').map_or(0, |newline| newline + 1);
     let column = before.get(start..).map_or(0, |s| s.chars().count()) + 1;
-    (line, column)
+    Position { line, column }
 }
 
 type At<'a> = &'a dyn Fn(Option<Range<usize>>, String) -> ParseError;
@@ -56,7 +56,7 @@ impl Reader<'_> {
         let known = [
             "care", "clean", "scan", "exclude", "keep", "rules", "ui", "keys",
         ];
-        for (name, key, item) in entries(root) {
+        for Entry { name, key, item } in entries(root) {
             if !known.contains(&name) && !LATER.contains(&name) {
                 return Err(self.unknown(name, key));
             }
@@ -105,10 +105,15 @@ impl Reader<'_> {
     }
 
     fn rules(&self, rules: &dyn TableLike, config: &mut Config) -> Result<(), ParseError> {
-        for (id, key, item) in entries(rules) {
+        for Entry {
+            name: id,
+            key,
+            item,
+        } in entries(rules)
+        {
             let rule = self.rule_id(id, key.span())?;
             let settings = self.rule(id, self.table(id, key, item)?)?;
-            config.rules.push((rule, settings));
+            config.rules.push(RuleConfig { id: rule, settings });
         }
         Ok(())
     }
@@ -128,7 +133,7 @@ impl Reader<'_> {
 
     fn rule(&self, id: &str, table: &dyn TableLike) -> Result<RuleSettings, ParseError> {
         let mut settings = RuleSettings::default();
-        for (name, key, item) in entries(table) {
+        for Entry { name, key, item } in entries(table) {
             let value = item.as_value();
             match name {
                 "enabled" => {
@@ -173,7 +178,7 @@ impl Reader<'_> {
     }
 
     /// `keep.paths`: each a path, or a table with a path and an optional note.
-    fn kept(&self, item: &Item) -> Result<Vec<(String, Option<String>)>, ParseError> {
+    fn kept(&self, item: &Item) -> Result<Vec<Kept>, ParseError> {
         let wanted = "a list of paths or { path = \"...\", note = \"...\" } tables";
         let array = item
             .as_array()
@@ -181,7 +186,10 @@ impl Reader<'_> {
         let mut kept = Vec::new();
         for value in array {
             let entry = match value {
-                Value::String(path) => (self.path("keep.paths", path.value(), value.span())?, None),
+                Value::String(path) => Kept {
+                    path: self.path("keep.paths", path.value(), value.span())?,
+                    note: None,
+                },
                 Value::InlineTable(table) => self.kept_table(table, value)?,
                 Value::Integer(_)
                 | Value::Float(_)
@@ -203,7 +211,7 @@ impl Reader<'_> {
         &self,
         table: &toml_edit::InlineTable,
         value: &Value,
-    ) -> Result<(String, Option<String>), ParseError> {
+    ) -> Result<Kept, ParseError> {
         self.only("keep.paths", table, &["path", "note"])?;
         let text = |name| table.get(name).and_then(Value::as_str).map(str::to_owned);
         let Some(path) = text("path") else {
@@ -215,7 +223,10 @@ impl Reader<'_> {
             let note = table.get("note").and_then(Value::span);
             return Err((self.at)(note, "keep.paths: a note is a string".to_owned()));
         }
-        Ok((self.path("keep.paths", &path, span)?, text("note")))
+        Ok(Kept {
+            path: self.path("keep.paths", &path, span)?,
+            note: text("note"),
+        })
     }
 
     fn paths(&self, key: &str, item: &Item) -> Result<Vec<String>, ParseError> {
@@ -293,8 +304,8 @@ impl Reader<'_> {
         entries_of: &dyn TableLike,
         known: &[&str],
     ) -> Result<(), ParseError> {
-        match entries(entries_of).find(|(name, _, _)| !known.contains(name)) {
-            Some((name, key, _)) => Err(self.unknown(&format!("{table}.{name}"), key)),
+        match entries(entries_of).find(|entry| !known.contains(&entry.name)) {
+            Some(Entry { name, key, .. }) => Err(self.unknown(&format!("{table}.{name}"), key)),
             None => Ok(()),
         }
     }
@@ -313,11 +324,18 @@ impl Reader<'_> {
     }
 }
 
+/// An entry of a table: its name, its key and its value.
+pub(super) struct Entry<'table> {
+    pub(super) name: &'table str,
+    pub(super) key: &'table Key,
+    pub(super) item: &'table Item,
+}
+
 /// Each entry of `table` with its key, in file order.
-pub(super) fn entries(table: &dyn TableLike) -> impl Iterator<Item = (&str, &Key, &Item)> {
+pub(super) fn entries(table: &dyn TableLike) -> impl Iterator<Item = Entry<'_>> {
     table.iter().filter_map(move |(name, _)| {
         table
             .get_key_value(name)
-            .map(|(key, item)| (name, key, item))
+            .map(|(key, item)| Entry { name, key, item })
     })
 }
