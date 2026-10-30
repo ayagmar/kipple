@@ -153,12 +153,18 @@ pub(super) fn rule_id_ok(id: &str) -> bool {
 }
 
 /// `plan` as stored, with every tree.
-#[must_use]
-pub fn encode_stored_plan(plan: &Plan, codec: &dyn NameCodec) -> Vec<u8> {
+///
+/// # Errors
+/// [`FormatError::TooLarge`] when a tree or the header is larger than the reader takes,
+/// so the run could never be read back, reconciled or restored.
+pub fn encode_stored_plan(plan: &Plan, codec: &dyn NameCodec) -> Result<Vec<u8>, FormatError> {
     let mut blobs = Vec::new();
     let mut items = Vec::with_capacity(plan.entries().len());
     for entry in plan.entries() {
         let tree = entry.tree().encode(codec);
+        if tree.len() > TREE_LIMIT {
+            return Err(FormatError::TooLarge(STORED_PLAN));
+        }
         items.push(item_out(entry, &tree, blobs.len() as u64, codec));
         blobs.extend_from_slice(&tree);
     }
@@ -169,8 +175,11 @@ pub fn encode_stored_plan(plan: &Plan, codec: &dyn NameCodec) -> Vec<u8> {
         items,
     };
     let mut bytes = signed(&unsigned);
+    if bytes.len() as u64 > crate::store::HEADER_LIMIT {
+        return Err(FormatError::TooLarge(STORED_PLAN));
+    }
     bytes.extend_from_slice(&blobs);
-    bytes
+    Ok(bytes)
 }
 
 fn item_out(entry: &PlanEntry, tree: &[u8], offset: u64, codec: &dyn NameCodec) -> ItemOut {

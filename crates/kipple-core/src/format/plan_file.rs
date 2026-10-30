@@ -55,24 +55,30 @@ pub(crate) struct PlanItemOut {
 }
 
 /// `plan` as a plan file.
-#[must_use]
-pub fn encode_plan_file(plan: &Plan, codec: &dyn NameCodec) -> Vec<u8> {
+///
+/// # Errors
+/// [`FormatError::TooLarge`] when an item's tree is larger than the reader takes.
+pub fn encode_plan_file(plan: &Plan, codec: &dyn NameCodec) -> Result<Vec<u8>, FormatError> {
     let items = plan
         .entries()
         .iter()
         .map(|entry| {
             let anchor = entry.anchor();
-            PlanItemOut {
+            let tree = entry.tree().encode(codec);
+            if tree.len() > TREE_LIMIT {
+                return Err(FormatError::TooLarge(PLAN));
+            }
+            Ok(PlanItemOut {
                 root: anchor.root.root,
                 root_path: path_out(&anchor.root.path, codec),
                 root_identity: IdentityOut(anchor.root.identity),
                 relative: rel_out(&anchor.relative, codec),
                 rule: entry.judgement().rule.0.clone(),
                 method: entry.method(),
-                tree: base64(&entry.tree().encode(codec)),
-            }
+                tree: base64(&tree),
+            })
         })
-        .collect();
+        .collect::<Result<_, _>>()?;
     let file = PlanFileOut {
         schema: PLAN.to_owned(),
         kipple: env!("CARGO_PKG_VERSION").to_owned(),
@@ -81,7 +87,7 @@ pub fn encode_plan_file(plan: &Plan, codec: &dyn NameCodec) -> Vec<u8> {
     // Serializing records of strings, numbers and enums can't fail.
     let mut bytes = serde_json::to_vec_pretty(&file).unwrap_or_default();
     bytes.push(b'\n');
-    bytes
+    Ok(bytes)
 }
 
 /// The plan a plan file holds, untrusted.

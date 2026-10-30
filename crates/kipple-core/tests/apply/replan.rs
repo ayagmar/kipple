@@ -20,7 +20,8 @@ fn planned(config: &Config) -> (World, ScanReport, Value) {
     let scan = scan_of(&[projects[0].0.clone(), projects[1].0.clone()]);
     let planned = plan_all(&scan, config, &world, PlanMode::Safe);
     assert_eq!(planned.plan.entries().len(), 2);
-    let file = serde_json::from_slice(&encode_plan_file(&planned.plan, &TestCodec)).unwrap();
+    let file =
+        serde_json::from_slice(&encode_plan_file(&planned.plan, &TestCodec).unwrap()).unwrap();
     (world, scan, file)
 }
 

@@ -154,6 +154,10 @@ pub enum StoreRefusal {
     /// Creating the run, or writing it durably, failed.
     #[error("the run couldn't be stored")]
     Write(ApplyError),
+    /// The plan is larger than a stored run may be ([`HEADER_LIMIT`] for its header,
+    /// `TREE_LIMIT` for one item's tree), so it couldn't be read back.
+    #[error("the plan is too large to store")]
+    TooLarge,
     /// This build has no run store.
     #[error("this build can't store runs")]
     Unsupported,

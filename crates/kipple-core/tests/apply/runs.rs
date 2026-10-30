@@ -594,7 +594,7 @@ fn stored_records_hold_no_free_text() {
     let (item, target) = project(0, 100, &["a"]);
     let world = world_of(&[(item.clone(), target)]);
     let planned = super::plan_all(&scan_of(&[item]), &Config::new(), &world, PlanMode::Review);
-    let header = encode_stored_plan(&planned.plan, &TestCodec);
+    let header = encode_stored_plan(&planned.plan, &TestCodec).unwrap();
     let header = &header[..=header.iter().position(|byte| *byte == b'\n').unwrap()];
     let mut lines = vec![header.to_vec()];
     for record in every_record() {

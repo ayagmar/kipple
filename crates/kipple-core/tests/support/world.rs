@@ -561,7 +561,7 @@ impl World {
             .collect();
         let id = RunId::at(UNIX_EPOCH + Duration::from_secs(state.runs.len() as u64), 0);
         let files = Files {
-            plan: Some(encode_stored_plan(plan, &TestCodec)),
+            plan: Some(encode_stored_plan(plan, &TestCodec).unwrap()),
             journal,
         };
         state.runs.insert(id.clone(), files);

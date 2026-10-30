@@ -24,12 +24,12 @@ use crate::format::{encode_line, encode_stored_plan};
 use crate::frozen::NameCodec;
 use crate::imported::{DroppedItem, ImportedPlan, ReplanRequest, replan};
 use crate::journal::{Journal, Record, RestoreResult};
-use crate::outcome::{ApplyError, ErrorCode, ItemOutcome, Receipt, Skip, Status, Stop};
+use crate::outcome::{ApplyError, ErrorCode, Found, ItemOutcome, Receipt, Skip, Status, Stop};
 use crate::plan::{ItemId, Plan, Selection};
 use crate::planner::{Judge, Merged, PlanMode, PlanRequest, Refused, plan};
 use crate::run::{Depth, ItemState, RunRead, StoredItem, StoredRun, Unreadable, read_run};
 use crate::store::{Locked, RunId, RunStore, StoreRefusal};
-use crate::trash::RestoreRequest;
+use crate::trash::{RestoreRequest, TrashSlot};
 
 /// What a mutating command works under and through.
 #[derive(Debug, Clone, Copy)]
@@ -189,8 +189,8 @@ pub enum Ending {
     NoneRan,
     /// The person said no. Nothing ran. Exit 3.
     Declined,
-    /// Every item of a plan file dropped when planned again: the plan is stale, make a
-    /// new one. Exit 3.
+    /// Every item of a plan file dropped when planned again because the disk changed
+    /// since (`Dropped::stale`): the plan is stale, make a new one. Exit 3.
     Stale,
     /// An item is partial, failed, indeterminate or stranded, or a restore failed.
     /// Exit 1.
@@ -259,6 +259,8 @@ pub struct Finished {
     pub run: Option<RunId>,
     /// What its run did, item by item; empty when nothing ran.
     pub receipt: Receipt,
+    /// The plan file's items left out of the fresh plan, with why; empty for `clean`.
+    pub dropped: Vec<DroppedItem>,
 }
 
 impl Finished {
@@ -267,6 +269,7 @@ impl Finished {
             ending,
             run: None,
             receipt: Receipt::default(),
+            dropped: Vec::new(),
         }
     }
 }
@@ -354,10 +357,15 @@ pub fn run_apply(
     if replanned.plan.entries().is_empty() {
         let ending = if imported.is_empty() {
             Ending::NothingToClean
-        } else {
+        } else if replanned.dropped.iter().all(|item| item.why.stale()) {
             Ending::Stale
+        } else {
+            Ending::NoneRan
         };
-        return Finished::before(ending);
+        return Finished {
+            dropped: replanned.dropped,
+            ..Finished::before(ending)
+        };
     }
     let review = Review {
         plan: &replanned.plan,
@@ -375,7 +383,10 @@ pub fn run_apply(
         },
         ..*session
     };
-    execute(&replanned.plan, authorization, &session, events, cancel)
+    Finished {
+        dropped: replanned.dropped,
+        ..execute(&replanned.plan, authorization, &session, events, cancel)
+    }
 }
 
 /// Takes the lock, reconciles every pending run, stores `plan` as a new run and applies
@@ -387,6 +398,9 @@ fn execute(
     events: &mut dyn EventSink,
     cancel: &CancelToken,
 ) -> Finished {
+    let Ok(stored) = encode_stored_plan(plan, session.codec) else {
+        return Finished::before(Ending::Refused(StoreRefusal::TooLarge));
+    };
     let lock = match prepare(session, events, cancel) {
         Ok(lock) => lock,
         Err(ending) => return Finished::before(ending),
@@ -397,10 +411,7 @@ fn execute(
         },
         session.codec,
     );
-    let run = match session
-        .store
-        .create(&lock, &encode_stored_plan(plan, session.codec), &first)
-    {
+    let run = match session.store.create(&lock, &stored, &first) {
         Ok(run) => run,
         Err(refusal) => return Finished::before(Ending::Refused(refusal)),
     };
@@ -447,6 +458,7 @@ fn execute(
         ending,
         run: Some(run),
         receipt,
+        dropped: Vec::new(),
     }
 }
 
@@ -676,6 +688,33 @@ struct Steps<'steps, 'run> {
 }
 
 /// Restores `item` of `run`, if it moved to the trash and wasn't restored since.
+/// Where `item` of `run` went in the trash: the slot its outcome records, the slot
+/// reconciliation found it at, or, when its move couldn't be made durable, the slot its
+/// intent named (the trash checks the slot holds the item before moving it back).
+fn trashed_slot(run: &StoredRun, item: ItemId) -> Option<TrashSlot> {
+    let ItemState::Ended(outcome) = run.state(item) else {
+        return None;
+    };
+    if let ItemOutcome::Indeterminate(Found::Trashed(trashed)) = outcome {
+        return Some(trashed.slot.clone());
+    }
+    if let ItemOutcome::Indeterminate(Found::Unsynced(_)) = outcome {
+        return run.records().iter().rev().find_map(|record| {
+            if let Record::Intent(intent) = record
+                && intent.item == item
+            {
+                intent.trash.clone()
+            } else {
+                None
+            }
+        });
+    }
+    outcome
+        .effect()
+        .and_then(|effect| effect.trashed.as_ref())
+        .map(|trashed| trashed.slot.clone())
+}
+
 fn restore_one(
     run: &StoredRun,
     item: ItemId,
@@ -687,11 +726,7 @@ fn restore_one(
     let Some(stored) = run.plan().item(item) else {
         return Restoring::NoSuchItem;
     };
-    let slot = match run.state(item) {
-        ItemState::Ended(outcome) => outcome.effect().and_then(|effect| effect.trashed.clone()),
-        ItemState::NotReached | ItemState::Pending(_) => None,
-    };
-    let Some(trashed) = slot else {
+    let Some(slot) = trashed_slot(run, item) else {
         return Restoring::NotTrashed;
     };
     if journal.restored.contains(&item) || run.restored(item) == Some(&RestoreResult::Restored) {
@@ -699,14 +734,11 @@ fn restore_one(
     }
     let top = stored.tree().and_then(|tree| tree.top().snapshot());
     let Some(request) =
-        top.and_then(|top| RestoreRequest::new(trashed.slot.clone(), stored.anchor().clone(), top))
+        top.and_then(|top| RestoreRequest::new(slot.clone(), stored.anchor().clone(), top))
     else {
         return Restoring::NotTrashed;
     };
-    let intent = Record::RestoreIntent {
-        item,
-        slot: trashed.slot,
-    };
+    let intent = Record::RestoreIntent { item, slot };
     if let Err(error) = journal.record(&intent) {
         return Restoring::Ran(RestoreResult::Failed(error));
     }

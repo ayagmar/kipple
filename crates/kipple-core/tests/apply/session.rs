@@ -3,16 +3,18 @@
 
 use std::path::Path;
 
+use kipple_core::format::{decode_plan_file, encode_plan_file};
 use kipple_core::{
     Activity, ActivityGap, Answer, ApplyEvent, ApplyPorts, CancelToken, CleanRequest, Confirm,
     Consent, Depth, Digest, Ending, EventSink, Finished, GitGap, Hold, ItemEvent, ItemId,
     ItemOutcome, Method, Reconciled, RestoreAsk, RestoreResult, Restoring, Review, RunRead,
     ScanReport, Session, Skip, Status, StoreRefusal, Tracked, read_run, run_clean, run_restore,
 };
+use kipple_core::{ApplyFile, Dropped, ImportedPlan, PlanMode, run_apply};
 
 use super::codec::TestCodec;
 use super::world::{Crash, Rescanned, World};
-use super::{Config, everything, ports, project, rel, rescanned, scan_of, world_of};
+use super::{Config, everything, plan_all, ports, project, rel, rescanned, scan_of, world_of};
 
 /// Answers every prompt with its answer, keeping the digest of each plan shown.
 struct Person {
@@ -103,6 +105,30 @@ impl Machine {
             codec: &TestCodec,
         };
         run_restore(ask, &session, events, &CancelToken::new())
+    }
+
+    fn apply(&self, imported: &ImportedPlan, consent: Consent<'_>) -> Finished {
+        let mutation = ports(&self.world);
+        let session = Session {
+            judge: self.config.judge(),
+            store: &self.world,
+            ports: ApplyPorts {
+                rescan: &self.rescan,
+                mutation: &mutation,
+            },
+            codec: &TestCodec,
+        };
+        let file = ApplyFile {
+            imported,
+            scan: &self.scan,
+        };
+        run_apply(
+            &file,
+            &session,
+            consent,
+            &mut Events::default(),
+            &CancelToken::new(),
+        )
     }
 
     fn statuses(finished: &Finished) -> Vec<Status> {
@@ -326,6 +352,69 @@ fn a_restore_moves_an_item_back_once() {
     assert_eq!(nothing.ending, Ending::NoneRan);
 }
 
+/// Catches a trash move a crash interrupted that can't be restored once reconciled
+/// (docs/04 §7): reconciliation finds the item in the trash, and restore moves it back.
+#[test]
+fn a_reconciled_trash_move_restores() {
+    let machine = Machine::new(Method::Trash);
+    machine.world.state().crash = Some(Crash::BeforeWrite(2));
+    let crashed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        machine.clean(
+            Consent::Ask(&mut person(Answer::Yes)),
+            &mut Events::default(),
+            &CancelToken::new(),
+        )
+    }));
+    assert!(crashed.is_err(), "the run crashed after its first move");
+    machine.world.state().crash = None;
+    let run = machine.world.state().runs.keys().next().cloned().unwrap();
+
+    let ask = RestoreAsk {
+        run,
+        items: vec![ItemId(0)],
+    };
+    let restored = machine.restore(&ask, &mut Events::default());
+    assert_eq!(
+        restored.items[0].restoring,
+        Restoring::Ran(RestoreResult::Restored)
+    );
+    assert!(
+        machine
+            .world
+            .state()
+            .targets
+            .contains_key(Path::new("/home/u/p0/target")),
+        "the item is back at its place"
+    );
+}
+
+/// Catches a plan file whose items the current config refuses reported as stale, which
+/// sends the person to make a new plan that fails the same way, or its drops lost under
+/// `--yes`: every item drops for its method, it exits 3 as none ran, and says why.
+#[test]
+fn a_file_the_config_refuses_is_not_stale() {
+    let mut machine = Machine::new(Method::Delete);
+    let planned = plan_all(
+        &machine.scan,
+        &machine.config,
+        &machine.world,
+        PlanMode::Safe,
+    );
+    let file = encode_plan_file(&planned.plan, &TestCodec).unwrap();
+    let imported = decode_plan_file(&file, &TestCodec).unwrap();
+    machine.config.methods.config = Some(Method::Trash);
+
+    let finished = machine.apply(&imported, Consent::Yes);
+    assert_eq!(finished.ending, Ending::NoneRan);
+    let why: Vec<&Dropped> = finished.dropped.iter().map(|item| &item.why).collect();
+    assert_eq!(why.len(), 2, "both items say why they dropped: {why:?}");
+    assert!(
+        why.iter().all(|why| !why.stale()),
+        "a refused item isn't stale: {why:?}"
+    );
+    assert!(machine.world.state().runs.is_empty(), "nothing was stored");
+}
+
 /// Catches a cancel before the run starts that stores or runs anything, or exits as if
 /// it finished (pinned 17): exit 130.
 #[test]
@@ -376,11 +465,11 @@ fn activity_and_git_are_asked_again_at_apply() {
             .git
             .insert("/home/u/p1/target".into(), Err(GitGap::Failed));
     }
-    let planned = super::plan_all(
+    let planned = plan_all(
         &tracked.scan,
         &tracked.config,
         &tracked.world,
-        kipple_core::PlanMode::SafeOnly,
+        PlanMode::SafeOnly,
     );
     assert_eq!(planned.plan.entries().len(), 1, "git failing refuses p1");
     tracked

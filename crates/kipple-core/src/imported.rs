@@ -95,6 +95,18 @@ pub enum Dropped {
     Duplicate,
 }
 
+impl Dropped {
+    /// Whether it dropped because the file no longer matches the disk, so a new plan
+    /// would fix it, not because the current config or review refuses it.
+    #[must_use]
+    pub const fn stale(&self) -> bool {
+        matches!(
+            self,
+            Self::NotFound | Self::RootChanged | Self::NothingInCommon
+        )
+    }
+}
+
 /// An item of a plan file left out of the fresh plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DroppedItem {

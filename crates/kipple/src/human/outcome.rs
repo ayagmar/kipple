@@ -276,6 +276,7 @@ pub(crate) fn store_refusal(refusal: &StoreRefusal) -> String {
             format!("free {} for the plan record", super::bytes(*needed))
         }
         StoreRefusal::Write(error) => format!("the run couldn't be stored: {}", error_text(error)),
+        StoreRefusal::TooLarge => "the plan is too large to store: clean fewer items".to_owned(),
         StoreRefusal::Unsupported => "this build can't store runs yet".to_owned(),
     }
 }
