@@ -7,6 +7,7 @@ use std::ops::Range;
 use toml_edit::{Array, Item, TableLike};
 
 use super::parse::{ParseError, Reader, entries};
+use super::show_line;
 use crate::human::escaped;
 use crate::tui::Key;
 use crate::tui::keymap::{Action, Keymap, key_name, key_named};
@@ -44,7 +45,7 @@ impl KeysConfig {
                 let names: Array = keys.iter().map(|&key| key_name(key)).collect();
                 escaped(&names.to_string())
             };
-            writeln!(out, "{:<22}{shown}", format!("keys.{}", action.name()))?;
+            show_line(out, &format!("keys.{}", action.name()), shown)?;
         }
         Ok(())
     }

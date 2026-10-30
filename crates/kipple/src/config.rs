@@ -452,36 +452,36 @@ pub fn write_show(
         .as_ref()
         .map_or_else(|| "unknown".to_owned(), |path| path.display().to_string());
     let header = format!("{file} (from {})", location.source);
-    writeln!(out, "{:<22}{}", "config file", escaped(&header))?;
+    show_line(out, "config file", escaped(&header))?;
     let Some(loaded) = loaded else {
         return out.flush();
     };
     let config = &loaded.config;
     if !loaded.exists {
-        writeln!(out, "{:<22}not present, the defaults apply", "")?;
+        show_line(out, "", "not present, the defaults apply")?;
     }
     let level = config.level.unwrap_or(Level::Balanced);
     let method = config
         .method
         .map_or("delete (default; stored only)", |m| m.name());
-    writeln!(out, "{:<22}{level}", "care.level")?;
-    writeln!(out, "{:<22}{method}", "clean.method")?;
+    show_line(out, "care.level", level)?;
+    show_line(out, "clean.method", method)?;
     let roots = config.project_roots.as_ref().map_or_else(
         || "the defaults that exist".to_owned(),
         |roots| roots.join(", "),
     );
-    writeln!(out, "{:<22}{}", "scan.project_roots", escaped(&roots))?;
+    show_line(out, "scan.project_roots", escaped(&roots))?;
     for path in &config.exclude_paths {
-        writeln!(out, "{:<22}{}", "exclude.paths", escaped(path))?;
+        show_line(out, "exclude.paths", escaped(path))?;
     }
     for rule in &config.exclude_rules {
-        writeln!(out, "{:<22}{rule}", "exclude.rules")?;
+        show_line(out, "exclude.rules", rule)?;
     }
     for (path, note) in &config.keep {
         let line = note
             .as_ref()
             .map_or_else(|| path.clone(), |note| format!("{path}  ({note})"));
-        writeln!(out, "{:<22}{}", "keep.paths", escaped(&line))?;
+        show_line(out, "keep.paths", escaped(&line))?;
     }
     for (rule, settings) in &config.rules {
         let mut parts = Vec::new();
@@ -494,9 +494,15 @@ pub fn write_show(
         if let Some(days) = settings.recent_days {
             parts.push(format!("recent_days = {days}"));
         }
-        writeln!(out, "{:<22}{}", format!("rules.{rule}"), parts.join(", "))?;
+        show_line(out, &format!("rules.{rule}"), parts.join(", "))?;
     }
     config.ui.write_show(out)?;
     config.keys.write_show(out)?;
     out.flush()
+}
+
+/// One line of `kipple config show`: the key in its column, then always a space before
+/// the value, however long the key.
+fn show_line(out: &mut dyn Write, key: &str, value: impl fmt::Display) -> io::Result<()> {
+    writeln!(out, "{key:<21} {value}")
 }

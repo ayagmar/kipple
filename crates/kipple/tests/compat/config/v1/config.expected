@@ -5,8 +5,8 @@ exclude.paths         ~/projects/keep-this/target
 exclude.rules         builtin.node.node-modules
 keep.paths            ~/projects/demo/target  (benchmark baseline)
 keep.paths            ~/projects/other/.venv
-rules.builtin.cargo.targetlevel = thorough, recent_days = 30
-rules.builtin.python.bytecodeenabled = false
+rules.builtin.cargo.target level = thorough, recent_days = 30
+rules.builtin.python.bytecode enabled = false
 ui.theme              kipple-dark
 ui.summary            false
 ui.detail             bottom
