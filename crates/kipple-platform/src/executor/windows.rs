@@ -37,10 +37,11 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX, FILE_FLAG_BACKUP_SEMANTICS,
     FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_EXTD_DIR_INFO, FILE_INFO_BY_HANDLE_CLASS,
     FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_TRAVERSE, FileAttributeTagInfo, FileBasicInfo,
-    FileDispositionInfoEx, FileIdExtdDirectoryInfo, FileIdExtdDirectoryRestartInfo,
-    FileStandardInfo, GetFileInformationByHandleEx, GetVolumeInformationByHandleW,
-    MAXIMUM_REPARSE_DATA_BUFFER_SIZE, SYNCHRONIZE, SetFileInformationByHandle,
+    FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_TRAVERSE, FILE_WRITE_DATA, FileAttributeTagInfo,
+    FileBasicInfo, FileDispositionInfoEx, FileIdExtdDirectoryInfo, FileIdExtdDirectoryRestartInfo,
+    FileStandardInfo, FlushFileBuffers, GetFileInformationByHandleEx,
+    GetVolumeInformationByHandleW, MAXIMUM_REPARSE_DATA_BUFFER_SIZE, SYNCHRONIZE,
+    SetFileInformationByHandle,
 };
 use windows_sys::Win32::System::IO::{DeviceIoControl, IO_STATUS_BLOCK};
 use windows_sys::Win32::System::Ioctl::{FILE_DEVICE_NETWORK_FILE_SYSTEM, FSCTL_GET_REPARSE_POINT};
@@ -70,6 +71,10 @@ const DIR_ACCESS: u32 = FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUT
 
 /// What an entry about to be removed is opened for.
 const REMOVE_ACCESS: u32 = DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
+
+/// What a directory is opened for to flush it: NTFS and `ReFS` flush only a handle that
+/// may write, which for a directory means adding entries to it.
+const FLUSH_ACCESS: u32 = FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
 
 /// The name-surrogate bit of a reparse tag: links, junctions and mount points.
 const NAME_SURROGATE: u32 = 0x2000_0000;
@@ -191,26 +196,31 @@ impl Dir {
         }
     }
 
-    /// Nothing: Windows has no directory sync a process can rely on. A removal is in
-    /// NTFS's and `ReFS`'s metadata log, which a later write-through on the volume forces
-    /// to disk (D-065).
-    #[expect(
-        clippy::unnecessary_wraps,
-        clippy::unused_self,
-        reason = "the Unix version can fail, and callers share one signature"
-    )]
-    pub(crate) const fn sync(&self) -> io::Result<()> {
-        Ok(())
+    /// Makes what changed in this directory durable: the names removed from it, added to
+    /// it or renamed in it. The directory is opened again relative to its own handle, for
+    /// writing, and flushed (`FlushFileBuffers`), which commits the volume's metadata log
+    /// on NTFS and `ReFS`; never the whole volume.
+    pub(crate) fn sync(&self) -> io::Result<()> {
+        #[cfg(test)]
+        super::faults::sync()?;
+        flush(&open_at(
+            self,
+            &Name::new(),
+            FLUSH_ACCESS,
+            FILE_DIRECTORY_FILE,
+        )?)
     }
 
-    /// Nothing, as [`sync`](Self::sync).
-    #[expect(
-        clippy::unnecessary_wraps,
-        clippy::unused_self,
-        reason = "the Unix version can fail, and callers share one signature"
-    )]
-    pub(super) const fn sync_named(&self, _: &Name, _: FileIdentity) -> io::Result<()> {
-        Ok(())
+    /// Syncs the directory `name` in this one, which must still be the directory with the
+    /// identity `frozen`: one moved away or replaced since can't be synced from here.
+    pub(super) fn sync_named(&self, name: &Name, frozen: FileIdentity) -> io::Result<()> {
+        let handle = open_at(self, name, FLUSH_ACCESS, FILE_DIRECTORY_FILE)?;
+        if seen(&handle)?.snapshot.identity != frozen {
+            return Err(io::Error::other(
+                "the directory isn't the one frozen any more",
+            ));
+        }
+        flush(&handle)
     }
 
     /// `name`, opened for removal and read on that handle.
@@ -288,6 +298,19 @@ fn open_at(dir: &Dir, name: &Name, access: u32, options: u32) -> io::Result<Owne
     nt(result)?;
     // SAFETY: NtCreateFile succeeded, so `handle` is open and ours.
     Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
+}
+
+/// Writes what `handle` has open, and the metadata it changed, to disk.
+#[expect(
+    unsafe_code,
+    reason = "windows-sys exposes FlushFileBuffers as a raw call"
+)]
+fn flush(handle: &OwnedHandle) -> io::Result<()> {
+    // SAFETY: the handle is open.
+    if unsafe { FlushFileBuffers(handle.as_raw_handle()) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 /// Removes the file `handle` has open: its name goes at once, others' open handles

@@ -154,11 +154,14 @@ pub trait EffectSink {
 ///   unsupported file system) stops the run with an error.
 /// - `cancel` is checked between entries.
 /// - **Durable before returning.** On every path that removed something, `Ok`, `Err` or
-///   cancelled, the removals are synced before the call returns: `fsync` of the item's
-///   directory and of each directory that had an entry removed, never a whole-file-system
-///   sync. The journal records the outcome only after that. A sync that fails makes the
-///   run return [`ErrorCode::Unsynced`](crate::ErrorCode::Unsynced), and the item's
-///   outcome is `indeterminate`: never done for removals a power loss could undo.
+///   cancelled, the removals are synced before the call returns: each directory that had
+///   an entry removed and is still there, the item's own directory included, with `fsync`
+///   (`F_FULLFSYNC` on macOS) or on Windows `FlushFileBuffers` on the directory opened
+///   for writing; never the whole file system. A directory removed in turn isn't synced:
+///   once its removal from its parent is durable, nothing in it can come back. The
+///   journal records the outcome only after that. A sync that fails makes the run return
+///   [`ErrorCode::Unsynced`](crate::ErrorCode::Unsynced), and the item's outcome is
+///   `indeterminate`: never done for removals a power loss could undo.
 ///
 /// [`EntrySnapshot::drift`]: crate::EntrySnapshot::drift
 pub trait Executor: fmt::Debug + Send + Sync {

@@ -392,7 +392,6 @@ fn freed(seen: &Seen) -> Freed {
 }
 
 #[cfg(test)]
-#[cfg(unix)]
 mod tests {
     use std::fs;
 

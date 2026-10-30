@@ -127,12 +127,15 @@ impl RestoreRequest {
 /// [`ErrorCode::Unsupported`]: crate::ErrorCode::Unsupported
 ///
 /// **Durable before returning.** On every path that moved something, `Ok`, `Err` or
-/// cancelled, the move is synced before the call returns: the trash record (the
+/// cancelled, the move is synced before the call returns: the trash record (Linux's
 /// `.trashinfo`) and its directory before the rename, and the item's old directory and
-/// the trash directory after it, with `fsync` of each directory where the OS has one. The
-/// journal records the outcome only after that. A sync that fails makes the call fail
-/// with [`ErrorCode::Unsynced`], never succeed, and the item's outcome is
-/// `indeterminate`: never done for a move a power loss could undo.
+/// the trash directory after it, each with `fsync` (`F_FULLFSYNC` on macOS). A record
+/// whose move didn't happen is removed and its directory synced; the record of an item
+/// that reached the trash stays, even when a sync after the move fails. The journal
+/// records the outcome only after that. A sync that fails makes the call fail with
+/// [`ErrorCode::Unsynced`], never succeed, and the item's outcome is `indeterminate`:
+/// never done for a move a power loss could undo. The Windows backend moves nothing
+/// (D-062).
 ///
 /// [`ErrorCode::Unsynced`]: crate::ErrorCode::Unsynced
 pub trait TrashBackend: fmt::Debug + Send + Sync {

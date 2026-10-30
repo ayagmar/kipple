@@ -154,25 +154,46 @@ fn nothing_is_removed_on_fat() {
     assert!(present(&temp.path().join("target/x")), "target/x stays");
 }
 
-/// Catches 128-bit `ReFS` file IDs (Dev Drive) being mishandled where the runner can make
-/// such a volume.
+/// Catches a directory flush that NTFS or `ReFS` (Dev Drive) refuses, which would make
+/// every Windows delete there indeterminate, and 128-bit `ReFS` file IDs mishandled: on
+/// each, a tree is removed whole, flushing the directory it was in, and another is
+/// removed but for an excluded file, flushing the directories that stay. `ReFS` is
+/// checked where the runner can make such a volume.
 #[cfg(windows)]
 #[test]
-fn a_tree_on_refs_is_frozen_and_removed() {
-    let Some(volume) = std::env::var_os("KIPPLE_TEST_REFS").map(PathBuf::from) else {
-        return;
-    };
-    let temp = TempDir::new_in(&volume).unwrap();
-    write(&temp.path().join("target/sub/x"), b"on ReFS");
-    let anchor = anchor_at(temp.path(), "target");
+fn removals_on_ntfs_and_refs_are_flushed() {
+    use kipple_core::{LocalFileSystem, RelPath, Status};
 
-    let frozen = freeze(&anchor);
-    assert_eq!(
-        frozen.file_system,
-        FileSystemClass::Supported(kipple_core::LocalFileSystem::Refs)
-    );
-    let outcome = delete(&anchor, frozen.tree);
+    let mut volumes = vec![(TempDir::new().unwrap(), LocalFileSystem::Ntfs)];
+    if let Some(refs) = std::env::var_os("KIPPLE_TEST_REFS").map(PathBuf::from) {
+        volumes.push((TempDir::new_in(&refs).unwrap(), LocalFileSystem::Refs));
+    }
+    for (temp, file_system) in volumes {
+        write(&temp.path().join("whole/sub/x"), b"x");
+        write(&temp.path().join("part/sub/y"), b"y");
+        write(&temp.path().join("part/kept"), b"kept");
+        let whole = anchor_at(temp.path(), "whole");
+        let frozen = freeze(&whole);
+        assert_eq!(frozen.file_system, FileSystemClass::Supported(file_system));
 
-    assert_eq!(outcome.status(), kipple_core::Status::Done, "{outcome:?}");
-    assert!(!present(&temp.path().join("target")), "target is gone");
+        let gone = delete(&whole, frozen.tree);
+
+        assert_eq!(gone.status(), Status::Done, "{file_system:?}: {gone:?}");
+        assert!(!present(&temp.path().join("whole")), "whole is gone");
+
+        let part = anchor_at(temp.path(), "part");
+        let mut tree = freeze(&part).tree;
+        let kept = tree.find(&RelPath::of("kept".as_ref()).unwrap()).unwrap();
+        tree.exclude(kept);
+
+        let thinned = delete(&part, tree);
+
+        assert_eq!(
+            thinned.status(),
+            Status::Done,
+            "{file_system:?}: {thinned:?}"
+        );
+        assert!(!present(&temp.path().join("part/sub")), "part/sub is gone");
+        assert!(present(&temp.path().join("part/kept")), "part/kept stays");
+    }
 }

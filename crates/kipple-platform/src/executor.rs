@@ -27,7 +27,6 @@ pub(crate) mod unix;
 pub(crate) mod windows;
 
 #[cfg(test)]
-#[cfg(unix)]
 pub(crate) mod faults;
 
 use std::io;
