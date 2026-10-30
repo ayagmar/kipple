@@ -4,9 +4,13 @@
 //! directory included (D-065). A directory removed in turn isn't: once its removal from
 //! its parent is durable, nothing in it can come back.
 
+use std::collections::HashSet;
+use std::ffi::OsStr;
+
 use kipple_core::{
-    Allocated, ApplyError, CancelToken, DeleteOp, EffectSink, Entry, EntryKind, ErrorCode,
-    FileSystemClass, Finish, Freed, FrozenTree, LeftReason, Marks, NodeId, Scope, Volume,
+    Allocated, ApplyError, CancelToken, Component, DeleteOp, EffectSink, Entry, EntryKind,
+    ErrorCode, FileSystemClass, Finish, Freed, FrozenTree, LeftReason, Marks, NodeId, Scope,
+    Volume,
 };
 
 use super::{Form, Seen, drift, left_reason, reach, sys};
@@ -104,7 +108,7 @@ impl<'run> Run<'run> {
         cancel: &CancelToken,
     ) -> Result<Finish, ApplyError> {
         let top = self.tree.top();
-        if let Some(reason) = drift(top, seen) {
+        if let Some(reason) = changed(&root, top, seen) {
             self.leave(top, reason);
             return Ok(Finish::Completed);
         }
@@ -290,7 +294,7 @@ impl<'run> Run<'run> {
             }
         };
         self.confined(entry, &seen)?;
-        if let Some(reason) = drift(entry, &seen) {
+        if let Some(reason) = changed(&sub, entry, &seen) {
             self.leave(entry, reason);
             return Ok(Visit::Done);
         }
@@ -352,6 +356,29 @@ impl<'run> Run<'run> {
             stack.extend(next.children());
         }
     }
+}
+
+/// How the directory `dir`, frozen as `entry` and read now as `seen`, differs from what
+/// was frozen: its fingerprint, or a name it holds now that the freeze didn't list. A
+/// clock that ticks coarsely (Windows stamps a change with a time that moves every 15.6
+/// ms or so) can leave a directory's times as they were when an entry is added to it.
+fn changed(dir: &sys::Dir, entry: Entry<'_>, seen: &Seen) -> Option<LeftReason> {
+    if let Some(reason) = drift(entry, seen) {
+        return Some(reason);
+    }
+    let listed = match dir.names() {
+        Ok(listed) => listed,
+        Err(error) => return Some(left_reason(&error)),
+    };
+    let frozen: HashSet<&OsStr> = entry
+        .children()
+        .filter_map(|child| child.name())
+        .map(Component::as_os_str)
+        .collect();
+    listed
+        .iter()
+        .any(|name| !frozen.contains(name.as_os_str()))
+        .then_some(LeftReason::Changed)
 }
 
 /// What removing `seen` frees: nothing for a file that keeps another name.
