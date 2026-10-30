@@ -1,6 +1,6 @@
 # Architecture
 
-Status: partly built. The core ports, `Engine::scan` with its events and the shared project walk (§2, §3), the platform's root resolution, probes, walker and capability probes (§1, §3), the built-in integrations, and the `scan`, `rules`, `explain` and `doctor` commands exist since M1. The Rust in §2 shows the signatures as they are, and items marked *planned* are sketches that have not been compiled. Nothing is frozen yet.
+Status: partly built. The core ports, `Engine::scan` with its events and the shared project walk (§2, §3), the platform's root resolution, probes, walker and capability probes (§1, §3), the built-in integrations, and the `scan`, `rules`, `explain` and `doctor` commands exist since M1. The core's mutation contract (§2, the mutation contract) exists since M3a, without an implementation of its ports yet. The Rust in §2 shows the signatures as they are, and items marked *planned* are sketches that have not been compiled. Nothing is frozen yet.
 
 ## 1. Workspace
 
@@ -74,14 +74,41 @@ pub trait Clock: Debug + Send + Sync { fn now(&self) -> SystemTime; }
 
 pub struct Ports { pub fs, pub sizer, pub processes, pub clock }   // boxed, what Engine::new takes
 
-// planned, with their first consumers:
-pub trait Executor: Send + Sync {          // the only mutation boundary (M3)
-    fn execute(&self, op: &AuthorizedOp, journal: &mut dyn Journal) -> ItemOutcome;
+// the mutation ports (M3a): defined, implemented by kipple-platform from M3a's second phase
+pub trait Freezer: Debug + Send + Sync {   // read-only, handle-relative from a verified root
+    fn freeze(&self, anchor: &Anchor, cancel: &CancelToken) -> Result<Freeze, ApplyError>;  // tree, file system, parent identity
 }
 
+pub trait Executor: Debug + Send + Sync {  // the only code that removes files
+    fn delete(&self, op: &DeleteOp, effects: &mut dyn EffectSink, cancel: &CancelToken) -> Result<Finish, ApplyError>;
+}
+
+pub trait TrashBackend: Debug + Send + Sync {
+    fn available(&self, anchor: &Anchor) -> Result<(), ApplyError>;
+    fn destination(&self, op: &TrashOp) -> Result<TrashSlot, ApplyError>;   // read-only; journalled with the intent
+    fn move_whole(&self, op: &TrashOp, slot: &TrashSlot, cancel: &CancelToken) -> Result<Trashed, ApplyError>;
+    fn find(&self, slot: &TrashSlot, target: &EntrySnapshot) -> Result<SlotState, ApplyError>;  // for reconciliation
+    fn restore(&self, request: &RestoreRequest, cancel: &CancelToken) -> Result<(), ApplyError>;
+}
+
+pub trait Journal: Debug + Send {          // each call returns once what it records is durable
+    fn plan(&mut self, plan: &Plan) -> Result<(), ApplyError>;            // the plan and its trees, before any intent
+    fn intent(&mut self, intent: &Intent) -> Result<(), ApplyError>;      // before the item's first mutation
+    fn outcome(&mut self, item: ItemId, outcome: &ItemOutcome) -> Result<(), ApplyError>;
+}
 ```
 
 The probes are path-based. Spike S1 decides whether read-only probes become handle-relative like the executor.
+
+### The mutation contract
+
+Only the core decides what may change, and only the platform changes it (04 §1). The types carry the rules:
+
+- **Frozen trees.** `FrozenTree` is one item's target and everything below it as the `Freezer` read it from open handles: each file, directory and link with its `FileIdentity` (device and inode; on Windows the 64-bit volume serial and 128-bit file ID of `FILE_ID_INFO`), its `Fingerprint` (change, modification and birth times exactly, and size) and its link count. Names are `Component`s holding the OS's `OsString`, so non-UTF-8 and ill-formed UTF-16 names survive. Names are interned and the nodes sit in one array, breadth first with each directory's children sorted, so the same entries give the same tree, digest and stored form whatever order they were read in. Every entry is on one `Volume` (device and mount ID); a target that is a verified root freezes as its contents only (`Scope::Contents`), and the root directory is never removed. `exclude` leaves entries out, keeping their directories, for files git tracks (M3b). `EntrySnapshot::drift` is the one comparison: another identity or kind is replaced; otherwise the whole fingerprint is compared, except for a file with more than one name, which compares modification time and size, since removing a sibling name changes its change time. The stored form (`encode`/`decode`, `kipple.frozen-tree` version 1) goes through a `NameCodec` the platform supplies, and decoding checks everything, since a stored tree is untrusted (D-063).
+- **Marks.** What may be removed is a `Mark` per entry: `Remove`, `Unauthorized(Top | Excluded)` from the plan, or `Dropped(reason)`. `FrozenTree::recheck(fresh)` returns the plan's marks with every entry a fresh freeze doesn't confirm dropped for its reason; a directory that is gone, replaced or changed drops everything inside it, each entry counted under that reason. Nothing turns a mark back to `Remove`, so revalidation only subtracts.
+- **Plans.** A `Plan` is built only by the core (no public constructor), from a `Selection` of finding IDs, before review is shown. Each `PlanEntry` holds the finding, its `Anchor` (the `VerifiedRoot` with the identity the scan recorded in `IntegrationReport::opened`, the components below it, and the identity of the target's directory), its method from `MethodChoice` (`--method` > `rules.<id>.method` > `clean.method` > `delete`; a method the rule doesn't offer refuses the item, never substitutes), its `Standing` (Safe, or Review with its cautions), its `Judgement` (digests of the policy, the rule and the kept and excluded paths, the effective level and recent window, and the method), its estimate, its supported `LocalFileSystem` and its tree. `Plan::digest` covers all of it.
+- **Authorization.** `Authorization::Reviewed { plan }` names the digest of the plan the user saw; `SafeOnly` is automation. An `AuthorizedOp` is either a `DeleteOp` or a `TrashOp`, and neither has a public constructor: only revalidation in the core makes one, after checking, in order, that the authorization is for this plan (and Safe-only only for Safe items), that the `Judgement` is unchanged, that the item isn't Protected now, that its bucket is still one it was authorized in (Safe stays Safe, Review gains no caution), that its rule still offers the method, that its file system is supported, and that the fresh freeze leaves something. A trash move needs every entry of the tree still authorized, nothing excluded or dropped; otherwise the item is skipped, never deleted instead. A `TrashOp` can't become a `DeleteOp`.
+- **Outcomes.** The `Executor` reports each entry to an `EffectSink`: removed, with what it freed (`Freed::Allocated` estimated, `Shared` for a file that keeps another name, `Unmeasured`), or left with a `LeftReason`. `Tally` is the sink the apply loop uses: it starts with what revalidation dropped already counted, counts each entry once, and turns the run into an `ItemOutcome`, measured against the reviewed tree: `Done` (every reviewed entry removed; a directory still holding new entries is a `not-empty` note), `Partial`, `Skipped(Skip)`, `Failed { error, effect }`, `Cancelled` or `Indeterminate(Found)`. `Left` keeps a count per reason and the first `SAMPLE` paths in tree order, never every leaf. `Receipt::totals` counts removed names (confirmed) and estimated bytes from every item that ran, failed and cancelled ones included, and what moved to the trash apart. Errors are `ApplyError`: kipple's `ErrorCode`, the `OsError` kind and number, the entry's path, and the upstream error in memory only.
 
 `AuthorizedOp` has private constructors. Only the engine's policy code can build one, from a validated plan entry and a user authorization. Integrations never see `Executor`.
 
@@ -122,11 +149,11 @@ When the engine measures a finding it also establishes its `Facts` (D-047): what
 
 ### Key types
 
-- **IDs:** `IntegrationId`, `FindingId`, `RuleId` and `PackId` exist; `PlanId` and `ReceiptId` are planned. All are distinct newtypes. IDs are references, never authorization. A `FindingId` is unique within one scan.
+- **IDs:** `IntegrationId`, `FindingId`, `RuleId`, `PackId` and `ItemId` (an item's place in its plan) exist; `ReceiptId` is planned. All are distinct newtypes. IDs are references, never authorization. A `FindingId` is unique within one scan.
 - **`Finding`:** today its ID, integration, rule, category, path, evidence, size and `Facts`. Planned: pack and version in the owner, `PathRef` (lossless OS path plus escaped display), `SpaceEstimate`, loss and recovery description, eligibility with reasons, allowed methods, advice.
 - **`SpaceEstimate`:** apparent, allocated, unique-reclaim estimate, completeness (`Complete`, `Incomplete { unreadable, skipped_mounts }` or `Cancelled`). A directory inside on another file system (a mount or a btrfs subvolume) isn't entered and makes the estimate incomplete. A hard-linked file counts once, and one with a link outside the item is left out of the unique-reclaim estimate. Windows reports neither allocation nor link counts cheaply, so there the last two are unknown.
-- **`Plan`:** schema version, creation time, entries (target identities and fingerprints, method, operation), policy, exclusion and pack digests, and a review DTO for display. Imported plan files are untrusted input: they are re-planned and revalidated, never executed as written.
-- **`Receipt`:** per-item `Done | Skipped(Reason) | Failed(ErrorDetail) | Cancelled | Indeterminate`, method, recovery handle where one exists, estimated bytes, and an optional observed free-space change.
+- **`Plan`:** see the mutation contract above. A stored plan (M3b) adds a schema version and creation time. Imported plan files are untrusted input: they are planned again from a fresh scan and each tree intersected with a fresh freeze (`recheck`), never executed as written.
+- **`Receipt`:** per item its plan item, path, method, estimate and `ItemOutcome` (`Done | Partial | Skipped(Skip) | Failed { error, effect } | Cancelled | Indeterminate(Found)`), where a trash item's `Trashed` holds the `TrashSlot` that restores it; `Receipt::totals` is the one place totals are counted. An observed free-space change is planned.
 - **Errors:** `thiserror` enums with structured codes and context (integration, item, OS error or tool exit code and stderr). Upstream detail is preserved in the error value and shown to the user. Only structured fields are persisted (04 §8a). Strings never become the public API.
 
 ### Events
@@ -174,7 +201,7 @@ planned: IntegrationProgress, PlanReady, ItemStarted, ItemCompleted(outcome), Ap
 | Store | Location | Format |
 | --- | --- | --- |
 | Config | platform config dir | TOML |
-| Receipts journal | platform data dir `receipts/` | append-only JSONL per receipt, intent before effect |
+| Receipts journal | platform data dir `receipts/` | per apply, the plan with each item's frozen tree stored first (trees in `kipple.frozen-tree` v1, about 40 bytes an entry, D-063), then an append-only journal, intent before effect (format: M3b) |
 | Packs | data dir `packs/<id>/<version>/` | exact manifest bytes |
 | Lock and grants | data dir `packs.lock` | TOML with digests, sources and grants |
 | Scan cache | platform cache dir | versioned binary, safe to delete |

@@ -125,8 +125,10 @@ When a tool cannot enumerate targets up front, the review screen shows the plan 
 
 ## 7. Journal and partial outcomes
 
-- The intent is journalled before each mutation, and the outcome after.
-- A crash between the two leaves an `indeterminate` entry, which is reconciled on the next start.
+- The plan, with every item's frozen tree, is stored durably before anything runs. Then each item's intent is made durable before its first mutation, and its outcome is recorded after. One intent per item names every entry it may change, because it names the item's stored tree and what revalidation left of it; an intent per entry would add nothing but a sync per file (D-063).
+- A crash between the two leaves the item `indeterminate`. On the next start reconciliation compares a fresh freeze with the stored tree and records what it finds (unchanged, partly gone, gone) as evidence. It never counts a gone entry as removed by kipple, since something else may have removed it, and it never runs anything again. For a trash item it looks at the destination journalled with the intent, which recovers the restore handle.
+- An item is `done` only when every entry the user reviewed was removed. Entries dropped at revalidation leave it `partial` (or `skipped` when none is left), each counted under its reason.
+- A journal write that fails stops the apply: an item whose intent wasn't recorded isn't run, and nothing after it is.
 - Cancellation stops scheduling new work. Items already done stay done.
 - A receipt never reports success for everything when some items failed, were skipped or were cancelled.
 
@@ -176,6 +178,7 @@ Required failure scenarios:
 
 ## 11. Known residual risks (documented, not hidden)
 
+- Removed bytes are an estimate: what each removed file allocated when it had a single name. APFS clones and btrfs and XFS reflinks share storage that removing one name doesn't free, so the figure is an upper bound. Only the count of removed names is confirmed.
 - A process running as the same user and actively racing kipple can still win some races. We confine and revalidate, but we don't promise atomic compare-and-delete.
 - Upstream tools change their layouts without notice. Integrations fail closed on unfamiliar versions, which can mean less cleanup right after a tool update.
 - Activity is a snapshot taken during the scan (D-050). A program can start using an artifact after it. M3's executor must check activity again before acting.
