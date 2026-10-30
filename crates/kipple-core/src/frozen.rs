@@ -34,6 +34,11 @@ pub use codec::{DecodeError, NameCodec};
 ///
 /// Never empty, `.` or `..`, and holds no separator and no NUL, so joining components
 /// can't climb out of a directory or name two levels at once.
+///
+/// It may hold `:`, a valid name on Unix. On Windows an NT-relative open of `a:b` names
+/// the stream `b` of `a`, not an entry, so the platform keeps such names out: its
+/// [`NameCodec`] refuses one when decoding, and its freezer never yields one (NTFS and
+/// `ReFS` don't allow `:` in a name).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Component(OsString);
 

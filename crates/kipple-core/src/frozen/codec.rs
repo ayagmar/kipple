@@ -38,7 +38,9 @@ pub trait NameCodec: std::fmt::Debug {
     /// The bytes that store `name`.
     fn encode(&self, name: &OsStr) -> Vec<u8>;
 
-    /// The name `bytes` stores, if they store one.
+    /// The name `bytes` stores, if they store one name on this OS. On Windows that
+    /// refuses a name holding `:`, which an NT-relative open reads as a stream of
+    /// another entry ([`Component`]).
     fn decode(&self, bytes: &[u8]) -> Option<OsString>;
 }
 

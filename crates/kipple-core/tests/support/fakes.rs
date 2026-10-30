@@ -22,7 +22,8 @@ use kipple_core::{
     RestoreRequest, SlotState, TrashBackend, TrashDir, TrashOp, TrashSlot, Trashed,
 };
 
-/// Stores names as the OS does: bytes on Unix, UTF-16 code units on Windows.
+/// Stores names as the OS does: bytes on Unix, UTF-16 code units on Windows, where a
+/// name holding `:` is refused as `NameCodec` requires.
 #[derive(Debug)]
 pub(crate) struct TestCodec;
 
@@ -55,6 +56,9 @@ impl NameCodec for TestCodec {
             .chunks_exact(2)
             .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
             .collect();
+        if wide.contains(&u16::from(b':')) {
+            return None;
+        }
         Some(OsString::from_wide(&wide))
     }
 }
