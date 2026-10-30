@@ -163,6 +163,17 @@ impl Dir {
         })
     }
 
+    /// Creates the directory `name` in this one, for its owner only (mode 0700). Fails if
+    /// anything has that name.
+    #[expect(unsafe_code, reason = "libc's mkdirat is a raw call")]
+    pub(crate) fn create_dir(&self, name: &Name) -> io::Result<()> {
+        // SAFETY: the descriptor is open and `name` is NUL-terminated.
+        if unsafe { libc::mkdirat(self.0.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
     /// Opens the file `name` in this one with `flags`, never through a link, and never
     /// left open across an `exec`. A file it creates is for its owner only (mode 0600).
     #[expect(unsafe_code, reason = "libc's openat is a raw call")]

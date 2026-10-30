@@ -16,6 +16,10 @@ use kipple_core::{
     Trashed, Volume,
 };
 
+mod home;
+
+pub(super) use home::{forget_unmoved, prepare_home};
+
 use super::ConfinedTrash;
 use super::verify::verify;
 use crate::executor::sys::{self, Dir, Name, no_replace};
@@ -74,8 +78,20 @@ struct Move<'dirs> {
     into: &'dirs Name,
 }
 
+/// Whether `anchor`'s item has a trash on its file system: one there now, or the home
+/// trash that [`prepare_home`] would create on it.
 pub(super) fn available(trash: &ConfinedTrash, anchor: &Anchor) -> Result<(), ApplyError> {
-    locate(trash, anchor).map(|_| ())
+    match locate(trash, anchor) {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            let volume = reached(anchor)?.volume;
+            if home::creatable(trash, volume) {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        }
+    }
 }
 
 /// The slot `op` will move to: its name and a tag from the digest of what it moves, in
