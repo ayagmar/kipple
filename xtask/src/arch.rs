@@ -245,45 +245,183 @@ struct Arm {
     text: bool,
 }
 
-/// Each match arm of `source` that names a type, outside its `#[cfg(test)]` module. A
-/// value on the line after `=> {` or `=> (` counts as the arm's.
+/// Each match arm of `source` that names a type, outside its inline `#[cfg(test)]`
+/// modules.
 fn match_arms(source: &str) -> Vec<Arm> {
     let lines: Vec<&str> = source.lines().collect();
     let mut arms = Vec::new();
-    for (index, line) in lines.iter().enumerate() {
-        let code = line.trim();
-        if code == "#[cfg(test)]"
-            && lines
-                .get(index + 1)
-                .is_some_and(|next| next.trim().starts_with("mod tests {"))
-        {
-            break;
-        }
-        if code.starts_with("//") {
+    let mut index = 0;
+    while index < lines.len() {
+        if let Some(open) = test_module(&lines, index) {
+            index = block_end(&lines, open) + 1;
             continue;
         }
-        let Some((pattern, value)) = code.split_once("=>") else {
-            continue;
-        };
-        let value = value.trim();
-        let value = if matches!(value, "" | "{" | "(") {
-            lines.get(index + 1).map_or("", |next| next.trim())
-        } else {
-            value
-        };
-        let text = ["\"", "r\"", "(\"", "format!("]
-            .iter()
-            .any(|start| value.starts_with(start));
-        let types = pattern_types(pattern);
-        if !types.is_empty() {
-            arms.push(Arm {
-                line: index + 1,
-                types,
-                text,
-            });
-        }
+        arms.extend(arm(&lines, index));
+        index += 1;
     }
     arms
+}
+
+/// The line that opens an inline module, if line `index` is a `#[cfg(test)]` before one.
+fn test_module(lines: &[&str], index: usize) -> Option<usize> {
+    let rest = lines
+        .get(index)?
+        .trim()
+        .strip_prefix("#[cfg(test)]")?
+        .trim();
+    let (open, item) = if rest.is_empty() {
+        (index + 1, lines.get(index + 1)?.trim())
+    } else {
+        (index, rest)
+    };
+    (item.starts_with("mod ") && item.ends_with('{')).then_some(open)
+}
+
+/// The line on which the block that opens on line `open` closes, by brace depth outside
+/// strings, characters and comments; the last line if it never closes.
+fn block_end(lines: &[&str], open: usize) -> usize {
+    let text = lines.get(open..).unwrap_or_default().join("\n");
+    let mut chars = text.char_indices().peekable();
+    let mut depth = 0_usize;
+    while let Some((at, c)) = chars.next() {
+        match c {
+            '"' => skip_string(&mut chars),
+            'r' => skip_raw_string(&mut chars),
+            '\'' => skip_char(&mut chars),
+            '/' => skip_comment(&mut chars),
+            '{' => depth += 1,
+            '}' if depth <= 1 => {
+                let before = text.get(..at).unwrap_or_default();
+                return open + before.matches('\n').count();
+            }
+            '}' => depth -= 1,
+            _ => {}
+        }
+    }
+    lines.len().saturating_sub(1)
+}
+
+type Chars<'a> = std::iter::Peekable<std::str::CharIndices<'a>>;
+
+/// Skips the rest of a string after its opening `"`.
+fn skip_string(chars: &mut Chars<'_>) {
+    while let Some((_, c)) = chars.next() {
+        match c {
+            '\\' => {
+                chars.next();
+            }
+            '"' => return,
+            _ => {}
+        }
+    }
+}
+
+/// Skips a raw string after its `r`, if one starts there: `r"…"` or `r#"…"#`.
+fn skip_raw_string(chars: &mut Chars<'_>) {
+    let mut hashes = 0;
+    while chars.next_if(|&(_, c)| c == '#').is_some() {
+        hashes += 1;
+    }
+    if chars.next_if(|&(_, c)| c == '"').is_none() {
+        return;
+    }
+    while let Some((_, c)) = chars.next() {
+        if c == '"' && (0..hashes).all(|_| chars.next_if(|&(_, next)| next == '#').is_some()) {
+            return;
+        }
+    }
+}
+
+/// Skips a character literal after its opening `'`, if one starts there rather than a
+/// lifetime.
+fn skip_char(chars: &mut Chars<'_>) {
+    let mut ahead = chars.clone();
+    match ahead.next() {
+        Some((_, '\\')) => {
+            chars.nth(1);
+            while chars.next().is_some_and(|(_, c)| c != '\'') {}
+        }
+        Some(_) if ahead.next().is_some_and(|(_, c)| c == '\'') => *chars = ahead,
+        _ => {}
+    }
+}
+
+/// Skips a comment after its first `/`, if one starts there.
+fn skip_comment(chars: &mut Chars<'_>) {
+    if chars.next_if(|&(_, c)| c == '/').is_some() {
+        while chars.next_if(|&(_, c)| c != '\n').is_some() {}
+    } else if chars.next_if(|&(_, c)| c == '*').is_some() {
+        let mut star = false;
+        for (_, c) in chars.by_ref() {
+            if star && c == '/' {
+                return;
+            }
+            star = c == '*';
+        }
+    }
+}
+
+/// The match arm on line `index`, if it has one whose pattern names a type. Its value
+/// runs on into the next two lines, for one that starts on the line after `=> {`.
+fn arm(lines: &[&str], index: usize) -> Option<Arm> {
+    let code = lines.get(index)?.trim();
+    if code.starts_with("//") {
+        return None;
+    }
+    let (pattern, value) = code.split_once("=>")?;
+    let types = pattern_types(pattern);
+    if types.is_empty() {
+        return None;
+    }
+    let following = lines.iter().skip(index + 1).take(2).copied();
+    let value: Vec<&str> = std::iter::once(value).chain(following).collect();
+    Some(Arm {
+        line: index + 1,
+        types,
+        text: is_text(&value.join(" ")),
+    })
+}
+
+/// Whether an arm's value is text: a string literal or a `format!`, also behind a block,
+/// a `return`, a call such as `Span::styled(` or `Some(`, or `write!(f, `.
+fn is_text(value: &str) -> bool {
+    let mut rest = value.trim_start();
+    loop {
+        if ["\"", "r\"", "r#\"", "format!("]
+            .iter()
+            .any(|start| rest.starts_with(start))
+        {
+            return true;
+        }
+        let inner = rest
+            .strip_prefix(['{', '('])
+            .or_else(|| rest.strip_prefix("return "))
+            .or_else(|| written(rest))
+            .or_else(|| call_arguments(rest));
+        let Some(inner) = inner else {
+            return false;
+        };
+        rest = inner.trim_start();
+    }
+}
+
+/// What `write!` or `writeln!` at the start of `code` writes: its arguments after the
+/// first.
+fn written(code: &str) -> Option<&str> {
+    let arguments = ["write!(", "writeln!("]
+        .iter()
+        .find_map(|start| code.strip_prefix(start))?;
+    Some(arguments.split_once(',').map_or("", |(_, rest)| rest))
+}
+
+/// The arguments of a call to a function or variant named by a path at the start of
+/// `code`, as in `Line::from(` or `Some(`.
+fn call_arguments(code: &str) -> Option<&str> {
+    let (callee, arguments) = code.split_once('(')?;
+    callee
+        .split("::")
+        .all(|part| !part.is_empty() && part.chars().all(|c| c.is_alphanumeric() || c == '_'))
+        .then_some(arguments)
 }
 
 /// The types a pattern names as `Type::Variant`, without `Self`.
@@ -506,6 +644,40 @@ mod tests {
         assert!(violations[0].contains("more than one frontend module"));
     }
 
+    // Catches wording after an inline test module passing: only the module's own body is
+    // test code, even when it holds braces in strings, characters and comments.
+    #[test]
+    fn wording_after_a_test_module_fails() {
+        let violations = wording_violations(&binary(
+            "crates/kipple/src/tui/ui.rs",
+            "#[cfg(test)]\nmod tests {\n    fn f() {\n        let _ = (\"}\", '}', r#\"}\"#, ('\\'','{')); // }\n        /* } */\n    }\n    Bucket::Safe => \"Safe\",\n}\n\nmatch bucket {\n    Bucket::Safe => \"Wrong\",\n}\n",
+        ));
+        assert_eq!(violations.len(), 1, "{violations:?}");
+        assert!(
+            violations[0].starts_with("crates/kipple/src/tui/ui.rs:11: words `Bucket`"),
+            "{violations:?}"
+        );
+    }
+
+    // Catches wording a frontend builds as a span, a line, a `String` or a `write!`, or
+    // returns from a block, passing because the arm's value doesn't start with a literal.
+    #[test]
+    fn text_behind_a_call_or_a_return_counts() {
+        let violations = wording_violations(&binary(
+            "crates/kipple/src/tui/ui/tree.rs",
+            "match shelf {\n    Shelf::SAFE => Span::styled(\"Safe to clean\", s),\n    Bucket::Review => { return \"Review\"; }\n    Bucket::Protected => {\n        return Line::from(\"Protected\");\n    }\n    Lens::Agents => Text::styled(\n        \"Agents\",\n        s,\n    ),\n    Lens::Dev => String::from(\"Dev\"),\n    Lens::System => write!(f, \"System\"),\n    Lens::Other => writeln!(f, \"Other\"),\n    Lens::Mine => Some(Cow::Borrowed(\"Mine\")),\n    Bucket::Safe => Span::styled(human::standing(Some(b)).title, s),\n    Bucket::Safe => Role::Safe,\n}\n",
+        ));
+        let lines: BTreeSet<u32> = violations
+            .iter()
+            .map(|v| v.split(':').nth(1).unwrap().parse().unwrap())
+            .collect();
+        assert_eq!(
+            lines,
+            BTreeSet::from([2, 3, 4, 7, 11, 12, 13, 14]),
+            "{violations:?}"
+        );
+    }
+
     // Catches the check failing on what isn't wording: an arm to a theme role, a type's
     // own `Self` arms, a non-core enum, the JSON wire names and test code.
     #[test]
@@ -534,8 +706,12 @@ mod tests {
             "crates/kipple/src/tui/ui/titles.rs",
             "match shelf {\n    Shelf::SAFE => \"Safe to clean\",\n    Shelf::Measuring => \"Measuring\",\n}\nmatch level {\n    Level::Careful => \"Careful\",\n}\nmatch lens {\n    Lens::Dev => \"Dev\",\n}\n",
         ));
+        files.push(source(
+            "crates/kipple/src/tui/ui/shelf.rs",
+            "match shelf {\n    Shelf::SAFE => Span::styled(\"Safe to clean\", s),\n}\n",
+        ));
         let violations = wording_violations(&files);
-        assert_eq!(violations.len(), 4, "{violations:?}");
+        assert_eq!(violations.len(), 5, "{violations:?}");
         assert!(violations.iter().all(|v| v.contains("which `human` words")));
     }
 
