@@ -20,7 +20,7 @@ Every command here only reads. `kipple --help` lists them all.
 ```sh
 kipple                               # the home screen; a summary when piped
 kipple scan                          # what was found, with the evidence for each
-kipple scan --root ~/code --json     # only this project root, as one JSON envelope
+kipple scan --root ~/code --json     # with ~/code as the only project root, as one JSON envelope
 kipple explain builtin.cargo.target  # what a rule selects, why, and what is lost
 kipple doctor                        # where kipple looks and what it can read
 kipple config show                   # the settings in effect
