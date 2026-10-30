@@ -4,9 +4,11 @@
 //! same name from the same open directory.
 
 use std::ffi::{CStr, CString, OsStr, OsString};
+use std::fs::File;
 use std::io;
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd, RawFd};
 use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
 
 use kipple_core::{EntryKind, FileIdentity, FileSystemClass};
@@ -75,6 +77,15 @@ impl Dir {
         Self::open(libc::AT_FDCWD, &path)
     }
 
+    /// The directory at `path`, through any link on the way, for reading what it is.
+    pub(crate) fn open_followed(path: &Path) -> io::Result<Self> {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY)
+            .open(path)?;
+        Ok(Self(OwnedFd::from(file)))
+    }
+
     /// The directory `name` in this one, without following a link.
     pub(crate) fn open_dir(&self, name: &Name) -> io::Result<Self> {
         Self::open(self.0.as_raw_fd(), name)
@@ -109,7 +120,7 @@ impl Dir {
     /// The names in this directory, without `.` and `..`. Fails rather than return part
     /// of a listing.
     #[expect(unsafe_code, reason = "libc's directory stream calls are raw")]
-    pub(super) fn names(&self) -> io::Result<Vec<OsString>> {
+    pub(crate) fn names(&self) -> io::Result<Vec<OsString>> {
         // SAFETY: duplicating an open descriptor; the copy is owned by the stream below.
         let copy = unsafe { libc::fcntl(self.0.as_raw_fd(), libc::F_DUPFD_CLOEXEC, 0) };
         if copy < 0 {
@@ -162,6 +173,59 @@ impl Dir {
         })
     }
 
+    /// Creates the directory `name` in this one, for its owner only (mode 0700). Fails if
+    /// anything has that name.
+    #[expect(unsafe_code, reason = "libc's mkdirat is a raw call")]
+    pub(crate) fn create_dir(&self, name: &Name) -> io::Result<()> {
+        // SAFETY: the descriptor is open and `name` is NUL-terminated.
+        if unsafe { libc::mkdirat(self.0.as_raw_fd(), name.as_ptr(), 0o700) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Opens the file `name` in this one with `flags`, never through a link, and never
+    /// left open across an `exec`. A file it creates is for its owner only (mode 0600).
+    #[expect(unsafe_code, reason = "libc's openat is a raw call")]
+    pub(crate) fn open_file(&self, name: &Name, flags: libc::c_int) -> io::Result<File> {
+        let flags = flags | libc::O_NOFOLLOW | libc::O_CLOEXEC;
+        // SAFETY: the descriptor is open and `name` is NUL-terminated.
+        let fd = unsafe {
+            libc::openat(
+                self.0.as_raw_fd(),
+                name.as_ptr(),
+                flags,
+                0o600 as libc::c_uint,
+            )
+        };
+        if fd < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // SAFETY: `openat` returned a new descriptor that nothing else owns.
+        Ok(File::from(unsafe { OwnedFd::from_raw_fd(fd) }))
+    }
+
+    /// Makes what changed in this directory durable: the names removed from it, added to
+    /// it or renamed in it. `fsync` on Linux, `F_FULLFSYNC` on macOS, as std's `sync_all`
+    /// does for a file; never a whole-file-system sync.
+    pub(crate) fn sync(&self) -> io::Result<()> {
+        #[cfg(test)]
+        super::faults::sync()?;
+        File::from(self.0.try_clone()?).sync_all()
+    }
+
+    /// Syncs the directory `name` in this one, which must still be the directory with the
+    /// identity `frozen`: one moved away or replaced since can't be synced from here.
+    pub(super) fn sync_named(&self, name: &Name, frozen: FileIdentity) -> io::Result<()> {
+        let dir = self.open_dir(name)?;
+        if dir.seen()?.snapshot.identity != frozen {
+            return Err(io::Error::other(
+                "the directory isn't the one frozen any more",
+            ));
+        }
+        dir.sync()
+    }
+
     /// Its descriptor, for the calls the trash makes relative to it.
     pub(crate) fn fd(&self) -> RawFd {
         self.0.as_raw_fd()
@@ -181,6 +245,56 @@ impl Dir {
         }
         Ok(())
     }
+}
+
+/// Renames `name` in `from` to `into` in `to`, failing if anything is at `into`: the
+/// trash's moves and the run store's one rename.
+#[cfg(target_os = "linux")]
+#[expect(unsafe_code, reason = "libc's renameat2 is a raw call")]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a move between checked directories that never replaces anything"
+)]
+pub(crate) fn no_replace(from: &Dir, name: &Name, to: &Dir, into: &Name) -> io::Result<()> {
+    // SAFETY: both descriptors are open and both names are NUL-terminated.
+    let done = unsafe {
+        libc::renameat2(
+            from.fd(),
+            name.as_ptr(),
+            to.fd(),
+            into.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    if done != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
+}
+
+/// Renames `name` in `from` to `into` in `to`, failing if anything is at `into`: the
+/// trash's moves and the run store's one rename.
+#[cfg(target_os = "macos")]
+#[expect(unsafe_code, reason = "libc's renameatx_np is a raw call")]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a move between checked directories that never replaces anything"
+)]
+pub(crate) fn no_replace(from: &Dir, name: &Name, to: &Dir, into: &Name) -> io::Result<()> {
+    // SAFETY: both descriptors are open and both names are NUL-terminated.
+    let done = unsafe {
+        libc::renameatx_np(
+            from.fd(),
+            name.as_ptr(),
+            to.fd(),
+            into.as_ptr(),
+            libc::RENAME_EXCL,
+        )
+    };
+    if done != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 /// Every name `stream` lists but `.` and `..`.

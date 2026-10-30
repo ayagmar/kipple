@@ -17,6 +17,7 @@ disallowed-methods = [
   # Only kipple-platform links libc and windows-sys, hence `allow-invalid` elsewhere.
   { path = "libc::unlinkat",            reason = "mutation goes through kipple-platform's confined executor", allow-invalid = true },
   { path = "windows_sys::Win32::Storage::FileSystem::SetFileInformationByHandle", reason = "mutation goes through kipple-platform's confined executor", allow-invalid = true },
+  { path = "windows_sys::Wdk::Storage::FileSystem::NtSetInformationFile", reason = "mutation goes through kipple-platform's confined executor", allow-invalid = true },
   { path = "libc::renameat2",           reason = "mutation goes through kipple-platform's confined executor", allow-invalid = true },
   { path = "libc::renameatx_np",        reason = "mutation goes through kipple-platform's confined executor", allow-invalid = true },
   { path = "std::process::Command::new", reason = "native commands go through the platform runner (identity, deadline, env)" },

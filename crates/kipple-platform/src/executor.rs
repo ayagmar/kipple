@@ -26,6 +26,9 @@ pub(crate) mod unix;
 #[cfg(windows)]
 pub(crate) mod windows;
 
+#[cfg(test)]
+pub(crate) mod faults;
+
 use std::io;
 
 use kipple_core::{

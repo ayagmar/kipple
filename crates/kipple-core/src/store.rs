@@ -165,17 +165,17 @@ pub enum StoreRefusal {
 
 /// Where kipple keeps its runs. Implemented by the platform, faked in tests.
 ///
-/// Every write is durable before it returns: on Linux and macOS each file and the
-/// directories its name is in are synced with `fsync` (`F_FULLFSYNC` on macOS); on Windows
-/// files are written through and renamed with `MOVEFILE_WRITE_THROUGH`, with NTFS's
-/// metadata journal standing for the directory sync (D-065).
+/// Every write is durable before it returns: each file and the directories its name is
+/// in are synced, with `fsync` on Linux and macOS (`F_FULLFSYNC` on macOS); on Windows
+/// files are written through and each directory flushed with `FlushFileBuffers` (D-065).
 pub trait RunStore: fmt::Debug + Send + Sync {
     /// Takes the lock for a mutating command, waiting up to [`LOCK_WAIT`] while another
     /// process holds it. Also refuses when the data directory isn't on a supported local
     /// file system.
     ///
     /// # Errors
-    /// [`StoreRefusal::Busy`] when another holds it longer, another refusal when the lock
+    /// [`StoreRefusal::Busy`] when another holds it longer, or when `cancel` ended the
+    /// wait (the caller ends the command as cancelled); another refusal when the lock
     /// can't be taken at all or the store can't be used.
     fn lock(&self, cancel: &CancelToken) -> Result<Locked, StoreRefusal>;
 

@@ -8,6 +8,7 @@
 //! ignored rather than cleared first.
 
 use std::ffi::{OsStr, OsString, c_void};
+use std::fs::File;
 use std::io;
 use std::mem::{offset_of, size_of, size_of_val};
 use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
@@ -22,8 +23,9 @@ use kipple_core::{
 };
 use windows_sys::Wdk::Foundation::OBJECT_ATTRIBUTES;
 use windows_sys::Wdk::Storage::FileSystem::{
-    FILE_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT, FILE_SYNCHRONOUS_IO_NONALERT,
-    FileFsDeviceInformation, NtCreateFile, NtQueryVolumeInformationFile,
+    FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_REPARSE_POINT,
+    FILE_RENAME_INFORMATION, FILE_SYNCHRONOUS_IO_NONALERT, FileFsDeviceInformation,
+    FileRenameInformation, NtCreateFile, NtQueryVolumeInformationFile, NtSetInformationFile,
 };
 use windows_sys::Wdk::System::SystemServices::{FILE_FS_DEVICE_INFORMATION, FILE_REMOTE_DEVICE};
 use windows_sys::Win32::Foundation::{
@@ -31,17 +33,17 @@ use windows_sys::Win32::Foundation::{
     ERROR_USER_MAPPED_FILE, HANDLE, NTSTATUS, RtlNtStatusToDosError, UNICODE_STRING,
 };
 use windows_sys::Win32::Storage::FileSystem::{
-    DELETE, FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS,
+    DELETE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS,
     FILE_ATTRIBUTE_RECALL_ON_OPEN, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO,
     FILE_BASIC_INFO, FILE_DISPOSITION_FLAG_DELETE, FILE_DISPOSITION_FLAG_IGNORE_READONLY_ATTRIBUTE,
     FILE_DISPOSITION_FLAG_POSIX_SEMANTICS, FILE_DISPOSITION_INFO_EX, FILE_FLAG_BACKUP_SEMANTICS,
     FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_EXTD_DIR_INFO, FILE_INFO_BY_HANDLE_CLASS,
     FILE_LIST_DIRECTORY, FILE_NAME_NORMALIZED, FILE_READ_ATTRIBUTES, FILE_SHARE_DELETE,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_TRAVERSE, FileAttributeTagInfo,
-    FileBasicInfo, FileDispositionInfoEx, FileIdExtdDirectoryInfo, FileIdExtdDirectoryRestartInfo,
-    FileStandardInfo, GetFileInformationByHandleEx, GetFinalPathNameByHandleW,
-    GetVolumeInformationByHandleW, MAXIMUM_REPARSE_DATA_BUFFER_SIZE, SYNCHRONIZE,
-    SetFileInformationByHandle, VOLUME_NAME_NONE,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_TRAVERSE, FILE_WRITE_DATA,
+    FileAttributeTagInfo, FileBasicInfo, FileDispositionInfoEx, FileIdExtdDirectoryInfo,
+    FileIdExtdDirectoryRestartInfo, FileStandardInfo, FlushFileBuffers,
+    GetFileInformationByHandleEx, GetFinalPathNameByHandleW, GetVolumeInformationByHandleW,
+    MAXIMUM_REPARSE_DATA_BUFFER_SIZE, SYNCHRONIZE, SetFileInformationByHandle, VOLUME_NAME_NONE,
 };
 use windows_sys::Win32::System::IO::{DeviceIoControl, IO_STATUS_BLOCK};
 use windows_sys::Win32::System::Ioctl::{FILE_DEVICE_NETWORK_FILE_SYSTEM, FSCTL_GET_REPARSE_POINT};
@@ -71,6 +73,10 @@ const DIR_ACCESS: u32 = FILE_LIST_DIRECTORY | FILE_TRAVERSE | FILE_READ_ATTRIBUT
 
 /// What an entry about to be removed is opened for.
 const REMOVE_ACCESS: u32 = DELETE | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
+
+/// What a directory is opened for to flush it: NTFS and `ReFS` flush only a handle that
+/// may write, which for a directory means adding entries to it.
+const FLUSH_ACCESS: u32 = FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE;
 
 /// The name-surrogate bit of a reparse tag: links, junctions and mount points.
 const NAME_SURROGATE: u32 = 0x2000_0000;
@@ -122,6 +128,17 @@ impl Dir {
         Ok(Self(OwnedHandle::from(file)))
     }
 
+    /// The directory at `path`, through any link or junction on the way, for reading what
+    /// it is.
+    pub(crate) fn open_followed(path: &Path) -> io::Result<Self> {
+        let file = std::fs::OpenOptions::new()
+            .access_mode(DIR_ACCESS)
+            .share_mode(SHARE_ALL)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)?;
+        Ok(Self(OwnedHandle::from(file)))
+    }
+
     /// The directory `name` in this one, opened as itself if it is a reparse point.
     pub(crate) fn open_dir(&self, name: &Name) -> io::Result<Self> {
         open_at(self, name, DIR_ACCESS, FILE_DIRECTORY_FILE).map(Self)
@@ -132,13 +149,48 @@ impl Dir {
         seen(&self.0)
     }
 
+    /// Whether this is a plain directory, not a link, junction or other reparse point.
+    /// Read from its basic attributes alone, which every file system gives: FAT has no
+    /// reparse tags to ask for, and refuses the question.
+    pub(crate) fn is_plain(&self) -> io::Result<bool> {
+        let basic: FILE_BASIC_INFO = info(&self.0, FileBasicInfo)?;
+        let attributes = basic.FileAttributes;
+        Ok(attributes & FILE_ATTRIBUTE_DIRECTORY != 0
+            && attributes & FILE_ATTRIBUTE_REPARSE_POINT == 0)
+    }
+
+    /// Creates the directory `name` in this one. It takes this directory's access rules.
+    /// Fails if anything has that name.
+    pub(crate) fn create_dir(&self, name: &Name) -> io::Result<()> {
+        create_at(self, name, DIR_ACCESS, FILE_CREATE, FILE_DIRECTORY_FILE).map(drop)
+    }
+
+    /// Opens the file `name` in this one, as itself, never a directory, for `access`, with
+    /// the create `disposition` and the create `options` (such as `FILE_WRITE_THROUGH`)
+    /// `NtCreateFile` takes. A file it creates takes this directory's access rules.
+    pub(crate) fn open_file(
+        &self,
+        name: &Name,
+        access: u32,
+        disposition: u32,
+        options: u32,
+    ) -> io::Result<File> {
+        let options = options | FILE_NON_DIRECTORY_FILE;
+        create_at(self, name, access | SYNCHRONIZE, disposition, options).map(File::from)
+    }
+
+    /// Its handle, for the calls the run store makes on it.
+    pub(crate) const fn handle(&self) -> &OwnedHandle {
+        &self.0
+    }
+
     /// What `name` in this directory is, read from a handle that opens it as itself.
     pub(crate) fn stat(&self, name: &Name) -> io::Result<Seen> {
         seen(&open_at(self, name, FILE_READ_ATTRIBUTES | SYNCHRONIZE, 0)?)
     }
 
     /// The file system this directory is on.
-    pub(super) fn file_system(&self) -> io::Result<FileSystemClass> {
+    pub(crate) fn file_system(&self) -> io::Result<FileSystemClass> {
         if remote(&self.0)? {
             return Ok(FileSystemClass::Unsupported(Unsupported::Network));
         }
@@ -182,7 +234,7 @@ impl Dir {
         unsafe_code,
         reason = "windows-sys exposes GetFileInformationByHandleEx as a raw call"
     )]
-    pub(super) fn names(&self) -> io::Result<Vec<OsString>> {
+    pub(crate) fn names(&self) -> io::Result<Vec<OsString>> {
         let mut names = Vec::new();
         // `u64`s keep the buffer aligned for the entries.
         let mut buf = vec![0_u64; 8 * 1024];
@@ -212,6 +264,33 @@ impl Dir {
             listed(raw, &mut names)?;
             class = FileIdExtdDirectoryInfo;
         }
+    }
+
+    /// Makes what changed in this directory durable: the names removed from it, added to
+    /// it or renamed in it. The directory is opened again relative to its own handle, for
+    /// writing, and flushed (`FlushFileBuffers`), which commits the volume's metadata log
+    /// on NTFS and `ReFS`; never the whole volume.
+    pub(crate) fn sync(&self) -> io::Result<()> {
+        #[cfg(test)]
+        super::faults::sync()?;
+        flush(&open_at(
+            self,
+            &Name::new(),
+            FLUSH_ACCESS,
+            FILE_DIRECTORY_FILE,
+        )?)
+    }
+
+    /// Syncs the directory `name` in this one, which must still be the directory with the
+    /// identity `frozen`: one moved away or replaced since can't be synced from here.
+    pub(super) fn sync_named(&self, name: &Name, frozen: FileIdentity) -> io::Result<()> {
+        let handle = open_at(self, name, FLUSH_ACCESS, FILE_DIRECTORY_FILE)?;
+        if seen(&handle)?.snapshot.identity != frozen {
+            return Err(io::Error::other(
+                "the directory isn't the one frozen any more",
+            ));
+        }
+        flush(&handle)
     }
 
     /// `name`, opened for removal and read on that handle.
@@ -251,8 +330,20 @@ impl Dir {
 }
 
 /// Opens `name` relative to `dir`, as itself if it is a reparse point.
-#[expect(unsafe_code, reason = "windows-sys exposes NtCreateFile as a raw call")]
 fn open_at(dir: &Dir, name: &Name, access: u32, options: u32) -> io::Result<OwnedHandle> {
+    create_at(dir, name, access, FILE_OPEN, options)
+}
+
+/// Opens or creates `name` relative to `dir` as `disposition` says, as itself if it is a
+/// reparse point.
+#[expect(unsafe_code, reason = "windows-sys exposes NtCreateFile as a raw call")]
+fn create_at(
+    dir: &Dir,
+    name: &Name,
+    access: u32,
+    disposition: u32,
+    options: u32,
+) -> io::Result<OwnedHandle> {
     let length = u16::try_from(name.len() * 2).map_err(|_| io::ErrorKind::InvalidInput)?;
     let object = UNICODE_STRING {
         Length: length,
@@ -280,7 +371,7 @@ fn open_at(dir: &Dir, name: &Name, access: u32, options: u32) -> io::Result<Owne
             ptr::null(),
             0,
             SHARE_ALL,
-            FILE_OPEN,
+            disposition,
             options | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
             ptr::null(),
             0,
@@ -289,6 +380,19 @@ fn open_at(dir: &Dir, name: &Name, access: u32, options: u32) -> io::Result<Owne
     nt(result)?;
     // SAFETY: NtCreateFile succeeded, so `handle` is open and ours.
     Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
+}
+
+/// Writes what `handle` has open, and the metadata it changed, to disk.
+#[expect(
+    unsafe_code,
+    reason = "windows-sys exposes FlushFileBuffers as a raw call"
+)]
+fn flush(handle: &OwnedHandle) -> io::Result<()> {
+    // SAFETY: the handle is open.
+    if unsafe { FlushFileBuffers(handle.as_raw_handle()) } == 0 {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(())
 }
 
 /// Removes the file `handle` has open: its name goes at once, others' open handles
@@ -321,6 +425,49 @@ fn dispose(handle: &OwnedHandle) -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
     Ok(())
+}
+
+/// Renames `name` in `from` to `into` in `to`, failing if anything is at `into`: the run
+/// store's one rename. `name` is opened as itself, relative to `from`, and renamed on that
+/// handle, relative to `to`'s: `NtSetInformationFile(FileRenameInformation)`, which takes
+/// `FileName` relative to `RootDirectory`.
+#[expect(
+    unsafe_code,
+    reason = "windows-sys exposes NtSetInformationFile as a raw call"
+)]
+#[expect(
+    clippy::disallowed_methods,
+    reason = "a rename between checked directories that never replaces anything"
+)]
+pub(crate) fn no_replace(from: &Dir, name: &Name, to: &Dir, into: &Name) -> io::Result<()> {
+    let handle = open_at(from, name, DELETE | SYNCHRONIZE, 0)?;
+    let length = size_of_val(into.as_slice());
+    let bytes = size_of::<FILE_RENAME_INFORMATION>() + length;
+    // `u64`s keep the buffer aligned for the struct; it is zeroed, so `ReplaceIfExists`
+    // is false.
+    let mut buf = vec![0_u64; bytes.div_ceil(size_of::<u64>())];
+    let rename = buf.as_mut_ptr().cast::<FILE_RENAME_INFORMATION>();
+    // SAFETY: `buf` is aligned for the struct and holds it with room for `into` from its
+    // `FileName` on.
+    unsafe {
+        (*rename).RootDirectory = to.0.as_raw_handle();
+        (*rename).FileNameLength = u32::try_from(length).map_err(io::Error::other)?;
+        let to_name = (&raw mut (*rename).FileName).cast::<u16>();
+        ptr::copy_nonoverlapping(into.as_ptr(), to_name, into.len());
+    }
+    let mut status = IO_STATUS_BLOCK::default();
+    // SAFETY: `handle` is open with DELETE access, and `buf` holds the struct the class
+    // names and its name, `bytes` long.
+    let result = unsafe {
+        NtSetInformationFile(
+            handle.as_raw_handle(),
+            &raw mut status,
+            buf.as_ptr().cast::<c_void>(),
+            u32::try_from(bytes).map_err(io::Error::other)?,
+            FileRenameInformation,
+        )
+    };
+    nt(result)
 }
 
 /// An NTSTATUS as a result, its error as the Win32 error it stands for.

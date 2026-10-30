@@ -4,10 +4,8 @@
 
 use std::ffi::{OsStr, OsString};
 use std::fmt::Write as _;
-use std::fs::File;
 use std::io::{self, Write as _};
 use std::mem::MaybeUninit;
-use std::os::fd::{FromRawFd as _, OwnedFd};
 use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -18,9 +16,13 @@ use kipple_core::{
     Trashed, Volume,
 };
 
+mod home;
+
+pub(super) use home::{forget_unmoved, prepare_home};
+
 use super::ConfinedTrash;
 use super::verify::verify;
-use crate::executor::sys::{self, Dir, Name};
+use crate::executor::sys::{self, Dir, Name, no_replace};
 use crate::executor::{Reached, reach};
 
 /// Whether the trash is freedesktop's (Linux): trashed items in `files`, each described
@@ -68,6 +70,21 @@ const RESTORING: Codes = Codes {
     changed: ErrorCode::TrashChanged,
 };
 
+/// Whether a move left the item at its destination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Arrival {
+    /// It is there.
+    Arrived,
+    /// It is where it was, or it can't be told.
+    Stayed,
+}
+
+/// What [`shift`] did: where the item is, and how the move ended.
+struct Shifted {
+    arrival: Arrival,
+    ended: Result<(), ApplyError>,
+}
+
 /// One rename: `name` in `from` to `into` in `to`.
 struct Move<'dirs> {
     from: &'dirs Dir,
@@ -76,8 +93,20 @@ struct Move<'dirs> {
     into: &'dirs Name,
 }
 
+/// Whether `anchor`'s item has a trash on its file system: one there now, or the home
+/// trash that [`prepare_home`] would create on it.
 pub(super) fn available(trash: &ConfinedTrash, anchor: &Anchor) -> Result<(), ApplyError> {
-    locate(trash, anchor).map(|_| ())
+    match locate(trash, anchor) {
+        Ok(_) => Ok(()),
+        Err(error) => {
+            let volume = reached(anchor)?.volume;
+            if home::creatable(trash, volume) {
+                Ok(())
+            } else {
+                Err(error)
+            }
+        }
+    }
 }
 
 /// The slot `op` will move to: its name and a tag from the digest of what it moves, in
@@ -151,16 +180,22 @@ pub(super) fn move_whole(
         to: &opened.files,
         into: &into,
     };
-    match shift(&rename, &top, TRASHING) {
+    let shifted = shift(&rename, &top, TRASHING);
+    match shifted.ended {
         Ok(()) => Ok(Trashed { slot: slot.clone() }),
         // What moved in its place stays recorded, so the trash lists it.
         Err(error) if error.code == ErrorCode::Stranded => {
             Err(error.at(RelPath::new(vec![slot.name.clone()])))
         }
-        Err(error) => {
-            record.undo();
-            Err(error)
-        }
+        // The item is in the trash though the move isn't durable: its record stays, so
+        // the trash lists it and it can be restored.
+        Err(error) if shifted.arrival == Arrival::Arrived => Err(error),
+        Err(error) => match record.undo() {
+            Ok(()) => Err(error),
+            // A record that a power loss could bring back would list an item that never
+            // moved.
+            Err(undo) => Err(ApplyError::io(ErrorCode::Unsynced, undo)),
+        },
     }
 }
 
@@ -216,17 +251,19 @@ pub(super) fn restore(
         to: reached.holder(),
         into: &name,
     };
-    shift(&rename, request.target(), RESTORING).map_err(|error| {
-        if error.code == ErrorCode::Stranded {
-            error.at(anchor.relative.clone())
-        } else {
-            error
-        }
-    })?;
+    shift(&rename, request.target(), RESTORING)
+        .ended
+        .map_err(|error| {
+            if error.code == ErrorCode::Stranded {
+                error.at(anchor.relative.clone())
+            } else {
+                error
+            }
+        })?;
     if let (Some(info), Ok(described)) = (&opened.info, info_name(&slot.name)) {
         // The item is back; a `.trashinfo` left behind would only list it in the trash
         // without anything there.
-        info.unlink(&described, 0).ok();
+        forget(info, &described).ok();
     }
     Ok(())
 }
@@ -467,30 +504,46 @@ fn same(now: &EntrySnapshot, then: &EntrySnapshot) -> bool {
 /// checks what arrived is `expected`. Something else, swapped in between the check and
 /// the rename, is moved back and the move refused; when it can't be moved back, the
 /// error is [`ErrorCode::Stranded`], and the caller says where it is.
-fn shift(rename: &Move<'_>, expected: &EntrySnapshot, codes: Codes) -> Result<(), ApplyError> {
-    let missing = |error: io::Error| {
-        let code = if error.kind() == io::ErrorKind::NotFound {
-            codes.missing
-        } else {
-            ErrorCode::Io
-        };
-        ApplyError::io(code, error)
+///
+/// Once anything moved, both directories are synced before it returns. A sync that
+/// fails makes it [`ErrorCode::Unsynced`]: a power loss could undo the move. However it
+/// ends, it says whether the item arrived.
+fn shift(rename: &Move<'_>, expected: &EntrySnapshot, codes: Codes) -> Shifted {
+    let stayed = |ended| Shifted {
+        arrival: Arrival::Stayed,
+        ended,
     };
-    let now = rename.from.stat(rename.name).map_err(missing)?;
+    let now = match rename.from.stat(rename.name) {
+        Ok(now) => now,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return stayed(Err(ApplyError::io(codes.missing, error)));
+        }
+        Err(error) => return stayed(Err(ApplyError::io(ErrorCode::Io, error))),
+    };
     if !same(&now.snapshot, expected) {
-        return Err(ApplyError::new(codes.changed));
+        return stayed(Err(ApplyError::new(codes.changed)));
     }
-    no_replace(rename.from, rename.name, rename.to, rename.into)
-        .map_err(|error| refused(error, codes))?;
+    if let Err(error) = no_replace(rename.from, rename.name, rename.to, rename.into) {
+        return stayed(Err(refused(error, codes)));
+    }
     let arrived = rename.to.stat(rename.into);
-    if arrived.is_ok_and(|seen| same(&seen.snapshot, expected)) {
-        return Ok(());
-    }
-    // The rename moved what was there by then. Put it back where it was found.
-    match no_replace(rename.to, rename.into, rename.from, rename.name) {
-        Ok(()) => Err(ApplyError::new(codes.changed)),
-        Err(error) => Err(ApplyError::io(ErrorCode::Stranded, error)),
-    }
+    let (arrival, moved) = if arrived.is_ok_and(|seen| same(&seen.snapshot, expected)) {
+        (Arrival::Arrived, Ok(()))
+    } else {
+        // The rename moved what was there by then. Put it back where it was found.
+        let back = match no_replace(rename.to, rename.into, rename.from, rename.name) {
+            Ok(()) => Err(ApplyError::new(codes.changed)),
+            Err(error) => Err(ApplyError::io(ErrorCode::Stranded, error)),
+        };
+        (Arrival::Stayed, back)
+    };
+    let synced = [rename.from, rename.to].map(Dir::sync);
+    let ended = match (moved, synced) {
+        (Err(error), _) if error.code == ErrorCode::Stranded => Err(error),
+        (_, [Err(error), _] | [_, Err(error)]) => Err(ApplyError::io(ErrorCode::Unsynced, error)),
+        (moved, _) => moved,
+    };
+    Shifted { arrival, ended }
 }
 
 /// Why a rename was refused.
@@ -503,54 +556,6 @@ fn refused(error: io::Error, codes: Codes) -> ApplyError {
         _ => ErrorCode::Io,
     };
     ApplyError::io(code, error)
-}
-
-/// Renames `name` in `from` to `into` in `to`, failing if anything is at `into`.
-#[cfg(target_os = "linux")]
-#[expect(unsafe_code, reason = "libc's renameat2 is a raw call")]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the trash's one move, between checked directories, never replacing"
-)]
-fn no_replace(from: &Dir, name: &Name, to: &Dir, into: &Name) -> io::Result<()> {
-    // SAFETY: both descriptors are open and both names are NUL-terminated.
-    let done = unsafe {
-        libc::renameat2(
-            from.fd(),
-            name.as_ptr(),
-            to.fd(),
-            into.as_ptr(),
-            libc::RENAME_NOREPLACE,
-        )
-    };
-    if done != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
-}
-
-/// Renames `name` in `from` to `into` in `to`, failing if anything is at `into`.
-#[cfg(target_os = "macos")]
-#[expect(unsafe_code, reason = "libc's renameatx_np is a raw call")]
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the trash's one move, between checked directories, never replacing"
-)]
-fn no_replace(from: &Dir, name: &Name, to: &Dir, into: &Name) -> io::Result<()> {
-    // SAFETY: both descriptors are open and both names are NUL-terminated.
-    let done = unsafe {
-        libc::renameatx_np(
-            from.fd(),
-            name.as_ptr(),
-            to.fd(),
-            into.as_ptr(),
-            libc::RENAME_EXCL,
-        )
-    };
-    if done != 0 {
-        return Err(io::Error::last_os_error());
-    }
-    Ok(())
 }
 
 /// The name an item gets in the trash: its own, cut to leave room, then `.` and eight hex
@@ -627,7 +632,8 @@ impl<'opened> Record<'opened> {
         let io = |error: io::Error| ApplyError::io(ErrorCode::Io, error);
         let name = info_name(slot).map_err(io)?;
         let contents = trash_info(original, now).map_err(io)?;
-        let mut file = create(info, &name).map_err(|error| {
+        let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL;
+        let mut file = info.open_file(&name, flags).map_err(|error| {
             if error.kind() == io::ErrorKind::AlreadyExists {
                 ApplyError::io(ErrorCode::DestinationExists, error)
             } else {
@@ -637,32 +643,32 @@ impl<'opened> Record<'opened> {
         let record = Self {
             written: Some((info, name)),
         };
-        if let Err(error) = file.write_all(&contents) {
-            record.undo();
+        // Durable before the move, so a crash after it leaves the item listed.
+        let written = file
+            .write_all(&contents)
+            .and_then(|()| file.sync_all())
+            .and_then(|()| info.sync());
+        if let Err(error) = written {
+            record.undo().ok();
             return Err(io(error));
         }
         Ok(record)
     }
 
-    /// Removes the `.trashinfo` written, after a move that didn't happen.
-    fn undo(self) {
-        if let Some((info, name)) = self.written {
-            info.unlink(&name, 0).ok();
+    /// Removes the `.trashinfo` written, after a move that didn't happen, and syncs its
+    /// directory.
+    fn undo(self) -> io::Result<()> {
+        match self.written {
+            Some((info, name)) => forget(info, &name),
+            None => Ok(()),
         }
     }
 }
 
-/// A new file `name` in `dir`, for writing. Fails if anything has that name.
-#[expect(unsafe_code, reason = "libc's openat is a raw call")]
-fn create(dir: &Dir, name: &Name) -> io::Result<File> {
-    let flags = libc::O_WRONLY | libc::O_CREAT | libc::O_EXCL | libc::O_NOFOLLOW | libc::O_CLOEXEC;
-    // SAFETY: the descriptor is open and `name` is NUL-terminated.
-    let fd = unsafe { libc::openat(dir.fd(), name.as_ptr(), flags, 0o600 as libc::c_uint) };
-    if fd < 0 {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: `openat` returned a new descriptor that nothing else owns.
-    Ok(File::from(unsafe { OwnedFd::from_raw_fd(fd) }))
+/// Removes the `.trashinfo` `name` from `info`, durably.
+fn forget(info: &Dir, name: &Name) -> io::Result<()> {
+    info.unlink(name, 0)?;
+    info.sync()
 }
 
 /// A freedesktop `.trashinfo`: the item's absolute path, escaped as a URI path, and when
@@ -709,6 +715,114 @@ fn local_time(now: SystemTime) -> io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A failed sync during a move, on a disposable home trash: what the trash keeps.
+    #[cfg(target_os = "linux")]
+    mod unsynced {
+        use std::fs;
+        use std::sync::Arc;
+
+        use kipple_core::{Clock, Freezer as _, Marks, TrashBackend as _};
+        use tempfile::TempDir;
+
+        use super::*;
+        use crate::ConfinedFs;
+        use crate::executor::faults::{anchor, fail_syncs_after};
+
+        #[derive(Debug)]
+        struct Epoch;
+
+        impl Clock for Epoch {
+            fn now(&self) -> SystemTime {
+                UNIX_EPOCH
+            }
+        }
+
+        /// A root holding `target/a`, a home trash beside it, and the move of `target`.
+        struct Site {
+            temp: TempDir,
+            trash: ConfinedTrash,
+            op: TrashOp,
+        }
+
+        impl Site {
+            fn new() -> Self {
+                let temp = TempDir::new().unwrap();
+                let root = temp.path().join("root");
+                fs::create_dir_all(root.join("target")).unwrap();
+                fs::write(root.join("target/a"), b"a").unwrap();
+                fs::create_dir_all(temp.path().join("Trash/files")).unwrap();
+                fs::create_dir_all(temp.path().join("Trash/info")).unwrap();
+                let anchor = anchor(&root, "target");
+                let tree = ConfinedFs
+                    .freeze(&anchor, &CancelToken::new())
+                    .unwrap()
+                    .tree;
+                let marks = Marks::of(&tree);
+                Self {
+                    trash: ConfinedTrash::new(
+                        Some(temp.path().join("Trash/files")),
+                        Arc::new(Epoch),
+                    ),
+                    op: TrashOp::for_platform_tests(anchor, tree, marks),
+                    temp,
+                }
+            }
+
+            fn at(&self, relative: &str) -> PathBuf {
+                self.temp.path().join(relative)
+            }
+
+            fn record(&self, slot: &TrashSlot) -> PathBuf {
+                let mut name = slot.name.as_os_str().to_owned();
+                name.push(INFO_SUFFIX);
+                self.at("Trash/info").join(name)
+            }
+        }
+
+        /// Catches the `.trashinfo` of an item that reached the trash removed because a
+        /// sync after the rename failed: the item would sit in `files/` where no file
+        /// manager lists or restores it. The move is unsynced, and the record stays.
+        #[test]
+        fn a_moved_item_keeps_its_record_when_a_sync_fails() {
+            let site = Site::new();
+            let slot = site.trash.destination(&site.op).unwrap();
+            // The record's own sync passes; the first sync after the rename fails.
+            let _failing = fail_syncs_after(1);
+
+            let moved = site.trash.move_whole(&site.op, &slot, &CancelToken::new());
+
+            assert_eq!(moved.map_err(|error| error.code), Err(ErrorCode::Unsynced));
+            assert!(
+                fs::symlink_metadata(slot.trash.path.join(slot.name.as_os_str())).is_ok(),
+                "the item is in the trash"
+            );
+            assert!(
+                fs::symlink_metadata(site.record(&slot)).is_ok(),
+                "its record stays"
+            );
+        }
+
+        /// Catches a refused move whose record removal isn't made durable: a power loss
+        /// would bring the record back, listing an item that never moved. When syncing
+        /// `info/` after removing it fails, the move is unsynced, not refused.
+        #[test]
+        fn a_refused_move_whose_record_removal_isnt_synced_is_unsynced() {
+            let site = Site::new();
+            let slot = site.trash.destination(&site.op).unwrap();
+            // Something takes the slot after it was chosen, so the rename refuses.
+            fs::write(slot.trash.path.join(slot.name.as_os_str()), b"taken").unwrap();
+            let _failing = fail_syncs_after(1);
+
+            let moved = site.trash.move_whole(&site.op, &slot, &CancelToken::new());
+
+            assert_eq!(moved.map_err(|error| error.code), Err(ErrorCode::Unsynced));
+            assert!(
+                fs::symlink_metadata(site.at("root/target/a")).is_ok(),
+                "the item stays"
+            );
+        }
+    }
 
     /// Catches a trash name too long for its `.trashinfo`, or a UTF-8 name cut inside a
     /// character, which macOS file systems refuse.

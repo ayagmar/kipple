@@ -4,7 +4,8 @@
 //! reviewed `unsafe` is allowed (see `docs/05-architecture.md`). Everything that differs
 //! by OS lives in its `os` module, and in `executor`'s and `trash`'s own OS modules.
 //! Everything here is read-only except the atomic write of kipple's own config file, the
-//! confined executor ([`ConfinedFs`]), the only code that removes files, and the trash
+//! run store ([`FileRunStore`]), which writes only kipple's own runs, the confined
+//! executor ([`ConfinedFs`]), the only code that removes files, and the trash
 //! ([`ConfinedTrash`]), the only code that moves the user's files.
 
 mod capabilities;
@@ -19,10 +20,10 @@ mod process;
 mod project_search;
 mod roots;
 mod runner;
+mod runs;
 #[cfg(feature = "test-roots")]
 mod test_host;
 mod trash;
-mod unbuilt;
 mod walk;
 
 pub use capabilities::{ToolProbe, probe_tools};
@@ -38,8 +39,8 @@ pub use roots::{
     CONFIG_FILE, KippleDir, KippleDirs, follow_root_links, kipple_dirs, resolve_roots,
     resolve_roots_from,
 };
+pub use runs::FileRunStore;
 pub use trash::ConfinedTrash;
-pub use unbuilt::NoRunStore;
 pub use walk::Walker;
 
 /// The operating system kipple was built for.

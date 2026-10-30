@@ -28,8 +28,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use kipple_core::{
-    Anchor, ApplyError, CancelToken, Clock, EntrySnapshot, ErrorCode, Forgotten, RestoreRequest,
-    SlotState, TrashBackend, TrashOp, TrashSlot, Trashed,
+    Anchor, ApplyError, CancelToken, Clock, EntrySnapshot, Forgotten, RestoreRequest, SlotState,
+    TrashBackend, TrashOp, TrashSlot, Trashed,
 };
 
 /// The platform's [`TrashBackend`]: whole-item moves by handle-relative, no-replace
@@ -88,15 +88,12 @@ impl TrashBackend for ConfinedTrash {
         unix::restore(self, request, cancel)
     }
 
-    /// Not built yet (M3b store card): a missing home trash stays missing, so a trash
-    /// item whose destination needs it skips as unavailable.
     fn prepare_home(&self) -> Result<(), ApplyError> {
-        Err(ApplyError::new(ErrorCode::Unsupported))
+        unix::prepare_home(self)
     }
 
-    /// Not built yet (M3b store card): no record is removed.
-    fn forget_unmoved(&self, _: &TrashSlot, _: &Anchor) -> Result<Forgotten, ApplyError> {
-        Err(ApplyError::new(ErrorCode::Unsupported))
+    fn forget_unmoved(&self, slot: &TrashSlot, original: &Anchor) -> Result<Forgotten, ApplyError> {
+        unix::forget_unmoved(self, slot, original)
     }
 }
 
@@ -140,5 +137,5 @@ impl TrashBackend for ConfinedTrash {
 
 #[cfg(windows)]
 const fn unsupported() -> ApplyError {
-    ApplyError::new(ErrorCode::Unsupported)
+    ApplyError::new(kipple_core::ErrorCode::Unsupported)
 }
