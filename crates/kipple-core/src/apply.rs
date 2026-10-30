@@ -36,6 +36,7 @@ use crate::outcome::{ApplyError, ErrorCode, ItemOutcome, Receipt, ReceiptItem, S
 use crate::plan::{ItemId, Plan, PlanEntry, VerifiedRoot};
 use crate::planner::{Judge, Judged, MutationPorts, Scene, Unjudged, untracked};
 use crate::policy::Verdict;
+use crate::rule::Method;
 use crate::trash::TrashSlot;
 
 /// What to apply.
@@ -243,6 +244,10 @@ impl Run<'_> {
 
     /// Revalidates `entry`, then runs it between its intent and its outcome.
     fn item(&self, entry: &PlanEntry, journal: &mut dyn Journal, events: &mut dyn ItemSink) -> Ran {
+        if entry.method() == Method::Trash {
+            // Its result is read again when the slot is chosen.
+            self.prepare_home().ok();
+        }
         let op = match self.authorize(entry) {
             Ok(op) => op,
             Err(skip) => return Ran::skipped(entry, skip, journal),
@@ -284,17 +289,23 @@ impl Run<'_> {
         Ran { outcome, stop }
     }
 
-    /// The slot `op` will move to, once the home trash was prepared: created when it is
-    /// missing, under the lock, before the first trash intent (pinned 11). A trash that
-    /// can't be prepared leaves the slot to say why.
-    fn destination(&self, op: &TrashOp) -> Result<TrashSlot, ApplyError> {
+    /// Prepares the home trash once, for the first trash item: created when it is
+    /// missing, under the lock, before that item's revalidation, so its activity
+    /// snapshot is still fresh when its intent is written (pinned 4, 11).
+    fn prepare_home(&self) -> Result<(), ApplyError> {
         let trash = self.mutation().trash;
-        let prepared = self
-            .home_trash
+        self.home_trash
             .borrow_mut()
             .get_or_insert_with(|| trash.prepare_home())
-            .clone();
-        trash
+            .clone()
+    }
+
+    /// The slot `op` will move to. A trash that couldn't be prepared leaves the slot to
+    /// say why.
+    fn destination(&self, op: &TrashOp) -> Result<TrashSlot, ApplyError> {
+        let prepared = self.prepare_home();
+        self.mutation()
+            .trash
             .destination(op)
             .map_err(|error| prepared.err().unwrap_or(error))
     }

@@ -138,6 +138,22 @@ fn yes_cleans_safe_deletes_only() {
     );
 }
 
+/// Catches a run whose last record couldn't be written ending as done (D-067): the
+/// item was deleted, but the stored run doesn't say so, so the command exits 1, not 0.
+#[test]
+fn a_failed_last_record_fails_the_command() {
+    let counted = Machine::new(Method::Delete);
+    counted.clean(Consent::Yes, &mut Events::default(), &CancelToken::new());
+    let writes = counted.world.state().writes;
+
+    let machine = Machine::new(Method::Delete);
+    machine.world.state().journal_fails_at = Some(writes - 1);
+    let finished = machine.clean(Consent::Yes, &mut Events::default(), &CancelToken::new());
+    assert_eq!(Machine::statuses(&finished), [Status::Done, Status::Done]);
+    assert_eq!(finished.ending, Ending::Failed);
+    assert_eq!(finished.ending.code(), 1);
+}
+
 /// Catches a prompt that authorizes a plan other than the one shown, or a "no" that
 /// stores or runs anything (pinned 1): yes authorizes exactly the plan shown, by its
 /// digest, trash items included; no runs nothing and exits 3.

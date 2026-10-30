@@ -464,11 +464,12 @@ named! {
     RunState {
         /// Every item ended.
         Complete = "complete",
-        /// Some items have an intent and no outcome, and another kipple holds the lock:
-        /// it is running now.
+        /// Some items have no outcome, and another kipple holds the lock: it is running
+        /// now.
         Running = "running",
-        /// Some items have an intent and no outcome, and nobody holds the lock: a crash
-        /// interrupted it, and the next mutating command reconciles it.
+        /// Some items have no outcome, and nobody holds the lock: a crash or a failed
+        /// record stopped it. The next mutating command reconciles the items it had
+        /// started; the others never ran.
         Interrupted = "interrupted",
         /// It was created and never started.
         NeverStarted = "never-started",
@@ -477,8 +478,8 @@ named! {
     }
 }
 
-/// Every run in `store`, oldest first, read to their headers. A run with pending intents
-/// is `running` while another kipple holds the lock (`held`), else `interrupted`.
+/// Every run in `store`, oldest first, read to their headers. A run with items that have
+/// no outcome is `running` while another kipple holds the lock (`held`), else `interrupted`.
 ///
 /// # Errors
 /// When the runs can't be listed.
@@ -502,7 +503,13 @@ pub fn history(
                 receipt: Receipt::default(),
             },
             RunRead::Read(run) => {
-                let pending = !run.pending().is_empty() || !run.pending_restores().is_empty();
+                let unreached = run
+                    .plan
+                    .items
+                    .iter()
+                    .any(|item| run.state(item.item) == ItemState::NotReached);
+                let pending =
+                    unreached || !run.pending().is_empty() || !run.pending_restores().is_empty();
                 let state = match (pending, held) {
                     (false, _) => RunState::Complete,
                     (true, crate::store::LockState::Held) => RunState::Running,

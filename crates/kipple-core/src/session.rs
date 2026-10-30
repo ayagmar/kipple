@@ -416,6 +416,7 @@ fn execute(
         plan: plan.digest(),
         codec: session.codec,
         restored: Vec::new(),
+        failed: false,
     };
     let mut items = RunEvents {
         run: run.clone(),
@@ -435,8 +436,15 @@ fn execute(
         to,
         cancel,
     );
+    // A record that couldn't be written fails the run even when its item ended: the
+    // stored run doesn't say so, and the next command reconciles it.
+    let ending = if journal.failed {
+        Ending::Failed
+    } else {
+        Ending::of(&receipt)
+    };
     Finished {
-        ending: Ending::of(&receipt),
+        ending,
         run: Some(run),
         receipt,
     }
@@ -766,6 +774,8 @@ struct StoreJournal<'run> {
     codec: &'run dyn NameCodec,
     /// Items this command restored.
     restored: Vec<ItemId>,
+    /// Whether a record couldn't be written.
+    failed: bool,
 }
 
 impl<'run> StoreJournal<'run> {
@@ -779,6 +789,7 @@ impl<'run> StoreJournal<'run> {
             plan: run.plan().digest(),
             codec: session.codec,
             restored: Vec::new(),
+            failed: false,
         }
     }
 }
@@ -805,7 +816,15 @@ impl Journal for StoreJournal<'_> {
 
     fn record(&mut self, record: &Record) -> Result<(), ApplyError> {
         let line = encode_line(record, self.codec);
-        self.at = self.store.append(self.lock, &self.run, self.at, &line)?;
-        Ok(())
+        match self.store.append(self.lock, &self.run, self.at, &line) {
+            Ok(at) => {
+                self.at = at;
+                Ok(())
+            }
+            Err(error) => {
+                self.failed = true;
+                Err(error)
+            }
+        }
     }
 }
