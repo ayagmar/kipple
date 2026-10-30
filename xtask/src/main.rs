@@ -10,6 +10,7 @@ mod compat;
 mod demo;
 mod docs_cmds;
 mod gen_docs;
+mod style;
 
 // The demo tree, built from the same fixtures as the integration tests.
 #[path = "../../crates/kipple-adapters/tests/fixtures/node/bun_v1_4_2.rs"]
@@ -72,6 +73,8 @@ enum Task {
     },
     /// Fail on a `kipple` command in a shell block of the docs that the CLI doesn't accept.
     CheckDocs,
+    /// Fail on the style rules clippy can't check, such as a type's one-letter lifetime.
+    CheckStyle,
     /// Build a benchmark reference tree. The references are 100000 and 1000000 entries.
     BenchTree {
         /// Where to build it. Must be missing or empty.
@@ -116,6 +119,7 @@ fn main() -> Result<()> {
         Task::CheckArch => arch::run(root),
         Task::CheckCompat { refresh } => compat::run(root, refresh),
         Task::CheckDocs => docs_cmds::run(root),
+        Task::CheckStyle => style::run(root),
         Task::BenchTree { dir, entries } => bench_tree::run(&dir, entries),
         Task::BenchTui { tree } => bench_tui::run(root, tree.as_deref()),
         Task::TestNative => {

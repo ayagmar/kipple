@@ -316,12 +316,12 @@ pub fn home(cli: &Cli, env: &Environment, stderr: &mut dyn Write) -> ExitCode {
 /// What every command runs with: the built-in rules, the environment snapshot, the
 /// config file `--config` names, if any, and how human output is drawn.
 #[derive(Debug, Clone, Copy)]
-struct Host<'a> {
-    builtin: &'a Builtin,
-    env: &'a Environment,
-    config: Option<&'a Path>,
+struct Host<'cli> {
+    builtin: &'cli Builtin,
+    env: &'cli Environment,
+    config: Option<&'cli Path>,
     /// `--theme`.
-    theme: Option<&'a str>,
+    theme: Option<&'cli str>,
     /// Whether human output is in colour, and in how many.
     colours: Colours,
 }

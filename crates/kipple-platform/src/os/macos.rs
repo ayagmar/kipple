@@ -521,9 +521,9 @@ fn sysctl(mib: &mut [c_int], buf: &mut [u8]) -> io::Result<usize> {
 
 /// The arguments and environment entries of a `KERN_PROCARGS2` record.
 #[derive(Debug)]
-struct ProcArgs<'a> {
-    args: Vec<&'a [u8]>,
-    env: Vec<&'a [u8]>,
+struct ProcArgs<'buf> {
+    args: Vec<&'buf [u8]>,
+    env: Vec<&'buf [u8]>,
 }
 
 /// After the argument count and the executable path come NUL padding, then the

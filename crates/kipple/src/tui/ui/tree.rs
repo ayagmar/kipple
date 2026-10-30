@@ -43,8 +43,8 @@ pub(crate) const fn offset(scroll: usize, at: usize, rows: usize, len: usize) ->
 }
 
 /// The visible tree and the cursor's line in it.
-pub(super) struct Tree<'a> {
-    lines: &'a [Line],
+pub(super) struct Tree<'lines> {
+    lines: &'lines [Line],
     at: usize,
     /// The projects whose lines show their path from home.
     clashing: BTreeSet<ProjectId>,

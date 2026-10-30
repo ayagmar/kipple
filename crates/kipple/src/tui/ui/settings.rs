@@ -42,8 +42,8 @@ pub(super) fn render(app: &App, look: Look<'_>, area: Rect, frame: &mut Frame<'_
 }
 
 /// The settings panel's lines as they are built, and which one the cursor is on.
-struct PanelLines<'a> {
-    look: Look<'a>,
+struct PanelLines<'theme> {
+    look: Look<'theme>,
     focus: Option<Item>,
     lines: Vec<Text<'static>>,
     at: usize,

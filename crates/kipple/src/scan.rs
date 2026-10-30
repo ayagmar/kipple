@@ -66,9 +66,9 @@ pub(crate) fn run(
 /// What the event stream needs to write each event: each finding's verdict comes from the
 /// policy, with the rule and path its `FindingAdded` record carried.
 #[derive(Debug)]
-pub(crate) struct Stream<'a> {
-    pub(crate) lenses: &'a BTreeMap<IntegrationId, Lens>,
-    pub(crate) policy: &'a Policy,
+pub(crate) struct Stream<'policy> {
+    pub(crate) lenses: &'policy BTreeMap<IntegrationId, Lens>,
+    pub(crate) policy: &'policy Policy,
     pub(crate) found: HashMap<FindingId, (RuleId, PathBuf)>,
 }
 

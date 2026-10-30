@@ -68,9 +68,9 @@ fn markers() -> Vec<OsString> {
 }
 
 #[derive(Default)]
-struct Options<'a> {
-    skip: &'a [PathBuf],
-    exclude: &'a [HeldPath],
+struct Options<'roots> {
+    skip: &'roots [PathBuf],
+    exclude: &'roots [HeldPath],
     limits: SearchLimits,
 }
 

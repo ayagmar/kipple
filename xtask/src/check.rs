@@ -6,7 +6,7 @@ use std::path::Path;
 use anyhow::{Result, bail};
 use clap::ValueEnum;
 
-use crate::{arch, cmd, compat, docs_cmds, gen_docs};
+use crate::{arch, cmd, compat, docs_cmds, gen_docs, style};
 
 /// Gate steps that may be left out because CI runs them as their own job.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
@@ -113,6 +113,8 @@ pub(crate) fn run(root: &Path, skip: &[Skip]) -> Result<()> {
     compat::run(root, false)?;
     announce("documented commands")?;
     docs_cmds::run(root)?;
+    announce("style")?;
+    style::run(root)?;
     announce("all checks passed")
 }
 

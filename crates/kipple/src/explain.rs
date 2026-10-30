@@ -108,9 +108,9 @@ fn selects(selector: &Selector) -> String {
 
 /// A scan's report and the policy its findings are judged by.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Judged<'a> {
-    pub(crate) report: &'a ScanReport,
-    pub(crate) policy: &'a Policy,
+pub(crate) struct Judged<'report> {
+    pub(crate) report: &'report ScanReport,
+    pub(crate) policy: &'report Policy,
 }
 
 /// Writes what was found at `path`, or that nothing was.

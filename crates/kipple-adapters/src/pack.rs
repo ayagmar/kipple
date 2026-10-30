@@ -38,11 +38,11 @@ pub enum Origin {
 
 /// What a pack may reference: this engine's version and its integrations.
 #[derive(Debug, Clone, Copy)]
-pub struct Catalog<'a> {
+pub struct Catalog<'engine> {
     /// The engine version a pack's `kipple` requirement is checked against.
-    pub engine: &'a semver::Version,
+    pub engine: &'engine semver::Version,
     /// The built-in integrations, with the selectors they publish.
-    pub integrations: &'a [IntegrationDescriptor],
+    pub integrations: &'engine [IntegrationDescriptor],
 }
 
 /// A validation error's stable code.

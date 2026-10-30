@@ -15,9 +15,9 @@ pub(super) type Value<'i> = Spanned<DeValue<'i>>;
 
 /// Collects errors for one document, with line and column computed from byte spans.
 #[derive(Debug)]
-pub(super) struct Checker<'a> {
-    file: &'a str,
-    text: &'a str,
+pub(super) struct Checker<'doc> {
+    file: &'doc str,
+    text: &'doc str,
     errors: Vec<PackError>,
 }
 

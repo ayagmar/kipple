@@ -96,12 +96,12 @@ fn caseless(text: &str) -> impl Iterator<Item = char> + '_ {
 
 /// What a line sorts by.
 #[derive(Debug, Clone, Copy)]
-struct Key<'a> {
+struct Key<'rows> {
     bytes: u64,
     /// How long ago it last changed; for a project, its oldest finding's.
     age: Option<Duration>,
-    name: &'a str,
-    path: &'a Path,
+    name: &'rows str,
+    path: &'rows Path,
 }
 
 impl<'a> Key<'a> {
@@ -124,10 +124,10 @@ fn age(row: &Row) -> Option<Duration> {
 }
 
 /// One line of a group: a finding, or a project with the findings under its line.
-struct Entry<'a> {
+struct Entry<'rows> {
     node: Node,
-    key: Key<'a>,
-    rows: Vec<&'a Row>,
+    key: Key<'rows>,
+    rows: Vec<&'rows Row>,
 }
 
 impl App {

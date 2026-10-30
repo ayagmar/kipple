@@ -76,12 +76,12 @@ impl Sizer for Walker {
 
 /// What every task of one walk shares.
 #[derive(Clone, Copy)]
-struct Walk<'s> {
+struct Walk<'scan> {
     /// The item's file system.
     device: Option<u64>,
     device_of: DeviceOf,
-    tally: &'s Tally,
-    cancel: &'s CancelToken,
+    tally: &'scan Tally,
+    cancel: &'scan CancelToken,
 }
 
 /// Sizes the entries of `dir` and schedules each subdirectory on the same device as its

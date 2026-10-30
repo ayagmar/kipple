@@ -152,13 +152,13 @@ pub trait Integration: fmt::Debug + Send + Sync {
 
 /// The read-only view an integration gets during a scan.
 #[derive(Debug)]
-pub struct ScanContext<'a> {
-    pub(crate) roots: &'a [ResolvedRoot],
-    pub(crate) rules: &'a [Rule],
-    pub(crate) fs: &'a dyn FsProbe,
-    pub(crate) cancel: &'a CancelToken,
-    pub(crate) plan: &'a WalkPlan,
-    pub(crate) walks: &'a Walks,
+pub struct ScanContext<'scan> {
+    pub(crate) roots: &'scan [ResolvedRoot],
+    pub(crate) rules: &'scan [Rule],
+    pub(crate) fs: &'scan dyn FsProbe,
+    pub(crate) cancel: &'scan CancelToken,
+    pub(crate) plan: &'scan WalkPlan,
+    pub(crate) walks: &'scan Walks,
     /// The walks this integration used, whose gaps are its omissions.
     pub(crate) walked: RefCell<BTreeMap<PathBuf, Arc<Walk>>>,
 }
@@ -320,11 +320,11 @@ fn keep_nearest(stops: &mut BTreeMap<PathBuf, WalkStop>, found: &[WalkStop]) {
 /// Where an integration reports what it found. Every finding is streamed to the
 /// frontend as it is added, waiting while the stream is full.
 #[derive(Debug)]
-pub struct FindingSink<'a> {
+pub struct FindingSink<'scan> {
     pub(crate) integration: IntegrationId,
-    pub(crate) cx: &'a ScanContext<'a>,
-    pub(crate) events: &'a EventTx,
-    pub(crate) next_id: &'a AtomicU64,
+    pub(crate) cx: &'scan ScanContext<'scan>,
+    pub(crate) events: &'scan EventTx,
+    pub(crate) next_id: &'scan AtomicU64,
     pub(crate) found: Vec<Found>,
     pub(crate) advice: Vec<Advice>,
 }

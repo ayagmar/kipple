@@ -129,9 +129,9 @@ where
 
 /// What a session runs with: the machine, the settings and the appearance, and whether
 /// the first run's questions come before the home screen.
-struct Start<'a> {
-    env: &'a Environment,
-    settings: &'a Settings,
+struct Start<'env> {
+    env: &'env Environment,
+    settings: &'env Settings,
     appearance: Appearance,
     first: bool,
 }
@@ -225,8 +225,8 @@ impl Drop for Restore {
 }
 
 /// The config file the home screen writes, and the settings it last gave.
-struct Store<'e> {
-    env: &'e Environment,
+struct Store<'env> {
+    env: &'env Environment,
     catalog: config::Catalog,
     settings: Settings,
 }
@@ -267,10 +267,10 @@ struct Scan<'scope> {
 }
 
 /// One home screen session: the state, the scan feeding it and the terminal drawing it.
-struct Screen<'s, 'scope, 'env, B: Backend> {
-    terminal: &'s mut Terminal<B>,
+struct Screen<'ui, 'scope, 'env, B: Backend> {
+    terminal: &'ui mut Terminal<B>,
     glyphs: Glyphs,
-    app: &'s mut App,
+    app: &'ui mut App,
     /// The first run's questions, until they are answered.
     onboarding: Option<Onboarding>,
     store: Store<'env>,

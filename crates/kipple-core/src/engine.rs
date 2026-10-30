@@ -238,15 +238,15 @@ struct Registered {
 
 /// What every integration run of one scan shares.
 #[derive(Debug, Clone, Copy)]
-struct Shared<'a> {
-    roots: &'a Roots,
-    events: &'a EventTx,
-    cancel: &'a CancelToken,
-    next_id: &'a AtomicU64,
-    walks: &'a Walks,
-    repositories: &'a Repositories,
-    processes: &'a Processes,
-    identities: &'a Identities,
+struct Shared<'scan> {
+    roots: &'scan Roots,
+    events: &'scan EventTx,
+    cancel: &'scan CancelToken,
+    next_id: &'scan AtomicU64,
+    walks: &'scan Walks,
+    repositories: &'scan Repositories,
+    processes: &'scan Processes,
+    identities: &'scan Identities,
     home: Option<FileIdentity>,
 }
 
@@ -669,10 +669,10 @@ impl Identities {
 /// The integration whose findings are measured, whether it gave advice, and the roots it
 /// read.
 #[derive(Debug, Clone, Copy)]
-struct Owner<'a> {
-    registered: &'a Registered,
+struct Owner<'engine> {
+    registered: &'engine Registered,
     advised: bool,
-    roots: &'a [ResolvedRoot],
+    roots: &'engine [ResolvedRoot],
 }
 
 impl<'a> Owner<'a> {

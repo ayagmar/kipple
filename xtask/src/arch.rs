@@ -62,15 +62,15 @@ struct Dependency {
 
 /// A Rust source file, with its path relative to the workspace root.
 #[derive(Debug)]
-struct SourceFile {
-    path: PathBuf,
-    contents: String,
+pub(crate) struct SourceFile {
+    pub(crate) path: PathBuf,
+    pub(crate) contents: String,
 }
 
 /// Fails if the workspace breaks a crate boundary.
 pub(crate) fn run(root: &Path) -> Result<()> {
     let mut violations = edge_violations(&load_metadata(root)?.packages);
-    let sources = rust_sources(root)?;
+    let sources = rust_sources(root, &["crates"])?;
     violations.extend(target_os_violations(&sources));
     violations.extend(wording_violations(&sources));
     if violations.is_empty() {
@@ -439,10 +439,10 @@ fn pattern_types(pattern: &str) -> Vec<String> {
         .collect()
 }
 
-/// Every `.rs` file under `crates/`.
-fn rust_sources(root: &Path) -> Result<Vec<SourceFile>> {
+/// Every `.rs` file under the directories `dirs` of the workspace.
+pub(crate) fn rust_sources(root: &Path, dirs: &[&str]) -> Result<Vec<SourceFile>> {
     let mut files = Vec::new();
-    let mut pending = vec![root.join("crates")];
+    let mut pending: Vec<PathBuf> = dirs.iter().map(|dir| root.join(dir)).collect();
     while let Some(dir) = pending.pop() {
         let entries =
             fs::read_dir(&dir).with_context(|| format!("could not read {}", dir.display()))?;
@@ -581,7 +581,7 @@ mod tests {
 
     #[test]
     fn source_discovery_finds_every_crate_relative_to_the_workspace_root() {
-        let files = rust_sources(Path::new(crate::WORKSPACE_ROOT)).unwrap();
+        let files = rust_sources(Path::new(crate::WORKSPACE_ROOT), &["crates"]).unwrap();
         let has = |path: &str| files.iter().any(|f| f.path == Path::new(path));
         assert!(has("crates/kipple-core/src/lib.rs"));
         assert!(has("crates/kipple/src/main.rs"));
@@ -699,7 +699,7 @@ mod tests {
     // the rule: the real sources pass, and a `shelf_title` put back in the tree fails.
     #[test]
     fn the_workspace_passes_and_fails_with_shelf_title_put_back() {
-        let mut files = rust_sources(Path::new(crate::WORKSPACE_ROOT)).unwrap();
+        let mut files = rust_sources(Path::new(crate::WORKSPACE_ROOT), &["crates"]).unwrap();
         assert_eq!(wording_violations(&files), Vec::<String>::new());
 
         files.push(source(

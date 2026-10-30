@@ -455,16 +455,16 @@ fn option_value(piece: &str) -> &str {
 
 /// How the paths a process shows relate to kipple's.
 #[derive(Debug, Clone, Copy)]
-enum Frame<'p> {
+enum Frame<'proc> {
     /// They are kipple's own: the same mount namespace and root, or an OS without either.
     Ours,
     /// Kipple's mount namespace with another root, which kipple names this. The kernel
     /// shows the executable, working directory and mapped files as kipple names them;
     /// what the process named itself is below its root.
-    Chroot(&'p Path),
+    Chroot(&'proc Path),
     /// Another mount namespace, whose files kipple reaches through the path given, when
     /// that and the identity of its root directory could be read.
-    Elsewhere(Option<(&'p Path, FileIdentity)>),
+    Elsewhere(Option<(&'proc Path, FileIdentity)>),
     /// The process refused its mount namespace or root.
     Refused,
     /// Kipple's own mount namespace couldn't be read.
@@ -660,9 +660,9 @@ enum Step {
 }
 
 /// Paths of one process in another mount namespace, resolved through its root directory.
-struct Walk<'a> {
-    fs: &'a dyn FsProbe,
-    entry: &'a Path,
+struct Walk<'probe> {
+    fs: &'probe dyn FsProbe,
+    entry: &'probe Path,
     root: FileIdentity,
     seen: HashMap<PathBuf, Step>,
 }
@@ -815,22 +815,22 @@ const fn running(process: &ProcessRecord) -> bool {
 
 /// What one finding's activity is judged on.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Subject<'a> {
+pub(crate) struct Subject<'finding> {
     /// Its path.
-    pub(crate) path: &'a Path,
+    pub(crate) path: &'finding Path,
     /// The identities of it and every directory above it.
-    pub(crate) lineage: &'a Lineage,
+    pub(crate) lineage: &'finding Lineage,
     /// What its integration says can show it in use.
     pub(crate) evidence: ActivityEvidence,
     /// The directory of its project: a runtime working there or below uses it.
-    pub(crate) project: &'a Path,
+    pub(crate) project: &'finding Path,
 }
 
 /// What the scan knows besides the processes.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Scope<'a> {
-    pub(crate) fs: &'a dyn FsProbe,
-    pub(crate) identities: &'a Identities,
+pub(crate) struct Scope<'scan> {
+    pub(crate) fs: &'scan dyn FsProbe,
+    pub(crate) identities: &'scan Identities,
     /// The identity of the home directory, unless it is unknown or `/`.
     pub(crate) home: Option<FileIdentity>,
 }

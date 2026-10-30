@@ -1,6 +1,6 @@
 # Engineering standards
 
-Status: steps 1–13, §2–§3 and §8 are in place and enforced. The `native` nextest profile and `cargo xtask test-native` (§5) exist since M1, and so does `cargo xtask verify-demo`, the end-to-end check of the CLI with the `test-roots` feature, which CI runs beside the gate on all three OSes. Later steps are planned.
+Status: steps 1–14, §2–§4 and §8 are in place and enforced. The `native` nextest profile and `cargo xtask test-native` (§5) exist since M1, and so does `cargo xtask verify-demo`, the end-to-end check of the CLI with the `test-roots` feature, which CI runs beside the gate on all three OSes. Later steps are planned.
 
 ## 1. One gate
 
@@ -20,8 +20,9 @@ Status: steps 1–13, §2–§3 and §8 are in place and enforced. The `native` 
 | 10 | Generated JSON schemas and support matrix | part of `gen-docs --check` | M1 |
 | 11 | Compatibility with the last release | `cargo xtask check-compat` (see §8) | M2 |
 | 12 | Documented commands | `cargo xtask check-docs`: every `kipple` command in a shell block of `README.md`, `docs/` and `site/src/` parses against the CLI (see the rules below) | M2 |
-| 13 | Workflow and shell lint | `actionlint` (which runs `shellcheck` on every `run:` block), `zizmor` and `shellcheck` on `.githooks/` and `*.sh`, in CI's `lint` job only; xtask doesn't run them | M2 |
-| 14 | Site build, links, tapes, Lighthouse | `cargo xtask site` (separate CI job) | M6 |
+| 13 | Style | `cargo xtask check-style`: the rules of §4 that clippy can't check | M2 |
+| 14 | Workflow and shell lint | `actionlint` (which runs `shellcheck` on every `run:` block), `zizmor` and `shellcheck` on `.githooks/` and `*.sh`, in CI's `lint` job only; xtask doesn't run them | M2 |
+| 15 | Site build, links, tapes, Lighthouse | `cargo xtask site` (separate CI job) | M6 |
 
 Rules:
 - A step that is not yet active doesn't exist in the code or in CI. It isn't a skipped or silently passing step. Each milestone adds its steps in the same change that introduces their inputs.
@@ -86,6 +87,10 @@ These are cheap and deterministic, and they protect the boundaries in [05-archit
 - No global state, no lazy statics holding configuration, no `std::env` reads below the composition root.
 - Pure functions for policy, planning, retention, rendering and TUI state transitions. I/O happens at the edges.
 - Early returns over nested conditionals. No dead code, commented-out code or stale TODOs.
+
+These rules are checked by `cargo xtask check-style` (gate step 13), which parses every Rust source in `crates/` and `xtask/` with `syn`. It doesn't look inside `macro_rules!` bodies or macro calls.
+
+- A struct's, enum's or union's lifetime is named for what it borrows, such as `Tree<'lines>`; a one-letter name fails. `'a` is fine on functions and `impl` blocks.
 
 ## 5. Testing philosophy
 

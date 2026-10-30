@@ -45,9 +45,9 @@ type At<'a> = &'a dyn Fn(Option<Range<usize>>, String) -> ParseError;
 /// A string from the file, with where it is.
 type Spanned = (String, Option<Range<usize>>);
 
-pub(super) struct Reader<'a> {
-    catalog: &'a Catalog,
-    at: At<'a>,
+pub(super) struct Reader<'doc> {
+    catalog: &'doc Catalog,
+    at: At<'doc>,
 }
 
 impl Reader<'_> {

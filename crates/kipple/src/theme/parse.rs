@@ -87,9 +87,9 @@ pub(super) fn parse(text: &str) -> Result<ThemeFile, ThemeError> {
     .theme(document.as_table())
 }
 
-struct Reader<'a> {
-    at: &'a dyn Fn(Option<Range<usize>>, String) -> ThemeError,
-    place: &'a dyn Fn(Option<Range<usize>>) -> Option<(usize, usize)>,
+struct Reader<'doc> {
+    at: &'doc dyn Fn(Option<Range<usize>>, String) -> ThemeError,
+    place: &'doc dyn Fn(Option<Range<usize>>) -> Option<(usize, usize)>,
 }
 
 impl Reader<'_> {

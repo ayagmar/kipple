@@ -145,9 +145,9 @@ fn builtin_text(name: &str) -> Option<&'static str> {
 /// How the screen is drawn: the theme gives each role its style, the glyphs its
 /// symbols.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Look<'a> {
+pub(crate) struct Look<'theme> {
     /// The styles.
-    pub(crate) theme: &'a Theme,
+    pub(crate) theme: &'theme Theme,
     /// The symbols.
     pub(crate) glyphs: Glyphs,
 }
