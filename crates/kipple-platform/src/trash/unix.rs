@@ -70,6 +70,21 @@ const RESTORING: Codes = Codes {
     changed: ErrorCode::TrashChanged,
 };
 
+/// Whether a move left the item at its destination.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Arrival {
+    /// It is there.
+    Arrived,
+    /// It is where it was, or it can't be told.
+    Stayed,
+}
+
+/// What [`shift`] did: where the item is, and how the move ended.
+struct Shifted {
+    arrival: Arrival,
+    ended: Result<(), ApplyError>,
+}
+
 /// One rename: `name` in `from` to `into` in `to`.
 struct Move<'dirs> {
     from: &'dirs Dir,
@@ -165,12 +180,16 @@ pub(super) fn move_whole(
         to: &opened.files,
         into: &into,
     };
-    match shift(&rename, &top, TRASHING) {
+    let shifted = shift(&rename, &top, TRASHING);
+    match shifted.ended {
         Ok(()) => Ok(Trashed { slot: slot.clone() }),
         // What moved in its place stays recorded, so the trash lists it.
         Err(error) if error.code == ErrorCode::Stranded => {
             Err(error.at(RelPath::new(vec![slot.name.clone()])))
         }
+        // The item is in the trash though the move isn't durable: its record stays, so
+        // the trash lists it and it can be restored.
+        Err(error) if shifted.arrival == Arrival::Arrived => Err(error),
         Err(error) => {
             record.undo();
             Err(error)
@@ -230,13 +249,15 @@ pub(super) fn restore(
         to: reached.holder(),
         into: &name,
     };
-    shift(&rename, request.target(), RESTORING).map_err(|error| {
-        if error.code == ErrorCode::Stranded {
-            error.at(anchor.relative.clone())
-        } else {
-            error
-        }
-    })?;
+    shift(&rename, request.target(), RESTORING)
+        .ended
+        .map_err(|error| {
+            if error.code == ErrorCode::Stranded {
+                error.at(anchor.relative.clone())
+            } else {
+                error
+            }
+        })?;
     if let (Some(info), Ok(described)) = (&opened.info, info_name(&slot.name)) {
         // The item is back; a `.trashinfo` left behind would only list it in the trash
         // without anything there.
@@ -483,38 +504,44 @@ fn same(now: &EntrySnapshot, then: &EntrySnapshot) -> bool {
 /// error is [`ErrorCode::Stranded`], and the caller says where it is.
 ///
 /// Once anything moved, both directories are synced before it returns. A sync that
-/// fails makes it [`ErrorCode::Unsynced`]: a power loss could undo the move.
-fn shift(rename: &Move<'_>, expected: &EntrySnapshot, codes: Codes) -> Result<(), ApplyError> {
-    let missing = |error: io::Error| {
-        let code = if error.kind() == io::ErrorKind::NotFound {
-            codes.missing
-        } else {
-            ErrorCode::Io
-        };
-        ApplyError::io(code, error)
+/// fails makes it [`ErrorCode::Unsynced`]: a power loss could undo the move. However it
+/// ends, it says whether the item arrived.
+fn shift(rename: &Move<'_>, expected: &EntrySnapshot, codes: Codes) -> Shifted {
+    let stayed = |ended| Shifted {
+        arrival: Arrival::Stayed,
+        ended,
     };
-    let now = rename.from.stat(rename.name).map_err(missing)?;
+    let now = match rename.from.stat(rename.name) {
+        Ok(now) => now,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            return stayed(Err(ApplyError::io(codes.missing, error)));
+        }
+        Err(error) => return stayed(Err(ApplyError::io(ErrorCode::Io, error))),
+    };
     if !same(&now.snapshot, expected) {
-        return Err(ApplyError::new(codes.changed));
+        return stayed(Err(ApplyError::new(codes.changed)));
     }
-    no_replace(rename.from, rename.name, rename.to, rename.into)
-        .map_err(|error| refused(error, codes))?;
+    if let Err(error) = no_replace(rename.from, rename.name, rename.to, rename.into) {
+        return stayed(Err(refused(error, codes)));
+    }
     let arrived = rename.to.stat(rename.into);
-    let moved = if arrived.is_ok_and(|seen| same(&seen.snapshot, expected)) {
-        Ok(())
+    let (arrival, moved) = if arrived.is_ok_and(|seen| same(&seen.snapshot, expected)) {
+        (Arrival::Arrived, Ok(()))
     } else {
         // The rename moved what was there by then. Put it back where it was found.
-        match no_replace(rename.to, rename.into, rename.from, rename.name) {
+        let back = match no_replace(rename.to, rename.into, rename.from, rename.name) {
             Ok(()) => Err(ApplyError::new(codes.changed)),
             Err(error) => Err(ApplyError::io(ErrorCode::Stranded, error)),
-        }
+        };
+        (Arrival::Stayed, back)
     };
     let synced = [rename.from, rename.to].map(Dir::sync);
-    match (moved, synced) {
+    let ended = match (moved, synced) {
         (Err(error), _) if error.code == ErrorCode::Stranded => Err(error),
         (_, [Err(error), _] | [_, Err(error)]) => Err(ApplyError::io(ErrorCode::Unsynced, error)),
         (moved, _) => moved,
-    }
+    };
+    Shifted { arrival, ended }
 }
 
 /// Why a rename was refused.
@@ -678,6 +705,94 @@ fn local_time(now: SystemTime) -> io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A failed sync during a move, on a disposable home trash: what the trash keeps.
+    #[cfg(target_os = "linux")]
+    mod unsynced {
+        use std::fs;
+        use std::sync::Arc;
+
+        use kipple_core::{Clock, Freezer as _, Marks, TrashBackend as _};
+        use tempfile::TempDir;
+
+        use super::*;
+        use crate::ConfinedFs;
+        use crate::executor::faults::{anchor, fail_syncs_after};
+
+        #[derive(Debug)]
+        struct Epoch;
+
+        impl Clock for Epoch {
+            fn now(&self) -> SystemTime {
+                UNIX_EPOCH
+            }
+        }
+
+        /// A root holding `target/a`, a home trash beside it, and the move of `target`.
+        struct Site {
+            temp: TempDir,
+            trash: ConfinedTrash,
+            op: TrashOp,
+        }
+
+        impl Site {
+            fn new() -> Self {
+                let temp = TempDir::new().unwrap();
+                let root = temp.path().join("root");
+                fs::create_dir_all(root.join("target")).unwrap();
+                fs::write(root.join("target/a"), b"a").unwrap();
+                fs::create_dir_all(temp.path().join("Trash/files")).unwrap();
+                fs::create_dir_all(temp.path().join("Trash/info")).unwrap();
+                let anchor = anchor(&root, "target");
+                let tree = ConfinedFs
+                    .freeze(&anchor, &CancelToken::new())
+                    .unwrap()
+                    .tree;
+                let marks = Marks::of(&tree);
+                Self {
+                    trash: ConfinedTrash::new(
+                        Some(temp.path().join("Trash/files")),
+                        Arc::new(Epoch),
+                    ),
+                    op: TrashOp::for_platform_tests(anchor, tree, marks),
+                    temp,
+                }
+            }
+
+            fn at(&self, relative: &str) -> PathBuf {
+                self.temp.path().join(relative)
+            }
+
+            fn record(&self, slot: &TrashSlot) -> PathBuf {
+                let mut name = slot.name.as_os_str().to_owned();
+                name.push(INFO_SUFFIX);
+                self.at("Trash/info").join(name)
+            }
+        }
+
+        /// Catches the `.trashinfo` of an item that reached the trash removed because a
+        /// sync after the rename failed: the item would sit in `files/` where no file
+        /// manager lists or restores it. The move is unsynced, and the record stays.
+        #[test]
+        fn a_moved_item_keeps_its_record_when_a_sync_fails() {
+            let site = Site::new();
+            let slot = site.trash.destination(&site.op).unwrap();
+            // The record's own sync passes; the first sync after the rename fails.
+            let _failing = fail_syncs_after(1);
+
+            let moved = site.trash.move_whole(&site.op, &slot, &CancelToken::new());
+
+            assert_eq!(moved.map_err(|error| error.code), Err(ErrorCode::Unsynced));
+            assert!(
+                fs::symlink_metadata(slot.trash.path.join(slot.name.as_os_str())).is_ok(),
+                "the item is in the trash"
+            );
+            assert!(
+                fs::symlink_metadata(site.record(&slot)).is_ok(),
+                "its record stays"
+            );
+        }
+    }
 
     /// Catches a trash name too long for its `.trashinfo`, or a UTF-8 name cut inside a
     /// character, which macOS file systems refuse.

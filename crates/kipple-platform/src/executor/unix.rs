@@ -199,6 +199,8 @@ impl Dir {
     /// it or renamed in it. `fsync` on Linux, `F_FULLFSYNC` on macOS, as std's `sync_all`
     /// does for a file; never a whole-file-system sync.
     pub(crate) fn sync(&self) -> io::Result<()> {
+        #[cfg(test)]
+        super::faults::sync()?;
         File::from(self.0.try_clone()?).sync_all()
     }
 

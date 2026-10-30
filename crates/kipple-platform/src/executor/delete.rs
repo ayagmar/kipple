@@ -390,3 +390,46 @@ fn freed(seen: &Seen) -> Freed {
         Freed::Allocated(Allocated(bytes))
     })
 }
+
+#[cfg(test)]
+#[cfg(unix)]
+mod tests {
+    use std::fs;
+
+    use kipple_core::{Executor as _, Found, Freezer as _, ItemOutcome, Tally};
+    use tempfile::TempDir;
+
+    use super::super::ConfinedFs;
+    use super::super::faults::{anchor, fail_syncs_after};
+    use super::*;
+
+    /// Catches a removal reported done although its directory couldn't be synced, so a
+    /// power loss could bring it back (D-065): the item is indeterminate, never done.
+    #[test]
+    fn a_removal_whose_directory_sync_fails_is_indeterminate() {
+        let temp = TempDir::new().unwrap();
+        fs::create_dir_all(temp.path().join("target/sub")).unwrap();
+        fs::write(temp.path().join("target/sub/a"), b"a").unwrap();
+        let anchor = anchor(temp.path(), "target");
+        let tree = ConfinedFs
+            .freeze(&anchor, &CancelToken::new())
+            .unwrap()
+            .tree;
+        let marks = Marks::of(&tree);
+        let op = DeleteOp::for_platform_tests(anchor, tree, marks);
+        let mut tally = Tally::new(op.target().tree(), op.target().marks());
+        let _failing = fail_syncs_after(0);
+
+        let ran = ConfinedFs.delete(&op, &mut tally, &CancelToken::new());
+        let outcome = tally.finish(ran);
+
+        assert!(
+            matches!(&outcome, ItemOutcome::Indeterminate(Found::Unsynced(_))),
+            "{outcome:?}"
+        );
+        assert!(
+            fs::symlink_metadata(temp.path().join("target")).is_err(),
+            "the removal itself happened"
+        );
+    }
+}
