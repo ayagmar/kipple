@@ -6,9 +6,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use kipple_core::{
-    Activity, ActivityGap, Advice, Completeness, Consequence, Evidence, Finding, IntegrationId,
-    IntegrationReport, Lens, Omission, Policy, ScanOutcome, ScanReport, Seen, SpaceEstimate,
-    SymbolicRoot, UnresolvedRoot, Verdict,
+    Activity, ActivityGap, Advice, Bucket, Completeness, Consequence, Evidence, Finding,
+    IntegrationId, IntegrationReport, Lens, Omission, Policy, ScanOutcome, ScanReport, Seen,
+    SpaceEstimate, SymbolicRoot, UnresolvedRoot, Verdict,
 };
 use kipple_platform::{PLATFORM, raw_path};
 use schemars::JsonSchema;
@@ -179,6 +179,16 @@ impl From<Lens> for LensOut {
     }
 }
 
+impl From<LensOut> for Lens {
+    fn from(lens: LensOut) -> Self {
+        match lens {
+            LensOut::Agents => Self::Agents,
+            LensOut::Dev => Self::Dev,
+            LensOut::System => Self::System,
+        }
+    }
+}
+
 /// A bucket of the home screen (`docs/04-safety-model.md` §2a).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
@@ -189,6 +199,16 @@ pub enum BucketOut {
     Review,
     /// Blocked, unknown, report-only or advice only.
     Protected,
+}
+
+impl From<BucketOut> for Bucket {
+    fn from(bucket: BucketOut) -> Self {
+        match bucket {
+            BucketOut::Safe => Self::Safe,
+            BucketOut::Review => Self::Review,
+            BucketOut::Protected => Self::Protected,
+        }
+    }
 }
 
 /// A finding's bucket and every reason for it.
@@ -451,6 +471,15 @@ pub struct SizeOut {
     /// incomplete.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub skipped_mounts: Option<u64>,
+}
+
+impl SizeOut {
+    /// What the item takes on disk: allocated storage where known, else its apparent
+    /// size. Every size and total kipple shows for people is this.
+    #[must_use]
+    pub(crate) fn on_disk(&self) -> u64 {
+        self.allocated.unwrap_or(self.apparent)
+    }
 }
 
 impl From<&SpaceEstimate> for SizeOut {

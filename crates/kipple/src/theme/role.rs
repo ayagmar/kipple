@@ -1,5 +1,7 @@
 //! What a piece of the screen is, so a theme can say how it looks.
 
+use kipple_core::Bucket;
+
 /// A semantic role: the screen asks the theme for one and never names a colour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Role {
@@ -75,6 +77,16 @@ impl Role {
         Self::LevelOther,
         Self::Kept,
     ];
+
+    /// The role a bucket's name and its findings' states are painted in, in the CLI
+    /// and on the home screen.
+    pub(crate) const fn bucket(bucket: Bucket) -> Self {
+        match bucket {
+            Bucket::Safe => Self::Safe,
+            Bucket::Review => Self::Review,
+            Bucket::Protected => Self::Protected,
+        }
+    }
 
     /// The role's name in a theme file.
     #[must_use]

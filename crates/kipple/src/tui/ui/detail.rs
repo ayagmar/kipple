@@ -1,7 +1,7 @@
 //! The detail pane: what the focused line is, why it is in its bucket, and what removing
 //! it would cost, as a list of facts under aligned labels.
 
-use kipple_core::{Lens, Level, Verdict};
+use kipple_core::{Lens, Level};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Modifier;
@@ -11,7 +11,7 @@ use ratatui::widgets::Paragraph;
 use super::layout::{Screen, layout};
 use super::tree::sum;
 use super::wrap::wrap;
-use super::{Look, shelf_title, tint, title_case};
+use super::{Look, tint};
 use crate::human::{self, bytes, escaped, homed};
 use crate::theme::{Glyphs, Role, Theme};
 use crate::tui::app::{App, Node, ProjectId, Row, Shelf};
@@ -86,14 +86,14 @@ fn detail(app: &App, look: Look<'_>, node: Node) -> Vec<Entry> {
         Node::Project(_, _, id) => project_detail(app, look, id),
         Node::Shelf(shelf) | Node::Group(shelf, _) => shelf_detail(app, look, node, shelf),
         Node::Gaps => vec![
-            heading(look, "Not covered"),
+            heading(look, human::NOT_COVERED),
             plain(Text::from(
                 "The scan couldn't read everything, so this report is partial. An empty bucket doesn't mean there is nothing to clean.",
             )),
         ],
         Node::Gap(index) => app.gaps.get(index).map_or_else(Vec::new, |gap| {
             vec![
-                heading(look, "Not covered"),
+                heading(look, human::NOT_COVERED),
                 blank(),
                 labelled(look, "Integration", gap.integration.clone()),
                 labelled(look, "What happened", escaped(&gap.message)),
@@ -164,7 +164,11 @@ fn finding_detail(app: &App, look: Look<'_>, row: &Row) -> Vec<Entry> {
         lines.push(labelled(look, "What it is", escaped(what)));
         lines.push(labelled(look, "Why it's here", escaped(&text.why)));
     }
-    lines.push(labelled(look, why_label(row.shelf()), why(row, level)));
+    lines.push(labelled(
+        look,
+        human::standing(row.shelf().bucket()).why,
+        human::why(row.verdict.as_ref(), level),
+    ));
     let mut take = |label: &str| {
         let at = facts.iter().position(|(name, _)| *name == label)?;
         Some(facts.remove(at).1)
@@ -228,9 +232,9 @@ fn project_detail(app: &App, look: Look<'_>, id: ProjectId) -> Vec<Entry> {
         plain(Text::raw(shown(app, &project.path))),
     ];
     for shelf in [
-        Shelf::Safe,
-        Shelf::Review,
-        Shelf::Protected,
+        Shelf::SAFE,
+        Shelf::REVIEW,
+        Shelf::PROTECTED,
         Shelf::Measuring,
     ] {
         let mut rows: Vec<&Row> = [Lens::Agents, Lens::Dev, Lens::System]
@@ -246,7 +250,7 @@ fn project_detail(app: &App, look: Look<'_>, id: ProjectId) -> Vec<Entry> {
         lines.push(plain(Text::styled(
             format!(
                 "{}: {}, {}",
-                shelf_title(shelf),
+                human::standing(shelf.bucket()).title,
                 human::findings(rows.len()),
                 bytes(total)
             ),
@@ -264,65 +268,24 @@ fn project_detail(app: &App, look: Look<'_>, id: ProjectId) -> Vec<Entry> {
 }
 
 fn verdict_span(look: Look<'_>, row: &Row, level: Level) -> Span<'static> {
-    let text = row.verdict.as_ref().map_or_else(
-        || "measuring".to_owned(),
-        |verdict| {
-            format!(
-                "{} at {}",
-                human::bucket(verdict.bucket()),
-                title_case(level.name())
-            )
-        },
-    );
     Span::styled(
-        text,
+        human::placed(row.verdict.as_ref(), level),
         look.style(tint(row.shelf())).add_modifier(Modifier::BOLD),
     )
 }
 
-const fn why_label(shelf: Shelf) -> &'static str {
-    match shelf {
-        Shelf::Safe => "Why safe",
-        Shelf::Review => "Why review",
-        Shelf::Protected => "Why it's held",
-        Shelf::Measuring => "Status",
-    }
-}
-
-fn why(row: &Row, level: Level) -> String {
-    match &row.verdict {
-        None => "still being measured and checked".to_owned(),
-        Some(Verdict::Safe) => format!(
-            "passes every check at {}: recognised, comes back, untracked, no running program shows it in use, not recent",
-            title_case(level.name())
-        ),
-        Some(verdict) => human::reasons_in_full(verdict),
-    }
-}
-
 fn shelf_detail(app: &App, look: Look<'_>, node: Node, shelf: Shelf) -> Vec<Entry> {
     let (count, total) = sum(app, node);
+    let standing = human::standing(shelf.bucket());
     let safe = app
         .keymap()
         .first(Mode::Browse, Action::SelectSafe)
+        .filter(|_| shelf == Shelf::SAFE)
         .map_or_else(String::new, |key| format!(" {key} selects all of it."));
-    let about = match shelf {
-        Shelf::Safe => format!(
-            "Passes every check at this level: kipple recognised it, knows how it comes back, nothing inside is tracked by git, no running program shows it in use, and it hasn't changed recently.{safe}"
-        ),
-        Shelf::Review => {
-            "Eligible, but it loses more than this level allows, costs a lot to bring back, or changed recently. Each row says which.".to_owned()
-        }
-        Shelf::Protected => {
-            "Not eligible: blocked, unknown, report only or advice only. Each row says why. kipple never selects these.".to_owned()
-        }
-        Shelf::Measuring => {
-            "Still being measured and checked. Nothing counts as Safe until kipple knows.".to_owned()
-        }
-    };
+    let about = format!("{}{safe}", standing.about);
     vec![
         plain(Text::styled(
-            shelf_title(shelf),
+            standing.title,
             look.style(tint(shelf)).add_modifier(Modifier::BOLD),
         )),
         plain(Text::raw(format!(

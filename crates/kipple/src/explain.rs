@@ -5,12 +5,11 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use kipple_core::{Bucket, Operation, Pack, Policy, Rule, ScanOutcome, ScanReport, Selector};
+use kipple_core::{Operation, Pack, Policy, Rule, ScanOutcome, ScanReport, Selector};
 use kipple_platform::PLATFORM;
 
 use crate::human::{self, bytes, escaped, size};
-use crate::json::{EvidenceOut, FindingOut, LensOut};
-use crate::rules::lens;
+use crate::json::{EvidenceOut, FindingOut};
 use crate::setup::Builtin;
 use crate::theme::{Ink, Role};
 
@@ -30,7 +29,7 @@ pub(crate) fn write_rule(
     let lens_name = builtin
         .lenses()
         .get(&rule.integration)
-        .map_or("?", |&l| lens(LensOut::from(l)));
+        .map_or("?", |&l| l.name());
     let platforms: Vec<&str> = rule.platforms.iter().map(|p| p.name()).collect();
     let here = if rule.platforms.contains(&PLATFORM) {
         "runs here"
@@ -173,7 +172,7 @@ pub(crate) fn write_path(
     if let Some(verdict) = finding.verdict(policy) {
         let reasons = human::reasons_in_full(&verdict);
         let name = human::bucket(verdict.bucket());
-        let bucket = ink.paint(bucket_role(verdict.bucket()), name);
+        let bucket = ink.paint(Role::bucket(verdict.bucket()), name);
         let level = policy.level_of(&finding.rule);
         let line = if reasons.is_empty() {
             format!("{bucket} at the {level} level")
@@ -189,15 +188,6 @@ pub(crate) fn write_path(
     match find_rule(builtin, &finding.rule.0) {
         Some((pack, rule)) => write_rule(out, ink, builtin, pack, rule),
         None => writeln!(out, "Found by {}.", finding.rule),
-    }
-}
-
-/// The role a bucket is painted in, as on the home screen.
-const fn bucket_role(bucket: Bucket) -> Role {
-    match bucket {
-        Bucket::Safe => Role::Safe,
-        Bucket::Review => Role::Review,
-        Bucket::Protected => Role::Protected,
     }
 }
 

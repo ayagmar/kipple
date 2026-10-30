@@ -121,7 +121,9 @@ fn outline(app: &App) -> Vec<String> {
         .iter()
         .map(|line| {
             let what = match line.node {
-                Node::Shelf(shelf) => format!("{shelf:?}"),
+                Node::Shelf(shelf) => shelf
+                    .bucket()
+                    .map_or_else(|| "Measuring".to_owned(), |bucket| format!("{bucket:?}")),
                 Node::Group(_, lens) => format!("{lens:?}"),
                 Node::Project(_, _, id) => format!("project {}", app.project(id).unwrap().name),
                 Node::Finding(id) => format!("finding {}", id.0),
@@ -200,7 +202,7 @@ fn a_project_gets_a_line_only_in_a_group_where_it_has_two_findings() {
 #[test]
 fn a_folded_project_hides_its_findings_and_a_on_it_adds_only_what_a_group_would() {
     let mut app = projects();
-    let review = project_line(&app, Shelf::Review, "api");
+    let review = project_line(&app, Shelf::REVIEW, "api");
     go(&mut app, review);
 
     press(&mut app, &[Key::Char('h')]);
@@ -216,7 +218,7 @@ fn a_folded_project_hides_its_findings_and_a_on_it_adds_only_what_a_group_would(
         "{notice}"
     );
 
-    let protected = project_line(&app, Shelf::Protected, "api");
+    let protected = project_line(&app, Shelf::PROTECTED, "api");
     go(&mut app, protected);
     press(&mut app, &[Key::Char('a')]);
     assert_eq!(selected(&app), [4], "a Protected finding was added");
@@ -237,7 +239,7 @@ fn a_folded_project_hides_its_findings_and_a_on_it_adds_only_what_a_group_would(
 #[test]
 fn s_on_a_project_line_selects_nothing_as_on_a_group() {
     let mut app = projects();
-    let safe = project_line(&app, Shelf::Safe, "api");
+    let safe = project_line(&app, Shelf::SAFE, "api");
     go(&mut app, safe);
 
     press(&mut app, &[Key::Char('s')]);
@@ -575,7 +577,7 @@ fn projects_by_last_change_at_80_by_24() {
 fn a_project_line_details_its_path_and_its_findings_in_every_bucket() {
     let mut app = projects();
     finished(&mut app);
-    let api = project_line(&app, Shelf::Safe, "api");
+    let api = project_line(&app, Shelf::SAFE, "api");
     go(&mut app, api);
 
     // It shows from `~` below home (F1).
@@ -599,7 +601,7 @@ fn a_project_line_details_its_path_and_its_findings_in_every_bucket() {
 fn y_on_a_project_line_sends_the_projects_path() {
     let mut app = projects();
     finished(&mut app);
-    let api = project_line(&app, Shelf::Safe, "api");
+    let api = project_line(&app, Shelf::SAFE, "api");
     go(&mut app, api);
 
     press(&mut app, &[Key::Char('y')]);

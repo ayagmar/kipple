@@ -13,6 +13,7 @@ use super::keymap::{Action, Keymap, Mode};
 use super::settings::Found;
 use crate::config::{Edit, Loaded, Source, is_config_path, same_config_path, within_config_path};
 use crate::human::{escaped, homed};
+use crate::json::SizeOut;
 
 /// Whether the first run is due: no config file at the default location, in a known
 /// config directory. A file named by `--config` or `KIPPLE_CONFIG` never starts it.
@@ -47,7 +48,7 @@ pub fn level_totals<'a>(
         let size = finding
             .size
             .as_ref()
-            .map_or(0, |size| size.allocated.map_or(size.apparent.0, |a| a.0));
+            .map_or(0, |size| SizeOut::from(size).on_disk());
         match finding.verdict(&policy) {
             Some(Verdict::Safe) => totals.safe += size,
             Some(Verdict::Review(_)) => totals.review += size,

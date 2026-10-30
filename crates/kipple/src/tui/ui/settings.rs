@@ -9,9 +9,9 @@ use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::Paragraph;
 
+use super::Look;
 use super::tree::offset;
-use super::{Look, level_about, title_case};
-use crate::human::{escaped, homed};
+use crate::human::{self, escaped, homed};
 use crate::theme::{Colours, Role};
 use crate::tui::app::App;
 use crate::tui::keymap::{Action, Mode};
@@ -80,7 +80,10 @@ fn settings_head(app: &App, look: Look<'_>, panel: &mut PanelLines<'_>) {
     );
     panel.push(None, "", Vec::new());
     panel.push(Some(&Item::Level), "Level", level_spans(app, look));
-    let about = Span::styled(level_about(app.policy.level), look.style(Role::Muted));
+    let about = Span::styled(
+        human::level_about(app.policy.level),
+        look.style(Role::Muted),
+    );
     panel.push(None, "", vec![about]);
     panel.push(Some(&Item::Theme), "Theme", theme_spans(app, look));
     for (index, root) in app.roots.iter().enumerate() {
@@ -198,7 +201,7 @@ fn level_spans(app: &App, look: Look<'_>) -> Vec<Span<'static>> {
     Level::ALL
         .iter()
         .map(|&level| {
-            let name = title_case(level.name());
+            let name = human::level(level);
             if level == app.policy.level {
                 Span::styled(format!("[{name}] "), look.style(Role::LevelCurrent))
             } else {

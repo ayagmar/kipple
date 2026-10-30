@@ -14,7 +14,7 @@ mod summary;
 mod tree;
 mod wrap;
 
-use kipple_core::{Lens, Level};
+use kipple_core::Bucket;
 use ratatui::Frame;
 use ratatui::text::{Line as Text, Span};
 
@@ -52,9 +52,7 @@ impl Look<'_> {
 /// The role of a bucket's name and state.
 const fn tint(shelf: Shelf) -> Role {
     match shelf {
-        Shelf::Safe => Role::Safe,
-        Shelf::Review => Role::Review,
-        Shelf::Protected => Role::Protected,
+        Shelf::Bucket(bucket) => Role::bucket(bucket),
         Shelf::Measuring => Role::Muted,
     }
 }
@@ -62,9 +60,9 @@ const fn tint(shelf: Shelf) -> Role {
 /// The role of a finding's size bar in `shelf`.
 const fn bar_tint(shelf: Shelf) -> Role {
     match shelf {
-        Shelf::Safe => Role::BarSafe,
-        Shelf::Review => Role::BarReview,
-        Shelf::Protected => Role::BarProtected,
+        Shelf::Bucket(Bucket::Safe) => Role::BarSafe,
+        Shelf::Bucket(Bucket::Review) => Role::BarReview,
+        Shelf::Bucket(Bucket::Protected) => Role::BarProtected,
         Shelf::Measuring => Role::BarTrack,
     }
 }
@@ -137,35 +135,9 @@ fn cols(text: &str) -> usize {
     Span::raw(text).width()
 }
 
-pub(crate) const fn shelf_title(shelf: Shelf) -> &'static str {
-    match shelf {
-        Shelf::Safe => "Safe to clean",
-        Shelf::Review => "Review",
-        Shelf::Protected => "Protected",
-        Shelf::Measuring => "Measuring",
-    }
-}
-
-const fn lens_title(lens: Lens) -> &'static str {
-    match lens {
-        Lens::Agents => "Agents",
-        Lens::Dev => "Dev",
-        Lens::System => "System",
-    }
-}
-
 pub(crate) fn title_case(name: &str) -> String {
     let mut chars = name.chars();
     chars.next().map_or_else(String::new, |first| {
         first.to_uppercase().chain(chars).collect()
     })
-}
-
-/// What `level` puts in Safe (`docs/04-safety-model.md` §2a).
-pub(crate) const fn level_about(level: Level) -> &'static str {
-    match level {
-        Level::Careful => "Safe: build output and regenerated caches; recent: 14 days",
-        Level::Balanced => "Safe: rebuilt, reinstalled, re-downloaded; recent: 7 days",
-        Level::Thorough => "Safe: Balanced plus what costs a rollback; recent: 2 days",
-    }
 }

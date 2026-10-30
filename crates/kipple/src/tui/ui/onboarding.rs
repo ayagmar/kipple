@@ -1,7 +1,7 @@
 //! The first run's steps, each in the same frame: a title line, the question and its
 //! choices, and the keys.
 
-use kipple_core::{Level, Method, ScanOutcome};
+use kipple_core::{Level, Method};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Margin};
 use ratatui::text::Line;
@@ -9,7 +9,7 @@ use ratatui::widgets::{Paragraph, Wrap};
 
 use super::keybar::joined;
 use super::settings::{describe, search_notes};
-use super::{Look, level_about, title_case};
+use super::{Look, title_case};
 use crate::human::{self, bytes, escaped, homed};
 use crate::theme::Role;
 use crate::tui::app::{App, Progress};
@@ -50,11 +50,8 @@ pub(crate) fn render(onboarding: &Onboarding, app: &App, look: Look<'_>, frame: 
 
 fn head(onboarding: &Onboarding, app: &App, look: Look<'_>) -> Line<'static> {
     let state = match app.progress {
-        Progress::Scanning => look.glyphs.ellipsis("scanning"),
-        Progress::Done { outcome, .. } if outcome != ScanOutcome::Completed => {
-            "scan stopped early".to_owned()
-        }
-        Progress::Done { .. } => "scan finished".to_owned(),
+        Progress::Scanning => look.glyphs.ellipsis(human::SCANNING),
+        Progress::Done { outcome, .. } => human::outcome(outcome).to_owned(),
     };
     let step = format!("step {} of 4", onboarding.step.number());
     super::frame::plain(look, &["Welcome to kipple".to_owned(), step, state])
@@ -83,13 +80,13 @@ fn level_lines(onboarding: &Onboarding, app: &App, look: Look<'_>) -> Vec<Line<'
     let findings = app.rows.iter().map(|row| &row.finding);
     for &level in Level::ALL {
         let totals = level_totals(findings.clone(), &app.policy, level);
-        let mut name = title_case(level.name());
+        let mut name = human::level(level).to_owned();
         if level == Level::Balanced {
             name.push_str(" (the default)");
         }
         lines.push(choice(look, level == onboarding.level, &name));
         lines.push(Line::styled(
-            format!("    {}", level_about(level)),
+            format!("    {}", human::level_about(level)),
             look.style(Role::Muted),
         ));
         lines.push(Line::from(format!(

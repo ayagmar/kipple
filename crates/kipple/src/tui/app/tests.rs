@@ -7,6 +7,7 @@ mod dashboard;
 mod detail;
 mod keys;
 mod onboarding;
+mod parity;
 mod settings;
 mod themes;
 mod tree;
@@ -295,7 +296,7 @@ fn a_finding_waits_under_measuring_until_its_facts_arrive_and_is_never_safe_befo
 
     measured(&mut app, 1, 512, safe());
 
-    assert_eq!(app.row(FindingId(1)).unwrap().shelf(), Shelf::Safe);
+    assert_eq!(app.row(FindingId(1)).unwrap().shelf(), Shelf::SAFE);
     assert_eq!(app.totals().eligible, 512 * MIB);
 }
 
@@ -361,7 +362,7 @@ fn a_finding_under_a_kept_path_is_protected_and_s_refuses_it_as_kept() {
     );
     measured(&mut app, 1, 512, safe());
 
-    assert_eq!(app.row(FindingId(1)).unwrap().shelf(), Shelf::Protected);
+    assert_eq!(app.row(FindingId(1)).unwrap().shelf(), Shelf::PROTECTED);
     to(&mut app, 1);
     press(&mut app, &[Key::Char('s')]);
     assert!(app.selected.is_empty(), "a kept finding was selected");
@@ -379,11 +380,11 @@ fn a_adds_the_eligible_findings_under_the_focused_heading_but_never_protected() 
     let protected = app
         .lines()
         .iter()
-        .position(|line| line.node == Node::Shelf(Shelf::Protected))
+        .position(|line| line.node == Node::Shelf(Shelf::PROTECTED))
         .unwrap();
     press(&mut app, &[Key::Char('g')]);
     press(&mut app, &vec![Key::Down; protected]);
-    assert_eq!(focus(&app), Some(Node::Shelf(Shelf::Protected)));
+    assert_eq!(focus(&app), Some(Node::Shelf(Shelf::PROTECTED)));
     press(&mut app, &[Key::Char('a')]);
 
     assert_eq!(selected(&app), [1, 4], "a Protected finding was added");
@@ -533,11 +534,11 @@ fn h_folds_a_heading_and_from_a_finding_climbs_to_its_heading_and_l_unfolds() {
     assert_eq!(focus(&app), Some(Node::Finding(FindingId(1))));
 
     press(&mut app, &[Key::Char('h')]);
-    assert_eq!(focus(&app), Some(Node::Group(Shelf::Safe, Lens::Dev)));
+    assert_eq!(focus(&app), Some(Node::Group(Shelf::SAFE, Lens::Dev)));
     press(&mut app, &[Key::Char('h')]);
     assert_eq!(findings(&app), [2, 3, 5], "Safe's Dev group folded");
     press(&mut app, &[Key::Char('h')]);
-    assert_eq!(focus(&app), Some(Node::Shelf(Shelf::Safe)));
+    assert_eq!(focus(&app), Some(Node::Shelf(Shelf::SAFE)));
 
     press(&mut app, &[Key::Char('l'), Key::Down, Key::Char('l')]);
     assert_eq!(findings(&app), [1, 4, 2, 3, 5]);
@@ -820,7 +821,7 @@ fn a_finding_holding_a_mount_shows_its_size_as_a_lower_bound_and_names_the_mount
 
     let shown = screen(&app, colour(), 160, 48);
 
-    assert_eq!(app.row(FindingId(1)).unwrap().shelf(), Shelf::Protected);
+    assert_eq!(app.row(FindingId(1)).unwrap().shelf(), Shelf::PROTECTED);
     assert!(shown.contains("Size          >= 512.0 MiB"), "{shown}");
     for label in ["Git ", "Last change "] {
         let line = shown.lines().find(|line| line.contains(label)).unwrap();

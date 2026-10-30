@@ -12,8 +12,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use kipple_core::{
-    Advice, Caution, Finding, FindingId, IntegrationId, Lens, Policy, RuleId, RuleText, ScanEvent,
-    ScanOutcome, ScanReport, SymbolicRoot, Verdict,
+    Advice, Bucket, Caution, Finding, FindingId, IntegrationId, Lens, Policy, RuleId, RuleText,
+    ScanEvent, ScanOutcome, ScanReport, SymbolicRoot, Verdict,
 };
 
 pub(crate) use self::keep::{Effect, Saved};
@@ -82,25 +82,32 @@ pub(crate) enum Msg {
     Suggested(Box<Found>),
 }
 
-/// Where a finding stands: its bucket, or still being measured. Nothing is Safe until
-/// kipple knows.
+/// Where a finding stands: its bucket, or still being measured, after every bucket.
+/// Nothing is Safe until kipple knows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum Shelf {
-    Safe,
-    Review,
-    Protected,
+    Bucket(Bucket),
     Measuring,
 }
 
 impl Shelf {
-    pub(crate) const SORTED: [Self; 3] = [Self::Safe, Self::Review, Self::Protected];
+    pub(crate) const SAFE: Self = Self::Bucket(Bucket::Safe);
+    pub(crate) const REVIEW: Self = Self::Bucket(Bucket::Review);
+    pub(crate) const PROTECTED: Self = Self::Bucket(Bucket::Protected);
+    pub(crate) const SORTED: [Self; 3] = [Self::SAFE, Self::REVIEW, Self::PROTECTED];
 
     const fn of(verdict: Option<&Verdict>) -> Self {
         match verdict {
-            Some(Verdict::Safe) => Self::Safe,
-            Some(Verdict::Review(_)) => Self::Review,
-            Some(Verdict::Protected(_)) => Self::Protected,
+            Some(verdict) => Self::Bucket(verdict.bucket()),
             None => Self::Measuring,
+        }
+    }
+
+    /// Its bucket; none while measuring.
+    pub(crate) const fn bucket(self) -> Option<Bucket> {
+        match self {
+            Self::Bucket(bucket) => Some(bucket),
+            Self::Measuring => None,
         }
     }
 }
@@ -173,11 +180,9 @@ impl Row {
         Shelf::of(self.verdict.as_ref())
     }
 
-    /// What it takes on disk: allocated storage where known, else apparent size.
+    /// What it takes on disk, as [`SizeOut::on_disk`] says.
     pub(crate) fn bytes(&self) -> u64 {
-        self.size
-            .as_ref()
-            .map_or(0, |size| size.allocated.unwrap_or(size.apparent))
+        self.size.as_ref().map_or(0, SizeOut::on_disk)
     }
 
     /// What removing it frees at once: only the storage no other path holds.
@@ -191,7 +196,7 @@ impl Row {
 
     /// Whether it may be selected: Safe or Review, never Protected or unmeasured.
     const fn eligible(&self) -> bool {
-        matches!(self.shelf(), Shelf::Safe | Shelf::Review)
+        matches!(self.shelf(), Shelf::SAFE | Shelf::REVIEW)
     }
 
     /// Whether it changed within its rule's recent window, which keeps it out of every
@@ -758,7 +763,7 @@ impl App {
             return;
         };
         if !row.eligible() {
-            self.notice = Some(not_selectable(row));
+            self.notice = Some(crate::human::not_selectable(row.verdict.as_ref()));
             return;
         }
         // Chosen by hand now, so no longer a shortcut's.
@@ -812,8 +817,8 @@ impl App {
         let safe: Vec<(FindingId, Shelf)> = self
             .rows
             .iter()
-            .filter(|row| row.shelf() == Shelf::Safe)
-            .map(|row| (row.finding.id, Shelf::Safe))
+            .filter(|row| row.shelf() == Shelf::SAFE)
+            .map(|row| (row.finding.id, Shelf::SAFE))
             .collect();
         if safe.is_empty() {
             self.notice = Some("Nothing is Safe to clean yet.".to_owned());
@@ -983,17 +988,6 @@ fn notices(report: &ScanReport) -> Vec<String> {
     .into_iter()
     .flatten()
     .collect()
-}
-
-/// Why `row` can't be selected.
-fn not_selectable(row: &Row) -> String {
-    match &row.verdict {
-        Some(verdict @ Verdict::Protected(_)) => format!(
-            "Protected ({}): kipple never selects it.",
-            crate::human::reasons(verdict)
-        ),
-        _ => "Still measuring: it can be selected once kipple knows its bucket.".to_owned(),
-    }
 }
 
 #[cfg(test)]

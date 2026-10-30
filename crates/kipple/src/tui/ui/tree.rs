@@ -11,8 +11,9 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::Paragraph;
 
-use super::{Look, drawn_bar, lens_title, shelf_title, tint};
-use crate::human::{self, bytes, escaped};
+use super::{Look, drawn_bar, tint};
+use crate::human::{self, bytes, bytes_short, escaped};
+use crate::json::SizeOut;
 use crate::theme::Role;
 use crate::tui::app::{App, Line, Node, ProjectId, Row, Shelf};
 
@@ -108,7 +109,7 @@ pub(super) fn render(
         let paint = |text: Text<'static>| if focused { look.cursor(text) } else { text };
         let text = fitted(look, &cells, usize::from(label.width));
         frame.render_widget(Paragraph::new(paint(text)).style(base), label);
-        let shown_size = size_text(&cells.size, columns.compact);
+        let shown_size = cells.size.text(columns.compact);
         frame.render_widget(Paragraph::new(shown_size).style(base).right_aligned(), size);
         if bar.width > 0 {
             let drawn = Text::from(cells.bar);
@@ -149,7 +150,7 @@ impl Columns {
         // A space before the size, so it never touches the label.
         let sizes = |compact: bool| {
             let least = if compact { SHORT } else { SIZE };
-            widest(&|cells| Some(super::cols(&size_text(&cells.size, compact)))).max(least) + 1
+            widest(&|cells| Some(super::cols(&cells.size.text(compact)))).max(least) + 1
         };
         let mut size = sizes(false);
         let states = widest(&|cells| cells.finding.then(|| cells.state.width()));
@@ -201,19 +202,26 @@ impl Columns {
     }
 }
 
-/// A size as the tree writes it: as given, or when `compact` with its unit's letter
-/// and no decimal from 100 on (`512.0 MiB` is `512M`, `2.5 GiB` is `2.5G`).
-fn size_text(size: &str, compact: bool) -> String {
-    let Some((number, unit)) = size.rsplit_once(' ').filter(|_| compact) else {
-        return size.to_owned();
-    };
-    let (bound, number) = number
-        .rsplit_once(' ')
-        .map_or(("", number), |(bound, number)| (bound, number));
-    let whole = number.split('.').next().unwrap_or(number);
-    let number = if whole.len() >= 3 { whole } else { number };
-    let letter = unit.chars().next().unwrap_or('B');
-    format!("{bound}{number}{letter}")
+/// A line's size, as the tree writes it: in full, or short (`512M`) when the columns
+/// don't fit.
+enum Size {
+    None,
+    /// A heading's total.
+    Total(u64),
+    /// A finding's size, which may be a lower bound.
+    Finding(SizeOut),
+}
+
+impl Size {
+    fn text(&self, compact: bool) -> String {
+        match (self, compact) {
+            (Self::None, _) => String::new(),
+            (Self::Total(total), false) => bytes(*total),
+            (Self::Total(total), true) => bytes_short(*total),
+            (Self::Finding(size), false) => human::size(Some(size)),
+            (Self::Finding(size), true) => human::size_short(Some(size)),
+        }
+    }
 }
 
 fn lead_width(cells: &Cells) -> usize {
@@ -369,7 +377,7 @@ struct Cells {
     path: bool,
     /// A finding's rule title, the first to go when there isn't room.
     title: Option<Span<'static>>,
-    size: String,
+    size: Size,
     bar: Vec<Span<'static>>,
     state: Text<'static>,
     /// Whether it is a finding's line: a heading has no bar, so its state has that room
@@ -381,7 +389,7 @@ impl Cells {
     /// Whether it is a line of words alone, with no size or state: a note or what the
     /// scan couldn't read, which has the whole row.
     fn sentence(&self) -> bool {
-        !self.finding && self.size.is_empty() && self.state.width() == 0
+        !self.finding && matches!(self.size, Size::None) && self.state.width() == 0
     }
 
     /// A heading's line: `lead`, then `name`.
@@ -391,7 +399,7 @@ impl Cells {
             name,
             path: false,
             title: None,
-            size: String::new(),
+            size: Size::None,
             bar: Vec::new(),
             state: Text::from(""),
             finding: false,
@@ -417,28 +425,29 @@ fn cells(app: &App, look: Look<'_>, tree: &Tree<'_>, line: Line) -> Cells {
         ),
         Node::Shelf(shelf) => {
             let (count, total) = sum(app, line.node);
+            let standing = human::standing(shelf.bucket());
             let name = Span::styled(
-                format!("{} ({count})", shelf_title(shelf)),
+                format!("{} ({count})", standing.title),
                 look.style(tint(shelf)).add_modifier(Modifier::BOLD),
             );
             Cells {
-                size: bytes(total),
-                state: Text::styled(format!(" {}", shelf_hint(shelf)), look.style(Role::Muted)),
+                size: Size::Total(total),
+                state: Text::styled(format!(" {}", standing.hint), look.style(Role::Muted)),
                 ..Cells::heading(lead(line.node), name)
             }
         }
-        Node::Group(_, lens) => heading_cells(app, line, lead(line.node), lens_title(lens)),
+        Node::Group(_, lens) => heading_cells(app, line, lead(line.node), human::lens(lens)),
         Node::Project(_, _, id) => {
             let name = project_name(app, tree, id);
             heading_cells(app, line, lead(line.node), &name)
         }
         Node::Gaps => {
             let name = Span::styled(
-                format!("Not covered ({})", app.gaps.len()),
+                format!("{} ({})", human::NOT_COVERED, app.gaps.len()),
                 look.style(Role::Warning).add_modifier(Modifier::BOLD),
             );
             Cells {
-                state: Text::styled(" so this report is partial", look.style(Role::Muted)),
+                state: Text::styled(format!(" {}", human::PARTIAL), look.style(Role::Muted)),
                 ..Cells::heading(lead(line.node), name)
             }
         }
@@ -467,7 +476,7 @@ fn cells(app: &App, look: Look<'_>, tree: &Tree<'_>, line: Line) -> Cells {
 fn heading_cells(app: &App, line: Line, lead: String, name: &str) -> Cells {
     let (count, total) = sum(app, line.node);
     Cells {
-        size: bytes(total),
+        size: Size::Total(total),
         ..Cells::heading(lead, Span::raw(format!("{} ({count})", escaped(name))))
     }
 }
@@ -531,10 +540,7 @@ fn finding_cells(app: &App, look: Look<'_>, row: &Row, indent: &str, label: &str
             app.catalog.title(&row.finding.rule).to_owned(),
             look.style(Role::Muted),
         )),
-        size: row
-            .size
-            .as_ref()
-            .map_or_else(String::new, |size| human::size(Some(size))),
+        size: row.size.clone().map_or(Size::None, Size::Finding),
         bar: Vec::new(),
         state: Text::styled(format!(" {}", state(row)), look.style(role)),
         finding: true,
@@ -543,13 +549,10 @@ fn finding_cells(app: &App, look: Look<'_>, row: &Row, indent: &str, label: &str
 
 /// A row's state word: the first reason it isn't Safe, and how many more there are.
 fn state(row: &Row) -> String {
-    let reasons: Vec<&str> = match &row.verdict {
-        None => return "measuring".to_owned(),
-        Some(Verdict::Safe) => return String::new(),
-        Some(Verdict::Review(cautions)) => cautions.iter().map(|&c| human::caution(c)).collect(),
-        Some(Verdict::Protected(holds)) => holds.iter().map(|&h| human::hold(h)).collect(),
+    let Some(verdict) = &row.verdict else {
+        return human::MEASURING.to_owned();
     };
-    match reasons.as_slice() {
+    match human::reason_labels(verdict).as_slice() {
         [] => String::new(),
         [one] => (*one).to_owned(),
         [first, rest @ ..] => format!("{first} +{}", rest.len()),
@@ -582,13 +585,4 @@ pub(crate) fn slashed(path: &Path) -> String {
         .map(|part| part.as_os_str().to_string_lossy())
         .collect();
     parts.join("/")
-}
-
-const fn shelf_hint(shelf: Shelf) -> &'static str {
-    match shelf {
-        Shelf::Safe => "passes every check",
-        Shelf::Review => "loses more, or recent",
-        Shelf::Protected => "not eligible",
-        Shelf::Measuring => "not sorted yet",
-    }
 }

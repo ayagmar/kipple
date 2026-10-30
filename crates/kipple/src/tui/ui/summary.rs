@@ -10,7 +10,7 @@ use ratatui::widgets::Paragraph;
 use super::frame::vertical;
 use super::layout::Areas;
 use super::{Look, drawn_bar, tint};
-use crate::human::bytes;
+use crate::human::{self, bytes};
 use crate::theme::Role;
 use crate::tui::app::{App, Progress, Shelf};
 
@@ -27,7 +27,7 @@ struct Bucket {
 
 /// The three buckets, then Measuring while anything is.
 fn buckets(app: &App) -> Vec<Bucket> {
-    let mut buckets: Vec<Bucket> = [Shelf::Safe, Shelf::Review, Shelf::Protected]
+    let mut buckets: Vec<Bucket> = Shelf::SORTED
         .into_iter()
         .map(|shelf| Bucket {
             shelf,
@@ -101,12 +101,7 @@ fn amount(app: &App, look: Look<'_>, bucket: Bucket, whole: bool, squeeze: Squee
 }
 
 fn name(look: Look<'_>, bucket: Bucket, upper: bool) -> Span<'static> {
-    let name = match bucket.shelf {
-        Shelf::Safe => "Safe",
-        Shelf::Review => "Review",
-        Shelf::Protected => "Protected",
-        Shelf::Measuring => "Measuring",
-    };
+    let name = human::standing(bucket.shelf.bucket()).name;
     let name = if upper {
         name.to_uppercase()
     } else {

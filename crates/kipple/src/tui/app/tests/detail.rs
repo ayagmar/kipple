@@ -121,7 +121,7 @@ fn the_line_that_takes_a_vanished_lines_place_shows_its_detail_from_the_top() {
         .lines()
         .iter()
         .map(|line| line.node)
-        .find(|node| matches!(node, Node::Project(Shelf::Safe, ..)))
+        .find(|node| matches!(node, Node::Project(Shelf::SAFE, ..)))
         .unwrap();
     for _ in 0..app.lines().len() {
         if focus(&app) == Some(api) {
@@ -218,7 +218,7 @@ fn y_on_a_finding_asks_the_loop_to_send_exactly_its_path() {
 fn y_on_a_heading_does_nothing() {
     let mut app = sized(80, 24);
     press(&mut app, &[Key::Char('g')]);
-    assert_eq!(focus(&app), Some(Node::Shelf(Shelf::Safe)));
+    assert_eq!(focus(&app), Some(Node::Shelf(Shelf::SAFE)));
 
     press(&mut app, &[Key::Char('y')]);
 

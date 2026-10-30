@@ -5,8 +5,8 @@
 use std::io::{self, Write};
 
 use kipple_core::{
-    FactKind, GENERIC_FACTS, GENERIC_SELECTORS, IntegrationDescriptor, OPERATIONS, Pack, Rule,
-    Selector, SymbolicRoot,
+    FactKind, GENERIC_FACTS, GENERIC_SELECTORS, IntegrationDescriptor, Lens, OPERATIONS, Pack,
+    Rule, Selector, SymbolicRoot,
 };
 use kipple_platform::PLATFORM;
 use schemars::JsonSchema;
@@ -301,7 +301,7 @@ pub fn write_human(out: &mut dyn Write, rules: &RulesOut, ink: &Ink) -> io::Resu
         let line = format!(
             "{:<12} {:<7} {:<22} {here}",
             i.id,
-            lens(i.lens),
+            Lens::from(i.lens).name(),
             i.platforms.join(", ")
         );
         writeln!(out, "  {}", line.trim_end())?;
@@ -322,12 +322,4 @@ pub fn write_human(out: &mut dyn Write, rules: &RulesOut, ink: &Ink) -> io::Resu
         "\n`kipple explain RULE` shows what a rule selects and why."
     )?;
     out.flush()
-}
-
-pub(crate) const fn lens(lens: LensOut) -> &'static str {
-    match lens {
-        LensOut::Agents => "agents",
-        LensOut::Dev => "dev",
-        LensOut::System => "system",
-    }
 }

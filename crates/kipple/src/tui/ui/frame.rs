@@ -9,8 +9,8 @@ use ratatui::layout::Rect;
 use ratatui::text::{Line as Text, Span};
 use ratatui::widgets::{Block, Paragraph};
 
-use super::{Look, cols, lens_title, title_case};
-use crate::human::{escaped, homed};
+use super::{Look, cols};
+use crate::human::{self, escaped, homed};
 use crate::theme::Role;
 use crate::tui::app::{App, Mode, Progress};
 
@@ -197,9 +197,9 @@ struct Items {
 impl Items {
     fn new(app: &App, look: Look<'_>) -> Self {
         let state = match app.progress {
-            Progress::Scanning => (look.glyphs.ellipsis("scanning"), None),
+            Progress::Scanning => (look.glyphs.ellipsis(human::SCANNING), None),
             Progress::Done { outcome, .. } if outcome != ScanOutcome::Completed => {
-                ("scan stopped early".to_owned(), None)
+                (human::outcome(outcome).to_owned(), None)
             }
             Progress::Done { elapsed, .. } => {
                 let time = format!("{}.{} s", elapsed.as_secs(), elapsed.subsec_millis() / 100);
@@ -207,11 +207,11 @@ impl Items {
             }
         };
         Self {
-            level: title_case(app.policy.level.name()),
+            level: human::level(app.policy.level).to_owned(),
             state: Some(state),
             order: app.order.title(),
             partial: (!app.gaps.is_empty()).then_some(app.gaps.len()),
-            lens: app.lens.map(|lens| format!("lens: {}", lens_title(lens))),
+            lens: app.lens.map(|lens| format!("lens: {}", human::lens(lens))),
             filter: (!app.filter.is_empty() && app.mode != Mode::Filter)
                 .then(|| escaped(&app.filter)),
             short: Vec::new(),
