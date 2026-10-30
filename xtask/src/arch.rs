@@ -23,6 +23,10 @@ const ALLOWED_EDGES: &[(&str, &str)] = &[
 
 const DEV_TOOL: &str = "xtask";
 
+/// A feature that makes what only the core may make, for tests: never enabled by a
+/// normal or build dependency, so no shipped build has it.
+const TEST_ONLY_FEATURE: &str = "platform-tests";
+
 /// The only crate that may contain OS-specific code.
 const PLATFORM_CRATE_DIR: &str = "crates/kipple-platform";
 
@@ -51,6 +55,9 @@ struct Metadata {
 struct Package {
     name: String,
     dependencies: Vec<Dependency>,
+    /// Its own `[features]`, each with what it enables.
+    #[serde(default)]
+    features: BTreeMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,6 +65,9 @@ struct Dependency {
     name: String,
     /// `None` for a normal dependency, otherwise `"dev"` or `"build"`.
     kind: Option<String>,
+    /// The features it enables.
+    #[serde(default)]
+    features: Vec<String>,
 }
 
 /// A Rust source file, with its path relative to the workspace root.
@@ -93,13 +103,35 @@ fn load_metadata(root: &Path) -> Result<Metadata> {
     serde_json::from_slice(&json).context("could not parse `cargo metadata` output")
 }
 
-/// Dependencies between workspace crates that are not in [`ALLOWED_EDGES`], of any kind.
+/// Dependencies between workspace crates that are not in [`ALLOWED_EDGES`], of any kind,
+/// and any but a dev-dependency enabling [`TEST_ONLY_FEATURE`], directly or through a
+/// crate's own feature, which a shipped build can turn on.
 fn edge_violations(packages: &[Package]) -> Vec<String> {
     let members: BTreeSet<&str> = packages.iter().map(|p| p.name.as_str()).collect();
     let mut violations = Vec::new();
     for package in packages.iter().filter(|p| p.name != DEV_TOOL) {
+        for (feature, enables) in &package.features {
+            let forwards = enables.iter().any(|enabled| {
+                enabled
+                    .split_once('/')
+                    .is_some_and(|(_, enabled)| enabled == TEST_ONLY_FEATURE)
+            });
+            if forwards {
+                violations.push(format!(
+                    "`{}` feature `{feature}` enables `{TEST_ONLY_FEATURE}`",
+                    package.name
+                ));
+            }
+        }
         for dependency in &package.dependencies {
             let edge = (package.name.as_str(), dependency.name.as_str());
+            let test_only = dependency.features.iter().any(|f| f == TEST_ONLY_FEATURE);
+            if test_only && dependency.kind.as_deref() != Some("dev") {
+                violations.push(format!(
+                    "`{}` enables `{}/{TEST_ONLY_FEATURE}` outside its dev-dependencies",
+                    edge.0, edge.1
+                ));
+            }
             if members.contains(edge.1) && !ALLOWED_EDGES.contains(&edge) {
                 let kind = dependency
                     .kind
@@ -473,8 +505,10 @@ mod tests {
                 .map(|(dependency, kind)| Dependency {
                     name: (*dependency).to_owned(),
                     kind: kind.map(str::to_owned),
+                    features: Vec::new(),
                 })
                 .collect(),
+            features: BTreeMap::new(),
         }
     }
 
@@ -501,6 +535,7 @@ mod tests {
             package.dependencies.push(Dependency {
                 name: dependency.to_owned(),
                 kind: kind.map(str::to_owned),
+                features: Vec::new(),
             });
         }
         packages
@@ -554,6 +589,50 @@ mod tests {
                 .iter()
                 .any(|v| v.contains("`kipple-platform` has a build-dependency")),
             "{violations:?}"
+        );
+    }
+
+    /// Catches a shipped build that can make a delete without a plan or a review.
+    #[test]
+    fn the_test_only_feature_outside_dev_dependencies_fails() {
+        let mut packages = documented_graph();
+        for package in &mut packages {
+            let kind = (package.name == "kipple-platform").then(|| "dev".to_owned());
+            let core = package
+                .dependencies
+                .iter_mut()
+                .filter(|dependency| dependency.name == "kipple-core");
+            for dependency in core {
+                dependency.features = vec![TEST_ONLY_FEATURE.to_owned()];
+                dependency.kind.clone_from(&kind);
+            }
+        }
+        let violations = edge_violations(&packages);
+        assert_eq!(
+            violations,
+            [
+                "`kipple-adapters` enables `kipple-core/platform-tests` outside its dev-dependencies",
+                "`kipple` enables `kipple-core/platform-tests` outside its dev-dependencies",
+            ]
+        );
+    }
+
+    /// Catches the test-only feature turned on through a crate's own feature, which
+    /// a shipped build can enable with no dependency declaring it.
+    #[test]
+    fn the_test_only_feature_forwarded_by_a_crates_feature_fails() {
+        let mut packages = documented_graph();
+        for package in &mut packages {
+            if package.name == "kipple" {
+                package.features.insert(
+                    "x".to_owned(),
+                    vec![format!("kipple-core?/{TEST_ONLY_FEATURE}")],
+                );
+            }
+        }
+        assert_eq!(
+            edge_violations(&packages),
+            ["`kipple` feature `x` enables `platform-tests`"]
         );
     }
 

@@ -10,17 +10,21 @@ use std::time::SystemTime;
 use crate::cancel::CancelToken;
 use crate::size::Measurement;
 
-/// A file's identity: device and inode on Unix, volume serial and file index on Windows.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+/// A file's identity: device and inode on Unix; on Windows a volume serial and a file ID.
+///
+/// The file ID is 128 bits wide because `ReFS` needs `FILE_ID_INFO`'s (a 64-bit file index
+/// doesn't identify a file there). The Windows probes and freezer both fill it from
+/// `FILE_ID_INFO`, so a scan's identities and a freeze's compare.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FileIdentity {
-    /// Device or volume.
+    /// Device or volume serial.
     pub volume: u64,
-    /// Inode or file index.
-    pub file: u64,
+    /// Inode or file ID.
+    pub file: u128,
 }
 
 /// What an entry is, without following a link.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum EntryKind {
     /// A directory.
     Dir,

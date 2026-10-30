@@ -449,7 +449,7 @@ fn held(path: &str) -> HeldPath {
     }
 }
 
-const fn id(file: u64) -> FileIdentity {
+const fn id(file: u128) -> FileIdentity {
     FileIdentity { volume: 1, file }
 }
 

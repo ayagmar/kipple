@@ -774,6 +774,7 @@ fn finished(app: &mut App) {
         integrations: vec![IntegrationReport {
             id: PACMAN,
             omissions: Vec::new(),
+            opened: Vec::new(),
             advice: vec![Advice {
                 title: "Keep three versions of each package".to_owned(),
                 text: "paccache prunes the cache.".to_owned(),

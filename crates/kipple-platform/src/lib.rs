@@ -1,13 +1,16 @@
-//! kipple's operating-system facts, probes and native-command runner.
+//! kipple's operating-system facts, probes, native-command runner and confined executor.
 //!
 //! This is the only crate that may contain OS-specific code, and the only one where
 //! reviewed `unsafe` is allowed (see `docs/05-architecture.md`). Everything that differs
-//! by OS lives in its `os` module. Everything here is read-only except the atomic write of
-//! kipple's own config file: the confined executor arrives with spike S1.
+//! by OS lives in its `os` module, and in `executor`'s and `trash`'s own OS modules.
+//! Everything here is read-only except the atomic write of kipple's own config file, the
+//! confined executor ([`ConfinedFs`]), the only code that removes files, and the trash
+//! ([`ConfinedTrash`]), the only code that moves the user's files.
 
 mod capabilities;
 mod config_file;
 mod environment;
+mod executor;
 mod fs_probe;
 mod host;
 mod os;
@@ -17,11 +20,13 @@ mod roots;
 mod runner;
 #[cfg(feature = "test-roots")]
 mod test_host;
+mod trash;
 mod walk;
 
 pub use capabilities::{ToolProbe, probe_tools};
 pub use config_file::{WriteError, read_config, write_config};
 pub use environment::Environment;
+pub use executor::{ConfinedFs, OsNames};
 pub use fs_probe::NoFollowFs;
 pub use host::{SystemClock, clock, processes};
 pub use process::OsProcesses;
@@ -30,6 +35,7 @@ pub use roots::{
     CONFIG_FILE, KippleDir, KippleDirs, follow_root_links, kipple_dirs, resolve_roots,
     resolve_roots_from,
 };
+pub use trash::ConfinedTrash;
 pub use walk::Walker;
 
 /// The operating system kipple was built for.

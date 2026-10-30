@@ -176,6 +176,7 @@ fn report_with_advice() -> ScanReport {
         integrations: vec![IntegrationReport {
             id: PACMAN,
             omissions: Vec::new(),
+            opened: Vec::new(),
             advice: vec![Advice {
                 title: "Keep fewer old packages with paccache".to_owned(),
                 text: "paccache removes cached packages except the newest versions of each."

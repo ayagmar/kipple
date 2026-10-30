@@ -101,7 +101,7 @@ impl Disk {
         real.hash(&mut hasher);
         FileIdentity {
             volume: 1,
-            file: hasher.finish(),
+            file: u128::from(hasher.finish()),
         }
     }
 
@@ -384,7 +384,7 @@ fn inspected(pid: u32, owner: ProcessOwner, executable: &str) -> ProcessRecord {
         path: abs(executable),
         identity: FileIdentity {
             volume: 1,
-            file: u64::from(pid),
+            file: u128::from(pid),
         },
         deleted: false,
     };

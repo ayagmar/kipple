@@ -17,7 +17,7 @@ Use these words exactly, in code, docs and UI.
 | **Method** | How an allowed operation runs: `delete` (permanent), `trash` (OS trash), `native` (the tool's own command, a semantic plan), or `none` (report-only). |
 | **Selection** | The user's explicit choice of findings. Never inferred. |
 | **Plan** | A frozen selection plus method, targets, fingerprints and policy digests, ready for review. |
-| **Receipt** | The per-item outcome of applying a plan: `done`, `skipped(reason)`, `failed(error)`, `cancelled` or `indeterminate`. |
+| **Receipt** | The per-item outcome of applying a plan, measured against what the user reviewed: `done` (every reviewed entry removed, or moved to the trash; a directory kept because new entries appeared in it, or because it holds entries the plan left out, is a `not-empty` note, not a shortfall), `partial` (it ran, but left reviewed entries, each counted by reason), `skipped(reason)` (dropped before anything was touched), `failed(error)`, `cancelled` or `indeterminate` (a crash interrupted it). |
 | **Grant** | The user's permission for a third-party rule to act on a resolved root. Installing a pack does not grant anything. |
 | **Consequence** | What removing a finding costs, as composable host-derived facts: `recovery` (automatic, rebuild-local, reinstall, redownload, none), `loss` (a set from cache-warmth, rollback-ability, offline-ability, history) and `cost` (low, high, unknown). Defined in 04 §2a. Never taken from a rule's prose. |
 | **Bucket** | The home-screen grouping: **Safe**, **Review** or **Protected**. Derived by host policy (04 §2a). Never declared by a rule. |
@@ -92,7 +92,7 @@ Apply shows per-item progress. `ctrl+c` stops new operations from being schedule
 > Removed an estimated 9.2 GB of allocated storage. Moved 400 MB to Trash (still on disk). 1 item skipped: in use by process 4121 (codex).
 
 ### J4. Recover
-`kipple history` lists receipts. `kipple restore <receipt> [item...]` restores trash-backed items. It refuses to overwrite, and it reports trash that was emptied or entries that are missing. Permanent, native and worktree operations say plainly that they cannot be undone.
+`kipple history` lists receipts. `kipple restore <receipt> [item...]` restores trash-backed items on Linux and macOS, into the directory they came from, which must still be there and be the same directory. It refuses to overwrite, and it reports trash that was emptied or entries that are missing. Windows has no trash method in v0.1, so there is nothing to restore there (D-062). Permanent, native and worktree operations say plainly that they cannot be undone.
 
 ### J5. Extend
 `kipple pack add <source>` fetches a rule pack (URL with `--sha256`, or a registry name later), shows the publisher, version, digest, the roots it asks for and its rules, then installs it **without grants**. Its findings show as report-only until the user runs `kipple pack grant <pack> [rule] [--root ...]`. Updates show a diff of rules and roots and ask for new grants whenever authority grows.

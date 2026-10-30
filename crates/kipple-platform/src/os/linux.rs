@@ -413,7 +413,7 @@ const POSIX_ACL: &CStr = c"system.posix_acl_access";
 
 /// The `statfs` magic numbers of network and user-space file systems: NFS, SMB, CIFS,
 /// SMB2, AFS, Ceph, FUSE, 9p, Coda and NCP.
-const NETWORK_FILE_SYSTEMS: [i64; 10] = [
+pub(crate) const NETWORK_FILE_SYSTEMS: [i64; 10] = [
     0x6969,
     0x517B,
     0xFF53_4D42,
@@ -457,7 +457,7 @@ pub(crate) fn on_network(path: &CStr) -> io::Result<bool> {
 }
 
 /// A `statfs` magic number as its 32 bits, whatever integer type this target gives it.
-fn magic(f_type: impl Into<i64>) -> i64 {
+pub(crate) fn magic(f_type: impl Into<i64>) -> i64 {
     f_type.into() & 0xFFFF_FFFF
 }
 

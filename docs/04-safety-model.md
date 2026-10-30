@@ -1,6 +1,6 @@
 # Safety model
 
-Status: mostly planned. The bucket classification of §2a is built at all three levels (D-047), with the facts listed there; every frontend judges with the configured level and per-rule settings, and the `kept`, `excluded` and `disabled` holds of the config (D-051). The rest are release gates. An operation that cannot meet them on a given OS or filesystem stays report-only there, with the limitation published. A failing integration doesn't block releasing the integrations that pass.
+Status: mostly planned. The bucket classification of §2a is built at all three levels (D-047), with the facts listed there; every frontend judges with the configured level and per-rule settings, and the `kept`, `excluded` and `disabled` holds of the config (D-051). The core's planner, revalidation, apply loop and reconciliation are built against the mutation ports (M3a), holding §3.2's home and file-system-root protections, §3.3, §3.5, §3.6, §3.10 and §7. The platform's freezer and confined executor (§3.4–3.5, D-061) are built and have native tests for §10's confinement scenarios on Linux, macOS and Windows, and so is the trash backend of §5 (D-062). No command uses any of this yet, so nothing user-facing deletes. The rest are release gates. An operation that cannot meet them on a given OS or filesystem stays report-only there, with the limitation published. A failing integration doesn't block releasing the integrations that pass.
 
 ## 1. Who holds authority
 
@@ -39,7 +39,7 @@ Classification is **ordered and exhaustive**. The first matching row wins:
 
 An unknown `cost` is optional. It doesn't block Safe, and the detail pane and `kipple explain` say the restore cost is "not estimated".
 
-Status: until M3 adds methods, grants and operations, row 2's method-available, granted and no-conflict conditions aren't evaluated.
+Status: the core's planner evaluates row 2's other conditions before an item can be planned (M3a), and is stricter than the table: an item whose method its rule doesn't offer, whose file system kipple doesn't change, or whose method is trash where no trash can take it, isn't planned, and neither is one from a third-party rule, since nothing grants those yet. Two selected items in conflict (one at or above the other, or one directory selected through two rules with two methods or scopes) are both refused until the review leaves one out, rather than planned as Review. No command plans or applies yet (M3b).
 
 ### Carefulness levels
 
@@ -112,6 +112,8 @@ Rules:
 - Native operations and whole-worktree removal are labelled "cannot be undone" in review.
 - A custom quarantine store is out of scope for v0.1.
 
+Status: the platform's trash backend is built (spike S4, D-062), and no command uses it yet (M3b). It moves an item whole with one rename that never replaces anything, from its verified parent's handle into a verified trash directory's handle on the same file system, after checking every entry against the frozen tree with the executor's checks; a changed entry, an entry left out or dropped, a link on the way, another file system or an unsupported one refuses the move and nothing moves. On Linux it is the freedesktop trash: the home trash for items on its mount, an existing `$topdir/.Trash/$uid` (`.Trash` sticky) or `$topdir/.Trash-$uid` for items on another, each owned by the user and never reached through a link, with a `.trashinfo` written first so file managers list and restore the item too. On macOS the item moves into `~/.Trash` under the name journalled before the move; kipple restores it, and Finder's Put Back doesn't. Restore moves the item back into its original directory, opened from its verified root with the identity recorded, without replacing anything; a missing or replaced directory, a link in its place, or an emptied or changed trash entry refuses. Windows has no trash method in v0.1: the Recycle Bin is reached only by path, through the shell, which deletes permanently when a volume has no bin, is set not to use it, or the item is over its quota, so `trash` is report-only there and `restore` isn't offered.
+
 ## 6. Native operations (semantic plans)
 
 The core defines a closed enum of first-party native operations. Each variant states:
@@ -125,8 +127,10 @@ When a tool cannot enumerate targets up front, the review screen shows the plan 
 
 ## 7. Journal and partial outcomes
 
-- The intent is journalled before each mutation, and the outcome after.
-- A crash between the two leaves an `indeterminate` entry, which is reconciled on the next start.
+- The plan, with every item's frozen tree, is stored durably before anything runs. Then each item's intent is made durable before its first mutation, and its outcome is recorded after. One intent per item names every entry it may change, because it names the item's stored tree and what revalidation left of it; an intent per entry would add nothing but a sync per file (D-063).
+- A crash between the two leaves the item `indeterminate`. On the next start reconciliation compares a fresh freeze with the stored tree and records what it finds (unchanged, partly gone, gone) as evidence. It never counts a gone entry as removed by kipple, since something else may have removed it, and it never runs anything again. For a trash item it looks at the destination journalled with the intent, which recovers the restore handle.
+- An item is `done` only when every entry the user reviewed was removed, except directories kept because new entries appeared in them or because they hold entries the plan left out; each of those is a `not-empty` note. Entries dropped at revalidation leave it `partial` (or `skipped` when none is left), each counted under its reason. An executor's report about an entry the run wasn't authorized to touch fails the item.
+- A journal write that fails stops the apply: an item whose intent wasn't recorded isn't run, and nothing after it is.
 - Cancellation stops scheduling new work. Items already done stay done.
 - A receipt never reports success for everything when some items failed, were skipped or were cancelled.
 
@@ -176,7 +180,11 @@ Required failure scenarios:
 
 ## 11. Known residual risks (documented, not hidden)
 
-- A process running as the same user and actively racing kipple can still win some races. We confine and revalidate, but we don't promise atomic compare-and-delete.
+- Removed bytes are an estimate: what each removed file allocated when it had a single name. APFS clones and btrfs and XFS reflinks share storage that removing one name doesn't free, so the figure is an upper bound. Only the count of removed names is confirmed.
+- A process running as the same user and actively racing kipple can still win some races. We confine and revalidate, but we don't promise atomic compare-and-delete. On Linux and macOS a file has no handle to remove it by: it is re-read without following right before `unlinkat` removes its name, so a name swapped in between is removed instead. That is a file or a link, never what the link leads to, and only inside a directory kipple checked. A directory is removed only when empty. On Windows the delete is on the handle that was checked.
+- A trash move checks the item's top by name right before the rename, which moves whatever has the name by then. If a same-user process swapped it in between, the entry that arrived isn't the item: kipple moves it back and refuses. If it can't be moved back, because something has taken the name since, it stays in the trash with its `.trashinfo`, and the item fails as `stranded`, naming the slot. A restore does the same in reverse, and a stranded entry stays at the original name. A trash directory found through a top directory's path (Linux) is checked by owner, kind and identity, not by how it was reached.
+- A file edited in place after the freeze, keeping its size, within one tick of the file system's timestamps (FAT keeps two seconds; Linux stamps files from a coarse clock that ticks every few milliseconds) looks unchanged and is removed. On Windows a file's times may move only once the program writing it closes it, so a same-size write through a handle still open can look unchanged too.
+- A user-space file system is refused where the OS says so (FUSE on Linux and macOS). One on Windows that reports itself as NTFS is treated as NTFS.
 - Upstream tools change their layouts without notice. Integrations fail closed on unfamiliar versions, which can mean less cleanup right after a tool update.
 - Activity is a snapshot taken during the scan (D-050). A program can start using an artifact after it. M3's executor must check activity again before acting.
 - A root or `SYSTEM` process that kipple can't inspect isn't counted for an artifact in the home directory, and neither is one with root's reach on Linux (D-052). One running from an artifact without naming it on its command line (for example a capability-wrapped launcher started from a relative path that was rewritten) isn't seen, and neither is a root process in a container whose command line names the artifact by its path inside the container. On macOS and Windows there is no command-line check for root or `SYSTEM` processes at all: macOS denies `KERN_PROCARGS2` for other users' processes, and Windows isn't read in M2.

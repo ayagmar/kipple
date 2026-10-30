@@ -189,7 +189,7 @@ fn region_vnode(raw_pid: c_int) -> io::Result<Option<Region>> {
                 path: vnode_path(&info.vnode),
                 identity: FileIdentity {
                     volume: u64::from(stat.vst_dev),
-                    file: stat.vst_ino,
+                    file: u128::from(stat.vst_ino),
                 },
                 deleted: stat.vst_nlink == 0,
             }));

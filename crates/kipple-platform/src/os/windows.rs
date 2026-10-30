@@ -1,7 +1,8 @@
 //! Windows: Known Folders for roots, and `K32EnumProcesses`,
 //! `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` and `QueryFullProcessImageNameW` for
 //! processes (D-035), and `WTSEnumerateProcessesExW` for who each one runs as. File
-//! identity is the volume serial and file index of an open handle.
+//! identity is the `FILE_ID_INFO` of an open handle: the 64-bit volume serial and the
+//! 128-bit file ID, which `ReFS` needs and the executor checks too.
 
 use std::collections::HashMap;
 use std::ffi::{OsStr, OsString, c_void};
@@ -23,8 +24,8 @@ use windows_sys::Win32::Foundation::{
 use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
 use windows_sys::Win32::Security::{GetTokenInformation, PSID, TOKEN_QUERY, TOKEN_USER, TokenUser};
 use windows_sys::Win32::Storage::FileSystem::{
-    BY_HANDLE_FILE_INFORMATION, FILE_ATTRIBUTE_HIDDEN, FILE_FLAG_BACKUP_SEMANTICS,
-    FILE_FLAG_OPEN_REPARSE_POINT, GetFileInformationByHandle,
+    FILE_ATTRIBUTE_HIDDEN, FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_ID_INFO,
+    FileIdInfo, GetFileInformationByHandleEx,
 };
 use windows_sys::Win32::System::Com::CoTaskMemFree;
 use windows_sys::Win32::System::ProcessStatus::K32EnumProcesses;
@@ -196,24 +197,37 @@ pub(crate) fn identity(path: &Path, _: &fs::Metadata) -> Option<FileIdentity> {
     file_identity(path).ok()
 }
 
-#[expect(
-    unsafe_code,
-    reason = "windows-sys exposes GetFileInformationByHandle as a raw call"
-)]
 fn file_identity(path: &Path) -> io::Result<FileIdentity> {
     let file = fs::OpenOptions::new()
         .access_mode(0)
         .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
         .open(path)?;
-    // SAFETY: zeroed is a valid value for this plain C struct.
-    let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
-    // SAFETY: the handle is open for the lifetime of `file`, and `info` is writable.
-    if unsafe { GetFileInformationByHandle(file.as_raw_handle(), &raw mut info) } == 0 {
+    handle_identity(file.as_raw_handle())
+}
+
+/// The identity of the file `handle` has open: its `FILE_ID_INFO`. The probes, the
+/// process table and the executor all read it here, so their identities compare.
+#[expect(
+    unsafe_code,
+    reason = "windows-sys exposes GetFileInformationByHandleEx as a raw call"
+)]
+pub(crate) fn handle_identity(handle: HANDLE) -> io::Result<FileIdentity> {
+    let mut info = FILE_ID_INFO::default();
+    // SAFETY: the caller's handle is open, and `info` is the struct the class names.
+    let ok = unsafe {
+        GetFileInformationByHandleEx(
+            handle,
+            FileIdInfo,
+            (&raw mut info).cast::<c_void>(),
+            u32::try_from(size_of::<FILE_ID_INFO>()).unwrap_or(u32::MAX),
+        )
+    };
+    if ok == 0 {
         return Err(io::Error::last_os_error());
     }
     Ok(FileIdentity {
-        volume: u64::from(info.dwVolumeSerialNumber),
-        file: (u64::from(info.nFileIndexHigh) << 32) | u64::from(info.nFileIndexLow),
+        volume: info.VolumeSerialNumber,
+        file: u128::from_le_bytes(info.FileId.Identifier),
     })
 }
 

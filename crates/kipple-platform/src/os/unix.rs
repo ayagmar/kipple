@@ -82,7 +82,7 @@ pub(crate) fn identity(_: &Path, meta: &fs::Metadata) -> Option<FileIdentity> {
 pub(crate) fn identity_of(meta: &fs::Metadata) -> FileIdentity {
     FileIdentity {
         volume: meta.dev(),
-        file: meta.ino(),
+        file: u128::from(meta.ino()),
     }
 }
 
