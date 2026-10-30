@@ -143,7 +143,7 @@ fn check(
              (`cargo xtask check-compat --refresh`)"
             )]
         }
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Vec::new(),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => unjudged(current, ""),
         Err(error) => return Err(error).with_context(|| format!("could not read {relative}")),
     };
     if let Some(text) = refresh
@@ -193,7 +193,13 @@ const CHECKED: &[&str] = &[
 ];
 
 /// Every change from `old` to `new` that breaks a reader of `old`, worded for people.
+/// Where either schema has something the comparison can't judge, that instead.
 fn changes(old: &Value, new: &Value, read_by: ReadBy) -> Vec<String> {
+    let mut unjudged_parts = unjudged(new, "");
+    unjudged_parts.extend(unjudged(old, "in the baseline, "));
+    if !unjudged_parts.is_empty() {
+        return unjudged_parts;
+    }
     let mut diff = Diff {
         old_root: old,
         new_root: new,
@@ -230,13 +236,13 @@ impl Diff<'_> {
             Ok(resolved) => resolved,
             Err(problem) => return self.unsupported(at, &problem),
         };
-        if let (Some(old_ref), Some(new_ref)) = (old_ref, new_ref)
-            && !self.seen.insert((old_ref.to_owned(), new_ref.to_owned()))
+        let key = |reference: Option<&str>, schema: &Value| {
+            reference.map_or_else(|| schema.to_string(), |name| format!("$ref {name}"))
+        };
+        if (old_ref.is_some() || new_ref.is_some())
+            && !self.seen.insert((key(old_ref, old), key(new_ref, new)))
         {
             return;
-        }
-        if let Some(problem) = unsupported(old).or_else(|| unsupported(new)) {
-            return self.unsupported(at, &problem);
         }
         if is_union(old) || is_union(new) {
             self.union(at, old, new);
@@ -383,14 +389,21 @@ impl Diff<'_> {
 
     fn properties(&mut self, at: &str, old: &Value, new: &Value) {
         for (name, old_property) in properties(old) {
-            let path = if at.is_empty() {
-                name.clone()
-            } else {
-                format!("{at}.{name}")
-            };
+            let path = child(at, name);
             match new.get("properties").and_then(|p| p.get(name)) {
                 Some(new_property) => self.schema(&path, old_property, new_property),
                 None => self.push(at, &format!("`{name}` was removed")),
+            }
+        }
+        // Others ignore a property they don't know. Kipple compares a new one with what
+        // the baseline allowed in its place: anything, unless it refused unlisted ones.
+        let closed =
+            |schema: &Value| schema.get("additionalProperties") == Some(&Value::Bool(false));
+        if self.read_by == ReadBy::Kipple && !closed(old) {
+            let anything = Value::Object(Map::new());
+            let listed = |name: &str| old.get("properties").and_then(|p| p.get(name)).is_some();
+            for (name, new_property) in properties(new).filter(|(name, _)| !listed(name)) {
+                self.schema(&child(at, name), &anything, new_property);
             }
         }
         let (wide, narrow) = self.sides(old, new);
@@ -401,8 +414,6 @@ impl Diff<'_> {
             }
         }
         // Others ignore properties they don't know, so only kipple's reading cares.
-        let closed =
-            |schema: &Value| schema.get("additionalProperties") == Some(&Value::Bool(false));
         if self.read_by == ReadBy::Kipple && closed(new) && !closed(old) {
             self.escapes(at, "properties the baseline doesn't list");
         }
@@ -452,6 +463,73 @@ fn resolve<'v>(root: &'v Value, schema: &'v Value) -> Result<(&'v Value, Option<
         return Err(format!("the definition {name}, itself a reference"));
     }
     Ok((target, Some(name)))
+}
+
+/// Every place in `root`, reached from its top, the comparison can't judge, each worded
+/// after `lead`.
+fn unjudged(root: &Value, lead: &str) -> Vec<String> {
+    let mut walk = Walk {
+        root,
+        seen: BTreeSet::new(),
+        found: Vec::new(),
+    };
+    walk.node("", root);
+    walk.found
+        .into_iter()
+        .map(|(at, problem)| {
+            let at = if at.is_empty() { "(root)" } else { &at };
+            format!("{lead}{at}: {problem}, which the check can't compare (xtask/src/compat.rs)")
+        })
+        .collect()
+}
+
+/// A visit of every schema in one document, following each `$ref` once.
+struct Walk<'schema> {
+    root: &'schema Value,
+    seen: BTreeSet<String>,
+    found: Vec<(String, String)>,
+}
+
+impl Walk<'_> {
+    fn node(&mut self, at: &str, schema: &Value) {
+        let (schema, reference) = match resolve(self.root, schema) {
+            Ok(resolved) => resolved,
+            Err(problem) => return self.found.push((at.to_owned(), problem)),
+        };
+        if let Some(name) = reference
+            && !self.seen.insert(name.to_owned())
+        {
+            return;
+        }
+        if let Some(problem) = unsupported(schema) {
+            return self.found.push((at.to_owned(), problem));
+        }
+        if is_union(schema) {
+            let list = match variants(self.root, schema) {
+                Ok(list) => list,
+                Err(problem) => return self.found.push((at.to_owned(), problem)),
+            };
+            for variant in &list {
+                self.node(&format!("{at}<{}>", label(variant)), variant);
+            }
+            return;
+        }
+        if let Some(items) = schema.get("items") {
+            self.node(&format!("{at}[]"), items);
+        }
+        for (name, property) in properties(schema) {
+            self.node(&child(at, name), property);
+        }
+    }
+}
+
+/// The path of the property `name` of the schema at `at`.
+fn child(at: &str, name: &str) -> String {
+    if at.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{at}.{name}")
+    }
 }
 
 fn keywords(schema: &Value) -> impl Iterator<Item = &str> {
@@ -675,13 +753,73 @@ mod tests {
     }
 
     #[test]
-    fn an_added_optional_property_passes_for_every_reader() {
-        let new = edited(report(), |s| {
+    fn an_added_optional_property_passes_where_the_baseline_had_none() {
+        let closed = edited(report(), |s| s["additionalProperties"] = json!(false));
+        let new = edited(closed.clone(), |s| {
             s["properties"]["note"] = json!({ "type": ["string", "null"] });
         });
         for read_by in [ReadBy::Others, ReadBy::Kipple] {
-            assert_eq!(changes(&report(), &new, read_by), Vec::<String>::new());
+            assert_eq!(changes(&closed, &new, read_by), Vec::<String>::new());
         }
+    }
+
+    // Catches a new property on an object the baseline left open passing although a
+    // document the baseline allowed, `{"note": 42}`, is now refused.
+    #[test]
+    fn a_new_property_where_the_baseline_allowed_anything_breaks_kipples_reading() {
+        let new = edited(report(), |s| {
+            s["properties"]["note"] = json!({ "type": "string" });
+        });
+
+        let found = changes(&report(), &new, ReadBy::Kipple);
+
+        assert_eq!(
+            found,
+            ["note: kipple no longer reads types other than string, which the baseline allows"]
+        );
+        assert_eq!(
+            changes(&report(), &new, ReadBy::Others),
+            Vec::<String>::new()
+        );
+    }
+
+    // Catches a schema keyword the check can't compare passing because it sits in a
+    // property the baseline doesn't have.
+    #[test]
+    fn a_keyword_the_check_does_not_know_fails_in_a_new_property() {
+        let closed = edited(report(), |s| s["additionalProperties"] = json!(false));
+        let new = edited(closed.clone(), |s| {
+            s["properties"]["note"] = json!({ "type": "string", "minLength": 1 });
+        });
+        for read_by in [ReadBy::Others, ReadBy::Kipple] {
+            let found = changes(&closed, &new, read_by);
+
+            assert_eq!(found.len(), 1, "{found:?}");
+            assert!(
+                found[0].starts_with("note: `minLength`, which the check can't compare"),
+                "{found:?}"
+            );
+        }
+    }
+
+    // Catches comparing a new recursive property with what an open baseline allowed
+    // never ending.
+    #[test]
+    fn a_new_recursive_property_is_compared_once() {
+        let new = edited(report(), |s| {
+            s["properties"]["tree"] = json!({ "$ref": "#/$defs/Tree" });
+            s["$defs"]["Tree"] = json!({
+                "type": "object",
+                "properties": { "next": { "$ref": "#/$defs/Tree" } }
+            });
+        });
+
+        let found = changes(&report(), &new, ReadBy::Kipple);
+
+        assert_eq!(
+            found,
+            ["tree: kipple no longer reads types other than object, which the baseline allows"]
+        );
     }
 
     #[test]
@@ -702,21 +840,19 @@ mod tests {
     // Catches an old theme or config without a key the new version insists on.
     #[test]
     fn a_new_required_property_breaks_kipples_reading_only() {
-        let new = edited(report(), |s| {
+        let closed = edited(report(), |s| s["additionalProperties"] = json!(false));
+        let new = edited(closed.clone(), |s| {
             s["properties"]["level"] = json!({ "type": "string" });
             s["required"].as_array_mut().unwrap().push(json!("level"));
         });
 
-        let found = changes(&report(), &new, ReadBy::Kipple);
+        let found = changes(&closed, &new, ReadBy::Kipple);
 
         assert_eq!(
             found,
             ["(root): kipple no longer reads an object without `level`, which the baseline allows"]
         );
-        assert_eq!(
-            changes(&report(), &new, ReadBy::Others),
-            Vec::<String>::new()
-        );
+        assert_eq!(changes(&closed, &new, ReadBy::Others), Vec::<String>::new());
     }
 
     // Catches an output field turned optional: a script reading it on every record breaks.
@@ -906,5 +1042,29 @@ mod tests {
 
         assert!(run(root.path(), true).is_err());
         assert_eq!(fs::read_to_string(&scan).unwrap(), broken);
+    }
+
+    // Catches the first baseline of a version written from a schema the check can't
+    // judge, which every later comparison would then trust.
+    #[test]
+    fn refresh_never_writes_a_first_baseline_the_check_cannot_judge() {
+        let root = tempfile::tempdir().unwrap();
+        let format = Format {
+            name: "scan",
+            version: "v9",
+            read_by: ReadBy::Others,
+        };
+        let schema = edited(report(), |s| {
+            s["properties"]["note"] = json!({ "type": "string", "minLength": 1 });
+        });
+
+        let found = check(root.path(), &format, &schema, Some("{}")).unwrap();
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(
+            found[0].starts_with("scan v9: note: `minLength`"),
+            "{found:?}"
+        );
+        assert!(!root.path().join(BASELINES).join("scan/v9").exists());
     }
 }
