@@ -20,7 +20,9 @@ use std::sync::Arc;
 use crate::frozen::{FrozenTree, Mark, Marks, NodeId, RelPath, Unauthorized};
 use crate::mutation::{EffectSink, Finish, Unsupported};
 use crate::plan::{ItemId, JudgementField};
+use crate::planner::{Conflict, Unjudged};
 use crate::policy::{Caution, Hold};
+use crate::protect::Protection;
 use crate::rule::Method;
 use crate::size::{Allocated, Apparent, SpaceEstimate};
 use crate::trash::TrashSlot;
@@ -189,6 +191,29 @@ pub enum Skip {
     },
     /// The apply stopped before it started.
     NotStarted(Stop),
+    /// The root it is below isn't the directory the scan opened: it didn't open in the
+    /// scan run for the apply, or it opened with another identity.
+    RootChanged,
+    /// It can't be judged now.
+    Unjudged(Unjudged),
+    /// The host protects it whatever any rule says (04 §3.2, §3.9).
+    HostProtected(Protection),
+    /// It holds another finding, at the same directory or inside it, that is Protected
+    /// for these reasons, or that couldn't be measured when `holds` is empty: removing
+    /// this item would remove that one too, and a merge never discards a protection
+    /// (04 §3.10). One the host protects is [`Skip::HostProtected`].
+    HoldsProtected {
+        /// The other finding.
+        path: PathBuf,
+        /// What holds it.
+        holds: Vec<Hold>,
+    },
+    /// Its rule is a third-party rule, which acts on nothing until granted (04 §9).
+    NotGranted,
+    /// It conflicts with another selected item until the review resolves it (04 §3.10).
+    Conflict(Conflict),
+    /// Its method is trash, and no trash can take it without risking a permanent delete.
+    TrashUnavailable(ApplyError),
 }
 
 named! {
@@ -205,7 +230,7 @@ named! {
 /// to kipple: something else may have changed it too.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Found {
-    /// Every entry is as frozen: nothing was removed.
+    /// Every entry the plan authorized is still there, the same file: nothing was removed.
     Unchanged,
     /// The target is gone.
     Gone,
@@ -218,6 +243,9 @@ pub enum Found {
         /// How many there were.
         of: u64,
     },
+    /// The target is gone, and the item is at the trash slot journalled with its intent,
+    /// which restores it.
+    Trashed(Trashed),
     /// It couldn't be checked.
     Unreadable(ApplyError),
 }

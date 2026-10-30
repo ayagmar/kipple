@@ -17,11 +17,6 @@
 //! }
 //! ```
 
-#![cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the apply loop (M3a-apply) calls `admit`")
-)]
-
 #[cfg(test)]
 mod tests;
 

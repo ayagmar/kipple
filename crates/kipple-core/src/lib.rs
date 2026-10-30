@@ -42,6 +42,7 @@ macro_rules! named {
 }
 
 mod activity;
+mod apply;
 mod authorize;
 mod cancel;
 mod capability;
@@ -56,9 +57,11 @@ mod journal;
 mod mutation;
 mod outcome;
 mod plan;
+mod planner;
 mod policy;
 mod probe;
 mod process;
+mod protect;
 mod root;
 mod rule;
 mod size;
@@ -66,6 +69,7 @@ mod suggest;
 mod trash;
 
 pub use activity::{ProcessCensus, census};
+pub use apply::{ApplyRequest, Pending, Reconciled, apply, reconcile};
 pub use authorize::{Authorization, Authorized, AuthorizedOp, DeleteOp, TrashOp};
 pub use cancel::CancelToken;
 pub use capability::{NativeTool, ToolError, ToolStatus, ToolVersion};
@@ -98,6 +102,10 @@ pub use plan::{
     Anchor, ItemId, Judgement, JudgementField, MethodChoice, MethodRefusal, Plan, PlanEntry,
     Selection, Standing, VerifiedRoot,
 };
+pub use planner::{
+    Conflict, ConflictKind, Judge, Merged, Methods, MutationPorts, PlanMode, PlanRequest, Planned,
+    Refused, Unjudged, plan,
+};
 pub use policy::{
     Activity, ActivityGap, Bucket, Caution, Consequence, Cost, Facts, HeldPath, Hold, Level,
     Lineage, Loss, Modified, Policy, Proposal, Recovery, RuleSettings, Seen, Tracked, Verdict,
@@ -111,6 +119,7 @@ pub use process::{
     Capabilities, CommandLines, EnvPath, Inventory, MountNamespace, Observer, Probed, ProcessClass,
     ProcessOutcome, ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Unread, UserId,
 };
+pub use protect::{Protection, Protections};
 pub use root::{
     LinkProblem, Resolution, ResolvedRoot, RootLink, RootSource, Roots, SettingProblem,
     SymbolicRoot, UnresolvedRoot,

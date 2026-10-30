@@ -1,6 +1,6 @@
 # Safety model
 
-Status: mostly planned. The bucket classification of §2a is built at all three levels (D-047), with the facts listed there; every frontend judges with the configured level and per-rule settings, and the `kept`, `excluded` and `disabled` holds of the config (D-051). The rest are release gates. An operation that cannot meet them on a given OS or filesystem stays report-only there, with the limitation published. A failing integration doesn't block releasing the integrations that pass.
+Status: mostly planned. The bucket classification of §2a is built at all three levels (D-047), with the facts listed there; every frontend judges with the configured level and per-rule settings, and the `kept`, `excluded` and `disabled` holds of the config (D-051). The core's planner, revalidation, apply loop and reconciliation are built against the mutation ports (M3a), holding §3.2's home and file-system-root protections, §3.3, §3.5, §3.6, §3.10 and §7; no command uses them yet, so nothing user-facing deletes. The rest are release gates. An operation that cannot meet them on a given OS or filesystem stays report-only there, with the limitation published. A failing integration doesn't block releasing the integrations that pass.
 
 ## 1. Who holds authority
 
@@ -39,7 +39,7 @@ Classification is **ordered and exhaustive**. The first matching row wins:
 
 An unknown `cost` is optional. It doesn't block Safe, and the detail pane and `kipple explain` say the restore cost is "not estimated".
 
-Status: until M3 adds methods, grants and operations, row 2's method-available, granted and no-conflict conditions aren't evaluated.
+Status: the core's planner evaluates row 2's other conditions before an item can be planned (M3a), and is stricter than the table: an item whose method its rule doesn't offer, whose file system kipple doesn't change, or whose method is trash where no trash can take it, isn't planned, and neither is one from a third-party rule, since nothing grants those yet. Two selected items in conflict (one at or above the other, or one directory selected through two rules with two methods or scopes) are both refused until the review leaves one out, rather than planned as Review. No command plans or applies yet (M3b).
 
 ### Carefulness levels
 

@@ -325,10 +325,6 @@ pub struct Plan {
 
 impl Plan {
     /// A plan of `entries`, numbered in order.
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "the planner (M3a-apply) calls it")
-    )]
     pub(crate) fn new(mut entries: Vec<PlanEntry>) -> Self {
         for (index, entry) in entries.iter_mut().enumerate() {
             entry.item = ItemId(u32::try_from(index).unwrap_or(u32::MAX));
