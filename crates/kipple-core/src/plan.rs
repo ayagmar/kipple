@@ -351,6 +351,11 @@ impl Plan {
         Self { entries, digest }
     }
 
+    /// Its items, to make another plan of.
+    pub(crate) fn into_entries(self) -> Vec<PlanEntry> {
+        self.entries
+    }
+
     /// Its items, in order.
     #[must_use]
     pub fn entries(&self) -> &[PlanEntry] {

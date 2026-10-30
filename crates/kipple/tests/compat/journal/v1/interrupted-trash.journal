@@ -1,0 +1,2 @@
+{"schema":"kipple.journal/v1","record":{"type":"plan","digest":"94995290e20c4e46c0b0f58c94632143"},"digest":"2b6a562f3cfc131f5beb6aaefbc041cc"}
+{"schema":"kipple.journal/v1","record":{"type":"intent","plan":"94995290e20c4e46c0b0f58c94632143","item":0,"method":"trash","reviewed":"4e46336abb77ba911d88885539018945","authorized":"e928e89fe621e1429ef8e05bb8c7139f","entries":7,"trash":{"trash":"/home/u/.local/share/Trash/files","identity":"7:900","name":"item-0"}},"digest":"44c8d5d1a5d00971ab552644aa0afb8b"}

@@ -9,6 +9,11 @@ use std::fmt;
 use std::path::Path;
 
 use crate::policy::{HeldPath, Lineage, starts_with};
+use crate::root::{Roots, SymbolicRoot};
+
+/// The built-in integrations' state roots, protected whole until each declares the
+/// subresources in it (M4): `--root` inside one plans nothing there.
+pub const STATE_ROOTS: &[SymbolicRoot] = &[SymbolicRoot::ClaudeConfig];
 
 named! {
     /// Why the host protects a path whatever any rule says.
@@ -34,6 +39,29 @@ pub struct Protections {
 }
 
 impl Protections {
+    /// The host's protections: the home directory, kipple's data directory `data` (its
+    /// runs and config) and every [`STATE_ROOTS`] root, each as `held` reads it from its
+    /// path. One that is unknown, `data` included, holds every finding.
+    #[must_use]
+    pub fn of_host(roots: &Roots, data: Option<&Path>, held: &dyn Fn(&Path) -> HeldPath) -> Self {
+        let home = match roots.get(SymbolicRoot::Home) {
+            Some(Ok(home)) => Some(held(&home.path)),
+            Some(Err(_)) | None => None,
+        };
+        let state = STATE_ROOTS
+            .iter()
+            .flat_map(|root| roots.all(*root))
+            .map(|root| {
+                root.as_ref()
+                    .map_or_else(|_| HeldPath::default(), |root| held(&root.path))
+            });
+        let data = data.map_or_else(HeldPath::default, held);
+        Self {
+            home,
+            subresources: std::iter::once(data).chain(state).collect(),
+        }
+    }
+
     /// What protects an item at `path`, with the identities `lineage` of it and the
     /// directories above it, if anything does.
     #[must_use]

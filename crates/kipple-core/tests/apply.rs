@@ -11,6 +11,8 @@
     reason = "a test reads the machine's state while it checks it"
 )]
 
+#[path = "support/codec.rs"]
+mod codec;
 #[path = "support/world.rs"]
 mod world;
 
@@ -19,18 +21,20 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use codec::TestCodec;
 use kipple_core::{
     Activity, ActivityGap, Allocated, Apparent, ApplyRequest, Authorization, CancelToken, Category,
     Completeness, Conflict, ConflictKind, Consequence, Cost, EntryKind, EntrySnapshot, ErrorCode,
     Evidence, Facts, FileIdentity, FileSystemClass, Finding, FindingId, Fingerprint, Found,
     HeldPath, Hold, IntegrationId, IntegrationReport, ItemOutcome, Judge, JudgementField,
     LeftReason, Level, Lineage, Loss, Method, Methods, Modified, MutationPorts, OpenedRoot,
-    Operation, Pending, Plan, PlanEntry, PlanMode, PlanRequest, Planned, Platform, Policy,
-    Proposal, Protection, Protections, Receipt, Recovery, RelPath, Rule, RuleId, RuleSettings,
-    RuleText, ScanOutcome, ScanReport, Scope, Selection, Selector, Skip, SpaceEstimate, Stamp,
-    Standing, Status, Stop, SymbolicRoot, Tracked, Unjudged, Unsupported, apply, plan, reconcile,
+    Operation, Plan, PlanEntry, PlanMode, PlanRequest, Planned, Platform, Policy, Proposal,
+    Protection, Protections, Receipt, Recovery, RelPath, Rule, RuleId, RuleSettings, RuleText,
+    ScanOutcome, ScanReport, Scope, Selection, Selector, Skip, SpaceEstimate, Stamp, Standing,
+    Status, Stop, SymbolicRoot, Tracked, Unjudged, Unsupported, apply, plan, reconcile,
 };
-use world::{Crash, Crashed, Record, Target, World};
+use kipple_core::{ApplyPorts, Depth, Reconciled, Recorders, RunId, RunRead, StoredRun, read_run};
+use world::{Crash, Crashed, Record, Rescanned, Target, World};
 
 const HOME: &str = "/home/u";
 const FS_ROOT: FileIdentity = id(1);
@@ -247,6 +251,45 @@ const fn ports(world: &World) -> MutationPorts<'_> {
         freezer: world,
         executor: world,
         trash: world,
+        tracked: world,
+    }
+}
+
+/// Applies `plan` with `authorization`, rescanning as `rescan`, journalling to `world`.
+fn apply_as(
+    plan: &Plan,
+    authorization: Authorization,
+    rescan: &Rescanned,
+    config: &Config,
+    world: &World,
+) -> Receipt {
+    let mutation = ports(world);
+    let ports = ApplyPorts {
+        rescan,
+        mutation: &mutation,
+    };
+    let mut journal = world.recorder();
+    let to = Recorders {
+        journal: &mut journal,
+        events: &mut (),
+    };
+    apply(
+        &ApplyRequest {
+            plan,
+            authorization,
+        },
+        &config.judge(),
+        &ports,
+        to,
+        &CancelToken::new(),
+    )
+}
+
+/// `scan` as apply's rescan, with each finding's own activity.
+fn rescanned(scan: &ScanReport) -> Rescanned {
+    Rescanned {
+        scan: scan.clone(),
+        activity: None,
     }
 }
 
@@ -313,16 +356,19 @@ fn run_with(
     let request = ApplyRequest {
         plan,
         authorization: reviewed(plan),
-        rescan,
     };
-    let mut journal = world.journal();
-    apply(
-        &request,
-        &config.judge(),
-        &ports(world),
-        &mut journal,
-        cancel,
-    )
+    let rescan = rescanned(rescan);
+    let mutation = ports(world);
+    let ports = ApplyPorts {
+        rescan: &rescan,
+        mutation: &mutation,
+    };
+    let mut journal = world.recorder();
+    let to = Recorders {
+        journal: &mut journal,
+        events: &mut (),
+    };
+    apply(&request, &config.judge(), &ports, to, cancel)
 }
 
 fn statuses(receipt: &Receipt) -> Vec<Status> {
@@ -386,9 +432,12 @@ fn an_item_runs_between_its_durable_intent_and_its_outcome() {
         .records
         .iter()
         .map(|record| match record {
-            Record::Plan(_) => "plan",
+            Record::Plan { .. } => "plan",
             Record::Intent(_) => "intent",
-            Record::Outcome(..) => "outcome",
+            Record::Outcome { .. } => "outcome",
+            Record::RestoreIntent { .. }
+            | Record::RestoreOutcome { .. }
+            | Record::TrashRecordRemoved { .. } => "restore",
         })
         .collect();
     assert_eq!(kinds, ["plan", "intent", "outcome"]);
@@ -600,18 +649,12 @@ fn an_item_that_became_riskier_or_unknown_is_skipped() {
             (&recent, Skip::Riskier(vec![kipple_core::Caution::Recent])),
             (&unknown, Skip::Protected(vec![Hold::UnknownModified])),
         ] {
-            let request = ApplyRequest {
-                plan: &planned.plan,
+            let receipt = apply_as(
+                &planned.plan,
                 authorization,
-                rescan,
-            };
-            let mut journal = world.journal();
-            let receipt = apply(
-                &request,
-                &config.judge(),
-                &ports(&world),
-                &mut journal,
-                &CancelToken::new(),
+                &rescanned(rescan),
+                &config,
+                &world,
             );
             assert_eq!(skip_of(&receipt.items[0].outcome), Some(&skip));
         }
@@ -830,16 +873,13 @@ fn crash_then_reconcile(
     config: &Config,
     world: &World,
     crash: Crash,
-) -> Vec<kipple_core::Reconciled> {
-    let pending = crash_run(plan, scan, config, world, crash);
+) -> Vec<Reconciled> {
+    crash_run(plan, scan, config, world, crash);
     let ran = world.state().ran.clone();
     let removals = world.state().removals.len();
-    let mut journal = world.journal();
-    let pending = Pending {
-        plan,
-        intents: &pending,
-    };
-    let reconciled = reconcile(&pending, &ports(world), &mut journal, &CancelToken::new()).unwrap();
+    let mut journal = world.recorder();
+    let run = stored(world, plan);
+    let reconciled = reconcile(&run, &ports(world), &mut journal, &CancelToken::new()).unwrap();
     let state = world.state();
     assert_eq!(state.ran, ran, "reconciliation runs nothing");
     assert_eq!(
@@ -852,17 +892,40 @@ fn crash_then_reconcile(
     reconciled
 }
 
+/// The run `world` stored for `plan`, read back with its trees as reconciliation reads it.
+fn stored(world: &World, plan: &Plan) -> StoredRun {
+    let id = world.store(plan);
+    let read = read_run(world, &id, Depth::Trees, &TestCodec);
+    let run = if let RunRead::Read(run) = read {
+        Some(run)
+    } else {
+        None
+    };
+    run.unwrap()
+}
+
+/// The outcome reconciliation recorded for an interrupted item.
+const fn outcome_of(reconciled: &Reconciled) -> Option<&ItemOutcome> {
+    match reconciled {
+        Reconciled::Item { outcome, .. } => Some(outcome),
+        Reconciled::Restore { .. } => None,
+    }
+}
+
 /// What reconciliation found of each item, which is always indeterminate.
-fn found(reconciled: &[kipple_core::Reconciled]) -> Vec<Option<Found>> {
+fn found(reconciled: &[Reconciled]) -> Vec<Option<Found>> {
     reconciled
         .iter()
-        .map(|one| match &one.outcome {
-            ItemOutcome::Indeterminate(found) => Some(found.clone()),
-            ItemOutcome::Done(_)
-            | ItemOutcome::Partial(_)
-            | ItemOutcome::Skipped(_)
-            | ItemOutcome::Failed { .. }
-            | ItemOutcome::Cancelled(_) => None,
+        .map(|one| match outcome_of(one) {
+            Some(ItemOutcome::Indeterminate(found)) => Some(found.clone()),
+            Some(
+                ItemOutcome::Done(_)
+                | ItemOutcome::Partial(_)
+                | ItemOutcome::Skipped(_)
+                | ItemOutcome::Failed { .. }
+                | ItemOutcome::Cancelled(_),
+            )
+            | None => None,
         })
         .collect()
 }
@@ -919,14 +982,12 @@ fn a_cancel_during_reconciliation_leaves_the_item_pending() {
         freezer: &freezer,
         executor: &world,
         trash: &world,
+        tracked: &world,
     };
-    let mut journal = world.journal();
-    let pending_now = Pending {
-        plan: &planned.plan,
-        intents: &pending,
-    };
+    let mut journal = world.recorder();
+    let run = stored(&world, &planned.plan);
 
-    let reconciled = reconcile(&pending_now, &ports, &mut journal, &cancel).unwrap();
+    let reconciled = reconcile(&run, &ports, &mut journal, &cancel).unwrap();
 
     assert_eq!(reconciled, Vec::new());
     assert_eq!(world.state().pending(), pending);
@@ -966,6 +1027,72 @@ fn a_crash_after_a_trash_move_keeps_the_restore_handle() {
         found(&reconciled),
         [Some(Found::Trashed(kipple_core::Trashed { slot }))]
     );
+}
+
+/// The baseline run a crash interrupted between a trash move and its outcome, as an
+/// earlier release stored it (`crates/kipple/tests/compat/`).
+const BASELINE_PLAN: &[u8] =
+    include_bytes!("../../kipple/tests/compat/stored-plan/v1/interrupted-trash.plan");
+const BASELINE_JOURNAL: &[u8] =
+    include_bytes!("../../kipple/tests/compat/journal/v1/interrupted-trash.journal");
+
+/// The world the baseline run was made in: one project's `target/`, planned for the
+/// trash, crashed after the move and before its outcome.
+fn baseline_world() -> (World, Plan) {
+    let (item, target) = project(0, 100, TARGET);
+    let world = world_of(&[(item.clone(), target)]);
+    let scan = scan_of(&[item]);
+    let mut config = Config::new();
+    config.methods.config = Some(Method::Trash);
+    let planned = plan_all(&scan, &config, &world, PlanMode::Review);
+    crash_run(&planned.plan, &scan, &config, &world, Crash::BeforeWrite(2));
+    (world, planned.plan)
+}
+
+/// Catches a run an earlier kipple left pending that no longer reconciles after an
+/// upgrade, so its trashed item loses its restore handle (pinned 9, 18): the baseline's
+/// intent matches its plan by the digests stored, and the item is found in the trash.
+#[test]
+fn a_baseline_run_with_a_pending_trash_move_reconciles_to_trashed() {
+    let (world, _) = baseline_world();
+    let id = RunId::at(std::time::UNIX_EPOCH, 0);
+    let files = world::Files {
+        plan: Some(BASELINE_PLAN.to_vec()),
+        journal: BASELINE_JOURNAL.to_vec(),
+    };
+    world.state().runs.insert(id.clone(), files);
+    let read = read_run(&world, &id, Depth::Trees, &TestCodec);
+    let RunRead::Read(run) = read else {
+        panic!("the baseline run reads: {read:?}");
+    };
+    let mut journal = world.recorder();
+    let reconciled = reconcile(&run, &ports(&world), &mut journal, &CancelToken::new()).unwrap();
+    let slot = kipple_core::TrashSlot {
+        trash: world::trash_dir(),
+        name: kipple_core::Component::new("item-0").unwrap(),
+    };
+    assert_eq!(
+        found(&reconciled),
+        [Some(Found::Trashed(kipple_core::Trashed { slot }))]
+    );
+}
+
+/// Catches the `kipple.frozen-tree` v1 encoding changing for the same tree, which would
+/// make every stored tree's digest disagree with the tree a run reads back: the baseline
+/// holds the bytes this tree encoded to.
+#[test]
+fn a_frozen_tree_encodes_to_the_baseline_bytes() {
+    let (_, plan) = baseline_world();
+    let end = BASELINE_PLAN
+        .iter()
+        .position(|byte| *byte == b'\n')
+        .unwrap();
+    let header: serde_json::Value = serde_json::from_slice(&BASELINE_PLAN[..end]).unwrap();
+    let tree = &header["items"][0]["tree"];
+    let offset = usize::try_from(tree["offset"].as_u64().unwrap()).unwrap();
+    let length = usize::try_from(tree["length"].as_u64().unwrap()).unwrap();
+    let stored = &BASELINE_PLAN[end + 1..][offset..offset + length];
+    assert_eq!(plan.entries()[0].tree().encode(&TestCodec), stored);
 }
 
 /// A finding at `path`, with `own` its identity and `lineage` the rest.
@@ -1733,17 +1860,9 @@ fn check_reconciled(seed: u64, world: &World, case: &Case) {
         state.failed_write = None;
         (state.pending(), state.ran.clone(), state.removals.len())
     };
-    let mut journal = world.journal();
-    let pending_now = Pending {
-        plan: &case.plan,
-        intents: &pending,
-    };
-    let reconciled = reconcile(
-        &pending_now,
-        &ports(world),
-        &mut journal,
-        &CancelToken::new(),
-    );
+    let mut journal = world.recorder();
+    let run = stored(world, &case.plan);
+    let reconciled = reconcile(&run, &ports(world), &mut journal, &CancelToken::new());
     assert!(
         reconciled.is_ok(),
         "seed {seed}: reconciling records: {reconciled:?}"
@@ -1753,7 +1872,7 @@ fn check_reconciled(seed: u64, world: &World, case: &Case) {
     assert!(
         reconciled
             .iter()
-            .all(|one| one.outcome.status() == Status::Indeterminate),
+            .all(|one| outcome_of(one).map(ItemOutcome::status) == Some(Status::Indeterminate)),
         "seed {seed}: what a crash left is indeterminate"
     );
     let state = world.state();
@@ -1766,3 +1885,10 @@ fn check_reconciled(seed: u64, world: &World, case: &Case) {
     );
     assert_eq!(state.order_problem(), None, "seed {seed}");
 }
+
+#[path = "apply/replan.rs"]
+mod replan;
+#[path = "apply/runs.rs"]
+mod runs;
+#[path = "apply/session.rs"]
+mod session;

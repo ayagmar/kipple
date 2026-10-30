@@ -8,7 +8,6 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, PoisonError};
 
-use crate::policy::Tracked;
 use crate::probe::{FsProbe, ProbeError};
 
 /// What one directory holds, as far as git goes.
@@ -19,6 +18,17 @@ enum GitEntry {
     Unchecked(ProbeError),
 }
 
+/// What is above an item, as far as git goes.
+#[derive(Debug, Clone)]
+pub(crate) enum Above {
+    /// No `.git` in it or any directory above it, each checked.
+    Nothing,
+    /// A `.git` in this directory, the nearest.
+    Repository(PathBuf),
+    /// A directory couldn't be checked.
+    Unchecked(ProbeError),
+}
+
 /// The repository checks of one scan. Findings share most of their ancestors, so each
 /// directory is checked once.
 #[derive(Debug, Default)]
@@ -26,21 +36,17 @@ pub(crate) struct Repositories(Mutex<HashMap<PathBuf, GitEntry>>);
 
 impl Repositories {
     /// Looks for `.git` in `item` and in every directory above it, up to the file system's
-    /// root. Only when each one could be checked and none has it is nothing inside
-    /// tracked.
-    pub(crate) fn tracked(&self, fs: &dyn FsProbe, item: &Path) -> Tracked {
+    /// root, crossing mounts. Only when each one could be checked and none has it is
+    /// nothing inside tracked.
+    pub(crate) fn above(&self, fs: &dyn FsProbe, item: &Path) -> Above {
         for dir in item.ancestors() {
             match self.entry(fs, dir) {
                 GitEntry::Absent => {}
-                GitEntry::Present => {
-                    return Tracked::InsideRepository {
-                        work_tree: dir.to_owned(),
-                    };
-                }
-                GitEntry::Unchecked(error) => return Tracked::Unchecked(error),
+                GitEntry::Present => return Above::Repository(dir.to_owned()),
+                GitEntry::Unchecked(error) => return Above::Unchecked(error),
             }
         }
-        Tracked::NoRepository
+        Above::Nothing
     }
 
     fn entry(&self, fs: &dyn FsProbe, dir: &Path) -> GitEntry {

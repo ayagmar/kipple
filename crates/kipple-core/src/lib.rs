@@ -38,6 +38,38 @@ macro_rules! named {
                 f.pad(self.name())
             }
         }
+
+        /// Stored and shown as its name.
+        impl serde::Serialize for $name {
+            fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+                serializer.serialize_str(self.name())
+            }
+        }
+
+        /// Read from its name; any other string is refused.
+        impl<'de> serde::Deserialize<'de> for $name {
+            fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+                let name = String::deserialize(deserializer)?;
+                Self::from_name(&name).ok_or_else(|| {
+                    serde::de::Error::custom(format_args!(
+                        "{name:?} isn't a {}",
+                        stringify!($name)
+                    ))
+                })
+            }
+        }
+
+        /// A string, one of the names.
+        impl schemars::JsonSchema for $name {
+            fn schema_name() -> std::borrow::Cow<'static, str> {
+                stringify!($name).into()
+            }
+
+            fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+                let names: Vec<&str> = Self::ALL.iter().map(|value| value.name()).collect();
+                schemars::json_schema!({ "type": "string", "enum": names })
+            }
+        }
     };
 }
 
@@ -51,7 +83,9 @@ mod discovery;
 mod engine;
 mod event;
 mod facts;
+pub mod format;
 mod frozen;
+mod imported;
 mod integration;
 mod journal;
 mod mutation;
@@ -64,20 +98,26 @@ mod process;
 mod protect;
 mod root;
 mod rule;
+mod run;
+mod session;
 mod size;
+mod store;
 mod suggest;
+mod tracked;
 mod trash;
 
 pub use activity::{ProcessCensus, census};
-pub use apply::{ApplyRequest, Pending, Reconciled, apply, reconcile};
+pub use apply::{
+    ApplyPorts, ApplyRequest, ItemEvent, ItemSink, Reconciled, Recorders, apply, reconcile,
+};
 pub use authorize::{Authorization, Authorized, AuthorizedOp, DeleteOp, TrashOp};
 pub use cancel::CancelToken;
 pub use capability::{NativeTool, ToolError, ToolStatus, ToolVersion};
 pub use digest::Digest;
 pub use discovery::WalkStop;
 pub use engine::{
-    Engine, EngineError, Finding, FindingId, IntegrationReport, Omission, OpenedRoot, Ports,
-    ScanOutcome, ScanReport, ScanRequest,
+    Engine, EngineError, EngineRescan, FRESH, Finding, FindingId, IntegrationReport, Omission,
+    OpenedRoot, Ports, Rescan, ScanOutcome, ScanReport, ScanRequest,
 };
 pub use event::{EventChannel, EventRx, EventTx, ScanEvent, Sequenced, event_channel};
 pub use frozen::{
@@ -85,11 +125,12 @@ pub use frozen::{
     Marks, NameCodec, NodeId, RelPath, Scope, ShapeError, Slot, Stamp, TreeBuilder, Unauthorized,
     Volume,
 };
+pub use imported::{Dropped, DroppedItem, ImportedPlan, ReplanRequest, Replanned, replan};
 pub use integration::{
     ActivityEvidence, Advice, Evidence, FindingSink, Integration, IntegrationDescriptor,
     IntegrationError, IntegrationId, IntegrationSelector, ScanContext,
 };
-pub use journal::{Intent, Journal};
+pub use journal::{Intent, Journal, Record, RestoreResult};
 pub use mutation::{
     EffectSink, Executor, FileSystemClass, Finish, Freeze, Freezer, LocalFileSystem, Unsupported,
 };
@@ -119,7 +160,7 @@ pub use process::{
     Capabilities, CommandLines, EnvPath, Inventory, MountNamespace, Observer, Probed, ProcessClass,
     ProcessOutcome, ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Unread, UserId,
 };
-pub use protect::{Protection, Protections};
+pub use protect::{Protection, Protections, STATE_ROOTS};
 pub use root::{
     LinkProblem, Resolution, ResolvedRoot, RootLink, RootSource, Roots, SettingProblem,
     SymbolicRoot, UnresolvedRoot,
@@ -129,6 +170,19 @@ pub use rule::{
     OPERATIONS, Operation, Pack, PackId, Pattern, Platform, Predicate, Rule, RuleId, RuleText,
     Selector, Test,
 };
+pub use run::{
+    Depth, ItemState, PendingRestore, RunRead, RunState, RunSummary, StoredItem, StoredPlan,
+    StoredRun, Unreadable, history, read_run,
+};
+pub use session::{
+    Answer, ApplyEvent, ApplyFile, CleanRequest, Confirm, Consent, Ending, EventSink, Finished,
+    RestoreAsk, RestoreFinished, Restored, Restoring, Review, Session, run_apply, run_clean,
+    run_reconcile, run_restore,
+};
 pub use size::{Allocated, Apparent, Completeness, Measurement, SpaceEstimate};
+pub use store::{
+    HEADER_LIMIT, JOURNAL_LIMIT, LOCK_WAIT, LockState, Locked, RunId, RunStore, StoreRefusal,
+};
 pub use suggest::{Suggestion, is_within, suggest};
-pub use trash::{RestoreRequest, SlotState, TrashBackend, TrashDir, TrashSlot};
+pub use tracked::{GitGap, TrackedQuery};
+pub use trash::{Forgotten, RestoreRequest, SlotState, TrashBackend, TrashDir, TrashSlot};

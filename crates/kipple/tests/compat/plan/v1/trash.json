@@ -1,0 +1,18 @@
+{
+  "schema": "kipple.plan/v1",
+  "kipple": "0.0.0",
+  "items": [
+    {
+      "root": "config.project-roots",
+      "root_path": "/home/u",
+      "root_identity": "7:3",
+      "relative": [
+        "p0",
+        "target"
+      ],
+      "rule": "builtin.cargo.target",
+      "method": "trash",
+      "tree": "a2lwcGxlLXRyZWUAAQAABwEBBgcBYQFiBWRlYnVnA2FwcARkZXBzAWMDABABZIAgyAEAZAAUAAABEQFlgCDIAQBkABQAAAIRAWaAIMgBAGQAFAACAxABZ4AgyAEAZAAUAAAEEQFogCDIAQBkABQAAQUQAWmAIMgBAGQAFAAABhEBaoAgyAEAZAAUAA=="
+    }
+  ]
+}

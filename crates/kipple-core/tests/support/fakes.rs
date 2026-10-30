@@ -3,7 +3,7 @@
 //!
 //! They model the platform's documented behaviour, not more: the executor removes only
 //! what an operation authorizes, children before their directory, and keeps a directory
-//! that still holds anything; the journal checks the order the apply loop must keep.
+//! that still holds anything.
 #![expect(
     clippy::unwrap_used,
     clippy::unwrap_in_result,
@@ -11,55 +11,15 @@
 )]
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::{OsStr, OsString};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
 use kipple_core::{
     Allocated, Anchor, ApplyError, CancelToken, Component, DeleteOp, Digest, EffectSink, EntryKind,
-    EntrySnapshot, ErrorCode, Executor, FileIdentity, Finish, Freed, Freeze, Freezer, FrozenTree,
-    Intent, ItemId, ItemOutcome, Journal, LeftReason, Marks, NameCodec, Plan, RelPath,
-    RestoreRequest, SlotState, TrashBackend, TrashDir, TrashOp, TrashSlot, Trashed,
+    EntrySnapshot, ErrorCode, Executor, FileIdentity, Finish, Forgotten, Freed, Freeze, Freezer,
+    FrozenTree, LeftReason, Marks, RelPath, RestoreRequest, SlotState, TrashBackend, TrashDir,
+    TrashOp, TrashSlot, Trashed,
 };
-
-/// Stores names as the OS does: bytes on Unix, UTF-16 code units on Windows, where a
-/// name holding `:` is refused as `NameCodec` requires.
-#[derive(Debug)]
-pub(crate) struct TestCodec;
-
-impl NameCodec for TestCodec {
-    #[cfg(unix)]
-    fn encode(&self, name: &OsStr) -> Vec<u8> {
-        use std::os::unix::ffi::OsStrExt as _;
-        name.as_bytes().to_vec()
-    }
-
-    #[cfg(unix)]
-    fn decode(&self, bytes: &[u8]) -> Option<OsString> {
-        use std::os::unix::ffi::OsStrExt as _;
-        Some(OsStr::from_bytes(bytes).to_owned())
-    }
-
-    #[cfg(windows)]
-    fn encode(&self, name: &OsStr) -> Vec<u8> {
-        use std::os::windows::ffi::OsStrExt as _;
-        name.encode_wide().flat_map(u16::to_le_bytes).collect()
-    }
-
-    #[cfg(windows)]
-    fn decode(&self, bytes: &[u8]) -> Option<OsString> {
-        use std::os::windows::ffi::OsStringExt as _;
-        let (units, rest) = bytes.as_chunks::<2>();
-        if !rest.is_empty() {
-            return None;
-        }
-        let wide: Vec<u16> = units.iter().map(|unit| u16::from_le_bytes(*unit)).collect();
-        if wide.contains(&u16::from(b':')) {
-            return None;
-        }
-        Some(OsString::from_wide(&wide))
-    }
-}
 
 /// Freezes from a table of anchors, which a test changes between plan and apply.
 #[derive(Debug, Default)]
@@ -274,75 +234,13 @@ impl TrashBackend for FakeTrash {
         drop(slots);
         Ok(())
     }
-}
 
-/// One durable record.
-#[derive(Debug, Clone, PartialEq)]
-pub(crate) enum Record {
-    Plan(Digest),
-    Intent(Intent),
-    Outcome(ItemId, ItemOutcome),
-}
-
-/// Records in memory, failing the write numbered `fails_at` (from 0) and every one after,
-/// as a store whose disk filled up does.
-#[derive(Debug, Default)]
-pub(crate) struct FakeJournal {
-    pub(crate) records: Vec<Record>,
-    pub(crate) fails_at: Option<usize>,
-    pub(crate) writes: usize,
-}
-
-impl FakeJournal {
-    fn write(&mut self, record: Record) -> Result<(), ApplyError> {
-        let attempt = self.writes;
-        self.writes += 1;
-        if self.fails_at.is_some_and(|fails_at| attempt >= fails_at) {
-            return Err(ApplyError::new(ErrorCode::Journal));
-        }
-        self.records.push(record);
-        Ok(())
+    fn prepare_home(&self) -> Result<(), ApplyError> {
+        self.check()
     }
 
-    /// Why the records break the journal's order, if they do: the plan first, then per
-    /// item one intent before its one outcome, every intent naming the stored plan.
-    pub(crate) fn order_problem(&self) -> Option<String> {
-        let mut plan = None;
-        let mut intents = BTreeSet::new();
-        let mut outcomes = BTreeSet::new();
-        for (index, record) in self.records.iter().enumerate() {
-            match record {
-                Record::Plan(digest) if index == 0 => plan = Some(*digest),
-                Record::Plan(_) => return Some(format!("a second plan at {index}")),
-                Record::Intent(intent) if Some(intent.plan) != plan => {
-                    return Some(format!("an intent for another plan at {index}"));
-                }
-                Record::Intent(intent) if !intents.insert(intent.item) => {
-                    return Some(format!("item {} intended twice", intent.item.0));
-                }
-                Record::Outcome(item, _) if !intents.contains(item) => {
-                    return Some(format!("item {} ended with no intent", item.0));
-                }
-                Record::Outcome(item, _) if !outcomes.insert(*item) => {
-                    return Some(format!("item {} ended twice", item.0));
-                }
-                Record::Intent(_) | Record::Outcome(..) => {}
-            }
-        }
-        None
-    }
-}
-
-impl Journal for FakeJournal {
-    fn plan(&mut self, plan: &Plan) -> Result<(), ApplyError> {
-        self.write(Record::Plan(plan.digest()))
-    }
-
-    fn intent(&mut self, intent: &Intent) -> Result<(), ApplyError> {
-        self.write(Record::Intent(intent.clone()))
-    }
-
-    fn outcome(&mut self, item: ItemId, outcome: &ItemOutcome) -> Result<(), ApplyError> {
-        self.write(Record::Outcome(item, outcome.clone()))
+    fn forget_unmoved(&self, _: &TrashSlot, _: &Anchor) -> Result<Forgotten, ApplyError> {
+        self.check()?;
+        Ok(Forgotten::Absent)
     }
 }

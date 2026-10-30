@@ -7,6 +7,8 @@
     reason = "a helper given a bad fixture fails the test"
 )]
 
+#[path = "support/codec.rs"]
+mod codec;
 #[expect(
     dead_code,
     reason = "the trash fake and the freezer's table are for the apply loop's tests"
@@ -19,16 +21,17 @@ use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use fakes::{FakeExecutor, FakeJournal, Record, Script, TestCodec};
+use codec::TestCodec;
+use fakes::{FakeExecutor, Script};
 use kipple_core::{
-    Activity, Allocated, Anchor, Apparent, ApplyError, BadName, CancelToken, Completeness,
-    Component, Consequence, Cost, DecodeError, Digest, Drift, EntryKind, EntrySnapshot, ErrorCode,
-    Facts, FileIdentity, Fingerprint, Finish, FrozenTree, HeldPath, Intent, ItemId, ItemOutcome,
-    Journal, Judgement, JudgementField, LeftReason, Level, Lineage, Loss, Mark, Marks, Method,
-    MethodChoice, MethodRefusal, Modified, NameCodec as _, NodeId, Policy, Proposal, Receipt,
-    ReceiptItem, Recovery, RelPath, RestoreRequest, RuleSettings, Scope, ShapeError, Skip,
-    SpaceEstimate, Stamp, Status, Tally, Tracked, TrashDir, TrashSlot, Trashed, TreeBuilder,
-    Unauthorized, VerifiedRoot, Volume,
+    Activity, Allocated, Anchor, Apparent, BadName, CancelToken, Completeness, Component,
+    Consequence, Cost, DecodeError, Drift, EntryKind, EntrySnapshot, ErrorCode, Facts,
+    FileIdentity, Fingerprint, Finish, FrozenTree, HeldPath, ItemId, ItemOutcome, Judgement,
+    JudgementField, LeftReason, Level, Lineage, Loss, Mark, Marks, Method, MethodChoice,
+    MethodRefusal, Modified, NameCodec as _, NodeId, Policy, Proposal, Receipt, ReceiptItem,
+    Recovery, RelPath, RestoreRequest, RuleSettings, Scope, ShapeError, Skip, SpaceEstimate, Stamp,
+    Status, Tally, Tracked, TrashDir, TrashSlot, Trashed, TreeBuilder, Unauthorized, VerifiedRoot,
+    Volume,
 };
 
 const VOLUME: Volume = Volume {
@@ -731,6 +734,7 @@ fn removals_inside_failed_and_cancelled_items_count_and_the_rest_is_not_reached(
         method,
         estimate: Some(estimate),
         outcome,
+        restored: None,
     };
     let trashed = ItemOutcome::Done(kipple_core::Effect {
         trashed: Some(Trashed { slot: slot() }),
@@ -1023,42 +1027,4 @@ fn a_judgement_changes_with_whatever_the_item_was_judged_under() {
     wider.recent_days = Some(30);
     let wider = Judgement::new(&policy, &wider, &facts(), Method::Delete);
     assert_eq!(then.first_difference(&wider), Some(JudgementField::Rule));
-}
-
-/// The fake journal holds the apply loop to the documented order; this checks the fake
-/// itself catches what it must, since the apply loop's tests rely on it.
-#[test]
-fn the_fake_journal_catches_an_outcome_without_an_intent_and_a_failing_store() {
-    let intent = Intent {
-        plan: Digest(1),
-        item: ItemId(0),
-        method: Method::Delete,
-        reviewed: Digest(2),
-        authorized: Digest(3),
-        entries: 4,
-        trash: None,
-    };
-    let mut journal = FakeJournal {
-        records: vec![Record::Plan(Digest(1))],
-        ..FakeJournal::default()
-    };
-    journal
-        .outcome(ItemId(0), &ItemOutcome::Skipped(Skip::NotReviewed))
-        .unwrap();
-    assert!(
-        journal.order_problem().is_some(),
-        "an outcome needs an intent"
-    );
-
-    let mut failing = FakeJournal {
-        records: vec![Record::Plan(Digest(1))],
-        fails_at: Some(1),
-        ..FakeJournal::default()
-    };
-    failing.intent(&intent).unwrap();
-    assert_eq!(
-        failing.intent(&intent),
-        Err(ApplyError::new(ErrorCode::Journal))
-    );
-    assert_eq!(failing.order_problem(), None);
 }

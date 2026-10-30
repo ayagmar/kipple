@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PlanFileOut",
+  "description": "A plan file.",
+  "type": "object",
+  "properties": {
+    "items": {
+      "description": "Every item, in plan order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/PlanItemOut"
+      }
+    },
+    "kipple": {
+      "description": "The kipple version that wrote it.",
+      "type": "string"
+    },
+    "schema": {
+      "description": "`kipple.plan/v1`.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "kipple",
+    "items"
+  ],
+  "$defs": {
+    "FileIdentity": {
+      "type": "string",
+      "pattern": "^[0-9]+:[0-9]+$"
+    },
+    "Method": {
+      "type": "string",
+      "enum": [
+        "delete",
+        "trash"
+      ]
+    },
+    "PlanItemOut": {
+      "description": "One item of a plan file.",
+      "type": "object",
+      "properties": {
+        "method": {
+          "description": "How it was to be removed.",
+          "$ref": "#/$defs/Method"
+        },
+        "relative": {
+          "description": "The components from the root to the target; none for the root's contents.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TextOut"
+          }
+        },
+        "root": {
+          "description": "The root it is below.",
+          "$ref": "#/$defs/SymbolicRoot"
+        },
+        "root_identity": {
+          "description": "That root's identity when the plan was made.",
+          "$ref": "#/$defs/FileIdentity"
+        },
+        "root_path": {
+          "description": "That root's directory.",
+          "$ref": "#/$defs/TextOut"
+        },
+        "rule": {
+          "description": "The rule that found it.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+(\\.[a-z0-9-]+)+$"
+        },
+        "tree": {
+          "description": "Its frozen tree, `kipple.frozen-tree` v1 in base64.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "root_path",
+        "root_identity",
+        "relative",
+        "rule",
+        "method",
+        "tree"
+      ]
+    },
+    "SymbolicRoot": {
+      "type": "string",
+      "enum": [
+        "home",
+        "xdg.config",
+        "xdg.cache",
+        "xdg.data",
+        "xdg.state",
+        "known.local-app-data",
+        "known.roaming-app-data",
+        "macos.caches",
+        "config.project-roots",
+        "trash",
+        "claude.config",
+        "pacman.cache",
+        "journald.journal"
+      ]
+    },
+    "TextOut": {
+      "description": "A name or a path, exactly: its text when it is valid Unicode, else the OS's own form.",
+      "anyOf": [
+        {
+          "description": "The text.",
+          "type": "string"
+        },
+        {
+          "description": "Not valid Unicode.",
+          "type": "object",
+          "properties": {
+            "raw": {
+              "description": "Base64 of the bytes (Unix) or UTF-16LE code units (Windows).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "raw"
+          ]
+        }
+      ]
+    }
+  }
+}

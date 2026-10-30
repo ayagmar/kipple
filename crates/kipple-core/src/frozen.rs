@@ -487,7 +487,7 @@ impl FrozenTree {
     }
 
     /// `id` and every entry below it.
-    fn subtree(&self, id: NodeId) -> Vec<NodeId> {
+    pub(crate) fn subtree(&self, id: NodeId) -> Vec<NodeId> {
         let mut found = Vec::new();
         let mut stack = vec![id];
         while let Some(next) = stack.pop() {
