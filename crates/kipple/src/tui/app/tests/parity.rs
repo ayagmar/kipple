@@ -114,6 +114,7 @@ fn report(found: &[Found]) -> ScanReport {
         integrations: vec![IntegrationReport {
             id: PACMAN,
             omissions: Vec::new(),
+            opened: Vec::new(),
             advice: Vec::new(),
         }],
         findings,

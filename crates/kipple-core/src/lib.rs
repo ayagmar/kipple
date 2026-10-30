@@ -62,8 +62,8 @@ pub use cancel::CancelToken;
 pub use capability::{NativeTool, ToolError, ToolStatus, ToolVersion};
 pub use discovery::WalkStop;
 pub use engine::{
-    Engine, EngineError, Finding, FindingId, IntegrationReport, Omission, Ports, ScanOutcome,
-    ScanReport, ScanRequest,
+    Engine, EngineError, Finding, FindingId, IntegrationReport, Omission, OpenedRoot, Ports,
+    ScanOutcome, ScanReport, ScanRequest,
 };
 pub use event::{EventChannel, EventRx, EventTx, ScanEvent, Sequenced, event_channel};
 pub use integration::{

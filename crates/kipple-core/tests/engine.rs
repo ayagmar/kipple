@@ -16,11 +16,11 @@ use kipple_core::{
     Consequence, Cost, DirEntryMeta, Engine, EngineError, EntryKind, EntryMeta, EventChannel,
     EventRx, Evidence, Facts, FileIdentity, FindingSink, FsProbe, Hold, Integration,
     IntegrationDescriptor, IntegrationError, IntegrationId, Inventory, Lens, Level, Measurement,
-    Method, Modified, Name, Observer, Omission, Operation, Platform, Policy, Ports, ProbeError,
-    ProcessOutcome, ProcessProbe, ProcessRecord, ProcessSnapshot, Recovery, ResolvedRoot, RootLink,
-    RootSource, Roots, Rule, RuleId, RuleText, ScanContext, ScanEvent, ScanOutcome, ScanReport,
-    ScanRequest, Selector, Sizer, SpaceEstimate, SymbolicRoot, Tracked, UnresolvedRoot, Verdict,
-    WalkGap, event_channel,
+    Method, Modified, Name, Observer, Omission, OpenedRoot, Operation, Platform, Policy, Ports,
+    ProbeError, ProcessOutcome, ProcessProbe, ProcessRecord, ProcessSnapshot, Recovery,
+    ResolvedRoot, RootLink, RootSource, Roots, Rule, RuleId, RuleText, ScanContext, ScanEvent,
+    ScanOutcome, ScanReport, ScanRequest, Selector, Sizer, SpaceEstimate, SymbolicRoot, Tracked,
+    UnresolvedRoot, Verdict, WalkGap, event_channel,
 };
 
 /// Ten times the 100 ms cancellation budget: long enough not to flake on a loaded CI
@@ -816,6 +816,15 @@ fn a_root_resolved_through_a_link_is_read_only_while_it_leads_to_the_same_direct
             ]
         ),
         "a root leading somewhere else is an omission"
+    );
+    // What a plan anchors at: only the root that opened, with the identity it had then.
+    assert_eq!(
+        report.integrations[0].opened,
+        [OpenedRoot {
+            root: SymbolicRoot::XdgCache,
+            path: PathBuf::from("/same"),
+            identity: Some(resolved),
+        }]
     );
 }
 

@@ -160,6 +160,22 @@ pub struct IntegrationReport {
     pub omissions: Vec<Omission>,
     /// Native settings and commands it suggests.
     pub advice: Vec<Advice>,
+    /// The roots it read, each with the identity it had when it was opened, in the order
+    /// they were opened. A plan anchors each item at one of these, and apply compares the
+    /// root with this identity before anything else.
+    pub opened: Vec<OpenedRoot>,
+}
+
+/// A root an integration read, as it was when the scan opened it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OpenedRoot {
+    /// Which root.
+    pub root: SymbolicRoot,
+    /// The directory read.
+    pub path: PathBuf,
+    /// Its identity when it was opened, where the probe reported one. A root without one
+    /// can't anchor a plan.
+    pub identity: Option<FileIdentity>,
 }
 
 /// The result of a scan, sorted the same way every time.
@@ -387,8 +403,9 @@ impl Engine {
     fn run_one(&self, registered: &Registered, shared: Shared<'_>) -> IntegrationRun {
         let id = registered.descriptor.id;
         let mut omissions = Vec::new();
+        let mut identities = Vec::new();
         let opened = self
-            .open_roots(registered, shared, &mut omissions)
+            .open_roots(registered, shared, &mut omissions, &mut identities)
             .unwrap_or_default();
         let cx = ScanContext {
             roots: &opened,
@@ -443,17 +460,24 @@ impl Engine {
             roots: &opened,
         };
         let findings = self.measure_all(found, owner, shared, &mut omissions);
-        finish(id, omissions, advice, findings, shared)
+        let report = IntegrationReport {
+            id,
+            omissions,
+            advice,
+            opened: identities,
+        };
+        finish(report, findings, shared)
     }
 
     /// The roots of the integration and its rules that exist and are directories that can
-    /// be listed, announcing each one. A root that doesn't exist is not an omission: the
-    /// tool simply isn't there.
+    /// be listed, announcing each one and recording its identity in `identities`. A root
+    /// that doesn't exist is not an omission: the tool simply isn't there.
     fn open_roots(
         &self,
         registered: &Registered,
         shared: Shared<'_>,
         omissions: &mut Vec<Omission>,
+        identities: &mut Vec<OpenedRoot>,
     ) -> Result<Vec<ResolvedRoot>, Stopped> {
         let mut roots: Vec<SymbolicRoot> = registered.descriptor.roots.to_vec();
         roots.extend(registered.rules.iter().map(|rule| rule.root));
@@ -487,6 +511,11 @@ impl Engine {
                         path: resolved.path.clone(),
                     };
                     shared.events.send(event, shared.cancel)?;
+                    identities.push(OpenedRoot {
+                        root,
+                        path: resolved.path.clone(),
+                        identity: meta.identity,
+                    });
                     opened.push(resolved.clone());
                 }
                 Ok(meta) => omissions.push(Omission::RootNotDirectory {
@@ -732,32 +761,25 @@ fn changed(resolved: &ResolvedRoot, meta: &EntryMeta) -> bool {
         .is_some_and(|link| meta.identity != Some(link.identity))
 }
 
-fn finish(
-    id: IntegrationId,
-    omissions: Vec<Omission>,
-    advice: Vec<Advice>,
-    findings: Vec<Finding>,
-    shared: Shared<'_>,
-) -> IntegrationRun {
+fn finish(report: IntegrationReport, findings: Vec<Finding>, shared: Shared<'_>) -> IntegrationRun {
     let event = ScanEvent::IntegrationCompleted {
-        integration: id,
-        omissions: omissions.clone(),
+        integration: report.id,
+        omissions: report.omissions.clone(),
     };
     shared.events.deliver(event, shared.cancel);
-    IntegrationRun {
-        report: IntegrationReport {
-            id,
-            omissions,
-            advice,
-        },
-        findings,
-    }
+    IntegrationRun { report, findings }
 }
 
 /// The run of an integration whose sizing panicked. Its findings were streamed but are
 /// lost.
 fn crashed(id: IntegrationId, shared: Shared<'_>) -> IntegrationRun {
-    finish(id, vec![Omission::Crashed], Vec::new(), Vec::new(), shared)
+    let report = IntegrationReport {
+        id,
+        omissions: vec![Omission::Crashed],
+        advice: Vec::new(),
+        opened: Vec::new(),
+    };
+    finish(report, Vec::new(), shared)
 }
 
 fn report(outcome: ScanOutcome, runs: Vec<IntegrationRun>) -> ScanReport {

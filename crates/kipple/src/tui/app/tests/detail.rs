@@ -307,6 +307,7 @@ fn the_detail_pane_shows_each_line_of_an_advice_snippet_on_its_own_line() {
         integrations: vec![IntegrationReport {
             id: PACMAN,
             omissions: Vec::new(),
+            opened: Vec::new(),
             advice: vec![Advice {
                 title: "Keep less in the journal".to_owned(),
                 text: "journald keeps logs up to a size.".to_owned(),
