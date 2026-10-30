@@ -115,7 +115,8 @@ pub enum Finish {
     Cancelled,
 }
 
-/// Where an executor reports what happened to each entry, once per entry.
+/// Where an executor reports what happened to each entry it may touch, once per entry.
+/// A report about any other entry is a fault: [`Tally`](crate::Tally) fails the item.
 pub trait EffectSink {
     /// `id` was removed, freeing `freed`.
     fn removed(&mut self, id: NodeId, freed: Freed);

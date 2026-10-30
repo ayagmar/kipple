@@ -791,30 +791,67 @@ fn a_receipt_keeps_a_bounded_sample_of_what_was_left_in_tree_order() {
     );
 }
 
-/// Catches an entry reported twice counting twice, and a report about an entry the
-/// operation doesn't authorize counting at all.
+/// Catches an entry reported twice counting twice.
 #[test]
-fn each_entry_counts_once_and_only_if_authorized() {
+fn each_entry_counts_once() {
     use kipple_core::{EffectSink as _, Freed};
-    let mut tree = build(Scope::Whole, &target());
-    let excluded = find(&tree, ".rustc_info.json");
-    tree.exclude(excluded);
+    let tree = build(Scope::Whole, &target());
     let marks = Marks::of(&tree);
     let mut tally = Tally::new(&tree, &marks);
     let app = find(&tree, "debug/app");
     tally.removed(app, Freed::Allocated(Allocated(10)));
     tally.removed(app, Freed::Allocated(Allocated(10)));
     tally.left(app, LeftReason::Busy);
-    tally.removed(excluded, Freed::Allocated(Allocated(10)));
     let ItemOutcome::Cancelled(effect) = tally.finish(Ok(Finish::Cancelled)) else {
         panic!("cancelled");
     };
     assert_eq!(effect.removed.names, 1);
-    assert_eq!(effect.excluded, 1);
     assert!(
         !effect.left.0.contains_key(&LeftReason::Busy),
         "a second report is ignored"
     );
+}
+
+/// Catches an executor touching an entry the run wasn't authorized for, which the
+/// receipt would otherwise not show while the item still ends done (04 §1): one the plan
+/// left out, one revalidation dropped, and one that isn't in the tree.
+#[test]
+fn a_report_about_an_entry_the_run_may_not_touch_fails_the_item() {
+    use kipple_core::{EffectSink as _, Freed};
+    let mut tree = build(Scope::Whole, &target());
+    let excluded = find(&tree, ".rustc_info.json");
+    tree.exclude(excluded);
+    let mut marks = Marks::of(&tree);
+    let dropped = find(&tree, "debug/incremental/s-1");
+    marks.drop_subtree(&tree, dropped, LeftReason::Changed);
+    let others: Vec<String> = (0..20).map(|i| format!("f{i:02}")).collect();
+    let others: Vec<Spec<'_>> = others.iter().map(|path| spec(path, 100)).collect();
+    let bigger = build(Scope::Whole, &others);
+    let outside = bigger.entries().last().unwrap().id();
+
+    let cases = [
+        (excluded, Some(path(".rustc_info.json"))),
+        (dropped, Some(path("debug/incremental/s-1"))),
+        (outside, None),
+    ];
+    for (id, at) in cases {
+        for removed in [true, false] {
+            let mut tally = Tally::new(&tree, &marks);
+            let run = FakeExecutor::default().run(&tree, &marks, &mut tally, &CancelToken::new());
+            if removed {
+                tally.removed(id, Freed::Allocated(Allocated(10)));
+            } else {
+                tally.left(id, LeftReason::Busy);
+            }
+            let ItemOutcome::Failed { error, .. } = tally.finish(run) else {
+                panic!("a report about {at:?} fails the item");
+            };
+            assert_eq!(
+                (error.code, error.at),
+                (ErrorCode::Unauthorized, at.clone())
+            );
+        }
+    }
 }
 
 /// Catches a method picked by the wrong precedence, or a trash item quietly planned as

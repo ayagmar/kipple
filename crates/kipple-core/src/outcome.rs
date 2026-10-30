@@ -324,6 +324,9 @@ named! {
         TrashMissing = "trash-missing",
         /// The trash entry isn't the item that was moved there.
         TrashChanged = "trash-changed",
+        /// The executor reported an entry the run wasn't authorized to touch: one the
+        /// plan left out, one revalidation dropped, or one not in the tree.
+        Unauthorized = "unauthorized",
         /// The journal couldn't record it.
         Journal = "journal",
         /// The operation was cancelled before it changed anything.
@@ -485,7 +488,8 @@ impl fmt::Display for ApplyError {
 enum State {
     /// Authorized and not reported yet.
     Pending,
-    /// Not authorized for this run; never reported.
+    /// Not authorized for this run: left out by the plan, its top, or dropped at
+    /// revalidation. A report about it is a fault.
     Out,
     /// Reported.
     Reported,
@@ -496,7 +500,9 @@ enum State {
 /// [`EffectSink`].
 ///
 /// It starts with what revalidation dropped already counted as left. Each entry counts
-/// once: a second report about it is ignored.
+/// once: a second report about it is ignored. A report about an entry the run wasn't
+/// authorized to touch, or one not in the tree, is a fault ([`ErrorCode::Unauthorized`])
+/// that fails the item, and a removal it reports still counts as removed.
 #[derive(Debug)]
 pub struct Tally<'run> {
     tree: &'run FrozenTree,
@@ -504,6 +510,7 @@ pub struct Tally<'run> {
     removed: Removed,
     left: BTreeMap<LeftReason, Counted>,
     excluded: u64,
+    fault: Option<ApplyError>,
 }
 
 /// A reason's count and the smallest node IDs, which are the first in canonical order.
@@ -523,13 +530,14 @@ impl<'run> Tally<'run> {
             removed: Removed::default(),
             left: BTreeMap::new(),
             excluded: 0,
+            fault: None,
         };
         for entry in tree.entries() {
             let state = match marks.get(entry.id()) {
                 Mark::Remove => State::Pending,
                 Mark::Dropped(reason) => {
                     tally.count(entry.id(), reason);
-                    State::Reported
+                    State::Out
                 }
                 Mark::Unauthorized(Unauthorized::Excluded) => {
                     tally.excluded += 1;
@@ -551,16 +559,35 @@ impl<'run> Tally<'run> {
         }
     }
 
-    /// Takes the report about `id`, if it is the first about an entry this run may touch.
-    fn take(&mut self, id: NodeId) -> bool {
+    /// What to make of a report about `id`: the first about an entry this run may touch
+    /// is taken, a second about any entry ignored, and the first about any other entry,
+    /// or one not in the tree, is a fault.
+    fn take(&mut self, id: NodeId) -> Report {
         let Some(state) = self.states.get_mut(id.index()) else {
-            return false;
+            self.fault(None);
+            return Report::Unauthorized;
         };
-        if *state != State::Pending {
-            return false;
-        }
+        let report = match *state {
+            State::Pending => Report::Taken,
+            State::Reported => return Report::Again,
+            State::Out => Report::Unauthorized,
+        };
         *state = State::Reported;
-        true
+        if report == Report::Unauthorized {
+            self.fault(self.tree.entry(id).map(|entry| entry.path()));
+        }
+        report
+    }
+
+    /// Records the first report about an entry the run wasn't authorized to touch.
+    fn fault(&mut self, at: Option<RelPath>) {
+        if self.fault.is_none() {
+            let error = ApplyError::new(ErrorCode::Unauthorized);
+            self.fault = Some(match at {
+                Some(at) => error.at(at),
+                None => error,
+            });
+        }
     }
 
     /// The effect so far, every authorized entry not reported counted as not reached.
@@ -612,13 +639,16 @@ impl<'run> Tally<'run> {
 
     /// The item's outcome once the executor returned `run`.
     ///
-    /// An error makes it failed and cancellation cancelled, with what was removed until
-    /// then. A run that ended is done only when nothing reviewed was left but directories
-    /// still holding entries; otherwise it is partial.
+    /// A report about an entry the run wasn't authorized to touch makes it failed, with
+    /// that fault, whatever the run returned. Otherwise an error makes it failed and
+    /// cancellation cancelled, with what was removed until then. A run that ended is done
+    /// only when nothing reviewed was left but directories still holding entries;
+    /// otherwise it is partial.
     #[must_use]
-    pub fn finish(self, run: Result<Finish, ApplyError>) -> ItemOutcome {
+    pub fn finish(mut self, run: Result<Finish, ApplyError>) -> ItemOutcome {
+        let fault = self.fault.take();
         let effect = self.effect();
-        match run {
+        match fault.map_or(run, Err) {
             Err(error) => ItemOutcome::Failed { error, effect },
             Ok(Finish::Cancelled) => ItemOutcome::Cancelled(effect),
             Ok(Finish::Completed) if effect.left.is_short() => ItemOutcome::Partial(effect),
@@ -627,15 +657,27 @@ impl<'run> Tally<'run> {
     }
 }
 
+/// What a [`Tally`] made of one report.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Report {
+    /// The first about an entry the run may touch.
+    Taken,
+    /// A second about one.
+    Again,
+    /// About an entry the run wasn't authorized to touch.
+    Unauthorized,
+}
+
 impl EffectSink for Tally<'_> {
     fn removed(&mut self, id: NodeId, freed: Freed) {
-        if self.take(id) {
-            self.removed.record(freed);
+        match self.take(id) {
+            Report::Taken | Report::Unauthorized => self.removed.record(freed),
+            Report::Again => {}
         }
     }
 
     fn left(&mut self, id: NodeId, reason: LeftReason) {
-        if self.take(id) {
+        if self.take(id) == Report::Taken {
             self.count(id, reason);
         }
     }
