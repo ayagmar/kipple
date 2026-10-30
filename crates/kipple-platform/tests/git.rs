@@ -292,10 +292,12 @@ fn an_item_whose_name_isnt_utf8_is_asked_about_exactly() {
 }
 
 /// Catches a Windows name that can't reach git whole (ill-formed UTF-16) being asked
-/// about by a lossy copy.
+/// about by a lossy copy, or a file tracked beside it counted as inside it: the name
+/// never goes to git, git is asked about its directory, and no record of that answer
+/// reaches the item, since git's index can't hold such a name.
 #[cfg(windows)]
 #[test]
-fn an_item_whose_name_cant_reach_git_blocks() {
+fn an_item_whose_name_cant_reach_git_is_asked_through_its_directory() {
     use std::os::windows::ffi::OsStringExt as _;
 
     let repo = Repo::new();
@@ -303,7 +305,7 @@ fn an_item_whose_name_cant_reach_git_blocks() {
     let name = OsString::from_wide(&[0x62, 0xD800]);
     fs::create_dir(repo.at(&name)).unwrap();
 
-    assert_eq!(repo.count(&name), Err(GitGap::Unpassable));
+    assert_eq!(repo.count(&name), Ok(0));
 }
 
 /// Catches a case-only rename on a volume that folds case: git keeps the old case in its
