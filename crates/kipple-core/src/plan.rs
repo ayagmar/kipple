@@ -329,14 +329,15 @@ impl Plan {
         for (index, entry) in entries.iter_mut().enumerate() {
             entry.item = ItemId(u32::try_from(index).unwrap_or(u32::MAX));
         }
-        // What the digest covers of each item: everything but the display path and the
-        // estimate.
+        // What the digest covers of each item: everything but the estimate. The path is
+        // shown, and also picks the finding apply judges the item by again.
         let covered: Vec<_> = entries
             .iter()
             .map(|entry| {
                 (
                     entry.item,
                     entry.finding,
+                    &entry.path,
                     &entry.anchor,
                     entry.method,
                     &entry.standing,
