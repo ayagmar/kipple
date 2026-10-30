@@ -645,6 +645,12 @@ fn disjoint(root: &Value, one: &Value, other: &Value) -> bool {
     {
         return true;
     }
+    // `required` and `properties` constrain objects only, so they keep two variants apart
+    // only when one of them admits nothing but objects.
+    let objects_only = |schema: &Value| types(schema).is_some_and(|kinds| kinds == ["object"]);
+    if !objects_only(one) && !objects_only(other) {
+        return false;
+    }
     let property = |schema: &'_ Value, name: &str| schema.get("properties")?.get(name).cloned();
     required(one).intersection(&required(other)).any(|name| {
         match (property(one, name), property(other, name)) {
@@ -952,6 +958,21 @@ mod tests {
             assert_eq!(found.len(), 1, "{found:?}");
             assert!(found[0].contains("may overlap"), "{found:?}");
         }
+    }
+
+    // Catches reading a `oneOf` of untyped tagged variants as an `anyOf`: a non-object
+    // matches both variants, so the old schema refused it and the new one would not.
+    #[test]
+    fn untyped_tagged_variants_are_not_shown_disjoint() {
+        let tagged =
+            |tag: &str| json!({ "properties": { "t": { "const": tag } }, "required": ["t"] });
+        let old = json!({ "oneOf": [tagged("a"), tagged("c")] });
+        let new = json!({ "anyOf": [tagged("a"), tagged("c")] });
+
+        let found = changes(&old, &new, ReadBy::Others);
+
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].contains("may overlap"), "{found:?}");
     }
 
     // Catches comparing a new recursive property with what an open baseline allowed
