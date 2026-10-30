@@ -333,6 +333,11 @@ fn a_person_who_says_yes_cleans_the_safe_items_shown_and_lists_the_review_ones()
     assert_eq!(ran.code, ExitCode::SUCCESS, "{}", ran.err);
     assert!(ran.err.contains("Needs review in the TUI"), "{}", ran.err);
     assert!(ran.err.contains("web"), "{}", ran.err);
+    assert!(
+        ran.out.contains("Removed an estimated") && !ran.out.contains("to the trash"),
+        "{}",
+        ran.out
+    );
     assert!(!present(&demo.at(ACME)), "acme's target is gone");
     assert!(
         present(&demo.at("home/projects/web/node_modules")),
@@ -612,6 +617,15 @@ fn trash_the_targets(demo: &Demo) -> (String, Value) {
         trashed.err.contains("trash move takes each folder whole"),
         "{}",
         trashed.err
+    );
+    // 04 §8: what went to the trash is still on disk, never counted as removed.
+    assert!(
+        trashed
+            .out
+            .contains("in 2 items to the trash, still on disk.")
+            && !trashed.out.contains("Removed an estimated"),
+        "{}",
+        trashed.out
     );
     let run = demo.history().pop().unwrap();
     (text(&run, "/id").to_owned(), run)
