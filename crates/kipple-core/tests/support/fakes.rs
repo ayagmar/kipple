@@ -254,21 +254,21 @@ impl TrashBackend for FakeTrash {
 
     fn restore(&self, request: &RestoreRequest, _: &CancelToken) -> Result<(), ApplyError> {
         let mut slots = self.slots.lock().unwrap();
-        match slots.get(&request.slot.name) {
+        match slots.get(&request.slot().name) {
             None => return Err(ApplyError::new(ErrorCode::TrashMissing)),
-            Some(identity) if *identity != request.target.identity => {
+            Some(identity) if *identity != request.target().identity => {
                 return Err(ApplyError::new(ErrorCode::TrashChanged));
             }
             Some(_) => {}
         }
-        let original = request.anchor.path();
+        let original = request.anchor().path();
         if self.replaced_parents.lock().unwrap().contains(&original) {
             return Err(ApplyError::new(ErrorCode::ParentChanged));
         }
         if !self.occupied.lock().unwrap().insert(original) {
             return Err(ApplyError::new(ErrorCode::DestinationExists));
         }
-        slots.remove(&request.slot.name);
+        slots.remove(&request.slot().name);
         drop(slots);
         Ok(())
     }

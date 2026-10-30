@@ -21,13 +21,14 @@ use std::time::Duration;
 
 use fakes::{FakeExecutor, FakeJournal, Record, Script, TestCodec};
 use kipple_core::{
-    Activity, Allocated, Apparent, ApplyError, BadName, CancelToken, Completeness, Component,
-    Consequence, Cost, DecodeError, Digest, Drift, EntryKind, EntrySnapshot, ErrorCode, Facts,
-    FileIdentity, Fingerprint, Finish, FrozenTree, HeldPath, Intent, ItemId, ItemOutcome, Journal,
-    Judgement, JudgementField, LeftReason, Level, Lineage, Loss, Mark, Marks, Method, MethodChoice,
-    MethodRefusal, Modified, NameCodec as _, NodeId, Policy, Proposal, Receipt, ReceiptItem,
-    Recovery, RelPath, RuleSettings, Scope, ShapeError, Skip, SpaceEstimate, Stamp, Status, Tally,
-    Tracked, TrashDir, TrashSlot, Trashed, TreeBuilder, Unauthorized, Volume,
+    Activity, Allocated, Anchor, Apparent, ApplyError, BadName, CancelToken, Completeness,
+    Component, Consequence, Cost, DecodeError, Digest, Drift, EntryKind, EntrySnapshot, ErrorCode,
+    Facts, FileIdentity, Fingerprint, Finish, FrozenTree, HeldPath, Intent, ItemId, ItemOutcome,
+    Journal, Judgement, JudgementField, LeftReason, Level, Lineage, Loss, Mark, Marks, Method,
+    MethodChoice, MethodRefusal, Modified, NameCodec as _, NodeId, Policy, Proposal, Receipt,
+    ReceiptItem, Recovery, RelPath, RestoreRequest, RuleSettings, Scope, ShapeError, Skip,
+    SpaceEstimate, Stamp, Status, Tally, Tracked, TrashDir, TrashSlot, Trashed, TreeBuilder,
+    Unauthorized, VerifiedRoot, Volume,
 };
 
 const VOLUME: Volume = Volume {
@@ -749,6 +750,28 @@ fn removals_inside_failed_and_cancelled_items_count_and_the_rest_is_not_reached(
     assert_eq!(totals.trashed.items, 1);
     assert_eq!(totals.trashed.allocated, Some(Allocated(12_288)));
     assert_eq!(totals.items[&Status::Skipped], 1);
+}
+
+/// Catches a restore that could skip pinned 10's check of the original directory's
+/// identity, because the request didn't carry it.
+#[test]
+fn a_restore_request_needs_the_original_directory_identity() {
+    let root = VerifiedRoot {
+        root: kipple_core::SymbolicRoot::ProjectRoots,
+        path: PathBuf::from("/home/u/code"),
+        identity: FileIdentity { volume: 7, file: 1 },
+    };
+    let mut anchor = Anchor {
+        root,
+        relative: path("app/target"),
+        parent: None,
+    };
+    let target = snapshot(EntryKind::Dir, 3, 100, 1);
+    assert_eq!(RestoreRequest::new(slot(), anchor.clone(), target), None);
+    let parent = FileIdentity { volume: 7, file: 2 };
+    anchor.parent = Some(parent);
+    let request = RestoreRequest::new(slot(), anchor, target).unwrap();
+    assert_eq!(request.parent(), parent);
 }
 
 fn slot() -> TrashSlot {

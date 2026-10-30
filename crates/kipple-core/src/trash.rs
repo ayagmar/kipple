@@ -53,15 +53,55 @@ named! {
     }
 }
 
-/// What restoring a trashed item needs: where it is and where it came from.
+/// What restoring a trashed item needs: where it is, where it came from, and the
+/// identity of the directory it came from, which restore checks (pinned 10). It can't be
+/// made without that identity.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RestoreRequest {
+    slot: TrashSlot,
+    anchor: Anchor,
+    parent: FileIdentity,
+    target: EntrySnapshot,
+}
+
+impl RestoreRequest {
+    /// A request to move the item at `slot`, whose top was `target` when frozen, back to
+    /// `anchor`. `None` when the anchor doesn't record its directory's identity: only a
+    /// root has none, and a root is never moved to the trash.
+    #[must_use]
+    pub fn new(slot: TrashSlot, anchor: Anchor, target: EntrySnapshot) -> Option<Self> {
+        let parent = anchor.parent?;
+        Some(Self {
+            slot,
+            anchor,
+            parent,
+            target,
+        })
+    }
+
     /// Where it is in the trash.
-    pub slot: TrashSlot,
-    /// Where it came from. Its parent identity is set: restore checks it.
-    pub anchor: Anchor,
+    #[must_use]
+    pub const fn slot(&self) -> &TrashSlot {
+        &self.slot
+    }
+
+    /// Where it came from.
+    #[must_use]
+    pub const fn anchor(&self) -> &Anchor {
+        &self.anchor
+    }
+
+    /// The identity the directory it came from must still have.
+    #[must_use]
+    pub const fn parent(&self) -> FileIdentity {
+        self.parent
+    }
+
     /// The item's top entry as frozen, which a move keeps.
-    pub target: EntrySnapshot,
+    #[must_use]
+    pub const fn target(&self) -> &EntrySnapshot {
+        &self.target
+    }
 }
 
 /// Moves items whole into the trash and back.
