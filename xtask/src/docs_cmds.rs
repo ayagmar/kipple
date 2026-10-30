@@ -22,6 +22,15 @@ const SOURCES: &[&str] = &["README.md", "docs", "site/src"];
 /// The program whose command lines are checked.
 const PROGRAM: &str = "kipple";
 
+/// Words that may come before the program a simple command runs: the shell's reserved
+/// words, and `env` and `sudo` without options.
+const PREFIXES: &[&str] = &[
+    "if", "then", "elif", "else", "while", "until", "do", "!", "{", "time", "env", "sudo",
+];
+
+/// Commands that only print their arguments, so a `kipple` among them is text.
+const PRINTERS: &[&str] = &["echo", "printf"];
+
 /// A Markdown file, with its path relative to the workspace root.
 #[derive(Debug)]
 struct Doc {
@@ -55,12 +64,30 @@ struct Block<'doc> {
     lines: Vec<&'doc str>,
 }
 
-/// One `kipple` command line found in a doc.
+/// One simple command in a doc that names `kipple`.
 #[derive(Debug)]
 struct Invocation<'doc> {
     path: &'doc Path,
     line: usize,
-    words: Vec<String>,
+    command: Command,
+}
+
+/// What a simple command does with `kipple`.
+#[derive(Debug)]
+enum Command {
+    /// Runs it: the words from the program on, which clap must accept.
+    Runs(Vec<String>),
+    /// Names it in a way this check can't follow, such as behind `nice` or `xargs`, so
+    /// the line fails rather than pass unchecked.
+    Unclear(Vec<String>),
+}
+
+impl Command {
+    fn words(&self) -> &[String] {
+        match self {
+            Self::Runs(words) | Self::Unclear(words) => words,
+        }
+    }
 }
 
 /// Fails if a documented `kipple` command doesn't parse, or if the docs show none.
@@ -87,17 +114,24 @@ pub(crate) fn run(root: &Path) -> Result<()> {
     )
 }
 
-/// Every invocation that the real CLI rejects, as `path:line: `command`: why`.
+/// Every invocation that the real CLI rejects or that this check can't follow, as
+/// `path:line: `command`: why`.
 fn violations(invocations: &[Invocation<'_>]) -> Vec<String> {
     invocations
         .iter()
         .filter_map(|invocation| {
-            let problem = problem(&invocation.words)?;
+            let problem = match &invocation.command {
+                Command::Runs(words) => problem(words)?,
+                Command::Unclear(_) => format!(
+                    "can't tell how this runs `{PROGRAM}`; start the command with `{PROGRAM}`, \
+                     or show it in a `text` block"
+                ),
+            };
             Some(format!(
                 "{}:{}: `{}`: {problem}",
                 invocation.path.display(),
                 invocation.line,
-                invocation.words.join(" ")
+                invocation.command.words().join(" ")
             ))
         })
         .collect()
@@ -125,11 +159,11 @@ fn invocations(doc: &Doc) -> Vec<Invocation<'_>> {
             found.extend(
                 simple_commands(&text)
                     .into_iter()
-                    .filter_map(kipple_words)
-                    .map(|words| Invocation {
+                    .filter_map(command)
+                    .map(|command| Invocation {
                         path: &doc.path,
                         line,
-                        words,
+                        command,
                     }),
             );
         }
@@ -137,12 +171,26 @@ fn invocations(doc: &Doc) -> Vec<Invocation<'_>> {
     found
 }
 
-/// The command's words from `kipple` on, after any `NAME=value` assignments, if it runs
-/// `kipple`.
-fn kipple_words(mut words: Vec<String>) -> Option<Vec<String>> {
-    let start = words.iter().position(|word| !is_assignment(word))?;
-    words.drain(..start);
-    (words.first()? == PROGRAM).then_some(words)
+/// What the simple command does with `kipple`, if it names it. It runs it when its
+/// program, after any `NAME=value` assignments and [`PREFIXES`], is `kipple` or a path to
+/// it.
+fn command(mut words: Vec<String>) -> Option<Command> {
+    let start = words
+        .iter()
+        .position(|word| !is_assignment(word) && !PREFIXES.contains(&word.as_str()))?;
+    let program = words.get(start)?;
+    if is_program(program) {
+        words.drain(..start);
+        return Some(Command::Runs(words));
+    }
+    let prints = PRINTERS.contains(&program.as_str());
+    (!prints && words.iter().any(|word| is_program(word))).then_some(Command::Unclear(words))
+}
+
+/// Whether `word` is `kipple`, a path to it, or either with `.exe`.
+fn is_program(word: &str) -> bool {
+    let name = word.rsplit('/').next().unwrap_or(word);
+    name.strip_suffix(".exe").unwrap_or(name) == PROGRAM
 }
 
 fn is_assignment(word: &str) -> bool {
@@ -208,15 +256,16 @@ fn closes(fence: &Fence, line: &str) -> bool {
     trimmed.chars().count() >= fence.len && trimmed.chars().all(|c| c == fence.marker)
 }
 
-/// The block's command lines, each with the line it starts on. A line ending in `\`
-/// continues on the next.
+/// The block's command lines, each with the line it starts on, without a `$ ` prompt. A
+/// line ending in `\` continues on the next.
 fn block_commands(block: &Block<'_>) -> Vec<(usize, String)> {
     let mut commands = Vec::new();
     let mut current: Option<(usize, String)> = None;
     for (offset, raw) in block.lines.iter().enumerate() {
         let raw = raw.trim_start();
         let text = match (&current, block.kind) {
-            (Some(_), _) | (None, Kind::Shell) => raw,
+            (Some(_), _) => raw,
+            (None, Kind::Shell) => raw.strip_prefix("$ ").unwrap_or(raw),
             (None, Kind::Console) => match raw.strip_prefix("$ ") {
                 Some(command) => command,
                 None => continue,
@@ -237,8 +286,9 @@ fn block_commands(block: &Block<'_>) -> Vec<(usize, String)> {
 }
 
 /// Splits a shell command line into its simple commands, with quotes removed: the words
-/// between `|`, `&`, `;`, parentheses, backticks and `$(`. A redirection and its target are
-/// left out, and a `#` that starts a word starts a comment.
+/// between `|`, `&`, `;`, parentheses, backticks and `$(`, and those of a command
+/// substitution inside double quotes. A redirection and its target are left out, and a
+/// `#` that starts a word starts a comment.
 fn simple_commands(line: &str) -> Vec<Vec<String>> {
     let mut lexer = Lexer::default();
     let mut chars = line.chars().peekable();
@@ -293,17 +343,37 @@ impl Lexer {
     }
 
     fn double_quoted(&mut self, chars: &mut Peekable<Chars<'_>>) {
-        let word = self.word.get_or_insert_default();
+        self.word.get_or_insert_default();
         while let Some(c) = chars.next() {
             match c {
                 '"' => return,
                 '\\' => match chars.next_if(|next| matches!(next, '"' | '\\' | '$' | '`')) {
-                    Some(escaped) => word.push(escaped),
-                    None => word.push('\\'),
+                    Some(escaped) => self.push(escaped),
+                    None => self.push('\\'),
                 },
-                c => word.push(c),
+                '$' if chars.next_if_eq(&'(').is_some() => self.substitution(chars, ')'),
+                '`' => self.substitution(chars, '`'),
+                c => self.push(c),
             }
         }
+    }
+
+    /// A command substitution inside double quotes, up to its `close`: its commands are
+    /// the line's too, and its text stays in the word.
+    fn substitution(&mut self, chars: &mut Peekable<Chars<'_>>, close: char) {
+        let mut depth = 0_usize;
+        let mut inner = String::new();
+        for c in chars.by_ref() {
+            match c {
+                c if c == close && depth == 0 => break,
+                '(' if close == ')' => depth += 1,
+                ')' => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            inner.push(c);
+        }
+        self.commands.extend(simple_commands(&inner));
+        self.word.get_or_insert_default().push_str(&inner);
     }
 
     fn end_word(&mut self) {
@@ -383,7 +453,7 @@ mod tests {
     fn found(contents: &str) -> Vec<String> {
         invocations(&doc(contents))
             .iter()
-            .map(|invocation| invocation.words.join(" "))
+            .map(|invocation| invocation.command.words().join(" "))
             .collect()
     }
 
@@ -446,6 +516,47 @@ mod tests {
                 "kipple theme show dracula",
                 "kipple scan --help",
             ]
+        );
+    }
+
+    // Catches a broken example hidden from the check by the shell syntax around it: a
+    // condition, `env` or `sudo`, a `$ ` prompt in a shell block, a command substitution
+    // inside quotes, or a path to the binary.
+    #[test]
+    fn a_command_behind_shell_syntax_is_checked() {
+        let problems = problems(
+            "```sh\n\
+            if kipple scan --bogus1; then echo yes; fi\n\
+            env KIPPLE_CONFIG=demo.toml kipple scan --bogus2\n\
+            sudo kipple scan --bogus3\n\
+            $ kipple scan --bogus4\n\
+            kipple explain \"$(kipple --bogus5)\"\n\
+            ./target/release/kipple scan --bogus6\n\
+            echo \"`kipple --bogus7`\" | while read -r x; do ! kipple scan --bogus8; done\n\
+            ```\n",
+        );
+        assert_eq!(problems.len(), 8, "{problems:?}");
+        for (index, problem) in problems.iter().enumerate() {
+            assert!(
+                problem.contains(&format!("--bogus{}", index + 1)),
+                "{problems:?}"
+            );
+        }
+    }
+
+    // Catches a line that runs `kipple` in a way the check can't follow, such as behind
+    // `nice` or `xargs`, passing unchecked: it fails instead, and naming `kipple` only as
+    // text to print doesn't.
+    #[test]
+    fn a_line_that_runs_kipple_in_a_way_the_check_cannot_follow_fails() {
+        let problems = problems(
+            "```sh\nnice kipple scan\nsudo -E kipple scan\nls | xargs kipple explain\n\
+            echo kipple clean\nprintf '%s\\n' kipple\n```\n",
+        );
+        assert_eq!(problems.len(), 3, "{problems:?}");
+        assert!(
+            problems[0].starts_with("README.md:2: `nice kipple scan`: can't tell"),
+            "{problems:?}"
         );
     }
 
