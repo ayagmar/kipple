@@ -6,6 +6,7 @@ mod bench_tree;
 mod bench_tui;
 mod check;
 mod cmd;
+mod compat;
 mod demo;
 mod gen_docs;
 
@@ -62,6 +63,12 @@ enum Task {
     Fix,
     /// Fail on crate dependencies or OS-specific code that break the architecture.
     CheckArch,
+    /// Fail when a published JSON schema breaks its baseline, the last released one.
+    CheckCompat {
+        /// Make each compatible schema, or one whose version has no baseline, the baseline.
+        #[arg(long)]
+        refresh: bool,
+    },
     /// Build a benchmark reference tree. The references are 100000 and 1000000 entries.
     BenchTree {
         /// Where to build it. Must be missing or empty.
@@ -104,6 +111,7 @@ fn main() -> Result<()> {
         Task::Check { skip } => check::run(root, &skip),
         Task::Fix => check::fix(root),
         Task::CheckArch => arch::run(root),
+        Task::CheckCompat { refresh } => compat::run(root, refresh),
         Task::BenchTree { dir, entries } => bench_tree::run(&dir, entries),
         Task::BenchTui { tree } => bench_tui::run(root, tree.as_deref()),
         Task::TestNative => {

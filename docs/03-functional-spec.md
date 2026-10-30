@@ -175,6 +175,7 @@ There is no `clean --all --force`. `--yes` suppresses the prompt only. It never 
 - Final output (`--json` and human reports) is sorted deterministically (by lens, group, path), even though discovery runs concurrently. The event stream is not sorted.
 - Paths in JSON: an escaped `display` string plus a lossless `raw` form (Unix bytes as base64, Windows UTF-16 as base64) when the path is not valid UTF-8.
 - JSON Schemas are generated from the core types and published on the docs site.
+- A schema version is a promise ([08-engineering-standards.md](08-engineering-standards.md) §8). A later kipple may add properties to `kipple.scan/v1` and the other records, and a consumer must ignore the ones it doesn't know. It never removes or renames a property, makes one it always wrote optional, or writes a type, value or variant the version's schema doesn't list: that takes a new version.
 
 ### Exit codes
 

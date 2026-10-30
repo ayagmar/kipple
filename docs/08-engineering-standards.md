@@ -1,6 +1,6 @@
 # Engineering standards
 
-Status: steps 1–10 and §2–§3 are in place and enforced. The `native` nextest profile and `cargo xtask test-native` (§5) exist since M1, and so does `cargo xtask verify-demo`, the end-to-end check of the CLI with the `test-roots` feature, which CI runs beside the gate on all three OSes. Later steps are planned.
+Status: steps 1–11 and §2–§3 and §8 are in place and enforced. The `native` nextest profile and `cargo xtask test-native` (§5) exist since M1, and so does `cargo xtask verify-demo`, the end-to-end check of the CLI with the `test-roots` feature, which CI runs beside the gate on all three OSes. Later steps are planned.
 
 ## 1. One gate
 
@@ -18,7 +18,8 @@ Status: steps 1–10 and §2–§3 are in place and enforced. The `native` nexte
 | 8 | Architecture | `cargo xtask check-arch` (see §3) | M0 |
 | 9 | Generated CLI reference | `cargo xtask gen-docs --check` for the commands that exist | M0 (only `--version` and `--help`) |
 | 10 | Generated JSON schemas and support matrix | part of `gen-docs --check` | M1 |
-| 11 | Site build, links, tapes, Lighthouse | `cargo xtask site` (separate CI job) | M6 |
+| 11 | Compatibility with the last release | `cargo xtask check-compat` (see §8) | M3 |
+| 12 | Site build, links, tapes, Lighthouse | `cargo xtask site` (separate CI job) | M6 |
 
 Rules:
 - A step that is not yet active doesn't exist in the code or in CI. It isn't a skipped or silently passing step. Each milestone adds its steps in the same change that introduces their inputs.
@@ -128,3 +129,26 @@ Fake-path tests prove logic. Only native-profile tests count as platform evidenc
 - Conventional Commits, `type(scope): summary`, imperative, lowercase, at most 72 characters. No AI attribution, `Co-authored-by` lines or emoji.
 - Each milestone ends with an independent read-only review (a separate agent in its own pane) that runs until the verdict is READY.
 - Docs change in the same commit as the behaviour they describe.
+
+## 8. Compatibility across versions
+
+Data one version of kipple writes or reads must be read by the next. Each format kipple publishes or reads has a **baseline**, the contract of the last release, in `crates/kipple/tests/compat/<format>/<version>/`. There has been no release yet, so today's baselines are the first contract, version 1 of each format.
+
+What a baseline holds:
+- `schema.json`, for a format with a JSON schema: the `kipple scan --json`, `scan --events jsonl`, `rules --json` and `doctor --json` records, the support matrix, and the theme file.
+- Sample documents, for a format kipple reads: a `config.toml`, theme files and a third-party rule pack, between them setting every key the release reads. Beside a document, a `.expected` file lists lines `kipple config show` or `kipple theme show` must print for it.
+
+**The schema check.** `cargo xtask check-compat` (gate step 11) compares each published schema with its baseline. A compatible change depends on who reads the documents:
+- **Records kipple writes** (`scan`, `event`, `rules`, `doctor`, `support-matrix`) are read by scripts. A consumer of kipple's JSON may rely on every property, type, value and variant the baseline lists, and must ignore properties it doesn't know. So a new property, optional or always present, is compatible. These break it: removing or renaming a property, a property the baseline always writes becoming optional or nullable, and any type, value or variant the baseline doesn't allow, such as a new bucket or event type. A value the schema leaves a free string, such as a hold reason or an omission kind, is outside the check.
+- **Documents kipple reads** (`theme`, and from M3 the journal, receipts and profiles) are written by people or an earlier kipple. Every document the baseline allows must still be read. A new optional property, a new value or a wider type is compatible. These break it: removing or renaming a property, a new required property, a narrower type or enum, a tighter bound or pattern, and refusing properties the baseline left open.
+
+The check fails, rather than passes, on a schema keyword it doesn't compare and on a published schema that `FORMATS` in `xtask/src/compat.rs` doesn't list. `pattern` and `format` are compared for equality.
+
+**The reader tests.** `crates/kipple/tests/compat.rs` reads every sample document of every version the baselines hold, so a document written for any earlier release still loads: the config with `config show` printing each line of its `.expected` file, each theme with `theme show` doing the same, and each pack validating as a third-party pack. They need the `test-roots` feature, so they run with the other end-to-end tests in `cargo xtask verify-demo`. When only the wording of `show` changes, update the `.expected` file in the same commit and say so.
+
+**A breaking change** bumps the format's version (`kipple.scan/v2`, `version = 2` in a theme) and needs a baseline for it: `cargo xtask check-compat --refresh` writes the schema of a version that has none. A reader keeps reading every older version it has a baseline for. A config file has no version, so a change that breaks a baseline config isn't allowed.
+
+**Refreshing the baseline.** At each release, `cargo xtask check-compat --refresh` makes each compatible schema its baseline, so what the release added becomes part of the contract (10-ci-and-release.md §3, Flow). Add sample documents for any key the release reads that the samples don't set yet. `--refresh` never replaces a baseline the current schema breaks.
+
+**Adding a format** is one baseline directory and one test: an entry in `FORMATS` and `--refresh` for a JSON schema, and for a format kipple reads, its sample documents and a test in `compat.rs` that reads them through kipple's public interface.
+

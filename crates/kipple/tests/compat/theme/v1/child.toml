@@ -1,0 +1,7 @@
+# A theme of the user's that extends another of theirs, replacing two roles.
+version = 1
+extends = "base"
+
+[roles]
+safe = { fg = "#7FD47F" }
+kept = { fg = 214, bold = true }

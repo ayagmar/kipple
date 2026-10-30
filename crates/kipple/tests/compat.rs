@@ -1,0 +1,162 @@
+//! Documents an earlier release read are read the same way today
+//! (`docs/08-engineering-standards.md` §8): every config file, theme and rule pack in the
+//! baselines under `tests/compat/<format>/<version>/` loads, and where kipple can show
+//! what it read, shows every line of the document's `.expected` file. Built only with the
+//! `test-roots` feature: every root, kipple's config directory included, points into a
+//! temp dir.
+
+use std::ffi::OsString;
+use std::fmt::Write as _;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::ExitCode;
+
+use clap::Parser as _;
+use kipple::Cli;
+use kipple::theme::Themes;
+use kipple_adapters::builtin;
+use kipple_adapters::pack::{self, Catalog, Origin};
+use kipple_platform::Environment;
+
+const BASELINES: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/compat");
+
+/// Each version's baseline directory of `format`.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a baseline that can't be read fails the test"
+)]
+fn versions(format: &str) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = fs::read_dir(Path::new(BASELINES).join(format))
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    found.sort();
+    found
+}
+
+/// The `.toml` documents in the baseline directory `version`, at least one.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a baseline that can't be read fails the test"
+)]
+fn documents(version: &Path) -> Vec<PathBuf> {
+    let mut found: Vec<PathBuf> = fs::read_dir(version)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "toml"))
+        .collect();
+    found.sort();
+    assert!(!found.is_empty(), "no documents in {}", version.display());
+    found
+}
+
+/// An environment whose roots, kipple's config directory among them, are all in `temp`.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a host that can't be written fails the test"
+)]
+fn host(temp: &Path) -> Environment {
+    let roots = temp.join("roots.txt");
+    let mut lines = String::new();
+    for name in ["home", "xdg.config", "known.roaming-app-data"] {
+        writeln!(lines, "{name} = {}", temp.join(name).display()).unwrap();
+    }
+    fs::write(&roots, lines).unwrap();
+    Environment::from_vars([(OsString::from("KIPPLE_TEST_ROOTS"), roots.into_os_string())])
+}
+
+/// Runs `kipple <args>` and returns its exit code, stdout and stderr.
+#[expect(clippy::unwrap_used, reason = "output that isn't UTF-8 fails the test")]
+fn kipple(env: &Environment, args: &[&str]) -> (ExitCode, String, String) {
+    let cli = Cli::parse_from(std::iter::once("kipple").chain(args.iter().copied()));
+    let (mut out, mut err) = (Vec::new(), Vec::new());
+    let code = kipple::run(&cli, env, false, &mut out, &mut err);
+    let text = |bytes| String::from_utf8(bytes).unwrap();
+    (code, text(out), text(err))
+}
+
+/// Fails unless `shown` holds every line of `document`'s `.expected` file.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a baseline that can't be read fails the test"
+)]
+fn assert_shows(document: &Path, shown: &str) {
+    let expected = fs::read_to_string(document.with_extension("expected")).unwrap();
+    let lines: Vec<&str> = shown.lines().map(str::trim_end).collect();
+    let missing: Vec<&str> = expected
+        .lines()
+        .map(str::trim_end)
+        .filter(|line| !line.is_empty() && !lines.contains(line))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "{} no longer reads as it did. If only the wording of `show` changed, update its \
+         .expected file. Missing:\n{}\n\nShown:\n{shown}",
+        document.display(),
+        missing.join("\n"),
+    );
+}
+
+// Catches a released user's config file refused after an upgrade (a key renamed or
+// dropped, a value or rule ID no longer accepted) or read with another meaning.
+#[test]
+fn every_baseline_config_loads_with_the_same_settings() {
+    let temp = tempfile::tempdir().unwrap();
+    let env = host(temp.path());
+    for version in versions("config") {
+        for document in documents(&version) {
+            let file = document.to_str().unwrap();
+
+            let (code, out, err) = kipple(&env, &["--config", file, "config", "show"]);
+
+            assert_eq!((code, err.as_str()), (ExitCode::SUCCESS, ""), "{file}");
+            assert_shows(&document, &out);
+        }
+    }
+}
+
+// Catches a theme a released user wrote refused after an upgrade (a role, colour or
+// modifier name dropped, `extends` read differently) or drawn in other styles.
+#[test]
+fn every_baseline_theme_loads_with_the_same_styles() {
+    for version in versions("theme") {
+        let temp = tempfile::tempdir().unwrap();
+        let env = host(temp.path());
+        let dir = Themes::new(&env).dir().unwrap().to_owned();
+        fs::create_dir_all(&dir).unwrap();
+        let themes = documents(&version);
+        for document in &themes {
+            fs::copy(document, dir.join(document.file_name().unwrap())).unwrap();
+        }
+        for document in &themes {
+            let name = document.file_stem().unwrap().to_str().unwrap();
+
+            let (code, out, err) = kipple(&env, &["theme", "show", name]);
+
+            assert_eq!((code, err.as_str()), (ExitCode::SUCCESS, ""), "{name}");
+            assert_shows(document, &out);
+        }
+    }
+}
+
+// Catches a third-party rule pack written for an earlier release refused after an
+// upgrade: a key, selector, fact, predicate form or operation it uses no longer accepted.
+#[test]
+fn every_baseline_rule_pack_still_validates() {
+    let engine = semver::Version::parse(env!("CARGO_PKG_VERSION")).unwrap();
+    let integrations = builtin::descriptors();
+    let catalog = Catalog {
+        engine: &engine,
+        integrations: &integrations,
+    };
+    for version in versions("pack") {
+        for document in documents(&version) {
+            let file = document.display().to_string();
+            let bytes = fs::read(&document).unwrap();
+
+            let validated = pack::validate(&file, &bytes, Origin::ThirdParty, catalog);
+
+            assert!(validated.is_ok(), "{file}: {:?}", validated.err());
+        }
+    }
+}

@@ -1,0 +1,120 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SupportMatrixOut",
+  "description": "The generated support matrix.",
+  "type": "object",
+  "properties": {
+    "integrations": {
+      "description": "Every built-in integration, sorted by ID.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/SupportOut"
+      }
+    },
+    "kipple": {
+      "description": "kipple's version.",
+      "type": "string"
+    },
+    "schema": {
+      "description": "`kipple.support-matrix/v1`.",
+      "type": "string"
+    }
+  },
+  "required": [
+    "schema",
+    "kipple",
+    "integrations"
+  ],
+  "$defs": {
+    "LensOut": {
+      "description": "A lens, as `--lens` names it.",
+      "oneOf": [
+        {
+          "description": "What AI coding agents leave behind.",
+          "type": "string",
+          "const": "agents"
+        },
+        {
+          "description": "Developer tools and projects.",
+          "type": "string",
+          "const": "dev"
+        },
+        {
+          "description": "The operating system and its package managers.",
+          "type": "string",
+          "const": "system"
+        }
+      ]
+    },
+    "PlatformSupport": {
+      "description": "What an integration does on one platform.",
+      "type": "object",
+      "properties": {
+        "discover": {
+          "description": "Whether it finds things there.",
+          "type": "boolean"
+        },
+        "mutate": {
+          "description": "Whether it may change anything there. Never, in this version.",
+          "type": "boolean"
+        },
+        "platform": {
+          "description": "The platform.",
+          "type": "string"
+        },
+        "report": {
+          "description": "Whether it reports sizes or advice there.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "platform",
+        "discover",
+        "report",
+        "mutate"
+      ]
+    },
+    "SupportOut": {
+      "description": "One integration's support.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Its ID.",
+          "type": "string"
+        },
+        "lens": {
+          "description": "Its lens.",
+          "$ref": "#/$defs/LensOut"
+        },
+        "platforms": {
+          "description": "What it does on each platform.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/PlatformSupport"
+          }
+        },
+        "rules": {
+          "description": "Its rules.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "verified": {
+          "description": "The upstream versions its layouts were verified against.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "lens",
+        "verified",
+        "rules",
+        "platforms"
+      ]
+    }
+  }
+}

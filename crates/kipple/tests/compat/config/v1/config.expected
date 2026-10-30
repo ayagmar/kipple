@@ -1,0 +1,19 @@
+care.level            careful
+clean.method          trash
+scan.project_roots    ~/projects, /srv/work
+exclude.paths         ~/projects/keep-this/target
+exclude.rules         builtin.node.node-modules
+keep.paths            ~/projects/demo/target  (benchmark baseline)
+keep.paths            ~/projects/other/.venv
+rules.builtin.cargo.targetlevel = thorough, recent_days = 30
+rules.builtin.python.bytecodeenabled = false
+ui.theme              kipple-dark
+ui.summary            false
+ui.detail             bottom
+ui.bars               false
+ui.glyphs             ascii
+keys.move-down        ["j", "down", "pagedown"]
+keys.page-down        none
+keys.select           ["s", "space"]
+keys.settings         ["S"]
+keys.quit             ["q", "Q"]

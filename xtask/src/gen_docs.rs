@@ -43,7 +43,7 @@ pub(crate) fn run(root: &Path, check: bool) -> Result<()> {
 }
 
 /// `value` as pretty JSON with a trailing newline.
-fn pretty(value: &impl serde::Serialize) -> Result<String> {
+pub(crate) fn pretty(value: &impl serde::Serialize) -> Result<String> {
     Ok(format!("{}\n", serde_json::to_string_pretty(value)?))
 }
 

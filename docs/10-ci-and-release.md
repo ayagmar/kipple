@@ -8,7 +8,7 @@ The gate is `cargo xtask check`. Its authoritative step list and per-milestone a
 
 **Why `cargo xtask`, not `just` or `make`.** kipple needs native Windows contributors and runners. `just` recipes run in a shell (`sh` by default), and POSIX lines such as `RUSTDOCFLAGS=... cargo doc` don't run in PowerShell. `make` has the same problem. An `xtask` is a Rust binary in the workspace, so it runs the same everywhere with nothing extra to install, sets environment variables through `std::process::Command`, and is itself linted and tested. `.cargo/config.toml` defines `[alias] xtask = "run --locked --package xtask --"`, so building xtask can never rewrite `Cargo.lock` before the locked steps run.
 
-Other subcommands: `cargo xtask fix` (fmt and `clippy --fix`), `cargo xtask gen-docs [--check]`, `cargo xtask bench-tree <dir> --entries <n>` (the deterministic benchmark reference tree, 11 S3 procedure), `cargo xtask bench-tui [--tree <dir>]` (the home screen's keypress-to-frame p95 while scanning the 1M tree, run as a release build, D-048; a given tree must carry the `.kipple-bench-tree` sentinel `bench-tree` writes at its root, and the project markers are added only as new files, never over an existing file or through a link), `cargo xtask site` (site build and Lighthouse, once the site exists), `cargo xtask distro <name>` (one Linux container smoke run with podman or docker).
+Other subcommands: `cargo xtask fix` (fmt and `clippy --fix`), `cargo xtask gen-docs [--check]`, `cargo xtask check-compat [--refresh]` (compatibility with the last release, 08 §8), `cargo xtask bench-tree <dir> --entries <n>` (the deterministic benchmark reference tree, 11 S3 procedure), `cargo xtask bench-tui [--tree <dir>]` (the home screen's keypress-to-frame p95 while scanning the 1M tree, run as a release build, D-048; a given tree must carry the `.kipple-bench-tree` sentinel `bench-tree` writes at its root, and the project markers are added only as new files, never over an existing file or through a link), `cargo xtask site` (site build and Lighthouse, once the site exists), `cargo xtask distro <name>` (one Linux container smoke run with podman or docker).
 
 **Local vs CI.** `cargo xtask check` on one OS is what a contributor runs. CI runs that same command on all three OSes, plus jobs that cannot run on every machine (the distro containers, the site and Lighthouse). Those extra jobs have their own `xtask` subcommands, so anyone can reproduce them locally.
 
@@ -108,6 +108,7 @@ Alternative considered: hand-written tag workflow with `gh release create`, as i
 
 1. Conventional Commits on `main` (enforced by review and `AGENTS.md`).
 2. release-plz keeps an open "release vX.Y.Z" PR with `CHANGELOG.md` and version bumps.
+   Before merging it, refresh the compatibility baseline on `main` with `cargo xtask check-compat --refresh` (08 §8), add sample documents for any key the release reads that they don't set, and merge that first, so the tag carries the contract it releases.
 3. Merging that PR runs `release-plz release`, which creates the `vX.Y.Z` tag and nothing else.
 4. The tag triggers dist's release workflow:
    - re-runs `cargo xtask check` on all three OSes (the release gate is the CI gate),

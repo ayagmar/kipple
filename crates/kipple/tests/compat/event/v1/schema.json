@@ -1,0 +1,813 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "EventOut",
+  "description": "One `kipple scan --events jsonl` record. Sequence numbers follow emission order.",
+  "type": "object",
+  "properties": {
+    "schema": {
+      "description": "`kipple.event/v1`.",
+      "type": "string"
+    },
+    "seq": {
+      "description": "Its position in the stream, from 0.",
+      "type": "integer",
+      "format": "uint64",
+      "minimum": 0
+    }
+  },
+  "oneOf": [
+    {
+      "description": "The scan began.",
+      "type": "object",
+      "properties": {
+        "integrations": {
+          "description": "How many integrations will run.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "type": {
+          "type": "string",
+          "const": "scan-started"
+        }
+      },
+      "required": [
+        "type",
+        "integrations"
+      ]
+    },
+    {
+      "description": "An integration's root was found and will be read.",
+      "type": "object",
+      "properties": {
+        "integration": {
+          "description": "The integration.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Where it is.",
+          "$ref": "#/$defs/PathOut"
+        },
+        "root": {
+          "description": "The symbolic root.",
+          "type": "string"
+        },
+        "type": {
+          "type": "string",
+          "const": "root-opened"
+        }
+      },
+      "required": [
+        "type",
+        "integration",
+        "root",
+        "path"
+      ]
+    },
+    {
+      "description": "An integration found something, not sized yet.",
+      "type": "object",
+      "properties": {
+        "finding": {
+          "description": "What was found.",
+          "$ref": "#/$defs/FindingOut"
+        },
+        "id": {
+          "description": "Its ID within this scan, for `finding-updated`.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "type": {
+          "type": "string",
+          "const": "finding-added"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "finding"
+      ]
+    },
+    {
+      "description": "A finding was measured, and its bucket derived.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "The finding's ID within this scan.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "size": {
+          "description": "What removing it would free, unless it couldn't be sized.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SizeOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "type": {
+          "type": "string",
+          "const": "finding-updated"
+        },
+        "verdict": {
+          "description": "Its bucket at its level.",
+          "$ref": "#/$defs/VerdictOut"
+        }
+      },
+      "required": [
+        "type",
+        "id",
+        "verdict"
+      ]
+    },
+    {
+      "description": "An integration finished.",
+      "type": "object",
+      "properties": {
+        "integration": {
+          "description": "The integration.",
+          "type": "string"
+        },
+        "omissions": {
+          "description": "What it couldn't cover.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OmissionOut"
+          }
+        },
+        "type": {
+          "type": "string",
+          "const": "integration-completed"
+        }
+      },
+      "required": [
+        "type",
+        "integration",
+        "omissions"
+      ]
+    },
+    {
+      "description": "The engine finished.",
+      "type": "object",
+      "properties": {
+        "outcome": {
+          "description": "Whether it ran to the end.",
+          "$ref": "#/$defs/OutcomeOut"
+        },
+        "type": {
+          "type": "string",
+          "const": "scan-completed"
+        }
+      },
+      "required": [
+        "type",
+        "outcome"
+      ]
+    },
+    {
+      "description": "The last record, written while stdout stays writable: the whole sorted report.",
+      "type": "object",
+      "properties": {
+        "report": {
+          "description": "The same report `--json` prints.",
+          "$ref": "#/$defs/ScanOut"
+        },
+        "type": {
+          "type": "string",
+          "const": "completed"
+        }
+      },
+      "required": [
+        "type",
+        "report"
+      ]
+    }
+  ],
+  "required": [
+    "schema",
+    "seq"
+  ],
+  "$defs": {
+    "ActivityOut": {
+      "description": "Whether a running program uses a finding (`docs/04-safety-model.md` §4, D-050).",
+      "oneOf": [
+        {
+          "description": "Every process that counts was inspected, and none shows it in use.",
+          "type": "object",
+          "properties": {
+            "by_command_line": {
+              "description": "How many of the current user's processes couldn't be fully inspected and were\nchecked by their command line only, because it is in the home directory\n(D-052). Absent when none was.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint",
+              "minimum": 0
+            },
+            "state": {
+              "type": "string",
+              "const": "idle"
+            },
+            "unchecked_system": {
+              "description": "How many processes owned by root or `SYSTEM`, or running with root's rights,\ncouldn't be inspected and weren't counted, because it is in the home directory.\n0 when none was left out.",
+              "type": "integer",
+              "format": "uint",
+              "minimum": 0
+            }
+          },
+          "required": [
+            "state",
+            "unchecked_system"
+          ]
+        },
+        {
+          "description": "A process shows it in use.",
+          "type": "object",
+          "properties": {
+            "path": {
+              "description": "The path that matched. Nothing else of the process's command line or\nenvironment is ever shown.",
+              "$ref": "#/$defs/PathOut"
+            },
+            "pid": {
+              "description": "The process.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "seen": {
+              "description": "How: `executable`, `working-directory`, `argument`, `environment`,\n`mapped-file`, or `runtime` (its runtime working in its project or naming a path\nthere).",
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "const": "in-use"
+            }
+          },
+          "required": [
+            "state",
+            "pid",
+            "seen",
+            "path"
+          ]
+        },
+        {
+          "description": "Some processes that count couldn't be inspected, so it might be in use.",
+          "type": "object",
+          "properties": {
+            "message": {
+              "description": "What happened. For people; not a stable value.",
+              "type": "string"
+            },
+            "reason": {
+              "description": "Why: `no-listing`, `partial`, `uninspected`, or `unsupported` (the OS doesn't\nshow the paths of running programs its layout needs).",
+              "type": "string"
+            },
+            "state": {
+              "type": "string",
+              "const": "unknown"
+            }
+          },
+          "required": [
+            "state",
+            "reason",
+            "message"
+          ]
+        }
+      ]
+    },
+    "AdviceOut": {
+      "description": "A native setting or command, shown and never run.",
+      "type": "object",
+      "properties": {
+        "references": {
+          "description": "Upstream documentation.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "snippets": {
+          "description": "Exact commands or settings to copy.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "text": {
+          "description": "What it does and what to watch out for.",
+          "type": "string"
+        },
+        "title": {
+          "description": "A short title.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "text",
+        "snippets",
+        "references"
+      ]
+    },
+    "BucketOut": {
+      "description": "A bucket of the home screen (`docs/04-safety-model.md` §2a).",
+      "oneOf": [
+        {
+          "description": "Passes every check at the level.",
+          "type": "string",
+          "const": "safe"
+        },
+        {
+          "description": "Eligible, but loses something beyond the level or changed recently.",
+          "type": "string",
+          "const": "review"
+        },
+        {
+          "description": "Blocked, unknown, report-only or advice only.",
+          "type": "string",
+          "const": "protected"
+        }
+      ]
+    },
+    "CompletenessOut": {
+      "description": "How much of an item was measured.",
+      "oneOf": [
+        {
+          "description": "Every entry was read.",
+          "type": "string",
+          "const": "complete"
+        },
+        {
+          "description": "Some entries couldn't be read or are on another file system, so the sizes are\nlower bounds.",
+          "type": "string",
+          "const": "incomplete"
+        },
+        {
+          "description": "Sizing stopped because the scan was cancelled.",
+          "type": "string",
+          "const": "cancelled"
+        }
+      ]
+    },
+    "ConsequenceOut": {
+      "description": "What removing a finding costs (`docs/04-safety-model.md` §2a).",
+      "type": "object",
+      "properties": {
+        "cost": {
+          "description": "How expensive coming back is: `low`, `high` or `unknown`.",
+          "type": "string"
+        },
+        "loss": {
+          "description": "What is lost besides the bytes: `cache-warmth`, `rollback-ability`,\n`offline-ability`, `history`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "recovery": {
+          "description": "How it comes back: `automatic`, `rebuild-local`, `reinstall`, `redownload` or\n`none`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "recovery",
+        "loss",
+        "cost"
+      ]
+    },
+    "EvidenceOut": {
+      "description": "One piece of evidence.",
+      "oneOf": [
+        {
+          "description": "A file beside it marks a project.",
+          "type": "object",
+          "properties": {
+            "file": {
+              "description": "The file's name.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "marker"
+            }
+          },
+          "required": [
+            "kind",
+            "file"
+          ]
+        },
+        {
+          "description": "An entry inside it is one its tool writes.",
+          "type": "object",
+          "properties": {
+            "entry": {
+              "description": "The entry's name.",
+              "type": "string"
+            },
+            "kind": {
+              "type": "string",
+              "const": "signature"
+            }
+          },
+          "required": [
+            "kind",
+            "entry"
+          ]
+        },
+        {
+          "description": "None of the entries its tool writes is inside: its layout is unknown.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "no-signature"
+            }
+          },
+          "required": [
+            "kind"
+          ]
+        },
+        {
+          "description": "It is the root itself.",
+          "type": "object",
+          "properties": {
+            "kind": {
+              "type": "string",
+              "const": "root"
+            },
+            "root": {
+              "description": "The symbolic root.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "root"
+          ]
+        }
+      ]
+    },
+    "FindingOut": {
+      "description": "Something an integration found.",
+      "type": "object",
+      "properties": {
+        "activity": {
+          "description": "Whether a running program uses it, once measured.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActivityOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "category": {
+          "description": "What it is. Display only.",
+          "type": "string"
+        },
+        "consequence": {
+          "description": "What removing it costs, once measured, when its integration verified that.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ConsequenceOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "evidence": {
+          "description": "Why the integration thinks it is what the rule says.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceOut"
+          }
+        },
+        "integration": {
+          "description": "The integration that found it.",
+          "type": "string"
+        },
+        "lens": {
+          "description": "Its integration's lens.",
+          "$ref": "#/$defs/LensOut"
+        },
+        "level": {
+          "description": "The carefulness level its bucket is derived at: its rule's own\n(`rules.<id>.level`), else the global one.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Where it is.",
+          "$ref": "#/$defs/PathOut"
+        },
+        "rule": {
+          "description": "The rule it was found by.",
+          "type": "string"
+        },
+        "size": {
+          "description": "What removing it would free, once sized.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SizeOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "verdict": {
+          "description": "Its bucket at that level, once measured.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VerdictOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "integration",
+        "lens",
+        "rule",
+        "category",
+        "path",
+        "evidence",
+        "level"
+      ]
+    },
+    "IntegrationOut": {
+      "description": "One integration's part of a scan.",
+      "type": "object",
+      "properties": {
+        "advice": {
+          "description": "Native settings and commands it suggests. kipple never runs them.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/AdviceOut"
+          }
+        },
+        "id": {
+          "description": "Its ID.",
+          "type": "string"
+        },
+        "lens": {
+          "description": "Its lens.",
+          "$ref": "#/$defs/LensOut"
+        },
+        "omissions": {
+          "description": "What it could not cover. Omissions make a report partial, never anything safe.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OmissionOut"
+          }
+        }
+      },
+      "required": [
+        "id",
+        "lens",
+        "omissions",
+        "advice"
+      ]
+    },
+    "LensOut": {
+      "description": "A lens, as `--lens` names it.",
+      "oneOf": [
+        {
+          "description": "What AI coding agents leave behind.",
+          "type": "string",
+          "const": "agents"
+        },
+        {
+          "description": "Developer tools and projects.",
+          "type": "string",
+          "const": "dev"
+        },
+        {
+          "description": "The operating system and its package managers.",
+          "type": "string",
+          "const": "system"
+        }
+      ]
+    },
+    "OmissionOut": {
+      "description": "Something a scan couldn't cover, and why.",
+      "type": "object",
+      "properties": {
+        "kind": {
+          "description": "What kind of gap it is.",
+          "type": "string"
+        },
+        "message": {
+          "description": "What happened, with the upstream error. For people; not a stable value.",
+          "type": "string"
+        },
+        "path": {
+          "description": "The path it concerns, if any.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "root": {
+          "description": "The symbolic root it concerns, if any.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "kind",
+        "message"
+      ]
+    },
+    "OutcomeOut": {
+      "description": "Whether a scan ran to the end.",
+      "oneOf": [
+        {
+          "description": "Every integration finished and every finding was sized.",
+          "type": "string",
+          "const": "completed"
+        },
+        {
+          "description": "The scan was cancelled; the report holds what was found until then.",
+          "type": "string",
+          "const": "cancelled"
+        }
+      ]
+    },
+    "PathOut": {
+      "description": "A path: its display form, plus its exact bytes when it isn't valid Unicode.",
+      "type": "object",
+      "properties": {
+        "display": {
+          "description": "The path, with anything that isn't valid Unicode replaced.",
+          "type": "string"
+        },
+        "raw": {
+          "description": "Base64 of the exact bytes (Unix) or UTF-16LE code units (Windows), present only\nwhen `display` lost something.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "display"
+      ]
+    },
+    "ScanOut": {
+      "description": "`kipple scan --json`: one envelope once the scan finished.",
+      "type": "object",
+      "properties": {
+        "by_command_line_processes": {
+          "description": "How many of the current user's processes couldn't be fully inspected and were\nchecked by their command line only for findings in the home directory that are\notherwise idle (D-052). Absent when none was.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "minimum": 0
+        },
+        "findings": {
+          "description": "Every finding, sorted by lens, rule, then path.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FindingOut"
+          }
+        },
+        "integrations": {
+          "description": "Every integration that ran, sorted by lens, then ID.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/IntegrationOut"
+          }
+        },
+        "kipple": {
+          "description": "kipple's version.",
+          "type": "string"
+        },
+        "level": {
+          "description": "The global carefulness level (`care.level`). A finding whose rule has its own\ncarries that in its `level`.",
+          "type": "string"
+        },
+        "outcome": {
+          "description": "Whether the scan ran to the end.",
+          "$ref": "#/$defs/OutcomeOut"
+        },
+        "platform": {
+          "description": "The platform it ran on.",
+          "type": "string"
+        },
+        "schema": {
+          "description": "`kipple.scan/v1`.",
+          "type": "string"
+        },
+        "unchecked_system_processes": {
+          "description": "How many processes owned by root or `SYSTEM`, or running with root's rights,\ncouldn't be inspected and weren't counted for findings in the home directory that\nare otherwise idle (D-050, D-052).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "schema",
+        "kipple",
+        "platform",
+        "outcome",
+        "level",
+        "findings",
+        "integrations",
+        "unchecked_system_processes"
+      ]
+    },
+    "SizeOut": {
+      "description": "What removing an item would free, in bytes.",
+      "type": "object",
+      "properties": {
+        "allocated": {
+          "description": "Allocated storage, where the platform reports it.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "apparent": {
+          "description": "The sum of file lengths.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "completeness": {
+          "description": "Whether every entry was measured.",
+          "$ref": "#/$defs/CompletenessOut"
+        },
+        "skipped_mounts": {
+          "description": "How many directories inside are on another file system and weren't read, when\nincomplete.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "unique_reclaim": {
+          "description": "Allocated storage that only this item holds, where the platform reports it.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "unreadable": {
+          "description": "How many entries couldn't be read, when incomplete.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "apparent",
+        "completeness"
+      ]
+    },
+    "VerdictOut": {
+      "description": "A finding's bucket and every reason for it.",
+      "type": "object",
+      "properties": {
+        "bucket": {
+          "description": "The bucket.",
+          "$ref": "#/$defs/BucketOut"
+        },
+        "reasons": {
+          "description": "Why it isn't Safe: for Review, what falls short of the level (`recent`, `recovery`,\n`loss`, `high-cost`); for Protected, what holds it (`disabled`, `kept`, `excluded`,\n`report-only`, `advice`, `unknown-layout`,\n`unknown-consequence`, `unknown-git`, `holds-repository`, `in-use`,\n`unknown-activity`, `unknown-modified`). Empty when Safe.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "bucket",
+        "reasons"
+      ]
+    }
+  }
+}

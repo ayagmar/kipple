@@ -1,0 +1,86 @@
+# A third-party rule pack as the first release reads it, using every part of schema
+# version 1 such a pack may use.
+schema_version = 1
+
+[pack]
+id = "dev.example.tools"
+version = "1.2.0"
+publisher = "Example"
+description = "Example rules"
+license = "MIT"
+kipple = ">=0.0.0"
+platforms = ["linux", "macos", "windows"]
+
+[[rule]]
+id = "dev.example.tools.bun-cache"
+integration = "generic"
+title = "Bun install cache"
+why = "Bun keeps downloaded packages here."
+loss = "Bun downloads them again."
+references = ["https://bun.sh/docs/install/cache"]
+category = "cache"
+
+[rule.scope]
+root = "home"
+selection = "dirs-matching"
+pattern = ".bun/install/cache"
+
+[rule.eligibility]
+modified_age = { min = "30d" }
+size = { min = "100MB", max = "10GiB" }
+git.tracked_files_in_item = "absent"
+activity = ["idle"]
+
+[rule.operation]
+kind = "remove-files"
+methods = ["delete", "trash"]
+
+[rule.selection]
+default = "unselected"
+recent_days = 14
+
+[[rule]]
+id = "dev.example.tools.zig-out"
+integration = "generic"
+title = "Zig build output"
+description = "A zig-out directory next to a build.zig."
+why = "zig build installs its output here."
+loss = "The next build compiles the project again."
+category = "build-artifact"
+platforms = ["linux"]
+
+[rule.scope]
+root = "config.project-roots"
+selection = "project-artifact"
+marker = ["build.zig"]
+artifact = "zig-out"
+max_depth = 4
+
+[rule.requirements]
+"marker.present" = true
+
+[rule.eligibility]
+"git.tracked_changes" = { min = 0, max = 1000 }
+git.untracked_files = "absent"
+modified_age = { max = "1y" }
+
+[rule.operation]
+kind = "remove-files"
+methods = ["trash"]
+
+[[rule]]
+id = "dev.example.tools.crash-dumps"
+integration = "generic"
+title = "Crash dumps"
+why = "Example tools write a dump here when they crash."
+loss = "Nothing kipple can tell; this rule only reports them."
+category = "log"
+
+[rule.scope]
+root = "home"
+selection = "files-matching"
+pattern = ".example/dumps/*.dmp"
+max_matches = 50
+
+[rule.operation]
+kind = "report"

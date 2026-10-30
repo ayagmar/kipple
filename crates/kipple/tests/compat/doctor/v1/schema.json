@@ -1,0 +1,444 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DoctorOut",
+  "description": "`kipple doctor --json`.",
+  "type": "object",
+  "properties": {
+    "config": {
+      "description": "Where the config comes from and whether it can be used.",
+      "$ref": "#/$defs/ConfigOut"
+    },
+    "config_file": {
+      "description": "The config file, unless it is the default one and the config directory is unknown.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/EntryOut"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "dirs": {
+      "description": "kipple's own directories: `config`, `data` and `cache`.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/DirOut"
+      }
+    },
+    "integrations": {
+      "description": "Every built-in integration and the roots it reads.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/IntegrationRootsOut"
+      }
+    },
+    "kipple": {
+      "description": "kipple's version.",
+      "type": "string"
+    },
+    "permission_hint": {
+      "description": "A hint for a permission failure that was diagnosed.",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "platform": {
+      "description": "The platform it runs on.",
+      "type": "string"
+    },
+    "processes": {
+      "description": "What the process listing found.",
+      "$ref": "#/$defs/ProcessesOut"
+    },
+    "roots": {
+      "description": "Every root of this platform, in a fixed order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/RootOut"
+      }
+    },
+    "schema": {
+      "description": "`kipple.doctor/v1`.",
+      "type": "string"
+    },
+    "tools": {
+      "description": "Every native tool kipple knows.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ToolOut"
+      }
+    }
+  },
+  "required": [
+    "schema",
+    "kipple",
+    "platform",
+    "dirs",
+    "config",
+    "roots",
+    "integrations",
+    "tools",
+    "processes"
+  ],
+  "$defs": {
+    "ConfigOut": {
+      "description": "Where the config comes from and whether it can be used.",
+      "type": "object",
+      "properties": {
+        "problem": {
+          "description": "Why it can't be used, with its line and column, if it can't.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "`--config`, `KIPPLE_CONFIG` or `default`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "warnings": {
+          "description": "Each kept or excluded path that doesn't exist or can't be checked.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "warnings"
+      ]
+    },
+    "DirOut": {
+      "description": "One of kipple's directories.",
+      "type": "object",
+      "properties": {
+        "base": {
+          "description": "The root it lives under.",
+          "type": "string"
+        },
+        "name": {
+          "description": "`config`, `data` or `cache`.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Where it is, if its base resolved.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "problem": {
+          "description": "Why it has no path.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name",
+        "base"
+      ]
+    },
+    "EntryOut": {
+      "description": "A path and what a no-follow probe found there.",
+      "type": "object",
+      "properties": {
+        "path": {
+          "description": "The path.",
+          "$ref": "#/$defs/PathOut"
+        },
+        "problem": {
+          "description": "The OS error, when it can't be read.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "state": {
+          "description": "What is there.",
+          "$ref": "#/$defs/EntryState"
+        }
+      },
+      "required": [
+        "path",
+        "state"
+      ]
+    },
+    "EntryState": {
+      "description": "What a no-follow probe found at a path.",
+      "oneOf": [
+        {
+          "description": "A directory.",
+          "type": "string",
+          "const": "directory"
+        },
+        {
+          "description": "A link, which kipple doesn't follow.",
+          "type": "string",
+          "const": "link"
+        },
+        {
+          "description": "Something other than a directory.",
+          "type": "string",
+          "const": "not-directory"
+        },
+        {
+          "description": "Nothing.",
+          "type": "string",
+          "const": "not-present"
+        },
+        {
+          "description": "It can't be read.",
+          "type": "string",
+          "const": "unreadable"
+        }
+      ]
+    },
+    "IntegrationRootsOut": {
+      "description": "A built-in integration and the roots it reads.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "description": "Its ID.",
+          "type": "string"
+        },
+        "lens": {
+          "description": "Its lens.",
+          "$ref": "#/$defs/LensOut"
+        },
+        "roots": {
+          "description": "The roots it reads.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "supported": {
+          "description": "Whether it runs on this platform.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "id",
+        "lens",
+        "supported",
+        "roots"
+      ]
+    },
+    "LensOut": {
+      "description": "A lens, as `--lens` names it.",
+      "oneOf": [
+        {
+          "description": "What AI coding agents leave behind.",
+          "type": "string",
+          "const": "agents"
+        },
+        {
+          "description": "Developer tools and projects.",
+          "type": "string",
+          "const": "dev"
+        },
+        {
+          "description": "The operating system and its package managers.",
+          "type": "string",
+          "const": "system"
+        }
+      ]
+    },
+    "PathOut": {
+      "description": "A path: its display form, plus its exact bytes when it isn't valid Unicode.",
+      "type": "object",
+      "properties": {
+        "display": {
+          "description": "The path, with anything that isn't valid Unicode replaced.",
+          "type": "string"
+        },
+        "raw": {
+          "description": "Base64 of the exact bytes (Unix) or UTF-16LE code units (Windows), present only\nwhen `display` lost something.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "display"
+      ]
+    },
+    "ProcessesOut": {
+      "description": "What the process listing found.",
+      "type": "object",
+      "properties": {
+        "by_command_line": {
+          "description": "The current user's processes that can't be fully inspected and are checked by\ntheir command line only for project items in the home directory (D-052).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "counted_uninspected": {
+          "description": "Processes that can't be inspected and count for every project item, so none can be\nSafe: the current user's that can't be checked by their command line, those of an\nunknown owner, and those with root's rights whose command line names a relative\npath kipple couldn't place.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "exited": {
+          "description": "Processes that exited while being listed.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "identified": {
+          "description": "Processes whose program file was identified.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "no_executable": {
+          "description": "Processes with no program file, such as kernel threads.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "partial": {
+          "description": "Why the listing is partial, if it is.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "problem": {
+          "description": "Why the processes couldn't be listed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "total": {
+          "description": "Processes listed.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "unchecked_system": {
+          "description": "Processes owned by root or `SYSTEM`, or running with root's rights, that can't be\ninspected and aren't counted for project items in the home directory (D-050,\nD-052).",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        },
+        "unknown": {
+          "description": "Processes kipple treats as possibly running a tool.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "total",
+        "identified",
+        "unknown",
+        "exited",
+        "no_executable",
+        "unchecked_system",
+        "by_command_line",
+        "counted_uninspected"
+      ]
+    },
+    "RootOut": {
+      "description": "A root and what is at its path.",
+      "type": "object",
+      "properties": {
+        "configured": {
+          "description": "The configured path, when it is a link that was resolved.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "entry": {
+          "description": "Where the root is and what is there, or `None` when it has no path.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EntryOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "root": {
+          "description": "The symbolic root.",
+          "type": "string"
+        },
+        "source": {
+          "description": "Where the path came from.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "unresolved": {
+          "description": "Why it has no path.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "root"
+      ]
+    },
+    "ToolOut": {
+      "description": "A native tool.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "Its program name.",
+          "type": "string"
+        },
+        "path": {
+          "description": "Where it was found on `PATH`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "problem": {
+          "description": "Why the version probe failed.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "version": {
+          "description": "Its version, when the probe succeeded.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "name"
+      ]
+    }
+  }
+}
