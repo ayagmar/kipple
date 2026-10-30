@@ -114,14 +114,15 @@ fn a_gitlink_inside_the_item_blocks_it() {
 }
 
 /// Catches a tracked file replaced after the freeze: the file on disk is no entry kipple
-/// froze, so its place in the plan is unknown.
+/// froze, so its place in the plan is unknown. The old file is moved aside, not removed,
+/// so the file system can't give the new one its identity.
 #[test]
 fn a_tracked_path_that_matches_no_frozen_entry_blocks_the_item() {
     let repo = Repo::new();
     repo.track("target/keep.rs");
     let anchor = repo.anchor("target");
     let tree = freeze(&anchor);
-    remove(&repo.at("target/keep.rs"));
+    rename(&repo.at("target/keep.rs"), &repo.at("kept-aside.rs"));
     repo.write("target/keep.rs");
 
     let entries = query().entries(&repo.root, &anchor, &tree, &CancelToken::new());
