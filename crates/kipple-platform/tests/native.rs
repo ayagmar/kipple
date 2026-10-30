@@ -1,9 +1,12 @@
 //! Native-backend tests: the real process table, the real account's roots, and the
-//! confined executor on the real file system and real mounts. They run only in the
-//! `native` nextest profile, on a disposable host (`docs/08-engineering-standards.md` §5).
+//! confined executor and trash on the real file system and real mounts. They run only in
+//! the `native` nextest profile, on a disposable host (`docs/08-engineering-standards.md`
+//! §5).
 
 #[path = "native/executor.rs"]
 mod executor;
+#[path = "native/trash.rs"]
+mod trash;
 
 use std::ffi::OsString;
 

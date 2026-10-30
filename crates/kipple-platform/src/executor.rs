@@ -22,20 +22,21 @@ mod linux;
 #[cfg(target_os = "macos")]
 mod macos;
 #[cfg(unix)]
-mod unix;
+pub(crate) mod unix;
 #[cfg(windows)]
 mod windows;
 
 use std::io;
 
 use kipple_core::{
-    Anchor, ApplyError, CancelToken, Component, DeleteOp, EffectSink, EntryKind, EntrySnapshot,
-    ErrorCode, Executor, FileSystemClass, Finish, Freeze, Freezer, LeftReason, RelPath, Volume,
+    Anchor, ApplyError, CancelToken, Component, DeleteOp, Drift, EffectSink, Entry, EntryKind,
+    EntrySnapshot, ErrorCode, Executor, FileSystemClass, Finish, Freeze, Freezer, LeftReason,
+    RelPath, Volume,
 };
 
 pub use names::OsNames;
 #[cfg(unix)]
-use unix as sys;
+pub(crate) use unix as sys;
 #[cfg(windows)]
 use windows as sys;
 
@@ -92,14 +93,14 @@ pub(crate) enum Form {
 impl Seen {
     /// Whether it is on `volume`: the same device and, where the OS names mounts, the same
     /// mount. A bind mount of the same device has another mount ID.
-    fn on(&self, volume: Volume) -> bool {
+    pub(crate) fn on(&self, volume: Volume) -> bool {
         self.form != Form::MountPoint
             && self.snapshot.identity.volume == volume.device
             && self.mount == volume.mount
     }
 
     /// Its volume.
-    const fn volume(&self) -> Volume {
+    pub(crate) const fn volume(&self) -> Volume {
         Volume {
             device: self.snapshot.identity.volume,
             mount: self.mount,
@@ -238,4 +239,15 @@ pub(crate) fn left_reason(error: &io::Error) -> LeftReason {
     } else {
         LeftReason::Failed
     }
+}
+
+/// How `seen` differs from the frozen `entry`, as a reason to leave it.
+pub(crate) fn drift(entry: Entry<'_>, seen: &Seen) -> Option<LeftReason> {
+    let Some(frozen) = entry.snapshot() else {
+        return Some(LeftReason::Gone);
+    };
+    frozen.drift(&seen.snapshot).map(|drift| match drift {
+        Drift::Replaced => LeftReason::Replaced,
+        Drift::Changed => LeftReason::Changed,
+    })
 }

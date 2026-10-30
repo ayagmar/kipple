@@ -92,7 +92,7 @@ Apply shows per-item progress. `ctrl+c` stops new operations from being schedule
 > Removed an estimated 9.2 GB of allocated storage. Moved 400 MB to Trash (still on disk). 1 item skipped: in use by process 4121 (codex).
 
 ### J4. Recover
-`kipple history` lists receipts. `kipple restore <receipt> [item...]` restores trash-backed items. It refuses to overwrite, and it reports trash that was emptied or entries that are missing. Permanent, native and worktree operations say plainly that they cannot be undone.
+`kipple history` lists receipts. `kipple restore <receipt> [item...]` restores trash-backed items on Linux and macOS, into the directory they came from, which must still be there and be the same directory. It refuses to overwrite, and it reports trash that was emptied or entries that are missing. Windows has no trash method in v0.1, so there is nothing to restore there (D-062). Permanent, native and worktree operations say plainly that they cannot be undone.
 
 ### J5. Extend
 `kipple pack add <source>` fetches a rule pack (URL with `--sha256`, or a registry name later), shows the publisher, version, digest, the roots it asks for and its rules, then installs it **without grants**. Its findings show as report-only until the user runs `kipple pack grant <pack> [rule] [--root ...]`. Updates show a diff of rules and roots and ask for new grants whenever authority grows.

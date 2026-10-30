@@ -6,7 +6,7 @@ mod confinement;
 #[path = "executor/mounts.rs"]
 mod mounts;
 #[path = "executor/support.rs"]
-mod support;
+pub(crate) mod support;
 
 use std::fs;
 

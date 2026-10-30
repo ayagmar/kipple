@@ -6,7 +6,7 @@ use kipple_core::{
     FileSystemClass, Finish, Freed, FrozenTree, LeftReason, Marks, NodeId, Scope, Volume,
 };
 
-use super::{Form, Seen, left_reason, reach, sys};
+use super::{Form, Seen, drift, left_reason, reach, sys};
 
 /// Runs `op`. See [`Executor`](kipple_core::Executor).
 pub(super) fn delete(
@@ -272,17 +272,6 @@ impl<'run> Run<'run> {
             stack.extend(next.children());
         }
     }
-}
-
-/// How `seen` differs from the frozen `entry`, as a reason to leave it.
-fn drift(entry: Entry<'_>, seen: &Seen) -> Option<LeftReason> {
-    let Some(frozen) = entry.snapshot() else {
-        return Some(LeftReason::Gone);
-    };
-    frozen.drift(&seen.snapshot).map(|drift| match drift {
-        kipple_core::Drift::Replaced => LeftReason::Replaced,
-        kipple_core::Drift::Changed => LeftReason::Changed,
-    })
 }
 
 /// What removing `seen` frees: nothing for a file that keeps another name.

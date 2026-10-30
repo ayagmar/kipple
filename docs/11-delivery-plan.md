@@ -105,7 +105,7 @@ Verify:
 - Overlap regressions: an alias across a protected root, a hard link with an unselected sibling, a parent/child overlap, a method conflict.
 - The native-profile suite passes on all three CI OSes.
 - A seeded confinement property runs 10k cases in CI (D-061: each failure names the seed that reproduces it, with no dependency).
-- End to end on `demo-home`: `clean --only builtin.cargo.target --yes` removes exactly the snapshotted set and writes a receipt. `restore` brings back trash-backed items on Linux and Windows, and on macOS as S4 decided.
+- End to end on `demo-home`: `clean --only builtin.cargo.target --yes` removes exactly the snapshotted set and writes a receipt. `restore` brings back trash-backed items on Linux and macOS (S4, D-062: kipple's own restore on both; Windows has no trash method in v0.1).
 
 ## M4: Agent integrations
 

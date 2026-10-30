@@ -12,11 +12,11 @@ use std::path::Path;
 use kipple_core::{EntryKind, FileIdentity, FileSystemClass};
 
 #[cfg(target_os = "linux")]
-pub(super) use super::linux::NoMaterialize;
+pub(crate) use super::linux::NoMaterialize;
 #[cfg(target_os = "linux")]
 use super::linux::{clear_errno, errno, file_system, stat_at, stat_fd};
 #[cfg(target_os = "macos")]
-pub(super) use super::macos::NoMaterialize;
+pub(crate) use super::macos::NoMaterialize;
 #[cfg(target_os = "macos")]
 use super::macos::{clear_errno, errno, file_system, stat_at, stat_fd};
 use super::{Form, Seen};
@@ -25,7 +25,7 @@ use super::{Form, Seen};
 pub(crate) type Name = CString;
 
 /// `name` as the OS takes it.
-pub(super) fn name(name: &OsStr) -> io::Result<Name> {
+pub(crate) fn name(name: &OsStr) -> io::Result<Name> {
     CString::new(name.as_bytes()).map_err(|_| io::ErrorKind::InvalidInput.into())
 }
 
@@ -70,13 +70,13 @@ impl Victim<'_> {
 
 impl Dir {
     /// The directory at `path`, without following a link in its last component.
-    pub(super) fn open_root(path: &Path) -> io::Result<Self> {
+    pub(crate) fn open_root(path: &Path) -> io::Result<Self> {
         let path = name(path.as_os_str())?;
         Self::open(libc::AT_FDCWD, &path)
     }
 
     /// The directory `name` in this one, without following a link.
-    pub(super) fn open_dir(&self, name: &Name) -> io::Result<Self> {
+    pub(crate) fn open_dir(&self, name: &Name) -> io::Result<Self> {
         Self::open(self.0.as_raw_fd(), name)
     }
 
@@ -92,17 +92,17 @@ impl Dir {
     }
 
     /// What this directory is, from its descriptor.
-    pub(super) fn seen(&self) -> io::Result<Seen> {
+    pub(crate) fn seen(&self) -> io::Result<Seen> {
         stat_fd(self.0.as_raw_fd())
     }
 
     /// What `name` in this directory is, without following a link.
-    pub(super) fn stat(&self, name: &Name) -> io::Result<Seen> {
+    pub(crate) fn stat(&self, name: &Name) -> io::Result<Seen> {
         stat_at(self.0.as_raw_fd(), name)
     }
 
     /// The file system this directory is on.
-    pub(super) fn file_system(&self) -> io::Result<FileSystemClass> {
+    pub(crate) fn file_system(&self) -> io::Result<FileSystemClass> {
         file_system(self.0.as_raw_fd())
     }
 
@@ -162,12 +162,19 @@ impl Dir {
         })
     }
 
+    /// Its descriptor, for the calls the trash makes relative to it.
+    pub(crate) fn fd(&self) -> RawFd {
+        self.0.as_raw_fd()
+    }
+
+    /// Removes `name` from this directory: a file or link, or with `AT_REMOVEDIR` an empty
+    /// directory.
     #[expect(unsafe_code, reason = "libc's unlinkat is a raw call")]
     #[expect(
         clippy::disallowed_methods,
         reason = "the executor's one removal, by name in a checked directory"
     )]
-    fn unlink(&self, name: &CStr, flags: libc::c_int) -> io::Result<()> {
+    pub(crate) fn unlink(&self, name: &CStr, flags: libc::c_int) -> io::Result<()> {
         // SAFETY: the descriptor is open and `name` is NUL-terminated.
         if unsafe { libc::unlinkat(self.0.as_raw_fd(), name.as_ptr(), flags) } != 0 {
             return Err(io::Error::last_os_error());
@@ -199,7 +206,7 @@ fn read_stream(stream: *mut libc::DIR) -> io::Result<Vec<OsString>> {
 }
 
 /// Whether opening a directory failed because the name is a link or not a directory.
-pub(super) fn is_link_or_file(error: &io::Error) -> bool {
+pub(crate) fn is_link_or_file(error: &io::Error) -> bool {
     matches!(error.raw_os_error(), Some(libc::ELOOP | libc::ENOTDIR))
 }
 
