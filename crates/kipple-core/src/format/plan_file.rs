@@ -57,7 +57,8 @@ pub(crate) struct PlanItemOut {
 /// `plan` as a plan file.
 ///
 /// # Errors
-/// [`FormatError::TooLarge`] when an item's tree is larger than the reader takes.
+/// [`FormatError::TooLarge`] when an item's tree or the whole file is larger than the
+/// reader takes.
 pub fn encode_plan_file(plan: &Plan, codec: &dyn NameCodec) -> Result<Vec<u8>, FormatError> {
     let items = plan
         .entries()
@@ -87,6 +88,9 @@ pub fn encode_plan_file(plan: &Plan, codec: &dyn NameCodec) -> Result<Vec<u8>, F
     // Serializing records of strings, numbers and enums can't fail.
     let mut bytes = serde_json::to_vec_pretty(&file).unwrap_or_default();
     bytes.push(b'\n');
+    if bytes.len() > PLAN_LIMIT {
+        return Err(FormatError::TooLarge(PLAN));
+    }
     Ok(bytes)
 }
 
