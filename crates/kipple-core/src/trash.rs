@@ -136,7 +136,9 @@ pub trait TrashBackend: fmt::Debug + Send + Sync {
     /// whole move. Entries that appear after the check move with it.
     ///
     /// # Errors
-    /// When the move was refused or failed. Nothing moved then.
+    /// When the move was refused or failed. Nothing moved then, except with
+    /// [`ErrorCode::Stranded`](crate::ErrorCode::Stranded): something swapped in for the
+    /// item moved and couldn't be moved back, and the trash records it at `slot`.
     fn move_whole(
         &self,
         op: &TrashOp,
@@ -160,6 +162,8 @@ pub trait TrashBackend: fmt::Debug + Send + Sync {
     /// parent is never created and nothing is overwritten.
     ///
     /// # Errors
-    /// When the restore was refused or failed. Nothing moved then.
+    /// When the restore was refused or failed. Nothing moved then, except with
+    /// [`ErrorCode::Stranded`](crate::ErrorCode::Stranded): something swapped in for the
+    /// trashed entry moved and couldn't be moved back, and is at the original name.
     fn restore(&self, request: &RestoreRequest, cancel: &CancelToken) -> Result<(), ApplyError>;
 }

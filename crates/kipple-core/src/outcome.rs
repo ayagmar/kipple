@@ -173,6 +173,9 @@ pub enum Skip {
     MethodNotOffered(Method),
     /// The fresh freeze failed.
     Freeze(ApplyError),
+    /// The executor or the trash refused it before touching anything: the way to it, its
+    /// root, its volume or the item itself wasn't what the freeze saw.
+    Refused(ApplyError),
     /// It is on a file system kipple doesn't change.
     FileSystem(Unsupported),
     /// Revalidation dropped every reviewed entry.
@@ -356,6 +359,9 @@ named! {
         TrashMissing = "trash-missing",
         /// The trash entry isn't the item that was moved there.
         TrashChanged = "trash-changed",
+        /// A move took something swapped in for the item, and it couldn't be moved back:
+        /// it is at the destination, under the name this error is at.
+        Stranded = "stranded",
         /// The executor reported an entry the run wasn't authorized to touch: one the
         /// plan left out, one revalidation dropped, or one not in the tree.
         Unauthorized = "unauthorized",
@@ -701,15 +707,20 @@ impl<'run> Tally<'run> {
     /// The item's outcome once the executor returned `run`.
     ///
     /// A report about an entry the run wasn't authorized to touch makes it failed, with
-    /// that fault, whatever the run returned. Otherwise an error makes it failed and
-    /// cancellation cancelled, with what was removed until then. A run that ended is done
+    /// that fault, whatever the run returned. Otherwise an error before any report makes
+    /// it skipped ([`Skip::Refused`]): the executor reports each removal as it makes it,
+    /// so nothing was touched. [`ErrorCode::Stranded`], or a later error, makes it failed and cancellation cancelled,
+    /// with what was removed until then. A run that ended is done
     /// only when nothing reviewed was left but directories still holding entries;
     /// otherwise it is partial.
     #[must_use]
     pub fn finish(mut self, run: Result<Finish, ApplyError>) -> ItemOutcome {
         let fault = self.fault.take();
+        let untouched = fault.is_none() && !self.states.contains(&State::Reported);
+        let refused = |error: &ApplyError| untouched && error.code != ErrorCode::Stranded;
         let effect = self.effect();
         match fault.map_or(run, Err) {
+            Err(error) if refused(&error) => ItemOutcome::Skipped(Skip::Refused(error)),
             Err(error) => ItemOutcome::Failed { error, effect },
             Ok(Finish::Cancelled) => ItemOutcome::Cancelled(effect),
             Ok(Finish::Completed) if effect.left.is_short() => ItemOutcome::Partial(effect),

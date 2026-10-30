@@ -12,7 +12,7 @@ use std::fs;
 
 use kipple_core::{
     CancelToken, DeleteOp, EntryKind, ErrorCode, FileSystemClass, Freed, Freezer as _, ItemOutcome,
-    LeftReason, Marks, RelPath, Scope, Status,
+    LeftReason, Marks, RelPath, Scope, Skip, Status,
 };
 use kipple_platform::ConfinedFs;
 use support::{
@@ -84,7 +84,7 @@ fn a_tree_of_the_roots_contents_never_runs_for_a_target_below_it() {
     let outcome = delete(&site.anchor("target"), tree);
 
     assert!(
-        matches!(&outcome, ItemOutcome::Failed { error, .. } if error.code == ErrorCode::TargetChanged),
+        matches!(&outcome, ItemOutcome::Skipped(Skip::Refused(error)) if error.code == ErrorCode::TargetChanged),
         "{outcome:?}"
     );
     assert!(present(&site.at("other/x")), "other/x stays: {outcome:?}");
@@ -192,10 +192,9 @@ fn a_link_on_the_way_to_the_target_stops_the_run() {
     let outcome = delete(&anchor, frozen.tree);
 
     assert!(
-        matches!(&outcome, ItemOutcome::Failed { error, .. } if error.code == ErrorCode::ThroughLink),
+        matches!(&outcome, ItemOutcome::Skipped(Skip::Refused(error)) if error.code == ErrorCode::ThroughLink),
         "{outcome:?}"
     );
-    assert_eq!(removed(&outcome).names, 0);
     assert!(
         present(&site.outside.join("target/a")),
         "outside/target/a stays: {outcome:?}"
@@ -217,7 +216,7 @@ fn a_replaced_root_stops_the_run_before_anything_is_removed() {
     let outcome = delete(&anchor, frozen.tree);
 
     assert!(
-        matches!(&outcome, ItemOutcome::Failed { error, .. } if error.code == ErrorCode::RootChanged),
+        matches!(&outcome, ItemOutcome::Skipped(Skip::Refused(error)) if error.code == ErrorCode::RootChanged),
         "{outcome:?}"
     );
     assert!(
@@ -241,6 +240,21 @@ fn a_freeze_refuses_a_target_whose_directory_was_replaced() {
     let refused = ConfinedFs.freeze(&anchor, &CancelToken::new()).unwrap_err();
 
     assert_eq!(refused.code, ErrorCode::ParentChanged);
+}
+
+/// Catches a target swapped for a link being reported as unreadable rather than as
+/// another file at the target, which reconciliation records as `replaced`.
+#[test]
+fn a_freeze_reports_a_target_swapped_for_a_link_as_changed() {
+    let site = Site::new();
+    write(&site.at("target/a"), b"a");
+    let anchor = site.anchor("target");
+    site.replace(&site.at("target"), |path| link(&site.outside, path));
+
+    let refused = ConfinedFs.freeze(&anchor, &CancelToken::new()).unwrap_err();
+
+    assert_eq!(refused.code, ErrorCode::TargetChanged, "{refused:?}");
+    site.assert_outside_intact();
 }
 
 /// Catches an item replaced while the run is going being removed (04 §10 "an item

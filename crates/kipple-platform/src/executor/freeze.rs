@@ -174,7 +174,7 @@ fn io(code: ErrorCode, error: std::io::Error, at: RelPath) -> ApplyError {
 /// The error for a tree the builder refused.
 const fn shape(error: &ShapeError) -> ApplyError {
     ApplyError::new(match error {
-        ShapeError::TopIsLink => ErrorCode::ThroughLink,
+        ShapeError::TopIsLink => ErrorCode::TargetChanged,
         ShapeError::ContentsOfFile => ErrorCode::RootChanged,
         ShapeError::OtherVolume => ErrorCode::MountBoundary,
         ShapeError::TooLarge => ErrorCode::TooLarge,

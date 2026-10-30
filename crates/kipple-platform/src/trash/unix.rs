@@ -14,8 +14,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use kipple_core::{
     Anchor, ApplyError, Authorized, CancelToken, Component, Digest, EntrySnapshot, ErrorCode,
-    FileSystemClass, RestoreRequest, Scope, SlotState, TrashDir, TrashOp, TrashSlot, Trashed,
-    Volume,
+    FileSystemClass, RelPath, RestoreRequest, Scope, SlotState, TrashDir, TrashOp, TrashSlot,
+    Trashed, Volume,
 };
 
 use super::ConfinedTrash;
@@ -153,6 +153,10 @@ pub(super) fn move_whole(
     };
     match shift(&rename, &top, TRASHING) {
         Ok(()) => Ok(Trashed { slot: slot.clone() }),
+        // What moved in its place stays recorded, so the trash lists it.
+        Err(error) if error.code == ErrorCode::Stranded => {
+            Err(error.at(RelPath::new(vec![slot.name.clone()])))
+        }
         Err(error) => {
             record.undo();
             Err(error)
@@ -212,7 +216,13 @@ pub(super) fn restore(
         to: reached.holder(),
         into: &name,
     };
-    shift(&rename, request.target(), RESTORING)?;
+    shift(&rename, request.target(), RESTORING).map_err(|error| {
+        if error.code == ErrorCode::Stranded {
+            error.at(anchor.relative.clone())
+        } else {
+            error
+        }
+    })?;
     if let (Some(info), Ok(described)) = (&opened.info, info_name(&slot.name)) {
         // The item is back; a `.trashinfo` left behind would only list it in the trash
         // without anything there.
@@ -455,7 +465,8 @@ fn same(now: &EntrySnapshot, then: &EntrySnapshot) -> bool {
 
 /// Renames `rename.name`, which must be `expected`, without replacing anything, then
 /// checks what arrived is `expected`. Something else, swapped in between the check and
-/// the rename, is moved back and the move refused.
+/// the rename, is moved back and the move refused; when it can't be moved back, the
+/// error is [`ErrorCode::Stranded`], and the caller says where it is.
 fn shift(rename: &Move<'_>, expected: &EntrySnapshot, codes: Codes) -> Result<(), ApplyError> {
     let missing = |error: io::Error| {
         let code = if error.kind() == io::ErrorKind::NotFound {
@@ -476,8 +487,10 @@ fn shift(rename: &Move<'_>, expected: &EntrySnapshot, codes: Codes) -> Result<()
         return Ok(());
     }
     // The rename moved what was there by then. Put it back where it was found.
-    no_replace(rename.to, rename.into, rename.from, rename.name).ok();
-    Err(ApplyError::new(codes.changed))
+    match no_replace(rename.to, rename.into, rename.from, rename.name) {
+        Ok(()) => Err(ApplyError::new(codes.changed)),
+        Err(error) => Err(ApplyError::io(ErrorCode::Stranded, error)),
+    }
 }
 
 /// Why a rename was refused.

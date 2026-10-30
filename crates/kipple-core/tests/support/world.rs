@@ -47,6 +47,10 @@ pub(crate) struct Target {
     pub(crate) denied: BTreeSet<RelPath>,
     /// The run fails on reaching this entry, changing nothing more.
     pub(crate) fails_at: Option<RelPath>,
+    /// The executor and the trash fail with this code before removing anything: a
+    /// refusal, as when the way to it changed after the freeze, or a trash move that
+    /// stranded something swapped in for it.
+    pub(crate) refusal: Option<ErrorCode>,
 }
 
 impl Target {
@@ -64,6 +68,7 @@ impl Target {
             unreadable: false,
             denied: BTreeSet::new(),
             fails_at: None,
+            refusal: None,
         }
     }
 }
@@ -212,6 +217,7 @@ impl Executor for World {
     ) -> Result<Finish, ApplyError> {
         let target = op.target();
         self.started(target.item());
+        self.refusal(target)?;
         // Every entry before the directory holding it.
         let entries: Vec<_> = target.tree().entries().collect();
         for entry in entries.into_iter().rev() {
@@ -242,6 +248,16 @@ impl State {
 }
 
 impl World {
+    /// The error `target`'s item fails with before anything is removed, if any.
+    fn refusal(&self, target: &kipple_core::Authorized) -> Result<(), ApplyError> {
+        let refusal = self
+            .state()
+            .targets
+            .get(&target.anchor().path())
+            .and_then(|disk| disk.refusal);
+        refusal.map_or(Ok(()), |code| Err(ApplyError::new(code)))
+    }
+
     /// Removes the entry frozen as `frozen` at `path` of `target`'s item, or says why it
     /// stays. Crashes after it when a crash is due.
     fn remove(
@@ -347,6 +363,7 @@ impl TrashBackend for World {
         if cancel.is_cancelled() {
             return Err(ApplyError::new(ErrorCode::Cancelled));
         }
+        self.refusal(target)?;
         let at = target.anchor().path();
         let mut state = self.state();
         let disk = state

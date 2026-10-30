@@ -746,6 +746,83 @@ fn a_journal_write_that_fails_stops_the_apply() {
     }
 }
 
+/// Catches a refusal before anything was touched reported as a failure (pinned 7): the
+/// executor or the trash refusing the item, as when its parent was replaced after the
+/// freeze, skips it, by either method, and removes nothing.
+#[test]
+fn an_item_refused_before_anything_was_touched_is_skipped() {
+    for method in [Method::Delete, Method::Trash] {
+        let (item, target) = project(0, 100, TARGET);
+        let world = world_of(&[(item.clone(), target)]);
+        let scan = scan_of(&[item]);
+        let mut config = Config::new();
+        config.methods.config = Some(method);
+        let planned = plan_all(&scan, &config, &world, PlanMode::Review);
+        for disk in world.state().targets.values_mut() {
+            disk.refusal = Some(ErrorCode::ParentChanged);
+        }
+
+        let receipt = run(&planned.plan, &scan, &config, &world);
+
+        assert!(
+            matches!(
+                skip_of(&receipt.items[0].outcome),
+                Some(Skip::Refused(error)) if error.code == ErrorCode::ParentChanged
+            ),
+            "{method:?}: {:?}",
+            receipt.items[0].outcome
+        );
+        let state = world.state();
+        assert_eq!(state.removals, Vec::new(), "{method:?}");
+        assert_eq!(state.trash.len(), 0, "{method:?}");
+    }
+}
+
+/// Catches a trash move that stranded something swapped in for the item reported as a
+/// skip, which says nothing moved: it fails, naming the slot it is at.
+#[test]
+fn a_trash_move_that_stranded_something_fails() {
+    let (item, target) = project(0, 100, TARGET);
+    let world = world_of(&[(item.clone(), target)]);
+    let scan = scan_of(&[item]);
+    let mut config = Config::new();
+    config.methods.config = Some(Method::Trash);
+    let planned = plan_all(&scan, &config, &world, PlanMode::Review);
+    for disk in world.state().targets.values_mut() {
+        disk.refusal = Some(ErrorCode::Stranded);
+    }
+
+    let receipt = run(&planned.plan, &scan, &config, &world);
+
+    assert!(
+        matches!(
+            &receipt.items[0].outcome,
+            ItemOutcome::Failed { error, .. } if error.code == ErrorCode::Stranded
+        ),
+        "{:?}",
+        receipt.items[0].outcome
+    );
+}
+
+/// Runs `plan` until `crash`, and returns the intents it left pending.
+fn crash_run(
+    plan: &Plan,
+    scan: &ScanReport,
+    config: &Config,
+    world: &World,
+    crash: Crash,
+) -> Vec<kipple_core::Intent> {
+    world.state().crash = Some(crash);
+    let crashed = catch_unwind(AssertUnwindSafe(|| run(plan, scan, config, world)));
+    assert!(
+        matches!(&crashed, Err(payload) if payload.is::<Crashed>()),
+        "the run crashes, and nothing else unwinds"
+    );
+    let mut state = world.state();
+    state.crash = None;
+    state.pending()
+}
+
 /// Runs `plan` until `crash`, then reconciles what it left.
 fn crash_then_reconcile(
     plan: &Plan,
@@ -754,17 +831,7 @@ fn crash_then_reconcile(
     world: &World,
     crash: Crash,
 ) -> Vec<kipple_core::Reconciled> {
-    world.state().crash = Some(crash);
-    let crashed = catch_unwind(AssertUnwindSafe(|| run(plan, scan, config, world)));
-    assert!(
-        matches!(&crashed, Err(payload) if payload.is::<Crashed>()),
-        "the run crashes, and nothing else unwinds"
-    );
-    let pending = {
-        let mut state = world.state();
-        state.crash = None;
-        state.pending()
-    };
+    let pending = crash_run(plan, scan, config, world, crash);
     let ran = world.state().ran.clone();
     let removals = world.state().removals.len();
     let mut journal = world.journal();
@@ -817,6 +884,52 @@ fn a_crash_during_a_delete_is_reconciled_as_partly_gone() {
         found(&reconciled),
         [Some(Found::PartlyGone { gone: 2, of: 7 })]
     );
+}
+
+/// A freezer that is cancelled while it walks, as when the user quits during start-up.
+#[derive(Debug)]
+struct CancelledMidFreeze(CancelToken);
+
+impl kipple_core::Freezer for CancelledMidFreeze {
+    fn freeze(
+        &self,
+        _: &kipple_core::Anchor,
+        _: &CancelToken,
+    ) -> Result<kipple_core::Freeze, kipple_core::ApplyError> {
+        self.0.cancel();
+        Err(kipple_core::ApplyError::new(ErrorCode::Cancelled))
+    }
+}
+
+/// Catches a cancel during reconciliation recorded as the item's final outcome: the
+/// item must stay pending, so the next start can still find what the crash left.
+#[test]
+fn a_cancel_during_reconciliation_leaves_the_item_pending() {
+    let (world, scan, config, planned) = one();
+    let pending = crash_run(
+        &planned.plan,
+        &scan,
+        &config,
+        &world,
+        Crash::AfterRemovals(2),
+    );
+    let cancel = CancelToken::new();
+    let freezer = CancelledMidFreeze(cancel.clone());
+    let ports = MutationPorts {
+        freezer: &freezer,
+        executor: &world,
+        trash: &world,
+    };
+    let mut journal = world.journal();
+    let pending_now = Pending {
+        plan: &planned.plan,
+        intents: &pending,
+    };
+
+    let reconciled = reconcile(&pending_now, &ports, &mut journal, &cancel).unwrap();
+
+    assert_eq!(reconciled, Vec::new());
+    assert_eq!(world.state().pending(), pending);
 }
 
 /// Catches an intent read as a removal: a crash right after the intent leaves the item
@@ -1424,6 +1537,7 @@ fn change_item(
             let path = paths[rng.pick(paths.len())].clone();
             target.fails_at = Some(path);
         }
+        11 => target.refusal = Some(ErrorCode::ParentChanged),
         _ => {}
     }
     taint
@@ -1590,6 +1704,16 @@ fn check_receipt(seed: u64, world: &World, case: &Case, receipt: &Receipt) {
         "seed {seed}"
     );
     for (item, taint) in receipt.items.iter().zip(&case.taints) {
+        if matches!(item.outcome, ItemOutcome::Skipped(_)) {
+            assert!(
+                !state
+                    .removals
+                    .iter()
+                    .any(|removal| removal.item == item.item),
+                "seed {seed}: skipped item {} had nothing removed",
+                item.item.0
+            );
+        }
         if taint.whole {
             assert!(
                 matches!(item.outcome, ItemOutcome::Skipped(_)),
