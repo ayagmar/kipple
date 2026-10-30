@@ -171,6 +171,25 @@ fn a_review_of_another_plan_authorizes_nothing() {
     assert_eq!(skip, Skip::NotReviewed);
 }
 
+/// Catches automation moving a directory whole, with whatever entered it after the check,
+/// when no one reviewed a whole-directory move (04 §3.5).
+#[test]
+fn safe_only_automation_never_moves_a_directory_whole() {
+    let trash = entry(Method::Trash, Standing::Safe, tree(1));
+    let skip = admit_now(&trash, Some(Authorization::SafeOnly), Now::same_as(&trash)).unwrap_err();
+    assert_eq!(skip, Skip::WholeNotReviewed);
+    let delete = entry(Method::Delete, Standing::Safe, tree(1));
+    assert!(
+        admit_now(
+            &delete,
+            Some(Authorization::SafeOnly),
+            Now::same_as(&delete)
+        )
+        .is_ok(),
+        "a Safe delete still runs under Safe-only"
+    );
+}
+
 /// Catches automation acting on Review items (03 J6: `--yes` takes Safe only).
 #[test]
 fn safe_only_automation_never_takes_a_review_item() {

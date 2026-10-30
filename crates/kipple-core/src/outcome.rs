@@ -175,6 +175,10 @@ pub enum Skip {
     FileSystem(Unsupported),
     /// Revalidation dropped every reviewed entry.
     AllDropped(Left),
+    /// A trash move takes the directory whole, with whatever is in it at apply time
+    /// (04 §3.5), which needs that whole-directory move reviewed. Safe-only automation
+    /// has no such review until a profile records one (M3b).
+    WholeNotReviewed,
     /// Moving to the trash needs every entry of the item still authorized, and some
     /// weren't. Never turned into a delete.
     NotWhole {

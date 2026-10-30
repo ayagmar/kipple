@@ -46,7 +46,8 @@ pub enum Authorization {
         plan: Digest,
     },
     /// Automation (`--only`, a profile, an imported plan, each with `--yes`): Safe items
-    /// only, never Review, at planning and again at apply.
+    /// only, never Review, at planning and again at apply, and deletes only: a trash move
+    /// takes a directory whole, which needs a review automation doesn't have yet (M3b).
     SafeOnly,
 }
 
@@ -172,7 +173,8 @@ pub(crate) struct Recheck<'facts> {
 /// Authorizes `entry` of `plan`, or says why not. Only ever subtracts: an item survives
 /// only if every check passes, and its tree only with what the fresh freeze confirms.
 ///
-/// In order: the authorization must be for this plan, and Safe-only for a Safe item; the
+/// In order: the authorization must be for this plan, and Safe-only only for a Safe item
+/// removed by a delete; the
 /// item must be judged under the same policy, rule, level, recent window, method and
 /// kept and excluded paths; it must not be Protected now; its bucket must still be one it
 /// was authorized in (a Safe item stays Safe, a Review item gains no caution, and under
@@ -243,9 +245,14 @@ fn authorized_for(
 ) -> Result<(), Skip> {
     match authorization {
         Authorization::Reviewed { plan: shown } if shown != plan.digest() => Err(Skip::NotReviewed),
-        Authorization::SafeOnly => match &entry.standing {
-            Standing::Safe => Ok(()),
-            Standing::Review(cautions) => Err(Skip::Riskier(cautions.iter().copied().collect())),
+        Authorization::SafeOnly => match (&entry.standing, entry.method) {
+            (Standing::Review(cautions), _) => {
+                Err(Skip::Riskier(cautions.iter().copied().collect()))
+            }
+            // A trash move takes the directory whole, with whatever is in it then (04
+            // §3.5): automation has no review of that until a profile records one (M3b).
+            (Standing::Safe, Method::Trash) => Err(Skip::WholeNotReviewed),
+            (Standing::Safe, Method::Delete) => Ok(()),
         },
         Authorization::Reviewed { .. } => Ok(()),
     }
