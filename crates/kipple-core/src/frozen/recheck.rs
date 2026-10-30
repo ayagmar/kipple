@@ -2,7 +2,7 @@
 
 use std::cmp::Ordering;
 
-use super::{Drift, Entry, FrozenTree, Marks, NodeId};
+use super::{Drift, Entry, FrozenTree, Mark, Marks, NodeId, Unauthorized};
 use crate::outcome::LeftReason;
 use crate::probe::EntryKind;
 
@@ -12,14 +12,15 @@ impl FrozenTree {
     ///
     /// An entry stays only where the fresh tree has the same name in the same directory,
     /// of the same kind and identity, with a fingerprint that [`EntrySnapshot::drift`]
-    /// finds unchanged. A directory that is gone, replaced or changed is dropped with
-    /// everything inside it, each entry counted under that reason: a changed directory may
-    /// have gained an entry, and nothing below it is entered. A tree on another file
-    /// system or mount is replaced as a whole. Entries only the fresh tree has are not
-    /// looked at: they were never authorized.
+    /// finds unchanged, and still marked for removal: an entry the fresh plan leaves out
+    /// (a file git tracks now) is dropped as excluded. A directory that is gone, replaced,
+    /// changed or left out is dropped with everything inside it, each entry counted under
+    /// that reason: a changed directory may have gained an entry, and nothing below it is
+    /// entered. A tree on another file system or mount is replaced as a whole. Entries
+    /// only the fresh tree has are not looked at: they were never authorized.
     ///
-    /// The result is always this tree's own marks with some [`Mark::Remove`](super::Mark)
-    /// turned into [`Mark::Dropped`](super::Mark): a subset, never more.
+    /// The result is always this tree's own marks with some [`Mark::Remove`] turned into
+    /// [`Mark::Dropped`]: a subset, never more.
     ///
     /// [`EntrySnapshot::drift`]: super::EntrySnapshot::drift
     #[must_use]
@@ -31,7 +32,7 @@ impl FrozenTree {
         }
         let mut pairs = vec![(self.top(), fresh.top())];
         while let Some((frozen, now)) = pairs.pop() {
-            if let Some(reason) = drift(frozen, now) {
+            if let Some(reason) = withheld(now).or_else(|| drift(frozen, now)) {
                 marks.drop_subtree(self, frozen.id(), reason);
                 continue;
             }
@@ -40,6 +41,17 @@ impl FrozenTree {
             }
         }
         marks
+    }
+}
+
+/// Why the fresh plan doesn't authorize `now`, if it doesn't. The top of a root's
+/// contents is never authorized in either tree (the scopes match by now), and what is
+/// inside it is judged entry by entry.
+fn withheld(now: Entry<'_>) -> Option<LeftReason> {
+    match now.mark() {
+        Mark::Remove | Mark::Unauthorized(Unauthorized::Top) => None,
+        Mark::Unauthorized(Unauthorized::Excluded) => Some(LeftReason::Excluded),
+        Mark::Dropped(reason) => Some(reason),
     }
 }
 

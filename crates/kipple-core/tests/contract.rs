@@ -497,9 +497,10 @@ fn random_specs(rng: &mut SplitMix) -> Vec<(String, u128, i64)> {
     specs
 }
 
-/// Catches revalidation that adds or substitutes a target (04 §3.6): over generated
-/// trees and changes, every entry it leaves is one the plan authorized, and one the fresh
-/// tree has unchanged at the same place.
+/// Catches revalidation that adds or substitutes a target, or keeps one the fresh plan
+/// leaves out (04 §3.6): over generated trees, changes and fresh exclusions, every entry
+/// it leaves is one the plan authorized, and one the fresh tree has unchanged at the same
+/// place and still authorizes.
 #[test]
 fn revalidation_only_ever_subtracts() {
     let mut rng = SplitMix(0x6b69_7070);
@@ -516,7 +517,15 @@ fn revalidation_only_ever_subtracts() {
         fresh_specs.retain(|_| rng.below(10) != 0);
         fresh_specs.push((format!("new{}", rng.below(4)), 5000, 100));
         let frozen = build(Scope::Whole, &as_specs(&frozen_specs));
-        let fresh = build(Scope::Whole, &as_specs(&fresh_specs));
+        let mut fresh = build(Scope::Whole, &as_specs(&fresh_specs));
+        let kept: Vec<NodeId> = fresh
+            .entries()
+            .map(|entry| entry.id())
+            .filter(|_| rng.below(12) == 0)
+            .collect();
+        for id in kept {
+            fresh.exclude(id);
+        }
         check_subset(&frozen, &fresh, &frozen.recheck(&fresh));
     }
 }
@@ -555,10 +564,14 @@ fn check_subset(frozen: &FrozenTree, fresh: &FrozenTree, marks: &Marks) {
         if mark != Mark::Remove {
             continue;
         }
-        let now = fresh
-            .find(&entry.path())
-            .and_then(|id| fresh.entry(id))
-            .and_then(|now| now.snapshot());
+        let now = fresh.find(&entry.path()).and_then(|id| fresh.entry(id));
+        assert_eq!(
+            now.map(|now| now.mark()),
+            Some(Mark::Remove),
+            "{} stays authorized only where the fresh plan authorizes it",
+            entry.path()
+        );
+        let now = now.and_then(|now| now.snapshot());
         let then = entry.snapshot().unwrap();
         assert_eq!(
             now.map(|now| then.drift(&now)),
