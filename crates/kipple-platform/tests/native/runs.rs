@@ -309,7 +309,8 @@ fn an_unknown_data_directory_refuses() {
     assert!(store.runs().is_err(), "no data directory isn't no runs");
 }
 
-/// Catches a store kept on FAT, whose syncs and locks a run can't rely on (pinned 7).
+/// Catches a store kept on FAT, whose syncs and locks a run can't rely on (pinned 7), or
+/// refused only after `runs/` was made there.
 #[test]
 fn a_store_on_fat_refuses() {
     let fat = std::env::var_os("KIPPLE_TEST_FAT").map(PathBuf::from);
@@ -331,8 +332,5 @@ fn a_store_on_fat_refuses() {
         ),
         "{refused:?}"
     );
-    assert!(
-        !present(&temp.path().join("runs/.lock")),
-        "nothing is locked there"
-    );
+    assert!(!present(&temp.path().join("runs")), "nothing is made there");
 }

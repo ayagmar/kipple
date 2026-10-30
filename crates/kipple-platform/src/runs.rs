@@ -33,9 +33,9 @@ use kipple_core::{
 };
 
 #[cfg(unix)]
-use unix::{Folder, is_link};
+use unix::{Folder, file_system_at, is_link};
 #[cfg(windows)]
-use windows::{Folder, is_link};
+use windows::{Folder, file_system_at, is_link};
 
 use crate::os;
 
@@ -161,12 +161,9 @@ impl FileRunStore {
 impl RunStore for FileRunStore {
     fn lock(&self, cancel: &CancelToken) -> Result<Locked, StoreRefusal> {
         let data = self.data.as_deref().ok_or(StoreRefusal::NoDataDir)?;
+        supported(made_on(data))?;
         let runs = make_runs(data).map_err(refused("making runs/"))?;
-        match runs.file_system() {
-            Ok(FileSystemClass::Supported(_)) => {}
-            Ok(FileSystemClass::Unsupported(why)) => return Err(StoreRefusal::FileSystem(why)),
-            Err(error) => return Err(lock_failed(&error)),
-        }
+        supported(runs.file_system())?;
         let file = runs
             .lock_file(LOCK)
             .and_then(regular)
@@ -266,6 +263,25 @@ impl RunStore for FileRunStore {
             .and_then(regular)
             .map_err(failed)?;
         append_at(&mut file, at, line)
+    }
+}
+
+/// The file system `<data>/runs` is made on: that of `data`, or of the nearest directory
+/// above it when it is missing, reached through links as making them reaches it.
+fn made_on(data: &Path) -> io::Result<FileSystemClass> {
+    let existing = data
+        .ancestors()
+        .find(|dir| dir.exists())
+        .ok_or(io::ErrorKind::NotFound)?;
+    file_system_at(existing)
+}
+
+/// Refuses a file system outside the executor's allowlist, or one that can't be told.
+fn supported(class: io::Result<FileSystemClass>) -> Result<(), StoreRefusal> {
+    match class {
+        Ok(FileSystemClass::Supported(_)) => Ok(()),
+        Ok(FileSystemClass::Unsupported(why)) => Err(StoreRefusal::FileSystem(why)),
+        Err(error) => Err(lock_failed(&error)),
     }
 }
 

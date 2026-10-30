@@ -8,6 +8,7 @@ use std::fs::File;
 use std::io;
 use std::os::fd::{AsRawFd as _, FromRawFd as _, OwnedFd, RawFd};
 use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::Path;
 
 use kipple_core::{EntryKind, FileIdentity, FileSystemClass};
@@ -74,6 +75,15 @@ impl Dir {
     pub(crate) fn open_root(path: &Path) -> io::Result<Self> {
         let path = name(path.as_os_str())?;
         Self::open(libc::AT_FDCWD, &path)
+    }
+
+    /// The directory at `path`, through any link on the way, for reading what it is.
+    pub(crate) fn open_followed(path: &Path) -> io::Result<Self> {
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_DIRECTORY)
+            .open(path)?;
+        Ok(Self(OwnedFd::from(file)))
     }
 
     /// The directory `name` in this one, without following a link.

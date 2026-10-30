@@ -128,6 +128,17 @@ impl Dir {
         Ok(Self(OwnedHandle::from(file)))
     }
 
+    /// The directory at `path`, through any link or junction on the way, for reading what
+    /// it is.
+    pub(crate) fn open_followed(path: &Path) -> io::Result<Self> {
+        let file = std::fs::OpenOptions::new()
+            .access_mode(DIR_ACCESS)
+            .share_mode(SHARE_ALL)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(path)?;
+        Ok(Self(OwnedHandle::from(file)))
+    }
+
     /// The directory `name` in this one, opened as itself if it is a reparse point.
     pub(crate) fn open_dir(&self, name: &Name) -> io::Result<Self> {
         open_at(self, name, DIR_ACCESS, FILE_DIRECTORY_FILE).map(Self)
@@ -139,10 +150,11 @@ impl Dir {
     }
 
     /// Whether this is a plain directory, not a link, junction or other reparse point.
-    /// Read from its attributes alone, which FAT has even where it gives no file ID.
+    /// Read from its basic attributes alone, which every file system gives: FAT has no
+    /// reparse tags to ask for, and refuses the question.
     pub(crate) fn is_plain(&self) -> io::Result<bool> {
-        let tag: FILE_ATTRIBUTE_TAG_INFO = info(&self.0, FileAttributeTagInfo)?;
-        let attributes = tag.FileAttributes;
+        let basic: FILE_BASIC_INFO = info(&self.0, FileBasicInfo)?;
+        let attributes = basic.FileAttributes;
         Ok(attributes & FILE_ATTRIBUTE_DIRECTORY != 0
             && attributes & FILE_ATTRIBUTE_REPARSE_POINT == 0)
     }

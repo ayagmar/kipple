@@ -43,6 +43,11 @@ fn plain(dir: Dir) -> io::Result<Folder> {
     }
 }
 
+/// The file system of the directory at `path`, reached through any link on the way.
+pub(super) fn file_system_at(path: &Path) -> io::Result<FileSystemClass> {
+    Dir::open_followed(path)?.file_system()
+}
+
 fn name(name: &str) -> io::Result<Name> {
     sys::name(OsStr::new(name))
 }

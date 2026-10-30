@@ -21,6 +21,11 @@ pub(super) fn is_link(error: &io::Error) -> bool {
     sys::is_link_or_file(error)
 }
 
+/// The file system of the directory at `path`, reached through any link on the way.
+pub(super) fn file_system_at(path: &Path) -> io::Result<FileSystemClass> {
+    Dir::open_followed(path)?.file_system()
+}
+
 fn name(name: &str) -> io::Result<Name> {
     sys::name(OsStr::new(name))
 }
