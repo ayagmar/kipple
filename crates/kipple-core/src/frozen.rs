@@ -607,7 +607,8 @@ impl<'tree> Entry<'tree> {
         let mut entry = Some(*self);
         while let Some(current) = entry {
             components.extend(current.name().cloned());
-            entry = current.parent();
+            // A directory always comes before what it holds, so the walk up ends.
+            entry = current.parent().filter(|parent| parent.id < current.id);
         }
         components.reverse();
         RelPath(components)

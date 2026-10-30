@@ -269,25 +269,34 @@ fn read_names(
     count: u32,
     codec: &dyn NameCodec,
 ) -> Result<Vec<Component>, DecodeError> {
-    let mut names = Vec::new();
-    let mut seen = HashSet::new();
+    let mut names = Vec::with_capacity(count as usize);
     for _ in 0..count {
         let length = input.count()?;
         let bytes = input.take(length as usize)?;
         let name = codec.decode(bytes).ok_or(DecodeError::Name(None))?;
-        let name = Component::new(name).map_err(|bad| DecodeError::Name(Some(bad)))?;
-        if !seen.insert(name.clone()) {
-            return Err(DecodeError::Malformed("a name stored twice"));
-        }
-        names.push(name);
+        names.push(Component::new(name).map_err(|bad| DecodeError::Name(Some(bad)))?);
+    }
+    let mut seen = HashSet::with_capacity(names.len());
+    if !names.iter().all(|name| seen.insert(name)) {
+        return Err(DecodeError::Malformed("a name stored twice"));
     }
     Ok(names)
 }
 
+/// Reads the nodes, refusing any layout a [`TreeBuilder`](super::TreeBuilder) can't make:
+/// every entry's directory comes before it, a subtree left out of the plan has nothing
+/// inside marked for removal, and names are numbered in the order entries first use
+/// them, each used.
 fn read_nodes(input: &mut Input<'_>, tree: &mut FrozenTree, count: u32) -> Result<(), DecodeError> {
     let mut parents = vec![NONE; count as usize];
     let mut next: u32 = 1;
+    let mut names_used: u32 = 0;
     for index in 0..count {
+        // An entry no directory before it has claimed would be its own directory, or
+        // one that comes after it.
+        if index > 0 && index >= next {
+            return Err(DecodeError::Malformed("an entry outside the tree"));
+        }
         let children = input.count()?;
         let end = next
             .checked_add(children)
@@ -307,12 +316,29 @@ fn read_nodes(input: &mut Input<'_>, tree: &mut FrozenTree, count: u32) -> Resul
             ));
         }
         check_place(tree, &node, mark)?;
+        check_name_order(&node, &mut names_used)?;
         tree.nodes.push(node);
         tree.marks.push(mark);
     }
     if next != count {
         return Err(DecodeError::Malformed("entries outside the tree"));
     }
+    if names_used as usize != tree.names.len() {
+        return Err(DecodeError::Malformed("a name no entry uses"));
+    }
+    Ok(())
+}
+
+/// Checks that `node`'s name is one used before or the next one: names are numbered in
+/// the order entries first use them, so one tree has one name table.
+const fn check_name_order(node: &Node, used: &mut u32) -> Result<(), DecodeError> {
+    if node.name == NONE || node.name < *used {
+        return Ok(());
+    }
+    if node.name > *used {
+        return Err(DecodeError::Malformed("names out of order"));
+    }
+    *used += 1;
     Ok(())
 }
 
@@ -380,7 +406,8 @@ fn read_node(
 }
 
 /// Checks that the node about to be added has a name exactly when it isn't the top, a
-/// name greater than its previous sibling's, and the top's mark the scope implies.
+/// name greater than its previous sibling's, the top's mark the scope implies, and no
+/// removal inside a directory left out of the plan.
 fn check_place(tree: &FrozenTree, node: &Node, mark: Mark) -> Result<(), DecodeError> {
     let top = tree.nodes.is_empty();
     if top != (node.name == NONE) {
@@ -401,6 +428,10 @@ fn check_place(tree: &FrozenTree, node: &Node, mark: Mark) -> Result<(), DecodeE
     }
     if mark == Mark::Unauthorized(Unauthorized::Top) {
         return Err(DecodeError::Malformed("a top mark below the top"));
+    }
+    let excluded = Mark::Unauthorized(Unauthorized::Excluded);
+    if tree.marks.get(node.parent as usize) == Some(&excluded) && mark != excluded {
+        return Err(DecodeError::Malformed("a removal inside an excluded entry"));
     }
     if let Some(previous) = tree.nodes.last()
         && previous.parent == node.parent

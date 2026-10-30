@@ -15,19 +15,19 @@
 mod fakes;
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use fakes::{FakeExecutor, FakeJournal, Record, Script, TestCodec};
 use kipple_core::{
     Activity, Allocated, Apparent, ApplyError, BadName, CancelToken, Completeness, Component,
-    Consequence, Cost, Digest, Drift, EntryKind, EntrySnapshot, ErrorCode, Facts, FileIdentity,
-    Fingerprint, Finish, FrozenTree, HeldPath, Intent, ItemId, ItemOutcome, Journal, Judgement,
-    JudgementField, LeftReason, Level, Lineage, Loss, Mark, Marks, Method, MethodChoice,
-    MethodRefusal, Modified, NodeId, Policy, Proposal, Receipt, ReceiptItem, Recovery, RelPath,
-    RuleSettings, Scope, ShapeError, Skip, SpaceEstimate, Stamp, Status, Tally, Tracked, TrashDir,
-    TrashSlot, Trashed, TreeBuilder, Unauthorized, Volume,
+    Consequence, Cost, DecodeError, Digest, Drift, EntryKind, EntrySnapshot, ErrorCode, Facts,
+    FileIdentity, Fingerprint, Finish, FrozenTree, HeldPath, Intent, ItemId, ItemOutcome, Journal,
+    Judgement, JudgementField, LeftReason, Level, Lineage, Loss, Mark, Marks, Method, MethodChoice,
+    MethodRefusal, Modified, NameCodec as _, NodeId, Policy, Proposal, Receipt, ReceiptItem,
+    Recovery, RelPath, RuleSettings, Scope, ShapeError, Skip, SpaceEstimate, Stamp, Status, Tally,
+    Tracked, TrashDir, TrashSlot, Trashed, TreeBuilder, Unauthorized, Volume,
 };
 
 const VOLUME: Volume = Volume {
@@ -326,8 +326,132 @@ fn a_stored_tree_reads_back_exactly_and_damage_is_never_read_as_something_else()
                     damaged,
                     "byte {at} ^ {flip:#x} was read as a tree that stores differently"
                 );
+                assert_eq!(
+                    rebuilt(&read),
+                    read,
+                    "byte {at} ^ {flip:#x} was read as a tree no freeze makes"
+                );
             }
         }
+    }
+}
+
+/// `tree` made again the only way a freeze makes one: through a `TreeBuilder`, each entry
+/// inside its directory, then the plan's exclusions. A decoded tree that differs from it
+/// is one no freeze could have produced.
+fn rebuilt(tree: &FrozenTree) -> FrozenTree {
+    let top = tree.top().snapshot().unwrap();
+    let mut builder = TreeBuilder::new(tree.scope(), tree.volume(), &top).unwrap();
+    let mut slots = BTreeMap::from([(NodeId::TOP, builder.top())]);
+    for entry in tree.entries().skip(1) {
+        let parent = slots[&entry.parent().unwrap().id()];
+        let snapshot = entry.snapshot().unwrap();
+        let slot = builder
+            .add(parent, entry.name().unwrap().clone(), &snapshot)
+            .unwrap();
+        slots.insert(entry.id(), slot);
+    }
+    let mut again = builder.finish().unwrap();
+    for entry in tree.entries() {
+        if entry.mark() == Mark::Unauthorized(Unauthorized::Excluded) {
+            again.exclude(again.find(&entry.path()).unwrap());
+        }
+    }
+    again
+}
+
+/// One node of a hand-written stored tree: how many entries it holds, its name's number
+/// plus one (0 for the top), and its flags (kind in bits 0-1, mark in bits 2-3).
+#[derive(Debug, Clone, Copy)]
+struct Raw {
+    children: u8,
+    name: u8,
+    flags: u8,
+}
+
+const DIR: u8 = 0;
+const FILE: u8 = 1;
+const EXCLUDED: u8 = 2 << 2;
+
+/// A version 1 stored tree of `names` and `nodes`, in the documented layout: a whole
+/// target on device 7, each node with one link, file ID its index plus one, size 0 and
+/// times 0.
+fn stored(names: &[&str], nodes: &[Raw]) -> Vec<u8> {
+    let small = |count: usize| u8::try_from(count).unwrap();
+    let mut bytes = b"kipple-tree\0".to_vec();
+    bytes.extend([1, 0, 0, 7, 0, small(names.len()), small(nodes.len())]);
+    for name in names {
+        let encoded = TestCodec.encode(OsStr::new(name));
+        bytes.push(small(encoded.len()));
+        bytes.extend(encoded);
+    }
+    for (index, node) in nodes.iter().enumerate() {
+        bytes.extend([node.children, node.name, node.flags, 1, small(index + 1)]);
+        bytes.extend([0; 5]);
+    }
+    bytes
+}
+
+const fn raw(children: u8, name: u8, flags: u8) -> Raw {
+    Raw {
+        children,
+        name,
+        flags,
+    }
+}
+
+/// Catches a stored tree that no freeze could make being read as a plan: an entry that is
+/// its own directory or comes before it (walking up from it never ends), something kept
+/// out of the plan holding entries marked for removal, and a name table in another order
+/// or with names no entry uses (one tree, two digests).
+#[test]
+fn a_stored_tree_is_read_only_in_the_one_form_a_freeze_makes() {
+    let two_files = [raw(2, 0, DIR), raw(0, 1, FILE), raw(0, 2, FILE)];
+    let read = FrozenTree::decode(&stored(&["a", "b"], &two_files), &TestCodec).unwrap();
+    assert_eq!(rebuilt(&read), read);
+    let kept_dir = [
+        raw(1, 0, DIR),
+        raw(1, 1, DIR | EXCLUDED),
+        raw(0, 2, FILE | EXCLUDED),
+    ];
+    let kept = FrozenTree::decode(&stored(&["d", "f"], &kept_dir), &TestCodec).unwrap();
+    assert_eq!(rebuilt(&kept), kept);
+
+    let refused: [(&str, &[&str], &[Raw]); 5] = [
+        (
+            "its own directory",
+            &["a"],
+            &[raw(0, 0, DIR), raw(1, 1, DIR)],
+        ),
+        (
+            "a directory after its entry",
+            &["a", "b"],
+            &[raw(0, 0, DIR), raw(0, 1, FILE), raw(2, 2, DIR)],
+        ),
+        (
+            "removal inside an excluded directory",
+            &["d", "f"],
+            &[raw(1, 0, DIR), raw(1, 1, DIR | EXCLUDED), raw(0, 2, FILE)],
+        ),
+        (
+            "names out of first-use order",
+            &["b", "a"],
+            &[raw(2, 0, DIR), raw(0, 2, FILE), raw(0, 1, FILE)],
+        ),
+        (
+            "an unused name",
+            &["a", "z"],
+            &[raw(1, 0, DIR), raw(0, 1, FILE)],
+        ),
+    ];
+    for (case, names, nodes) in refused {
+        assert!(
+            matches!(
+                FrozenTree::decode(&stored(names, nodes), &TestCodec),
+                Err(DecodeError::Malformed(_))
+            ),
+            "{case} is refused"
+        );
     }
 }
 
