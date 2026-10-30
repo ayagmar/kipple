@@ -235,7 +235,7 @@ mod unix {
             size.unique_reclaim,
             Some(Allocated(allocated_total - shared))
         );
-        assert!(shared > 0);
+        assert!(shared > 0, "the file is shared with a link outside");
     }
 
     #[test]
@@ -251,7 +251,10 @@ mod unix {
             .size;
 
         assert_eq!(size.apparent, Apparent(256 << 20));
-        assert!(size.allocated.unwrap().0 < 1 << 20);
+        assert!(
+            size.allocated.unwrap().0 < 1 << 20,
+            "a sparse file allocates less than its length"
+        );
     }
 
     #[test]
@@ -289,18 +292,36 @@ mod unix {
         };
 
         let private = access(0o744);
-        assert!(private.owned_by_current_user);
-        assert!(!private.open_to_others);
-        assert!(!private.acl);
+        assert!(
+            private.owned_by_current_user,
+            "the directory belongs to the current user"
+        );
+        assert!(
+            !private.open_to_others,
+            "a directory without group or other execute bits is closed to others"
+        );
+        assert!(!private.acl, "a plain directory has no ACL");
         assert_eq!(private.file_system, FileSystem::Local);
-        assert!(access(0o710).open_to_others);
-        assert!(access(0o701).open_to_others);
+        assert!(
+            access(0o710).open_to_others,
+            "a group execute bit opens the directory to others"
+        );
+        assert!(
+            access(0o701).open_to_others,
+            "an other execute bit opens the directory to others"
+        );
 
         // A link to the private directory is what is checked, and a link is open.
         fs::set_permissions(&dir, fs::Permissions::from_mode(0o700)).unwrap();
         let link = temp.path().join("link");
         symlink(&dir, &link);
-        assert!(NoFollowFs.access(&link).unwrap().open_to_others);
-        assert!(NoFollowFs.access(&temp.path().join("missing")).is_err());
+        assert!(
+            NoFollowFs.access(&link).unwrap().open_to_others,
+            "the link itself is read, not the closed directory it leads to"
+        );
+        assert!(
+            NoFollowFs.access(&temp.path().join("missing")).is_err(),
+            "a missing path is an error"
+        );
     }
 }

@@ -129,21 +129,30 @@ fn a_valid_pack_comes_through_with_its_defaults() {
     assert_eq!(pattern.0, [".bun", "install", "cache"]);
     assert_eq!(*max_matches, 1000);
     let tests: Vec<(&str, &Test)> = rule.eligibility.iter().map(|p| (p.fact, &p.test)).collect();
-    assert!(tests.contains(&(
-        "size",
-        &Test::Bytes(Bounds {
-            min: Some(100_000_000),
-            max: Some(10 * (1 << 30)),
-        })
-    )));
-    assert!(tests.contains(&(
-        "git.tracked_files_in_item",
-        &Test::Count(Bounds {
-            min: Some(0),
-            max: Some(0),
-        })
-    )));
-    assert!(matches!(&rule.operation, Operation::RemoveFiles(methods) if methods.len() == 2));
+    assert!(
+        tests.contains(&(
+            "size",
+            &Test::Bytes(Bounds {
+                min: Some(100_000_000),
+                max: Some(10 * (1 << 30)),
+            })
+        )),
+        "the default size bound is kept"
+    );
+    assert!(
+        tests.contains(&(
+            "git.tracked_files_in_item",
+            &Test::Count(Bounds {
+                min: Some(0),
+                max: Some(0),
+            })
+        )),
+        "the default tracked-files bound is kept"
+    );
+    assert!(
+        matches!(&rule.operation, Operation::RemoveFiles(methods) if methods.len() == 2),
+        "both removal methods are kept"
+    );
 }
 
 #[test]
@@ -167,7 +176,8 @@ fn errors_point_at_the_offending_key_with_file_line_and_column() {
     assert!(
         error
             .to_string()
-            .starts_with(&format!("pack.toml:{line}:1: unknown-key"))
+            .starts_with(&format!("pack.toml:{line}:1: unknown-key")),
+        "the error names the file, line and column: {error}"
     );
 }
 
@@ -444,7 +454,8 @@ fn a_home_rule_must_start_its_pattern_with_a_literal_name() {
             &with(&[(".bun/install/cache", ".cache/*/tmp")]),
             Origin::ThirdParty
         )
-        .is_ok()
+        .is_ok(),
+        "a home pattern starting with a literal name is accepted"
     );
 }
 

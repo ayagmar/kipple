@@ -2,7 +2,7 @@
 //! clippy can't check.
 //!
 //! It parses every Rust source with `syn`, so it sees items, not lines. It doesn't look
-//! inside macro calls or `macro_rules!` bodies.
+//! inside macro calls other than `assert!`, or inside `macro_rules!` bodies.
 
 use std::collections::BTreeSet;
 use std::io::{self, Write as _};
@@ -10,10 +10,11 @@ use std::mem;
 use std::path::Path;
 
 use anyhow::{Context as _, Result, bail};
+use syn::punctuated::Punctuated;
 use syn::visit::{self, Visit};
 use syn::{
-    Fields, FnArg, GenericArgument, Generics, PathArguments, ReturnType, Signature, Type,
-    TypeParamBound, Visibility,
+    Attribute, BinOp, Expr, Fields, FnArg, GenericArgument, Generics, PathArguments, ReturnType,
+    Signature, Token, Type, TypeParamBound, Visibility,
 };
 
 use crate::arch::{self, SourceFile};
@@ -89,6 +90,7 @@ fn file_violations(file: &SourceFile) -> Result<Vec<String>> {
     let ast = syn::parse_file(&file.contents)
         .with_context(|| format!("could not parse {}", file.path.display()))?;
     let mut style = Style {
+        test: is_test_path(&file.path),
         trait_impl: false,
         item: String::new(),
         found: Vec::new(),
@@ -97,8 +99,16 @@ fn file_violations(file: &SourceFile) -> Result<Vec<String>> {
     Ok(style.found)
 }
 
+/// Whether `path` holds only tests: a `tests.rs` or a file under a `tests` directory.
+fn is_test_path(path: &Path) -> bool {
+    path.components()
+        .any(|part| part.as_os_str() == "tests" || part.as_os_str() == "tests.rs")
+}
+
 /// Walks one file and remembers where it is.
 struct Style {
+    /// Inside test code: a test file, a `#[cfg(test)]` item or a `#[test]` function.
+    test: bool,
     /// Inside a trait's `impl`, whose signatures the trait decides.
     trait_impl: bool,
     /// The innermost named item, which the report names since `syn` keeps no lines here.
@@ -107,11 +117,14 @@ struct Style {
 }
 
 impl Style {
-    /// Visits an item's insides as `item`.
-    fn within(&mut self, item: String, visit: impl FnOnce(&mut Self)) {
+    /// Visits an item's insides as `item`, as test code if `attrs` mark it so.
+    fn within(&mut self, item: String, attrs: &[Attribute], visit: impl FnOnce(&mut Self)) {
         let outer_item = mem::replace(&mut self.item, item);
+        let outer_test = self.test;
+        self.test |= attrs.iter().any(is_test_attr);
         visit(self);
         self.item = outer_item;
+        self.test = outer_test;
     }
 
     fn report(&mut self, message: &str) {
@@ -168,15 +181,36 @@ impl Style {
     }
 }
 
+impl Style {
+    /// A test's `assert!` with no message, unless it compares with `==` or `!=`, which
+    /// clippy's `manual_assert_eq` already turns into `assert_eq!` or `assert_ne!`.
+    fn check_assert(&mut self, mac: &syn::Macro) {
+        let is_assert = mac.path.is_ident("assert") || mac.path.is_ident("debug_assert");
+        if !self.test || !is_assert {
+            return;
+        }
+        let Ok(args) = mac.parse_body_with(Punctuated::<Expr, Token![,]>::parse_terminated) else {
+            return;
+        };
+        let bare = args.len() == 1 && !args.first().is_some_and(is_equality);
+        if bare {
+            self.report(&format!(
+                "`assert!({})` has no message; say what state it expects",
+                mac.tokens
+            ));
+        }
+    }
+}
+
 impl<'ast> Visit<'ast> for Style {
     fn visit_item_mod(&mut self, node: &'ast syn::ItemMod) {
-        self.within(format!("mod `{}`", node.ident), |style| {
+        self.within(format!("mod `{}`", node.ident), &node.attrs, |style| {
             visit::visit_item_mod(style, node);
         });
     }
 
     fn visit_item_fn(&mut self, node: &'ast syn::ItemFn) {
-        self.within(format!("fn `{}`", node.sig.ident), |style| {
+        self.within(format!("fn `{}`", node.sig.ident), &node.attrs, |style| {
             style.check_signature(&node.vis, &node.sig);
             visit::visit_item_fn(style, node);
         });
@@ -185,20 +219,22 @@ impl<'ast> Visit<'ast> for Style {
     fn visit_item_impl(&mut self, node: &'ast syn::ItemImpl) {
         let outer = mem::replace(&mut self.trait_impl, node.trait_.is_some());
         let item = format!("impl `{}`", type_name(&node.self_ty));
-        self.within(item, |style| visit::visit_item_impl(style, node));
+        self.within(item, &node.attrs, |style| {
+            visit::visit_item_impl(style, node);
+        });
         self.trait_impl = outer;
     }
 
     fn visit_impl_item_fn(&mut self, node: &'ast syn::ImplItemFn) {
         let item = format!("{}, fn `{}`", self.item, node.sig.ident);
-        self.within(item, |style| {
+        self.within(item, &node.attrs, |style| {
             style.check_signature(&node.vis, &node.sig);
             visit::visit_impl_item_fn(style, node);
         });
     }
 
     fn visit_item_trait(&mut self, node: &'ast syn::ItemTrait) {
-        self.within(format!("trait `{}`", node.ident), |style| {
+        self.within(format!("trait `{}`", node.ident), &node.attrs, |style| {
             let methods = node.items.iter().filter_map(|item| match item {
                 syn::TraitItem::Fn(method) => Some(method),
                 syn::TraitItem::Const(_)
@@ -215,7 +251,7 @@ impl<'ast> Visit<'ast> for Style {
     }
 
     fn visit_item_struct(&mut self, node: &'ast syn::ItemStruct) {
-        self.within(format!("struct `{}`", node.ident), |style| {
+        self.within(format!("struct `{}`", node.ident), &node.attrs, |style| {
             style.check_lifetimes(&node.generics);
             style.check_fields(&node.fields, None);
             visit::visit_item_struct(style, node);
@@ -223,7 +259,7 @@ impl<'ast> Visit<'ast> for Style {
     }
 
     fn visit_item_enum(&mut self, node: &'ast syn::ItemEnum) {
-        self.within(format!("enum `{}`", node.ident), |style| {
+        self.within(format!("enum `{}`", node.ident), &node.attrs, |style| {
             style.check_lifetimes(&node.generics);
             for variant in &node.variants {
                 style.check_fields(&variant.fields, Some(&node.vis));
@@ -233,20 +269,46 @@ impl<'ast> Visit<'ast> for Style {
     }
 
     fn visit_item_union(&mut self, node: &'ast syn::ItemUnion) {
-        self.within(format!("union `{}`", node.ident), |style| {
+        self.within(format!("union `{}`", node.ident), &node.attrs, |style| {
             style.check_lifetimes(&node.generics);
             visit::visit_item_union(style, node);
         });
     }
 
     fn visit_item_type(&mut self, node: &'ast syn::ItemType) {
-        self.within(format!("type `{}`", node.ident), |style| {
+        self.within(format!("type `{}`", node.ident), &node.attrs, |style| {
             if is_visible(&node.vis) && has_tuple(&node.ty) {
                 style.report("holds a tuple; use a struct with named fields");
             }
             visit::visit_item_type(style, node);
         });
     }
+
+    fn visit_macro(&mut self, node: &'ast syn::Macro) {
+        self.check_assert(node);
+        visit::visit_macro(self, node);
+    }
+}
+
+/// Whether `attr` marks test code: `#[test]`, `#[some::test]` or `#[cfg(test)]`.
+fn is_test_attr(attr: &Attribute) -> bool {
+    let path = attr.path();
+    if path.segments.last().is_some_and(|s| s.ident == "test") {
+        return true;
+    }
+    path.is_ident("cfg")
+        && attr
+            .meta
+            .require_list()
+            .is_ok_and(|list| list.tokens.to_string() == "test")
+}
+
+/// Whether `expr` is an `==` or `!=` comparison.
+const fn is_equality(expr: &Expr) -> bool {
+    matches!(
+        expr,
+        Expr::Binary(binary) if matches!(binary.op, BinOp::Eq(_) | BinOp::Ne(_))
+    )
 }
 
 /// Whether `vis` lets other modules see an item: anything but private and `pub(self)`.
@@ -452,6 +514,43 @@ mod tests {
             stale[0].ends_with("but no longer found; remove the exemption"),
             "a stale exemption fails: {stale:?}"
         );
+    }
+
+    // Catches a test's bare `assert!` the rule misses, in each place tests live: a
+    // `#[test]` function, a `#[cfg(test)]` module's helper and a file under `tests/`.
+    // A comparison clippy can't turn into `assert_eq!`, such as `<`, still fails.
+    #[test]
+    fn a_bare_assert_in_test_code_fails() {
+        let unit = source(
+            "#[test]\nfn sizes() { assert!(sizes.is_empty()); assert!(a < b,); }\n\
+             #[cfg(test)]\nmod tests { fn seen(x: &X) { debug_assert!(matches!(x, X::Seen)); } }\n",
+        );
+        let integration = SourceFile {
+            path: PathBuf::from("crates/kipple/tests/a.rs"),
+            contents: "fn helper(found: &[u8]) { assert!(!found.is_empty()) }\n".to_owned(),
+        };
+        let found = violations(&[unit, integration], &[]).unwrap();
+        assert_eq!(
+            found,
+            [
+                "crates/kipple/src/a.rs: fn `seen`: `assert!(matches ! (x , X :: Seen))` has no message; say what state it expects",
+                "crates/kipple/src/a.rs: fn `sizes`: `assert!(a < b ,)` has no message; say what state it expects",
+                "crates/kipple/src/a.rs: fn `sizes`: `assert!(sizes . is_empty ())` has no message; say what state it expects",
+                "crates/kipple/tests/a.rs: fn `helper`: `assert!(! found . is_empty ())` has no message; say what state it expects",
+            ]
+        );
+    }
+
+    // Catches the check failing what the rule allows: an assert with a message, an `==`
+    // or `!=` that clippy already turns into `assert_eq!` or `assert_ne!`, and an
+    // invariant asserted outside test code.
+    #[test]
+    fn an_assert_with_a_message_an_equality_or_outside_tests_passes() {
+        let found = check(
+            "#[test]\nfn sizes() { assert!(a < b, \"{a} below {b}\"); assert!(a == b); assert!(a != b); }\n\
+             fn invariant(len: usize) { assert!(len > 0); }\n",
+        );
+        assert_eq!(found, Vec::<String>::new());
     }
 
     // Catches the check passing by reading nothing: it reads every crate and xtask.

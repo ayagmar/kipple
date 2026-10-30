@@ -408,7 +408,10 @@ fn the_cursor_stays_on_its_finding_while_sizes_stream_in_and_reorder_the_tree() 
     press(&mut app, &[Key::Char('/')]);
     typed(&mut app, "zzz");
     assert_eq!(findings(&app), Vec::<u64>::new());
-    assert!(focus(&app).is_some());
+    assert!(
+        focus(&app).is_some(),
+        "the cursor stays on a finding while the filter shows none"
+    );
 }
 
 /// The findings `query` leaves shown, typed after `/` and cleared again with `esc`.
@@ -448,7 +451,7 @@ fn enter_keeps_the_filter_and_esc_clears_it() {
     assert_eq!(findings(&app), [2]);
     // q while typing is text, not quit.
     typed(&mut app, "q");
-    assert!(!app.quit);
+    assert!(!app.quit, "q while typing is text, not quit");
     press(&mut app, &[Key::Backspace, Key::Enter]);
     assert_eq!(findings(&app), [2], "enter keeps the filter");
 
@@ -643,11 +646,11 @@ fn q_and_ctrl_c_quit_and_any_key_closes_help() {
     press(&mut app, &[Key::Char('q')]);
     assert!(!app.quit, "q closes help first");
     press(&mut app, &[Key::Char('q')]);
-    assert!(app.quit);
+    assert!(app.quit, "a second q quits");
 
     let mut typing = home();
     press(&mut typing, &[Key::Char('/'), Key::Interrupt]);
-    assert!(typing.quit);
+    assert!(typing.quit, "ctrl-c quits while typing");
 }
 
 /// Whether a test draws in colour.

@@ -1087,7 +1087,10 @@ mod tests {
             "{added:?}"
         );
         assert_eq!(removed.len(), 1, "{removed:?}");
-        assert!(removed[0].contains("no longer reads the variant type=\"paused\""));
+        assert!(
+            removed[0].contains("no longer reads the variant type=\"paused\""),
+            "{removed:?}"
+        );
     }
 
     // Catches a change deep in one variant passing because some variant still matches.
@@ -1118,7 +1121,10 @@ mod tests {
         let found = changes(&report(), &new, ReadBy::Others);
 
         assert_eq!(found.len(), 1, "{found:?}");
-        assert!(found[0].starts_with("count: `exclusiveMaximum`, which the check can't compare"));
+        assert!(
+            found[0].starts_with("count: `exclusiveMaximum`, which the check can't compare"),
+            "{found:?}"
+        );
     }
 
     // Catches the check misreading kipple's real schemas: every change would fail, or
@@ -1172,8 +1178,14 @@ mod tests {
         let found = unlisted(&changed);
 
         assert_eq!(found.len(), 2, "{found:?}");
-        assert!(found[0].starts_with("journal: published but not in FORMATS"));
-        assert!(found[1].starts_with("theme v1: no longer published"));
+        assert!(
+            found[0].starts_with("journal: published but not in FORMATS"),
+            "{found:?}"
+        );
+        assert!(
+            found[1].starts_with("theme v1: no longer published"),
+            "{found:?}"
+        );
     }
 
     // Catches a bumped version passing with no baseline, and `--refresh` blessing a
@@ -1181,7 +1193,10 @@ mod tests {
     #[test]
     fn refresh_adds_missing_baselines_but_never_blesses_a_break() {
         let root = tempfile::tempdir().unwrap();
-        assert!(run(root.path(), Baselines::Keep).is_err());
+        assert!(
+            run(root.path(), Baselines::Keep).is_err(),
+            "a missing baseline fails the check"
+        );
 
         run(root.path(), Baselines::Refresh).unwrap();
         run(root.path(), Baselines::Keep).unwrap();
@@ -1193,7 +1208,10 @@ mod tests {
         let broken = gen_docs::pretty(&baseline).unwrap();
         fs::write(&scan, &broken).unwrap();
 
-        assert!(run(root.path(), Baselines::Refresh).is_err());
+        assert!(
+            run(root.path(), Baselines::Refresh).is_err(),
+            "refresh never blesses a break"
+        );
         assert_eq!(fs::read_to_string(&scan).unwrap(), broken);
     }
 
@@ -1218,6 +1236,9 @@ mod tests {
             found[0].starts_with("scan v9: note: `minLength`"),
             "{found:?}"
         );
-        assert!(!root.path().join(BASELINES).join("scan/v9").exists());
+        assert!(
+            !root.path().join(BASELINES).join("scan/v9").exists(),
+            "no first baseline is written for a schema the check can't judge"
+        );
     }
 }

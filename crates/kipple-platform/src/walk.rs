@@ -351,7 +351,10 @@ mod tests {
                 skipped_mounts: 1
             }
         );
-        assert!(measured.size.apparent < Apparent(1 << 20));
+        assert!(
+            measured.size.apparent < Apparent(1 << 20),
+            "the size leaves out the other file system"
+        );
         assert_eq!(measured.repository, None);
     }
 }

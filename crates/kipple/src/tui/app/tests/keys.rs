@@ -100,9 +100,9 @@ fn ctrl_c_and_esc_keep_their_meaning_whatever_the_keys_say() {
     assert_eq!(app.mode, Mode::Browse);
 
     press(&mut app, &[Key::Char('q')]);
-    assert!(!app.quit);
+    assert!(!app.quit, "q no longer quits once it is rebound");
     press(&mut app, &[Key::Interrupt]);
-    assert!(app.quit);
+    assert!(app.quit, "ctrl-c still quits");
 }
 
 // Catches a rebound character moving the cursor instead of typing in the filter.

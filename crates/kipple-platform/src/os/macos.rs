@@ -555,12 +555,24 @@ mod tests {
     #[test]
     fn only_an_acl_of_deny_entries_grants_nothing() {
         let allow = 1;
-        assert!(!grants(&[]));
-        assert!(!grants(&[Some(ACL_EXTENDED_DENY)]));
-        assert!(!grants(&[Some(ACL_EXTENDED_DENY), Some(ACL_EXTENDED_DENY)]));
-        assert!(grants(&[Some(ACL_EXTENDED_DENY), Some(allow)]));
+        assert!(!grants(&[]), "an empty ACL grants nothing");
+        assert!(
+            !grants(&[Some(ACL_EXTENDED_DENY)]),
+            "a deny entry grants nothing"
+        );
+        assert!(
+            !grants(&[Some(ACL_EXTENDED_DENY), Some(ACL_EXTENDED_DENY)]),
+            "deny entries grant nothing"
+        );
+        assert!(
+            grants(&[Some(ACL_EXTENDED_DENY), Some(allow)]),
+            "an allow entry grants something"
+        );
         // An entry whose tag couldn't be read might grant something.
-        assert!(grants(&[Some(ACL_EXTENDED_DENY), None]));
+        assert!(
+            grants(&[Some(ACL_EXTENDED_DENY), None]),
+            "an entry with an unread tag might grant something"
+        );
     }
 
     fn record(argc: c_int, rest: &[u8]) -> Vec<u8> {
@@ -584,7 +596,13 @@ mod tests {
 
     #[test]
     fn a_procargs_record_with_fewer_arguments_than_it_counts_is_unknown() {
-        assert!(split_procargs(&record(3, b"/bin/x\0\0x\0")).is_err());
-        assert!(split_procargs(&[1, 0]).is_err());
+        assert!(
+            split_procargs(&record(3, b"/bin/x\0\0x\0")).is_err(),
+            "a record with fewer arguments than it counts is unknown"
+        );
+        assert!(
+            split_procargs(&[1, 0]).is_err(),
+            "a record cut short in its count is unknown"
+        );
     }
 }

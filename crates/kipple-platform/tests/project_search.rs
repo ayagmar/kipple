@@ -109,7 +109,7 @@ fn a_project_at_depth_four_is_found_and_at_depth_five_is_not() {
     project(&home, "w/x/y/z/five");
     let found = search(&home);
     assert_eq!(names(&home, &found), ["a/b/c/four"]);
-    assert!(found.complete);
+    assert!(found.complete, "the search completes");
 }
 
 // Catches `.git` alone, or a `.git` file as a worktree has, not marking a project.
@@ -144,7 +144,7 @@ fn a_link_to_a_project_is_not_followed() {
     symlink_dir(&temp.path().join("outside"), &home.join("elsewhere"));
     let found = search(&home);
     assert_eq!(names(&home, &found), Vec::<String>::new());
-    assert!(found.complete);
+    assert!(found.complete, "the search completes");
 }
 
 // Catches a project's own nested projects (a workspace member, a vendored package) being
@@ -239,10 +239,13 @@ fn the_directory_budget_stops_early_and_says_so() {
         ..Options::default()
     };
     let found = search_with(&home, &options, &SystemClock);
-    assert!(!found.complete);
+    assert!(
+        !found.complete,
+        "the directory budget leaves the search incomplete"
+    );
     assert!(found.projects.len() < 5, "{found:?}");
     let all = search(&home);
-    assert!(all.complete);
+    assert!(all.complete, "the search completes without a budget");
     assert_eq!(all.projects.len(), 5);
 }
 
@@ -271,7 +274,10 @@ fn the_time_budget_stops_early_and_says_so() {
     }
     let clock = Ticking(Mutex::new(SystemTime::UNIX_EPOCH));
     let found = search_with(&home, &Options::default(), &clock);
-    assert!(!found.complete);
+    assert!(
+        !found.complete,
+        "the time budget leaves the search incomplete"
+    );
     assert!(found.projects.len() < 5, "{found:?}");
 }
 
@@ -291,7 +297,7 @@ fn a_cancelled_search_is_incomplete() {
     let cancel = CancelToken::new();
     cancel.cancel();
     let found = search_projects(&search, &SystemClock, &cancel);
-    assert!(!found.complete);
+    assert!(!found.complete, "a cancelled search is incomplete");
     assert_eq!(found.projects, Vec::<PathBuf>::new());
 }
 
@@ -315,7 +321,10 @@ fn an_unreadable_directory_is_skipped_and_counted() {
     }
     assert_eq!(names(&home, &found), ["Documents/app"]);
     assert_eq!(found.unreadable, 1);
-    assert!(found.complete);
+    assert!(
+        found.complete,
+        "an unreadable directory doesn't leave the search incomplete"
+    );
 }
 
 // Catches a home the search couldn't read at all being reported as searched in full, so

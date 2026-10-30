@@ -58,7 +58,10 @@ fn the_detail_pane_scrolls_with_j_and_k_and_its_last_line_says_more_follows() {
     assert!(!says_more(&end), "{end:#?}");
     assert!(end.iter().any(|line| line.starts_with("Rule ")), "{end:#?}");
     press(&mut app, &[Key::Char('K')]);
-    assert!(says_more(&pane(&app)));
+    assert!(
+        says_more(&pane(&app)),
+        "the last line says more follows again after scrolling up"
+    );
 
     press(&mut app, &[Key::Char('K'); 40]);
     assert_eq!(pane(&app), top);
@@ -145,7 +148,7 @@ fn the_line_that_takes_a_vanished_lines_place_shows_its_detail_from_the_top() {
         "{:?}",
         focus(&app)
     );
-    assert!(at_top(&mut app));
+    assert!(at_top(&mut app), "the detail shows from the top");
 }
 
 // Catches the scroll kept across a scan started again, so the first line focused in the
@@ -176,7 +179,7 @@ fn a_line_of_a_new_scan_shows_its_detail_from_the_top() {
     press(&mut app, &[Key::Char('G')]);
 
     assert_eq!(focus(&app), Some(Node::Finding(FindingId(1))));
-    assert!(at_top(&mut app));
+    assert!(at_top(&mut app), "the detail shows from the top");
 }
 
 // Catches `J` counting lines that aren't there when everything fits, so `K` would

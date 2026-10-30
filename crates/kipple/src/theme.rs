@@ -216,7 +216,10 @@ mod tests {
             assert_eq!(parse::parse(text).unwrap().extends, None, "{name}");
             assert!(valid_name(name), "{name}");
         }
-        assert!(Theme::builtin("dusk").is_err());
+        assert!(
+            Theme::builtin("dusk").is_err(),
+            "an unknown built-in name is refused"
+        );
     }
 
     // Catches a built-in theme that leaves a role to the terminal by mistake: every
@@ -247,12 +250,14 @@ mod tests {
         assert!(
             mono.style(Role::Cursor)
                 .add_modifier
-                .contains(Modifier::REVERSED)
+                .contains(Modifier::REVERSED),
+            "mono shows the cursor reversed"
         );
         assert!(
             mono.style(Role::Title)
                 .add_modifier
-                .contains(Modifier::BOLD)
+                .contains(Modifier::BOLD),
+            "mono keeps titles bold"
         );
     }
 

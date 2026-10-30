@@ -154,6 +154,9 @@ mod tests {
             matches!(result, Err(ToolError::TimedOut { .. })),
             "{result:?}"
         );
-        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the hung tool is stopped well before 5 seconds"
+        );
     }
 }

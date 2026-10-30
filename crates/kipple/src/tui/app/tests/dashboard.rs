@@ -160,7 +160,10 @@ fn ui_options_place_the_detail_pane_and_turn_bars_off() {
         width: 160,
         height: 48,
     });
-    assert!(screen(&app, colour(), 160, 48).contains('█'));
+    assert!(
+        screen(&app, colour(), 160, 48).contains('█'),
+        "the bars are drawn by default"
+    );
     app.config.ui.bars = false;
     let plain = screen(&app, colour(), 160, 48);
     assert!(!plain.contains('█'), "{plain}");

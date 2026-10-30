@@ -522,7 +522,10 @@ mod tests {
     fn core_depending_on_platform_fails() {
         let violations = edge_violations(&with_dependency("kipple-core", "kipple-platform", None));
         assert_eq!(violations.len(), 1);
-        assert!(violations[0].contains("`kipple-core` has a dependency on `kipple-platform`"));
+        assert!(
+            violations[0].contains("`kipple-core` has a dependency on `kipple-platform`"),
+            "{violations:?}"
+        );
     }
 
     #[test]
@@ -543,12 +546,14 @@ mod tests {
         assert!(
             violations
                 .iter()
-                .any(|v| v.contains("`kipple-adapters` has a dependency"))
+                .any(|v| v.contains("`kipple-adapters` has a dependency")),
+            "{violations:?}"
         );
         assert!(
             violations
                 .iter()
-                .any(|v| v.contains("`kipple-platform` has a build-dependency"))
+                .any(|v| v.contains("`kipple-platform` has a build-dependency")),
+            "{violations:?}"
         );
     }
 
@@ -575,7 +580,8 @@ mod tests {
         assert!(
             violations
                 .iter()
-                .any(|v| v.starts_with("crates/kipple-core/src/lib.rs:2:"))
+                .any(|v| v.starts_with("crates/kipple-core/src/lib.rs:2:")),
+            "{violations:?}"
         );
     }
 
@@ -583,9 +589,18 @@ mod tests {
     fn source_discovery_finds_every_crate_relative_to_the_workspace_root() {
         let files = rust_sources(Path::new(crate::WORKSPACE_ROOT), &["crates"]).unwrap();
         let has = |path: &str| files.iter().any(|f| f.path == Path::new(path));
-        assert!(has("crates/kipple-core/src/lib.rs"));
-        assert!(has("crates/kipple/src/main.rs"));
-        assert!(files.iter().any(|f| f.path.starts_with(PLATFORM_CRATE_DIR)));
+        assert!(
+            has("crates/kipple-core/src/lib.rs"),
+            "core's lib.rs is found"
+        );
+        assert!(
+            has("crates/kipple/src/main.rs"),
+            "the binary's main.rs is found"
+        );
+        assert!(
+            files.iter().any(|f| f.path.starts_with(PLATFORM_CRATE_DIR)),
+            "the platform crate's sources are found"
+        );
     }
 
     /// The core's exports, `human` wording buckets and lenses, and `frontend` at `path`.
@@ -627,7 +642,10 @@ mod tests {
             "match lens {\n    LensOut::Dev => {\n        \"Dev\".to_owned()\n    }\n    LensOut::System => format!(\"System\"),\n}\n",
         ));
         assert_eq!(violations.len(), 2, "{violations:?}");
-        assert!(violations.iter().all(|v| v.contains("words `Lens`")));
+        assert!(
+            violations.iter().all(|v| v.contains("words `Lens`")),
+            "{violations:?}"
+        );
     }
 
     // Catches one fact worded in two frontends before `human` words it, such as the
@@ -641,7 +659,10 @@ mod tests {
         files.push(source("crates/kipple/src/tui/ui/onboarding.rs", arm));
         let violations = wording_violations(&files);
         assert_eq!(violations.len(), 2, "{violations:?}");
-        assert!(violations[0].contains("more than one frontend module"));
+        assert!(
+            violations[0].contains("more than one frontend module"),
+            "{violations:?}"
+        );
     }
 
     // Catches wording after an inline test module passing: only the module's own body is
@@ -712,7 +733,10 @@ mod tests {
         ));
         let violations = wording_violations(&files);
         assert_eq!(violations.len(), 5, "{violations:?}");
-        assert!(violations.iter().all(|v| v.contains("which `human` words")));
+        assert!(
+            violations.iter().all(|v| v.contains("which `human` words")),
+            "{violations:?}"
+        );
     }
 
     #[test]

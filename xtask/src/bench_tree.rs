@@ -347,9 +347,12 @@ mod tests {
             "only {hot} of {} entries are in hot spots",
             listed.len()
         );
-        assert!(in_dir("target") > 0);
-        assert!(in_dir(".cache") > 0);
-        assert!(listed.iter().any(|(path, _)| path.ends_with(".gitignore")));
+        assert!(in_dir("target") > 0, "the tree has entries in target");
+        assert!(in_dir(".cache") > 0, "the tree has entries in .cache");
+        assert!(
+            listed.iter().any(|(path, _)| path.ends_with(".gitignore")),
+            "the tree has a .gitignore"
+        );
     }
 
     #[test]
@@ -357,7 +360,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::write(dir.path().join("keep.txt"), b"user data").unwrap();
 
-        assert!(generate(dir.path(), 10).is_err());
+        assert!(
+            generate(dir.path(), 10).is_err(),
+            "generating into a directory with contents is refused"
+        );
         assert_eq!(listing(dir.path()).len(), 1);
     }
 }

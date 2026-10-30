@@ -468,10 +468,17 @@ mod tests {
                 .as_ref()
                 .unwrap_err()
                 .message
-                .contains("built-in")
+                .contains("built-in"),
+            "a theme file named for a built-in is refused"
         );
-        assert!(own("Dusk").theme.is_err());
-        assert!(own("dawn").theme.is_ok());
+        assert!(
+            own("Dusk").theme.is_err(),
+            "a theme file name that isn't lower case is refused"
+        );
+        assert!(
+            own("dawn").theme.is_ok(),
+            "a theme file with a valid name reads"
+        );
         // The built-in keeps its name.
         assert_eq!(
             themes.resolve("kipple").unwrap(),
@@ -489,6 +496,9 @@ mod tests {
         let catalog = Themes::in_dir(&temp.path().join("themes")).catalog();
         assert_eq!(catalog.entries.len(), BUILTIN.len());
         assert_eq!(catalog.problem, None);
-        assert!(catalog.entries.iter().all(|e| e.theme.is_ok()));
+        assert!(
+            catalog.entries.iter().all(|e| e.theme.is_ok()),
+            "every built-in theme reads"
+        );
     }
 }

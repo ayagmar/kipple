@@ -202,7 +202,7 @@ fn skipping_every_step_writes_only_care_level_balanced() {
     assert_eq!(edits, [Edit::Level(Level::Balanced)]);
     assert_eq!(disk.finish(&mut app, edits), []);
     let written = config::load(&disk.location(), &disk.catalog).unwrap();
-    assert!(written.exists);
+    assert!(written.exists, "skipping every step still writes a config");
     assert_eq!(
         written.config,
         Config {
@@ -296,10 +296,13 @@ fn quitting_at_any_step_even_while_typing_writes_nothing() {
 
     let (_, mut first) = disk.first_run();
     answer(&mut first, &[Key::Enter, Key::Down, Key::Down, Key::Enter]);
-    assert!(first.typing.is_some());
+    assert!(first.typing.is_some(), "the root step is typing");
     assert_eq!(first.key(Key::Char('q')), Outcome::Stay, "q is typed");
     assert_eq!(first.key(Key::Interrupt), Outcome::Quit);
-    assert!(!disk.file().exists());
+    assert!(
+        !disk.file().exists(),
+        "quitting while typing writes no config"
+    );
 }
 
 // Catches a change of project roots that the home screen doesn't scan, or that writes
@@ -374,7 +377,7 @@ fn a_relative_root_is_refused_while_typing_and_can_be_corrected() {
     answer(&mut first, &[Key::Enter]);
 
     assert!(first.typing.is_some(), "a relative path was taken");
-    assert!(first.notice.is_some());
+    assert!(first.notice.is_some(), "a relative root shows a notice");
     assert_eq!(first.roots.len(), 0, "{:?}", first.roots);
 }
 
@@ -406,19 +409,23 @@ fn the_first_run_is_due_only_without_a_file_at_a_known_default_location() {
         config: Config::default(),
     };
 
-    assert!(onboarding::due(&loaded(
-        Source::Default,
-        Some(disk.file()),
-        false
-    )));
-    assert!(!onboarding::due(&loaded(
-        Source::Default,
-        Some(disk.file()),
-        true
-    )));
-    assert!(!onboarding::due(&loaded(Source::Default, None, false)));
+    assert!(
+        onboarding::due(&loaded(Source::Default, Some(disk.file()), false)),
+        "the first run is due without a file at the default location"
+    );
+    assert!(
+        !onboarding::due(&loaded(Source::Default, Some(disk.file()), true)),
+        "a file at the default location means the first run isn't due"
+    );
+    assert!(
+        !onboarding::due(&loaded(Source::Default, None, false)),
+        "an unknown default location means the first run isn't due"
+    );
     for named in [Source::Flag, Source::Env] {
-        assert!(!onboarding::due(&loaded(named, Some(disk.file()), true)));
+        assert!(
+            !onboarding::due(&loaded(named, Some(disk.file()), true)),
+            "a named config means the first run isn't due"
+        );
     }
 }
 
@@ -574,7 +581,10 @@ fn suggestions_start_unchecked_and_finishing_without_one_writes_as_before() {
     let documents = disk.home().join("Documents");
     suggest(&mut app, &mut first, &[documents], Search::Complete);
 
-    assert!(first.offers.iter().all(|offer| !offer.checked));
+    assert!(
+        first.offers.iter().all(|offer| !offer.checked),
+        "every suggestion starts unchecked"
+    );
     let edits = finished(answer(
         &mut first,
         &[Key::Enter, Key::Enter, Key::Tab, Key::Tab],
@@ -610,7 +620,7 @@ fn a_checked_suggestion_is_written_once_with_the_other_roots() {
         &mut first,
         &[Key::Down, Key::Down, Key::Down, Key::Char(' ')],
     );
-    assert!(first.offers[0].checked);
+    assert!(first.offers[0].checked, "space checks the first suggestion");
     // Typing it as well is refused: it is in the list.
     answer(&mut first, &[Key::Up, Key::Enter]);
     for c in documents.display().to_string().chars() {
@@ -660,7 +670,7 @@ fn a_checked_suggestion_inside_a_typed_root_is_not_written() {
         &mut first,
         &[Key::Down, Key::Down, Key::Down, Key::Char(' ')],
     );
-    assert!(first.offers[0].checked);
+    assert!(first.offers[0].checked, "space checks the first suggestion");
     answer(&mut first, &[Key::Up, Key::Enter]);
     for c in "~/Documents".chars() {
         first.key(Key::Char(c));
@@ -698,7 +708,10 @@ fn quitting_with_a_checked_suggestion_writes_nothing() {
     );
 
     assert_eq!(answer(&mut first, &[Key::Char('q')]), Outcome::Quit);
-    assert!(!disk.file().exists());
+    assert!(
+        !disk.file().exists(),
+        "quitting with a checked suggestion writes no config"
+    );
 }
 
 #[test]

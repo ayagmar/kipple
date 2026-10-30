@@ -477,7 +477,10 @@ mod tests {
 
         assert_eq!(fs::read(project.join("Cargo.toml")).unwrap(), cargo);
         assert_eq!(fs::read(project.join("package.json")).unwrap(), package);
-        assert!(project.join("target").join("CACHEDIR.TAG").is_file());
+        assert!(
+            project.join("target").join("CACHEDIR.TAG").is_file(),
+            "marking adds CACHEDIR.TAG to target"
+        );
     }
 
     #[cfg(unix)]

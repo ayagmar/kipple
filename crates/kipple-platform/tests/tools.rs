@@ -63,5 +63,8 @@ fn a_tool_counts_only_as_an_executable_on_an_absolute_path_entry_that_reports_a_
     };
     assert_eq!(git, &tools.join("git"));
     assert_eq!(version.to_string(), "2.56.0");
-    assert!(matches!(failure, ToolError::Failed { code: Some(3), stderr } if stderr == "broken"));
+    assert!(
+        matches!(failure, ToolError::Failed { code: Some(3), stderr } if stderr == "broken"),
+        "a version probe that exits 3 fails with its code and stderr"
+    );
 }

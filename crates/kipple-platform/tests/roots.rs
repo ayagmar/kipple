@@ -78,30 +78,42 @@ fn an_empty_variable_counts_as_unset() {
 fn a_relative_override_leaves_the_root_unknown_instead_of_using_the_default() {
     let roots = roots(&[("HOME", "/home/u"), ("XDG_CACHE_HOME", "cache")]);
 
-    assert!(matches!(
-        roots.get(SymbolicRoot::XdgCache),
-        Some(Err(UnresolvedRoot::NotAbsolute {
-            var: "XDG_CACHE_HOME",
-            ..
-        }))
-    ));
-    assert!(kipple_dirs(&roots).cache.path.is_err());
+    assert!(
+        matches!(
+            roots.get(SymbolicRoot::XdgCache),
+            Some(Err(UnresolvedRoot::NotAbsolute {
+                var: "XDG_CACHE_HOME",
+                ..
+            }))
+        ),
+        "a relative override leaves the cache root unresolved"
+    );
+    assert!(
+        kipple_dirs(&roots).cache.path.is_err(),
+        "a relative cache override leaves kipple's cache directory unknown"
+    );
 }
 
 #[test]
 fn without_home_only_explicitly_set_roots_resolve() {
     let roots = roots(&[("XDG_DATA_HOME", "/data")]);
 
-    assert!(matches!(
-        roots.get(SymbolicRoot::Home),
-        Some(Err(UnresolvedRoot::NotSet { var: "HOME" }))
-    ));
-    assert!(matches!(
-        roots.get(SymbolicRoot::XdgCache),
-        Some(Err(UnresolvedRoot::BaseUnresolved {
-            base: SymbolicRoot::Home
-        }))
-    ));
+    assert!(
+        matches!(
+            roots.get(SymbolicRoot::Home),
+            Some(Err(UnresolvedRoot::NotSet { var: "HOME" }))
+        ),
+        "without HOME the home root is unset"
+    );
+    assert!(
+        matches!(
+            roots.get(SymbolicRoot::XdgCache),
+            Some(Err(UnresolvedRoot::BaseUnresolved {
+                base: SymbolicRoot::Home
+            }))
+        ),
+        "without HOME the cache root's base is unresolved"
+    );
     let (data, _) = path(&roots, SymbolicRoot::XdgData).unwrap();
     assert_eq!(data, PathBuf::from("/data"));
 }
@@ -163,20 +175,26 @@ fn a_root_link_that_leads_nowhere_or_to_a_file_leaves_the_root_unknown() {
         symlink(temp.join("file"), cache).unwrap();
     });
 
-    assert!(matches!(
-        dangling.get(SymbolicRoot::XdgCache),
-        Some(Err(UnresolvedRoot::Link {
-            problem: LinkProblem::Unresolvable(_),
-            ..
-        }))
-    ));
-    assert!(matches!(
-        to_file.get(SymbolicRoot::XdgCache),
-        Some(Err(UnresolvedRoot::Link {
-            problem: LinkProblem::NotDirectory,
-            ..
-        }))
-    ));
+    assert!(
+        matches!(
+            dangling.get(SymbolicRoot::XdgCache),
+            Some(Err(UnresolvedRoot::Link {
+                problem: LinkProblem::Unresolvable(_),
+                ..
+            }))
+        ),
+        "a dangling link leaves the cache root unresolved"
+    );
+    assert!(
+        matches!(
+            to_file.get(SymbolicRoot::XdgCache),
+            Some(Err(UnresolvedRoot::Link {
+                problem: LinkProblem::NotDirectory,
+                ..
+            }))
+        ),
+        "a link to a file leaves the cache root unresolved"
+    );
 }
 
 #[test]
@@ -237,16 +255,21 @@ fn the_default_project_roots_are_those_that_exist_and_root_replaces_them() {
         replaced[0],
         Ok((home.join("code"), RootSource::CommandLine))
     );
-    assert!(replaced[1].as_ref().is_err_and(|e| e.contains("--root")));
+    assert!(
+        replaced[1].as_ref().is_err_and(|e| e.contains("--root")),
+        "a root in a missing directory is refused naming --root"
+    );
     assert!(
         replaced[2]
             .as_ref()
-            .is_err_and(|e| e.contains("can't be resolved"))
+            .is_err_and(|e| e.contains("can't be resolved")),
+        "a root that can't be resolved is refused"
     );
     assert!(
         replaced[3]
             .as_ref()
-            .is_err_and(|e| e.contains("cod can't be resolved"))
+            .is_err_and(|e| e.contains("cod can't be resolved")),
+        "a mistyped root is refused by its name"
     );
     assert_eq!(replaced.len(), 4);
 }
@@ -290,7 +313,8 @@ fn a_root_given_with_parent_components_is_the_directory_it_names() {
     assert!(
         found[1]
             .as_ref()
-            .is_err_and(|e| e.contains("can't be resolved"))
+            .is_err_and(|e| e.contains("can't be resolved")),
+        "a root through a missing parent is refused"
     );
 }
 

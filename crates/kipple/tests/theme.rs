@@ -157,7 +157,8 @@ fn a_shown_theme_saved_as_your_own_is_the_same_theme_and_is_listed() {
     assert!(copy.ends_with(&file.display().to_string()), "{list}");
     assert!(
         list.lines()
-            .any(|l| l.starts_with("kipple ") && l.contains("the default"))
+            .any(|l| l.starts_with("kipple ") && l.contains("the default")),
+        "the default theme is listed: {list}"
     );
 }
 

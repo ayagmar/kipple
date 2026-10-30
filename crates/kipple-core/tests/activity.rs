@@ -457,11 +457,17 @@ fn an_uninspectable_process_of_the_current_user_is_judged_by_its_command_line_on
         assert_eq!(report.by_command_line, 1);
     }
     // Outside the home directory every uninspected process still counts.
-    assert!(is_unknown(&host.activity(PYTHON, "/srv/code/app/.venv")));
+    assert!(
+        is_unknown(&host.activity(PYTHON, "/srv/code/app/.venv")),
+        "an uninspected process outside home leaves the venv unknown"
+    );
     // macOS doesn't show other users' command lines, so the rule stays off there.
     let mut macos = host;
     macos.observer = Observer::PLAIN;
-    assert!(is_unknown(&macos.activity(CARGO, TARGET)));
+    assert!(
+        is_unknown(&macos.activity(CARGO, TARGET)),
+        "without other users' command lines, the uninspected process leaves the target unknown"
+    );
 }
 
 #[test]
@@ -522,8 +528,14 @@ fn an_unread_environment_of_the_current_user_blocks_an_interpreted_layout_only()
     python.env_paths = Err(failed());
     let host = Host::new(vec![python]);
 
-    assert!(is_unknown(&host.activity(PYTHON, VENV)));
-    assert!(matches!(host.activity(CARGO, TARGET), Activity::Idle));
+    assert!(
+        is_unknown(&host.activity(PYTHON, VENV)),
+        "an unread environment leaves the venv unknown"
+    );
+    assert!(
+        matches!(host.activity(CARGO, TARGET), Activity::Idle),
+        "an unread environment says nothing about a built layout, so the target is idle"
+    );
 }
 
 #[test]
@@ -564,10 +576,13 @@ fn a_venv_is_in_use_through_virtual_env_path_an_argv0_link_or_a_mapped_library()
         let activity = Host::new(vec![process]).activity(PYTHON, VENV);
         assert_eq!(seen(&activity), Some(&expected));
     }
-    assert!(matches!(
-        Host::new(vec![python()]).activity(PYTHON, VENV),
-        Activity::Idle
-    ));
+    assert!(
+        matches!(
+            Host::new(vec![python()]).activity(PYTHON, VENV),
+            Activity::Idle
+        ),
+        "a python process with no path into the venv leaves it idle"
+    );
 }
 
 #[test]
@@ -617,11 +632,17 @@ fn a_runtime_working_in_the_project_uses_its_interpreted_layout() {
     // and neither does a runtime for a built layout.
     let mut shell = in_project("/usr/bin/bash");
     shell.argv = Ok(os(&["bash"]));
-    assert!(matches!(
-        Host::new(vec![shell]).activity(NODE, modules),
-        Activity::Idle
-    ));
-    assert!(matches!(node.activity(CARGO, TARGET), Activity::Idle));
+    assert!(
+        matches!(
+            Host::new(vec![shell]).activity(NODE, modules),
+            Activity::Idle
+        ),
+        "a shell working in the project doesn't hold node_modules"
+    );
+    assert!(
+        matches!(node.activity(CARGO, TARGET), Activity::Idle),
+        "a node runtime doesn't hold a built layout"
+    );
 }
 
 #[test]
@@ -630,33 +651,43 @@ fn an_uninspectable_root_process_is_left_out_and_counted_only_for_an_artifact_in
     let host = Host::new(vec![root()]);
 
     let (activity, report) = host.scan(PYTHON, VENV);
-    assert!(matches!(
-        activity,
-        Activity::IdleExceptSystem {
-            unchecked: 1,
-            by_command_line: 0
-        }
-    ));
+    assert!(
+        matches!(
+            activity,
+            Activity::IdleExceptSystem {
+                unchecked: 1,
+                by_command_line: 0
+            }
+        ),
+        "an uninspectable root process is left out for a venv in home"
+    );
     assert_eq!(report.unchecked_system, 1);
 
     let outside = host.scan(PYTHON, "/srv/code/app/.venv");
-    assert!(is_unknown(&outside.0));
+    assert!(
+        is_unknown(&outside.0),
+        "an uninspectable root process leaves a venv outside home unknown"
+    );
     assert_eq!(outside.1.unchecked_system, 0);
     // Configured in the home directory, but the root leads out of it.
-    assert!(is_unknown(
-        &host.activity(PYTHON, "/mnt/data/code/app/.venv")
-    ));
+    assert!(
+        is_unknown(&host.activity(PYTHON, "/mnt/data/code/app/.venv")),
+        "a root leading out of home leaves the venv unknown"
+    );
     // `SYSTEM` is left out the same way, on Windows, which shows no command line.
     let mut system = Host::new(vec![uninspectable(4, ProcessOwner::System, &[])]);
     system.observer = Observer::PLAIN;
     system.processes[0].argv = Err(Unread::Unsupported);
-    assert!(matches!(
-        system.activity(CARGO, TARGET),
-        Activity::IdleExceptSystem {
-            unchecked: 1,
-            by_command_line: 0
-        }
-    ));
+    assert!(
+        matches!(
+            system.activity(CARGO, TARGET),
+            Activity::IdleExceptSystem {
+                unchecked: 1,
+                by_command_line: 0
+            }
+        ),
+        "a system process with an unsupported command line is left out"
+    );
 }
 
 #[test]
@@ -666,8 +697,14 @@ fn without_a_known_home_below_the_file_system_root_no_root_process_is_left_out()
     let mut slash = unknown.clone();
     slash.home = Some("/");
 
-    assert!(is_unknown(&unknown.activity(PYTHON, VENV)));
-    assert!(is_unknown(&slash.activity(PYTHON, VENV)));
+    assert!(
+        is_unknown(&unknown.activity(PYTHON, VENV)),
+        "without a known home, an uninspectable root process leaves the venv unknown"
+    );
+    assert!(
+        is_unknown(&slash.activity(PYTHON, VENV)),
+        "with / as home, an uninspectable root process leaves the venv unknown"
+    );
 }
 
 #[test]
@@ -692,10 +729,13 @@ fn a_relative_root_command_line_path_with_an_unreadable_working_directory_blocks
         &["./target/release/x"],
     )]);
 
-    assert!(matches!(
-        host.activity(CARGO, TARGET),
-        Activity::Unknown(ActivityGap::Uninspected(1))
-    ));
+    assert!(
+        matches!(
+            host.activity(CARGO, TARGET),
+            Activity::Unknown(ActivityGap::Uninspected(1))
+        ),
+        "a relative root command line path with an unread working directory leaves the process uninspected"
+    );
 }
 
 #[test]
@@ -706,14 +746,20 @@ fn an_unread_root_command_line_blocks_where_the_os_shows_it_and_not_where_it_hid
     let mut macos = linux.clone();
     macos.observer = Observer::PLAIN;
 
-    assert!(is_unknown(&linux.activity(CARGO, TARGET)));
-    assert!(matches!(
-        macos.activity(CARGO, TARGET),
-        Activity::IdleExceptSystem {
-            unchecked: 1,
-            by_command_line: 0
-        }
-    ));
+    assert!(
+        is_unknown(&linux.activity(CARGO, TARGET)),
+        "an unread root command line leaves the target unknown where the OS shows it"
+    );
+    assert!(
+        matches!(
+            macos.activity(CARGO, TARGET),
+            Activity::IdleExceptSystem {
+                unchecked: 1,
+                by_command_line: 0
+            }
+        ),
+        "an unread root command line is left out where the OS hides it"
+    );
 }
 
 #[test]
@@ -733,7 +779,10 @@ fn another_users_process_counts_unless_a_private_directory_above_shuts_it_out() 
     let mut caps_unread = private.clone();
     caps_unread.processes[0].capabilities = Err(failed());
 
-    assert!(matches!(private.activity(PYTHON, VENV), Activity::Idle));
+    assert!(
+        matches!(private.activity(PYTHON, VENV), Activity::Idle),
+        "another user's process behind a private directory leaves the venv idle"
+    );
     for (name, host) in [
         ("0750 home", open),
         ("acl", acl),
@@ -743,7 +792,10 @@ fn another_users_process_counts_unless_a_private_directory_above_shuts_it_out() 
     ] {
         assert!(is_unknown(&host.activity(PYTHON, VENV)), "{name}");
     }
-    assert!(is_unknown(&private.activity(PYTHON, "/srv/code/app/.venv")));
+    assert!(
+        is_unknown(&private.activity(PYTHON, "/srv/code/app/.venv")),
+        "another user's process outside home leaves the venv unknown"
+    );
 }
 
 #[test]
@@ -759,11 +811,17 @@ fn a_process_of_unknown_owner_or_a_partial_inventory_blocks() {
         reason: "hidepid=2".to_owned(),
     };
 
-    assert!(is_unknown(&mixed.activity(CARGO, TARGET)));
-    assert!(matches!(
-        partial.activity(CARGO, TARGET),
-        Activity::Unknown(ActivityGap::Partial(_))
-    ));
+    assert!(
+        is_unknown(&mixed.activity(CARGO, TARGET)),
+        "a process of unknown owner leaves the target unknown"
+    );
+    assert!(
+        matches!(
+            partial.activity(CARGO, TARGET),
+            Activity::Unknown(ActivityGap::Partial(_))
+        ),
+        "a partial process inventory leaves the target unknown"
+    );
 }
 
 #[test]
@@ -780,10 +838,22 @@ fn a_process_in_another_mount_namespace_whose_root_cant_be_read_is_never_read_as
     let mut ours_unread = Host::new(vec![inspected(7, ProcessOwner::CurrentUser, "/usr/bin/x")]);
     ours_unread.observer.mount_namespace = Err(failed());
 
-    assert!(is_unknown(&host.activity(PYTHON, VENV)));
-    assert!(is_unknown(&host.activity(CARGO, TARGET)));
-    assert!(is_unknown(&Host::new(vec![unread]).activity(PYTHON, VENV)));
-    assert!(is_unknown(&ours_unread.activity(PYTHON, VENV)));
+    assert!(
+        is_unknown(&host.activity(PYTHON, VENV)),
+        "an unread root in another mount namespace leaves the venv unknown"
+    );
+    assert!(
+        is_unknown(&host.activity(CARGO, TARGET)),
+        "an unread root in another mount namespace leaves the target unknown"
+    );
+    assert!(
+        is_unknown(&Host::new(vec![unread]).activity(PYTHON, VENV)),
+        "an unread mount namespace of the process leaves the venv unknown"
+    );
+    assert!(
+        is_unknown(&ours_unread.activity(PYTHON, VENV)),
+        "our own unread mount namespace leaves the venv unknown"
+    );
 }
 
 #[test]
@@ -795,7 +865,10 @@ fn a_process_path_matches_ignoring_case_and_through_a_linked_parent() {
         path: abs("/home/u/code/app/.venv"),
     }]);
     let case = Host::new(vec![typed]);
-    assert!(seen(&case.activity(PYTHON, "/home/u/code/APP/.venv")).is_some());
+    assert!(
+        seen(&case.activity(PYTHON, "/home/u/code/APP/.venv")).is_some(),
+        "a process path differing only in case is seen in the venv"
+    );
 
     // `/var/home -> home`: the process names the project through the link.
     let mut through_link = inspected(7, ProcessOwner::CurrentUser, "/usr/bin/python3");
@@ -824,16 +897,20 @@ fn processes_that_exited_or_run_no_program_file_are_not_counted() {
         });
     }
 
-    assert!(matches!(host.activity(PYTHON, VENV), Activity::Idle));
+    assert!(
+        matches!(host.activity(PYTHON, VENV), Activity::Idle),
+        "exited processes and processes without a program file leave the venv idle"
+    );
 }
 
 #[test]
 fn an_integration_that_declares_nothing_counts_every_process() {
     let host = Host::new(vec![uninspectable(1, ProcessOwner::Root, &["/sbin/init"])]);
 
-    assert!(is_unknown(
-        &host.activity(ActivityEvidence::Everything, VENV)
-    ));
+    assert!(
+        is_unknown(&host.activity(ActivityEvidence::Everything, VENV)),
+        "an integration that declares no evidence is held by every process"
+    );
 }
 
 /// Where kipple reaches the root of the sandboxed process 7, and the directory it is.
@@ -904,10 +981,13 @@ fn a_sandboxed_process_shows_the_project_through_its_root_by_identity() {
         assert_eq!(seen(&activity), Some(&expected));
     }
     // Everything it shows was resolved there, and none of it is the project's.
-    assert!(matches!(
-        sandbox_host(python(), disk.clone()).activity(PYTHON, VENV),
-        Activity::Idle
-    ));
+    assert!(
+        matches!(
+            sandbox_host(python(), disk.clone()).activity(PYTHON, VENV),
+            Activity::Idle
+        ),
+        "a sandboxed process naming nothing of the project leaves the venv idle"
+    );
 }
 
 #[test]
@@ -927,9 +1007,15 @@ fn a_sandboxed_path_that_cant_be_resolved_leaves_its_kind_uninspected() {
         with_argument("/srv/app/x.py"),
         with_argument("/data/app/x.py"),
     ] {
-        assert!(is_unknown(&host.activity(PYTHON, VENV)));
+        assert!(
+            is_unknown(&host.activity(PYTHON, VENV)),
+            "an unresolved sandboxed path leaves the venv unknown"
+        );
         // A built layout needs only the executable, which resolved.
-        assert!(matches!(host.activity(CARGO, TARGET), Activity::Idle));
+        assert!(
+            matches!(host.activity(CARGO, TARGET), Activity::Idle),
+            "a resolved sandboxed executable leaves the target idle"
+        );
     }
 }
 
@@ -946,7 +1032,10 @@ fn a_sandboxed_path_ending_in_a_link_to_the_finding_is_never_idle() {
     }]);
     let host = sandbox_host(process, disk);
 
-    assert!(is_unknown(&host.activity(PYTHON, VENV)));
+    assert!(
+        is_unknown(&host.activity(PYTHON, VENV)),
+        "a sandboxed path ending in a link to the venv leaves it unknown"
+    );
 }
 
 #[test]
@@ -996,9 +1085,15 @@ fn a_chrooted_process_in_our_namespace_names_its_own_paths_below_its_root() {
     );
     // A browser's renderer is shut in a directory that is gone, and names nothing there.
     let gone = jailed(Ok(abs("/proc/4154/fdinfo")), &["/opt/browser/browser"]);
-    assert!(matches!(gone.activity(PYTHON, VENV), Activity::Idle));
+    assert!(
+        matches!(gone.activity(PYTHON, VENV), Activity::Idle),
+        "a process shut in a directory that is gone leaves the venv idle"
+    );
     let unread = jailed(Err(failed()), &["/opt/browser/browser"]);
-    assert!(is_unknown(&unread.activity(PYTHON, VENV)));
+    assert!(
+        is_unknown(&unread.activity(PYTHON, VENV)),
+        "a process with an unread chroot leaves the venv unknown"
+    );
 }
 
 #[test]
@@ -1017,16 +1112,22 @@ fn an_option_value_is_judged_as_the_path_it_holds() {
         Some(&Seen::Argument(abs(state)))
     );
     let outside = root(&[daemon.clone(), option("--socket", "/run/tailscale/s.sock")]);
-    assert!(matches!(
-        outside.activity(CARGO, TARGET),
-        Activity::IdleExceptSystem {
-            unchecked: 1,
-            by_command_line: 0
-        }
-    ));
+    assert!(
+        matches!(
+            outside.activity(CARGO, TARGET),
+            Activity::IdleExceptSystem {
+                unchecked: 1,
+                by_command_line: 0
+            }
+        ),
+        "an option value outside the project is left out"
+    );
     // A relative value can't be placed while root's working directory can't be read.
     let relative = root(&[daemon, "--config=conf/x.toml".to_owned()]);
-    assert!(is_unknown(&relative.activity(CARGO, TARGET)));
+    assert!(
+        is_unknown(&relative.activity(CARGO, TARGET)),
+        "a relative option value with an unread working directory leaves the target unknown"
+    );
 }
 
 #[test]
@@ -1035,13 +1136,16 @@ fn a_rewritten_process_title_is_judged_word_by_word() {
     let title = |text: String| Host::new(vec![uninspectable(9, ProcessOwner::Root, &[&text])]);
     let sshd = abs("/usr/bin/sshd").display().to_string();
     let listener = title(format!("sshd: {sshd} -D [listener] 0 of 10-100 startups"));
-    assert!(matches!(
-        listener.activity(CARGO, TARGET),
-        Activity::IdleExceptSystem {
-            unchecked: 1,
-            by_command_line: 0
-        }
-    ));
+    assert!(
+        matches!(
+            listener.activity(CARGO, TARGET),
+            Activity::IdleExceptSystem {
+                unchecked: 1,
+                by_command_line: 0
+            }
+        ),
+        "a process title of absolute paths outside the project is left out"
+    );
     let built = abs("/home/u/code/app/target/release/x");
     let naming = title(format!("worker {}", built.display()));
     assert_eq!(
@@ -1051,9 +1155,15 @@ fn a_rewritten_process_title_is_judged_word_by_word() {
     // A relative path with a space reads as relative whole and word by word, and one
     // relative word is enough to leave a title unplaced.
     let spaced = title("./my dir/x".to_owned());
-    assert!(is_unknown(&spaced.activity(CARGO, TARGET)));
+    assert!(
+        is_unknown(&spaced.activity(CARGO, TARGET)),
+        "a relative path with a space leaves the target unknown"
+    );
     let mixed = title(format!("worker {sshd} conf/x.toml"));
-    assert!(is_unknown(&mixed.activity(CARGO, TARGET)));
+    assert!(
+        is_unknown(&mixed.activity(CARGO, TARGET)),
+        "one relative word in a title leaves the target unknown"
+    );
 }
 
 #[test]
@@ -1108,7 +1218,10 @@ fn an_own_process_whose_title_starts_with_a_runtime_counts() {
         &["node server.js --port 3000"],
     );
 
-    assert!(is_unknown(&Host::new(vec![title]).activity(CARGO, TARGET)));
+    assert!(
+        is_unknown(&Host::new(vec![title]).activity(CARGO, TARGET)),
+        "an own process whose title starts with a runtime leaves the target unknown"
+    );
 }
 
 /// The two kinds of process with root's reach that aren't root's: a setuid-root helper
@@ -1194,7 +1307,10 @@ fn an_empty_or_blank_command_line_clears_nothing_where_the_os_shows_it() {
         ProcessOwner::CurrentUser,
         &["", &abs("/usr/share/x").display().to_string()],
     );
-    assert!(is_unknown(&nameless.activity(CARGO, TARGET)));
+    assert!(
+        is_unknown(&nameless.activity(CARGO, TARGET)),
+        "an empty command line word leaves the target unknown"
+    );
 }
 
 #[test]
@@ -1266,8 +1382,14 @@ fn a_runtime_naming_a_path_in_the_project_holds_its_interpreted_layout_from_anyw
     );
     // Only a runtime of the layout holds it this way.
     let shell = Host::new(vec![runtime("/usr/bin/bash", &["bash", server])]);
-    assert!(matches!(shell.activity(NODE, modules), Activity::Idle));
-    assert!(matches!(node.activity(CARGO, TARGET), Activity::Idle));
+    assert!(
+        matches!(shell.activity(NODE, modules), Activity::Idle),
+        "a shell naming a path in the project doesn't hold node_modules"
+    );
+    assert!(
+        matches!(node.activity(CARGO, TARGET), Activity::Idle),
+        "a node runtime naming a path in the project doesn't hold a built layout"
+    );
 }
 
 #[test]
@@ -1288,5 +1410,8 @@ fn where_the_os_shows_no_process_paths_an_interpreted_layout_is_never_idle() {
             "{path}"
         );
     }
-    assert!(matches!(windows.activity(CARGO, TARGET), Activity::Idle));
+    assert!(
+        matches!(windows.activity(CARGO, TARGET), Activity::Idle),
+        "without process paths, a built layout is still idle"
+    );
 }

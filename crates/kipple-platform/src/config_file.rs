@@ -183,7 +183,10 @@ mod tests {
             Err(io::Error::other("injected before the rename"))
         });
 
-        assert!(failed.is_err());
+        assert!(
+            failed.is_err(),
+            "a failure before the rename fails the write"
+        );
         let kept = fs::read_to_string(&file).unwrap();
         assert_eq!(kept, "[care]\nlevel = \"careful\"\n");
         let names: Vec<_> = fs::read_dir(dir.path())
@@ -198,7 +201,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("config.toml");
 
-        assert!(read_config(&file).unwrap().is_none());
+        assert!(
+            read_config(&file).unwrap().is_none(),
+            "a missing file reads as no file"
+        );
         assert!(
             read_config(dir.path()).is_err(),
             "a directory is not a config"
@@ -230,7 +236,10 @@ mod tests {
 
         let written = write_config(&file, |_| Err("mid-edit"));
 
-        assert!(matches!(written, Err(WriteError::Edit("mid-edit"))));
+        assert!(
+            matches!(written, Err(WriteError::Edit("mid-edit"))),
+            "a refused edit is the edit's error"
+        );
         assert_eq!(fs::read_to_string(&file).unwrap(), "old");
     }
 
@@ -266,7 +275,8 @@ mod tests {
             fs::symlink_metadata(&link)
                 .unwrap()
                 .file_type()
-                .is_symlink()
+                .is_symlink(),
+            "the link is still a link"
         );
         assert_eq!(fs::read_to_string(&target).unwrap(), "new");
         let mode = fs::metadata(&target).unwrap().permissions().mode();
@@ -282,8 +292,14 @@ mod tests {
 
         let read = read_config(&link);
 
-        assert!(read.is_err());
-        assert!(write_config(&link, |_| Ok::<_, String>(String::new())).is_err());
-        assert!(fs::symlink_metadata(dir.path().join("gone.toml")).is_err());
+        assert!(read.is_err(), "a link to nothing fails the read");
+        assert!(
+            write_config(&link, |_| Ok::<_, String>(String::new())).is_err(),
+            "a link to nothing fails the write"
+        );
+        assert!(
+            fs::symlink_metadata(dir.path().join("gone.toml")).is_err(),
+            "no file is written where the link leads"
+        );
     }
 }

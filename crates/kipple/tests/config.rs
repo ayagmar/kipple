@@ -208,8 +208,14 @@ fn no_config_at_the_default_location_means_balanced_and_the_default_roots() {
     assert_eq!(code, ExitCode::SUCCESS, "{err}");
     let report: Value = serde_json::from_str(&out).unwrap();
     assert_eq!(report["level"], "balanced");
-    assert!(findings(&report).iter().all(|f| f["level"] == "balanced"));
-    assert!(findings(&report).iter().any(|f| bucket(f) == "safe"));
+    assert!(
+        findings(&report).iter().all(|f| f["level"] == "balanced"),
+        "every finding is judged at balanced"
+    );
+    assert!(
+        findings(&report).iter().any(|f| bucket(f) == "safe"),
+        "the default roots give at least one safe finding"
+    );
 }
 
 #[test]
@@ -397,7 +403,10 @@ fn an_unknown_config_directory_exits_2_unless_a_file_is_named() {
     assert_eq!(code, ExitCode::from(USAGE));
     assert!(err.contains("config directory is unknown"), "{err}");
     assert_eq!(named, ExitCode::SUCCESS);
-    assert!(out.contains("\"level\": \"careful\""));
+    assert!(
+        out.contains("\"level\": \"careful\""),
+        "a named file is read at its level: {out}"
+    );
 }
 
 #[test]
@@ -465,7 +474,8 @@ fn doctor_and_config_say_what_is_wrong_with_the_config_and_where_it_came_from() 
         doctor["config"]["problem"]
             .as_str()
             .unwrap()
-            .contains("line 2, column 9")
+            .contains("line 2, column 9"),
+        "the problem names the line and column"
     );
     let (show_code, shown, err) = kipple(&env, &["--config", flag, "config", "show"]);
     assert_eq!(show_code, ExitCode::from(USAGE));
@@ -529,7 +539,10 @@ fn scan_honours_the_configured_level_and_a_rules_own_level() {
     // doesn't show the process paths they need, so there they are never Safe (04 §4).
     assert_ne!(node(&balanced).len(), 0);
     if kipple_platform::PLATFORM != kipple_core::Platform::Windows {
-        assert!(node(&balanced).iter().any(|(_, b, _)| b == "safe"));
+        assert!(
+            node(&balanced).iter().any(|(_, b, _)| b == "safe"),
+            "a node finding is safe at balanced"
+        );
     }
     for report in [scan_with(&env, &careful), scan_with(&env, &node_careful)] {
         assert_ne!(node(&report).len(), 0);
@@ -569,7 +582,10 @@ fn with_the_cargo_rule_turned_off_nothing_under_a_target_is_safe_or_review() {
             .filter(|f| path_of(f).components().any(|c| c.as_os_str() == "target"))
             .collect();
         // The rule still runs, so its walk still stops at each target.
-        assert!(targets.iter().any(|f| f["rule"] == CARGO));
+        assert!(
+            targets.iter().any(|f| f["rule"] == CARGO),
+            "the cargo rule still finds the targets"
+        );
         for finding in targets {
             assert_eq!(bucket(finding), "protected", "{finding}");
         }
@@ -670,7 +686,8 @@ fn an_excluded_project_is_not_walked_and_is_listed_as_excluded() {
     assert!(
         findings(&report)
             .iter()
-            .all(|f| !path_of(f).starts_with(&project))
+            .all(|f| !path_of(f).starts_with(&project)),
+        "nothing is found in the excluded project"
     );
     let omissions: Vec<&Value> = report["integrations"]
         .as_array()
@@ -689,7 +706,8 @@ fn an_excluded_project_is_not_walked_and_is_listed_as_excluded() {
             omission["message"]
                 .as_str()
                 .unwrap()
-                .contains("excluded by config")
+                .contains("excluded by config"),
+            "the omission says the config excluded it"
         );
     }
 }
@@ -775,7 +793,8 @@ fn the_configs_project_roots_replace_the_defaults_and_a_missing_one_is_an_omissi
         findings(&given)
             .iter()
             .filter(|f| f["lens"] == "dev")
-            .all(|f| !path_of(f).starts_with(&web))
+            .all(|f| !path_of(f).starts_with(&web)),
+        "nothing is found in a default project root the config replaced"
     );
 }
 
@@ -798,7 +817,8 @@ fn an_empty_list_of_project_roots_scans_no_project_and_only_root_replaces_it() {
     assert!(
         fs::read_to_string(&file)
             .unwrap()
-            .contains("project_roots = []")
+            .contains("project_roots = []"),
+        "the file lists no project roots"
     );
     let loaded = config::Loaded {
         location: at,
@@ -806,7 +826,10 @@ fn an_empty_list_of_project_roots_scans_no_project_and_only_root_replaces_it() {
         config,
     };
     let settings = config::Settings::from_loaded(&env, loaded, &[]).unwrap();
-    assert!(settings.roots.all(SymbolicRoot::ProjectRoots).is_empty());
+    assert!(
+        settings.roots.all(SymbolicRoot::ProjectRoots).is_empty(),
+        "an empty list scans no project root"
+    );
 
     let dev = |report: &Value| {
         findings(report)
@@ -856,7 +879,10 @@ fn a_kept_path_written_through_a_linked_root_holds_the_finding_where_the_link_le
     let report = scan_with(&env, &demo.config("keep.toml", &text));
 
     let target = rust_app_target(&report);
-    assert!(target.starts_with(fs::canonicalize(&real).unwrap()) || target.starts_with(&real));
+    assert!(
+        target.starts_with(fs::canonicalize(&real).unwrap()) || target.starts_with(&real),
+        "the kept target is reported where the link leads"
+    );
     let held = findings(&report)
         .iter()
         .find(|f| path_of(f) == target)
@@ -889,7 +915,10 @@ fn a_rule_of_any_platform_can_be_named_so_a_synced_config_loads_everywhere() {
     let loaded = config::load(&location(&file), &catalog()).unwrap();
 
     assert_eq!(loaded.config.exclude_rules.len(), ids.len());
-    assert!(ids.iter().any(|id| id.contains("pacman")));
+    assert!(
+        ids.iter().any(|id| id.contains("pacman")),
+        "a rule of another platform loads"
+    );
 }
 
 #[test]
@@ -946,7 +975,8 @@ fn an_edit_keeps_comments_and_every_other_key_and_survives_an_editors_change() {
         written
             .rules
             .iter()
-            .any(|rule| rule.id.0 == "builtin.node.node-modules" && rule.settings.disabled)
+            .any(|rule| rule.id.0 == "builtin.node.node-modules" && rule.settings.disabled),
+        "the node_modules rule is written as disabled"
     );
     assert_eq!(written.keep.len(), 1);
     assert_eq!(config::load(&at, &catalog()).unwrap().config, written);
@@ -1047,7 +1077,10 @@ fn the_ui_options_read_as_written_and_default_to_the_dashboard() {
         &["--config", named.to_str().unwrap(), "scan", "--json"],
     );
     assert_eq!(code, ExitCode::SUCCESS, "{err}");
-    assert!(serde_json::from_str::<Value>(&out).is_ok());
+    assert!(
+        serde_json::from_str::<Value>(&out).is_ok(),
+        "scan --json prints JSON: {out}"
+    );
 }
 
 /// The example in 03 §6 held keys that exit 2, so a user copying it got an unusable config.
@@ -1121,7 +1154,8 @@ fn the_first_write_creates_the_directory_and_the_file() {
     assert!(
         fs::read_to_string(&file)
             .unwrap()
-            .contains("level = \"careful\"")
+            .contains("level = \"careful\""),
+        "the new file holds the level"
     );
 }
 
@@ -1152,10 +1186,14 @@ fn a_file_mid_edit_or_an_unknown_directory_refuses_the_write_and_changes_nothing
         refused
             .unwrap_err()
             .message
-            .contains("no longer reads as a valid config")
+            .contains("no longer reads as a valid config"),
+        "a file mid-edit is refused as no longer valid"
     );
     assert_eq!(fs::read_to_string(&file).unwrap(), "[care\n");
-    assert!(nowhere.unwrap_err().message.contains("nothing was written"));
+    assert!(
+        nowhere.unwrap_err().message.contains("nothing was written"),
+        "an unknown directory is refused with nothing written"
+    );
 }
 
 #[test]
@@ -1175,8 +1213,14 @@ fn a_path_that_isnt_utf8_is_refused_with_a_message() {
         &catalog(),
     );
 
-    assert!(refused.unwrap_err().message.contains("isn't valid UTF-8"));
-    assert!(fs::symlink_metadata(&file).is_err());
+    assert!(
+        refused.unwrap_err().message.contains("isn't valid UTF-8"),
+        "a path that isn't UTF-8 is refused"
+    );
+    assert!(
+        fs::symlink_metadata(&file).is_err(),
+        "no file is written at a path that isn't UTF-8"
+    );
 }
 
 // Catches a config writing terminal escapes through kipple's own messages: a key name is

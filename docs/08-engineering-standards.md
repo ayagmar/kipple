@@ -91,10 +91,11 @@ These are cheap and deterministic, and they protect the boundaries in [05-archit
 
 - No `bool` parameter: `run(root, true)` doesn't say what `true` means. Take a two-variant enum named for what it means there, such as `compat::run(root, Baselines::Keep)`, or split the function in two. Clippy checks it: `max-fn-params-bools = 0` makes `fn_params_excessive_bools` fail on any function with one, so it can't tell a literal call site from one that passes a named value. A trait `impl` is exempt, since the trait decides its signature.
 
-These rules are checked by `cargo xtask check-style` (gate step 13), which parses every Rust source in `crates/` and `xtask/` with `syn`. It doesn't look inside `macro_rules!` bodies or macro calls.
+These rules are checked by `cargo xtask check-style` (gate step 13), which parses every Rust source in `crates/` and `xtask/` with `syn`. It doesn't look inside `macro_rules!` bodies or macro calls other than `assert!`.
 
 - No tuple in a signature or field other modules see: a function's parameters and return type, a trait method's, a field, an enum variant's field or a type alias, when it is `pub`, `pub(crate)`, `pub(super)` or `pub(in ...)`. That counts a tuple nested in a type, such as `Vec<(u64, u64)>` or `impl Iterator<Item = (Root, &Path)>`. Use a struct with named fields, so two values of one type can't be swapped. `()`, newtypes, private items and trait `impl`s, whose signatures the trait decides, are fine.
 - A struct's, enum's or union's lifetime is named for what it borrows, such as `Tree<'lines>`; a one-letter name fails. `'a` is fine on functions and `impl` blocks.
+- In test code (a file under `tests/`, a `tests.rs`, a `#[cfg(test)]` item or a `#[test]` function), an `assert!` or `debug_assert!` with only a condition gets a message that says what state it expects, such as `assert!(found.complete, "the search completes")`. Without one, a failure prints the expression but not why it should hold or what it was. `==` and `!=` are exempt, since clippy's `manual_assert_eq` already turns them into `assert_eq!` and `assert_ne!`, which print both sides. Every other condition (`<`, `matches!`, a method call, a negation) needs the message. Asserts outside test code state invariants and aren't checked.
 
 An item may break a rule only through an entry in the check's `EXEMPT` list, which names the item and the rule and says why. An entry that no longer matches anything fails too.
 

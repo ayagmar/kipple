@@ -244,8 +244,14 @@ fn s_on_a_project_line_selects_nothing_as_on_a_group() {
 
     press(&mut app, &[Key::Char('s')]);
 
-    assert!(app.selected.is_empty());
-    assert!(app.notice.as_deref().unwrap().contains("press a"));
+    assert!(
+        app.selected.is_empty(),
+        "s on a project line selects nothing"
+    );
+    assert!(
+        app.notice.as_deref().unwrap().contains("press a"),
+        "the notice says which key selects a project"
+    );
 }
 
 /// Four Safe Dev findings in four projects, each a different size, age and name.
@@ -386,7 +392,10 @@ fn a_finding_belongs_to_the_project_below_the_deepest_root_holding_it() {
     measured(&mut app, 1, 10, safe());
     measured(&mut app, 2, 20, safe());
 
-    assert!(!outline(&app).iter().any(|line| line.contains("project")));
+    assert!(
+        !outline(&app).iter().any(|line| line.contains("project")),
+        "no project line is shown for findings below the deepest root"
+    );
     let shown = screen(&app, colour(), 160, 48);
     assert!(shown.contains("acme/target"), "{shown}");
     assert!(shown.contains("zeta/target"), "{shown}");

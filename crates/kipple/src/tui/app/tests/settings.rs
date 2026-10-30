@@ -358,7 +358,10 @@ fn a_level_switch_rebuckets_in_place_and_takes_out_only_what_the_selection_rules
     assert_eq!(app.policy.level, Level::Thorough);
     assert_eq!(shelf(&app, 4), Shelf::SAFE);
     assert_eq!(selected(&app), [1, 3], "a finding joined the selection");
-    assert!(disk.text().contains("level = \"thorough\""));
+    assert!(
+        disk.text().contains("level = \"thorough\""),
+        "the file holds the new level"
+    );
 }
 
 // Catches a root change that keeps the old scan's findings or selection, whose IDs mean
@@ -381,7 +384,10 @@ fn adding_or_removing_a_project_root_rescans_and_says_the_selection_was_cleared(
     let effects = disk.run(&mut app);
 
     assert_eq!(effects, [Effect::Rescan]);
-    assert!(app.rows.is_empty() && app.selected.is_empty());
+    assert!(
+        app.rows.is_empty() && app.selected.is_empty(),
+        "a rescan clears the rows and the selection"
+    );
     assert_eq!(
         app.roots,
         [PathBuf::from("~/projects"), PathBuf::from("~/work")]
@@ -434,7 +440,10 @@ fn the_default_method_is_stored() {
     disk.run(&mut app);
 
     assert_eq!(app.config.method, Some(Method::Trash));
-    assert!(disk.text().contains("method = \"trash\""));
+    assert!(
+        disk.text().contains("method = \"trash\""),
+        "the file holds the method"
+    );
 }
 
 // Catches esc in the note prompt keeping the finding anyway.
@@ -674,7 +683,10 @@ fn the_root_search_starts_on_the_first_opening_only_and_its_result_stays() {
     let mut app = screen_on(&disk, Config::default());
     press(&mut app, &[Key::Char(',')]);
     assert_eq!(app.take_effect(), Some(Effect::Search));
-    assert!(matches!(app.search, Search::Running));
+    assert!(
+        matches!(app.search, Search::Running),
+        "opening the settings starts the root search"
+    );
     let text = screen(&app, colour(), 160, 48);
     assert!(text.contains("looking for projects…"), "{text}");
 
@@ -866,11 +878,15 @@ fn a_theme_that_cant_be_used_is_listed_but_never_drawn_or_kept() {
     assert!(row.contains("aaa  6 of 6, can't be used:"), "{row}");
     press(&mut app, &[Key::Enter]);
     assert_eq!(disk.run(&mut app), []);
-    assert!(!disk.file().exists());
+    assert!(
+        !disk.file().exists(),
+        "a theme that can't be used is never kept"
+    );
     assert!(
         app.notice
             .as_deref()
             .unwrap_or_default()
-            .contains("aaa can't be used")
+            .contains("aaa can't be used"),
+        "the notice says the theme can't be used"
     );
 }

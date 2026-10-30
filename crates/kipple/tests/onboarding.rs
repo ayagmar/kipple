@@ -191,14 +191,20 @@ fn the_first_run_is_not_due_once_a_config_file_exists_or_one_is_named() {
     let named = temp.path().join("named.toml");
     fs::write(&named, "").unwrap();
     let with_var = env(&roots, &[(config::VAR, &named)]);
-    assert!(!first_run_due(&settings(&with_var, &builtin).loaded));
+    assert!(
+        !first_run_due(&settings(&with_var, &builtin).loaded),
+        "a config named through the variable means the first run isn't due"
+    );
 
     let plain = env(&roots, &[]);
     let file = settings(&plain, &builtin).loaded.location.path.unwrap();
     fs::create_dir_all(file.parent().unwrap()).unwrap();
     fs::write(&file, "").unwrap();
 
-    assert!(!first_run_due(&settings(&plain, &builtin).loaded));
+    assert!(
+        !first_run_due(&settings(&plain, &builtin).loaded),
+        "a config file at the default location means the first run isn't due"
+    );
 }
 
 // Catches the home screen opening, and asking the first run's questions it can never
