@@ -217,7 +217,9 @@ pub(crate) fn admit(
     }
     let tree = &entry.tree;
     let mut marks = tree.recheck(&freeze.tree);
-    if entry.anchor.parent != freeze.parent {
+    // A tree of a root's contents for a target below it, or the reverse, isn't what the
+    // anchor names, whatever a freezer returned.
+    if entry.anchor.parent != freeze.parent || tree.scope() != entry.anchor.scope() {
         marks.drop_subtree(tree, NodeId::TOP, LeftReason::Replaced);
     }
     if marks.authorized() == 0 {

@@ -45,8 +45,12 @@ fn snapshot(kind: EntryKind, file: u128, changed: i64) -> EntrySnapshot {
 
 /// `target/` holding `a`, `b` and `deps/c`; `changed` moves `b`'s change time.
 fn tree(b_changed: i64) -> FrozenTree {
-    let mut builder =
-        TreeBuilder::new(Scope::Whole, VOLUME, &snapshot(EntryKind::Dir, 10, 1)).unwrap();
+    tree_as(Scope::Whole, b_changed)
+}
+
+/// [`tree`], frozen with `scope`.
+fn tree_as(scope: Scope, b_changed: i64) -> FrozenTree {
+    let mut builder = TreeBuilder::new(scope, VOLUME, &snapshot(EntryKind::Dir, 10, 1)).unwrap();
     let top = builder.top();
     let name = |name: &str| Component::new(name).unwrap();
     builder
@@ -334,6 +338,24 @@ fn a_replaced_parent_drops_everything() {
         panic!("nothing is authorized");
     };
     assert_eq!(left.0[&LeftReason::Replaced].count, 5);
+}
+
+/// Catches an item run with a tree that doesn't have its anchor's scope: a root's
+/// contents frozen for a target below the root names other entries than the anchor, so
+/// nothing is authorized even when a fresh freeze agrees with the stored tree.
+#[test]
+fn a_tree_with_another_scope_than_its_anchor_authorizes_nothing() {
+    let entry = entry(Method::Delete, Standing::Safe, tree_as(Scope::Contents, 1));
+
+    let Err(Skip::AllDropped(left)) = admit_now(&entry, None, Now::same_as(&entry)) else {
+        panic!("nothing is authorized");
+    };
+
+    assert_eq!(
+        left.0[&LeftReason::Replaced].count,
+        4,
+        "everything below the top"
+    );
 }
 
 /// Catches a trash move carrying an entry revalidation dropped (v2.1 J): the move takes
