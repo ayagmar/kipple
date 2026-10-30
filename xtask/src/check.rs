@@ -39,6 +39,7 @@ const STEPS: &[Step] = &[
             "clippy",
             "--workspace",
             "--all-targets",
+            "--all-features",
             "--locked",
             "--",
             "-D",
