@@ -28,8 +28,7 @@ use windows_sys::Wdk::Storage::FileSystem::{
 use windows_sys::Wdk::System::SystemServices::{FILE_FS_DEVICE_INFORMATION, FILE_REMOTE_DEVICE};
 use windows_sys::Win32::Foundation::{
     ERROR_DIRECTORY, ERROR_LOCK_VIOLATION, ERROR_NO_MORE_FILES, ERROR_SHARING_VIOLATION,
-    ERROR_USER_MAPPED_FILE, HANDLE, INVALID_HANDLE_VALUE, NTSTATUS, RtlNtStatusToDosError,
-    UNICODE_STRING,
+    ERROR_USER_MAPPED_FILE, HANDLE, NTSTATUS, RtlNtStatusToDosError, UNICODE_STRING,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     DELETE, FILE_ATTRIBUTE_OFFLINE, FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS,
@@ -41,7 +40,7 @@ use windows_sys::Win32::Storage::FileSystem::{
     FILE_SHARE_WRITE, FILE_STANDARD_INFO, FILE_TRAVERSE, FileAttributeTagInfo, FileBasicInfo,
     FileDispositionInfoEx, FileIdExtdDirectoryInfo, FileIdExtdDirectoryRestartInfo,
     FileStandardInfo, GetFileInformationByHandleEx, GetVolumeInformationByHandleW,
-    MAXIMUM_REPARSE_DATA_BUFFER_SIZE, ReOpenFile, SYNCHRONIZE, SetFileInformationByHandle,
+    MAXIMUM_REPARSE_DATA_BUFFER_SIZE, SYNCHRONIZE, SetFileInformationByHandle,
 };
 use windows_sys::Win32::System::IO::{DeviceIoControl, IO_STATUS_BLOCK};
 use windows_sys::Win32::System::Ioctl::{FILE_DEVICE_NETWORK_FILE_SYSTEM, FSCTL_GET_REPARSE_POINT};
@@ -190,24 +189,31 @@ impl Dir {
         Ok(Victim { handle, seen })
     }
 
-    /// Removes the emptied directory `name`, open as `opened`, if both still have the
-    /// identity `frozen` and it is empty, on a handle reopened from `opened` for removal.
-    /// The name is checked too: a directory moved elsewhere since it was entered stays.
+    /// Removes the emptied directory `name`, entered as `opened`, if it is empty and still
+    /// the directory with the identity `frozen`. It is opened again by name for removal,
+    /// checked on that handle and removed on it, as a file is: a directory moved away
+    /// since it was entered, or another put in its place, stays.
     pub(super) fn remove_dir(
         &self,
         name: &Name,
         opened: Self,
         frozen: FileIdentity,
     ) -> Result<(), Refusal> {
-        let held = opened.seen().map_err(Refusal::Os)?;
-        let named = self.stat(name).map_err(Refusal::Os)?;
-        let same =
-            |seen: &Seen| seen.snapshot.kind == EntryKind::Dir && seen.snapshot.identity == frozen;
-        if !same(&held) || !same(&named) {
+        drop(opened);
+        let handle = open_at(self, name, REMOVE_ACCESS, FILE_DIRECTORY_FILE).map_err(|error| {
+            if is_link_or_file(&error) {
+                Refusal::Replaced
+            } else {
+                Refusal::Os(error)
+            }
+        })?;
+        let now = seen(&handle).map_err(Refusal::Os)?;
+        if now.snapshot.kind != EntryKind::Dir
+            || now.form != Form::Plain
+            || now.snapshot.identity != frozen
+        {
             return Err(Refusal::Replaced);
         }
-        let handle = reopen(&opened.0, REMOVE_ACCESS).map_err(Refusal::Os)?;
-        drop(opened);
         dispose(&handle).map_err(Refusal::Os)
     }
 }
@@ -251,25 +257,6 @@ fn open_at(dir: &Dir, name: &Name, access: u32, options: u32) -> io::Result<Owne
     nt(result)?;
     // SAFETY: NtCreateFile succeeded, so `handle` is open and ours.
     Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
-}
-
-/// A new handle to the file `handle` has open, with `access`.
-#[expect(unsafe_code, reason = "windows-sys exposes ReOpenFile as a raw call")]
-fn reopen(handle: &OwnedHandle, access: u32) -> io::Result<OwnedHandle> {
-    // SAFETY: `handle` is open.
-    let new = unsafe {
-        ReOpenFile(
-            handle.as_raw_handle(),
-            access,
-            SHARE_ALL,
-            FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT,
-        )
-    };
-    if new == INVALID_HANDLE_VALUE || new.is_null() {
-        return Err(io::Error::last_os_error());
-    }
-    // SAFETY: ReOpenFile returned a new handle nothing else owns.
-    Ok(unsafe { OwnedHandle::from_raw_handle(new) })
 }
 
 /// Removes the file `handle` has open: its name goes at once, others' open handles

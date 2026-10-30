@@ -42,9 +42,15 @@ fn an_unchanged_tree_is_removed_whole_and_nothing_else() {
 
     assert_eq!(outcome.status(), Status::Done, "{outcome:?}");
     assert_eq!(removed(&outcome).names, 7);
-    assert!(!present(&site.at("target")), "the target is gone");
-    assert!(present(&site.at("sibling")), "its sibling stays");
-    assert!(present(&site.root), "the root stays");
+    assert!(
+        !present(&site.at("target")),
+        "the target is gone: {outcome:?}"
+    );
+    assert!(
+        present(&site.at("sibling")),
+        "its sibling stays: {outcome:?}"
+    );
+    assert!(present(&site.root), "the root stays: {outcome:?}");
     site.assert_outside_intact();
 }
 
@@ -62,7 +68,7 @@ fn a_roots_contents_go_and_the_root_stays() {
     let outcome = delete(&anchor, frozen.tree);
 
     assert_eq!(outcome.status(), Status::Done, "{outcome:?}");
-    assert!(present(&site.root), "the root itself stays");
+    assert!(present(&site.root), "the root itself stays: {outcome:?}");
     assert_eq!(fs::read_dir(&site.root).unwrap().count(), 0);
 }
 
@@ -81,8 +87,8 @@ fn a_tree_of_the_roots_contents_never_runs_for_a_target_below_it() {
         matches!(&outcome, ItemOutcome::Failed { error, .. } if error.code == ErrorCode::TargetChanged),
         "{outcome:?}"
     );
-    assert!(present(&site.at("other/x")), "other/x stays");
-    assert!(present(&site.at("target/a")), "target/a stays");
+    assert!(present(&site.at("other/x")), "other/x stays: {outcome:?}");
+    assert!(present(&site.at("target/a")), "target/a stays: {outcome:?}");
 }
 
 /// Catches a link inside a target being followed: what it leads to, outside the root,
@@ -108,7 +114,7 @@ fn a_link_inside_the_target_goes_and_what_it_leads_to_stays() {
     let outcome = delete(&anchor, frozen.tree);
 
     assert_eq!(outcome.status(), Status::Done, "{outcome:?}");
-    assert!(!present(&site.at("target")), "target is gone");
+    assert!(!present(&site.at("target")), "target is gone: {outcome:?}");
     site.assert_outside_intact();
 }
 
@@ -140,9 +146,15 @@ fn a_directory_replaced_by_a_link_during_the_run_is_never_entered() {
         5,
         "sub and all below it: {outcome:?}"
     );
-    assert!(!present(&site.at("target/a")), "target/a is gone");
+    assert!(
+        !present(&site.at("target/a")),
+        "target/a is gone: {outcome:?}"
+    );
     assert!(is_link(&site.at("target/sub")), "the link stays");
-    assert!(present(&site.outside.join("dir/b")), "outside/dir/b stays");
+    assert!(
+        present(&site.outside.join("dir/b")),
+        "outside/dir/b stays: {outcome:?}"
+    );
     site.assert_outside_intact();
 }
 
@@ -162,7 +174,7 @@ fn a_directory_changed_after_the_freeze_is_left_whole() {
 
     assert_eq!(outcome.status(), Status::Partial, "{outcome:?}");
     assert_eq!(left(&outcome, LeftReason::Changed), 7, "{outcome:?}");
-    assert!(present(&site.at("target/a")), "target/a stays");
+    assert!(present(&site.at("target/a")), "target/a stays: {outcome:?}");
     site.assert_outside_intact();
 }
 
@@ -186,7 +198,7 @@ fn a_link_on_the_way_to_the_target_stops_the_run() {
     assert_eq!(removed(&outcome).names, 0);
     assert!(
         present(&site.outside.join("target/a")),
-        "outside/target/a stays"
+        "outside/target/a stays: {outcome:?}"
     );
     site.assert_outside_intact();
 }
@@ -210,7 +222,7 @@ fn a_replaced_root_stops_the_run_before_anything_is_removed() {
     );
     assert!(
         present(&site.at("target/sub/deeper/c")),
-        "the new root's tree stays"
+        "the new root's tree stays: {outcome:?}"
     );
     assert!(
         present(&elsewhere.join("target/sub/deeper/c")),
@@ -254,9 +266,16 @@ fn a_file_replaced_during_the_run_stays() {
 
     assert_eq!(outcome.status(), Status::Partial, "{outcome:?}");
     assert_eq!(left(&outcome, LeftReason::Replaced), 1, "{outcome:?}");
-    assert_eq!(left(&outcome, LeftReason::NotEmpty), 1, "the target");
+    assert_eq!(
+        left(&outcome, LeftReason::NotEmpty),
+        1,
+        "the target: {outcome:?}"
+    );
     assert_eq!(fs::read(site.at("target/z")).unwrap(), b"z");
-    assert!(!present(&site.at("target/sub")), "target/sub is gone");
+    assert!(
+        !present(&site.at("target/sub")),
+        "target/sub is gone: {outcome:?}"
+    );
 }
 
 /// Catches a file edited in place after the freeze being removed: its fingerprint, not
@@ -278,7 +297,7 @@ fn a_file_edited_in_place_after_the_freeze_stays() {
     );
     assert!(
         !present(&site.at("target/sub/deeper")),
-        "target/sub/deeper is gone"
+        "target/sub/deeper is gone: {outcome:?}"
     );
 }
 
@@ -303,13 +322,16 @@ fn a_child_created_after_the_freeze_and_its_directory_stay() {
     );
     assert!(
         present(&site.at("target/sub/deeper/new")),
-        "target/sub/deeper/new stays"
+        "target/sub/deeper/new stays: {outcome:?}"
     );
     assert!(
         present(&site.at("target/sub/deeper/c")),
-        "target/sub/deeper/c stays"
+        "target/sub/deeper/c stays: {outcome:?}"
     );
-    assert!(!present(&site.at("target/a")), "target/a is gone");
+    assert!(
+        !present(&site.at("target/a")),
+        "target/a is gone: {outcome:?}"
+    );
 }
 
 /// Catches an entry the plan left out being removed, or its directories: they stay as
@@ -335,13 +357,16 @@ fn an_excluded_entry_and_its_directories_stay() {
     );
     assert!(
         present(&site.at("target/sub/deeper/c")),
-        "target/sub/deeper/c stays"
+        "target/sub/deeper/c stays: {outcome:?}"
     );
     assert!(
         !present(&site.at("target/sub/deeper/d")),
-        "target/sub/deeper/d is gone"
+        "target/sub/deeper/d is gone: {outcome:?}"
     );
-    assert!(!present(&site.at("target/sub/b")), "target/sub/b is gone");
+    assert!(
+        !present(&site.at("target/sub/b")),
+        "target/sub/b is gone: {outcome:?}"
+    );
 }
 
 /// Catches a non-UTF-8 name (Linux) or an ill-formed UTF-16 one (Windows) being
@@ -363,9 +388,12 @@ fn a_name_that_isnt_unicode_is_removed_by_its_own_name() {
     assert_eq!(outcome.status(), Status::Done, "{outcome:?}");
     assert!(
         !present(&site.at("target").join(&odd)),
-        "the name that isn't Unicode is gone"
+        "the name that isn't Unicode is gone: {outcome:?}"
     );
-    assert!(present(&site.at("target/odd--")), "target/odd-- stays");
+    assert!(
+        present(&site.at("target/odd--")),
+        "target/odd-- stays: {outcome:?}"
+    );
 }
 
 /// Catches a hard-linked file counted as freed while another name keeps it, and two
@@ -467,10 +495,13 @@ fn an_entry_the_os_refuses_is_left_and_the_rest_goes() {
         3,
         "deeper, sub, target"
     );
-    assert!(!present(&site.at("target/a")), "target/a is gone");
+    assert!(
+        !present(&site.at("target/a")),
+        "target/a is gone: {outcome:?}"
+    );
     assert!(
         present(&site.at("target/sub/deeper/c")),
-        "target/sub/deeper/c stays"
+        "target/sub/deeper/c stays: {outcome:?}"
     );
 }
 
@@ -544,10 +575,13 @@ fn a_locked_file_is_left_busy_and_the_rest_goes() {
     drop(held);
 
     assert_eq!(left(&outcome, LeftReason::Busy), 1, "{outcome:?}");
-    assert!(present(&site.at("target/sub/b")), "target/sub/b stays");
+    assert!(
+        present(&site.at("target/sub/b")),
+        "target/sub/b stays: {outcome:?}"
+    );
     assert!(
         !present(&site.at("target/sub/deeper")),
-        "target/sub/deeper is gone"
+        "target/sub/deeper is gone: {outcome:?}"
     );
 }
 
@@ -567,7 +601,7 @@ fn a_read_only_file_is_removed() {
     let outcome = delete(&anchor, frozen.tree);
 
     assert_eq!(outcome.status(), Status::Done, "{outcome:?}");
-    assert!(!present(&site.at("target")), "target is gone");
+    assert!(!present(&site.at("target")), "target is gone: {outcome:?}");
 }
 
 /// Catches a cloud placeholder being frozen as a plain file, so a delete would remove a
@@ -639,7 +673,10 @@ fn only_entries_still_authorized_are_touched() {
     assert_eq!(left(&outcome, LeftReason::Changed), 5);
     assert!(
         present(&site.at("target/sub/deeper/d")),
-        "target/sub/deeper/d stays"
+        "target/sub/deeper/d stays: {outcome:?}"
     );
-    assert!(!present(&site.at("target/a")), "target/a is gone");
+    assert!(
+        !present(&site.at("target/a")),
+        "target/a is gone: {outcome:?}"
+    );
 }
