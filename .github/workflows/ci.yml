@@ -65,11 +65,90 @@ jobs:
         with:
           tool: cargo-nextest@0.9.146
 
+      # The executor's mount tests need real mounts: another volume mounted inside a
+      # directory, a same-device bind mount (Linux) and a FAT volume. Each is named by a
+      # variable the tests read (crates/kipple-platform/tests/native/executor/mounts.rs).
+      - name: Prepare test mounts (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="$RUNNER_TEMP/kipple-mounts"
+          mkdir -p "$base/other/other" "$base/bind/inside" "$base/bind-source" "$base/fat"
+          owner="uid=$(id -u),gid=$(id -g)"
+          sudo mount -t tmpfs -o "size=64m,mode=0755,$owner" kipple-other "$base/other/other"
+          sudo mount --bind "$base/bind-source" "$base/bind/inside"
+          command -v mkfs.vfat >/dev/null || {
+            sudo apt-get update
+            sudo apt-get install -y dosfstools
+          }
+          truncate -s 64M "$base/fat.img"
+          mkfs.vfat "$base/fat.img"
+          sudo mount -o "loop,$owner" "$base/fat.img" "$base/fat"
+          {
+            echo "KIPPLE_TEST_OTHER_MOUNT=$base/other"
+            echo "KIPPLE_TEST_BIND_MOUNT=$base/bind"
+            echo "KIPPLE_TEST_FAT=$base/fat"
+          } >> "$GITHUB_ENV"
+
+      - name: Prepare test mounts (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="$RUNNER_TEMP/kipple-mounts"
+          mkdir -p "$base/other/other" "$base/fat"
+          hdiutil create -size 64m -fs APFS -volname KippleOther "$base/other.dmg"
+          hdiutil attach -nobrowse -mountpoint "$base/other/other" "$base/other.dmg"
+          hdiutil create -size 64m -fs MS-DOS -volname KIPPLEFAT "$base/fat.dmg"
+          hdiutil attach -nobrowse -mountpoint "$base/fat" "$base/fat.dmg"
+          {
+            echo "KIPPLE_TEST_OTHER_MOUNT=$base/other"
+            echo "KIPPLE_TEST_FAT=$base/fat"
+          } >> "$GITHUB_ENV"
+
+      # A Windows root is opened as itself, never through a mount point, so the other
+      # volume gets a drive letter as well as its folder. ReFS is best effort: the runner
+      # may not format it.
+      - name: Prepare test mounts (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $base = Join-Path $env:RUNNER_TEMP 'kipple-mounts'
+          New-Item -ItemType Directory -Force -Path "$base\other\other" | Out-Null
+          function New-TestVolume($name, $size, $format, $letter, $folder) {
+            $lines = @(
+              "create vdisk file=`"$base\$name.vhdx`" maximum=$size type=expandable",
+              "select vdisk file=`"$base\$name.vhdx`"",
+              'attach vdisk',
+              'convert mbr',
+              'create partition primary',
+              "format fs=$format quick label=$name",
+              "assign letter=$letter"
+            )
+            if ($folder) { $lines += "assign mount=`"$folder`"" }
+            $lines | Set-Content -Path "$base\$name.txt" -Encoding ascii
+            diskpart /s "$base\$name.txt" | Out-Host
+            return $LASTEXITCODE -eq 0
+          }
+          if (-not (New-TestVolume 'other' 256 'ntfs' 'K' "$base\other\other")) { throw 'diskpart failed for NTFS' }
+          if (-not (New-TestVolume 'fat' 256 'fat32' 'L' $null)) { throw 'diskpart failed for FAT32' }
+          Add-Content -Path $env:GITHUB_ENV -Value "KIPPLE_TEST_OTHER_MOUNT=$base\other"
+          Add-Content -Path $env:GITHUB_ENV -Value 'KIPPLE_TEST_OTHER_VOLUME=K:\'
+          Add-Content -Path $env:GITHUB_ENV -Value 'KIPPLE_TEST_FAT=L:\'
+          if (New-TestVolume 'refs' 4096 'refs' 'M' $null) {
+            Add-Content -Path $env:GITHUB_ENV -Value 'KIPPLE_TEST_REFS=M:\'
+          } else {
+            Write-Warning 'ReFS is not available on this runner; its test is skipped'
+          }
+
       # The runner VM is disposable, so the native-backend tests may read its real state.
       - name: Run the native-backend tests
         run: cargo xtask test-native
         env:
           KIPPLE_TEST_DISPOSABLE_HOST: "1"
+          KIPPLE_TEST_MOUNTS_REQUIRED: "1"
 
   deny:
     runs-on: ubuntu-latest
