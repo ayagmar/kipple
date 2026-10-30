@@ -15,7 +15,7 @@ use std::path::PathBuf;
 
 use kipple_core::{
     CancelToken, DeleteOp, ErrorCode, FileSystemClass, Freezer as _, FsProbe as _, ItemOutcome,
-    Marks, Unsupported,
+    Marks, Skip, Unsupported,
 };
 use kipple_platform::{ConfinedFs, NoFollowFs};
 use tempfile::TempDir;
@@ -119,7 +119,7 @@ fn refused_through(mounted: &std::path::Path, holder: &std::path::Path, componen
     let outcome = run(&DeleteOp::for_platform_tests(through, tree, marks));
 
     assert!(
-        matches!(&outcome, ItemOutcome::Failed { error, .. } if error.code == ErrorCode::MountBoundary),
+        matches!(&outcome, ItemOutcome::Skipped(Skip::Refused(error)) if error.code == ErrorCode::MountBoundary),
         "{outcome:?}"
     );
     assert!(present(&temp.path().join("inner/x")), "inner/x stays");
@@ -148,7 +148,7 @@ fn nothing_is_removed_on_fat() {
     let outcome = delete(&anchor, frozen.tree);
 
     assert!(
-        matches!(&outcome, ItemOutcome::Failed { error, .. } if error.code == ErrorCode::UnsupportedFileSystem),
+        matches!(&outcome, ItemOutcome::Skipped(Skip::Refused(error)) if error.code == ErrorCode::UnsupportedFileSystem),
         "{outcome:?}"
     );
     assert!(present(&temp.path().join("target/x")), "target/x stays");
