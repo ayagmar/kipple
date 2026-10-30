@@ -133,7 +133,7 @@ pub trait TrashBackend: fmt::Debug + Send + Sync {
     /// Checks every entry of `op`'s tree on its open handle, with the executor's own
     /// checks, then moves the item whole to `slot` and writes what the trash records to
     /// restore it (the freedesktop `.trashinfo`). Any entry that differs refuses the
-    /// whole move. Entries that appeared since the freeze move with it, as review said.
+    /// whole move. Entries that appear after the check move with it.
     ///
     /// # Errors
     /// When the move was refused or failed. Nothing moved then.
