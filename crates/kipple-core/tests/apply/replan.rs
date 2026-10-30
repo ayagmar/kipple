@@ -10,7 +10,7 @@ use serde_json::Value;
 
 use super::codec::TestCodec;
 use super::world::World;
-use super::{Config, plan_all, ports, project, rel, scan_of, snapshot, world_of};
+use super::{Config, HOME, home, plan_all, ports, project, rel, scan_of, snapshot, world_of};
 
 /// Two projects' `target/`, scanned and planned under `config`, with the file `plan -o`
 /// writes for that plan.
@@ -86,7 +86,7 @@ fn a_file_with_an_extra_root_reaches_nothing_there() {
     let config = Config::new();
     let (world, scan, mut file) = planned(&config);
     let mut extra = file["items"][0].clone();
-    extra["root_path"] = Value::from("/elsewhere");
+    extra["root_path"] = Value::from(format!("{HOME}-elsewhere"));
     file["items"].as_array_mut().unwrap().push(extra);
     let replanned = again(&file, &scan, &config, &world);
     assert_eq!(why(&replanned), [(2, Dropped::NotFound)]);
@@ -168,7 +168,7 @@ fn an_entry_added_since_the_file_is_left_out() {
     world
         .state()
         .targets
-        .get_mut(std::path::Path::new("/home/u/p0/target"))
+        .get_mut(&home("p0/target"))
         .unwrap()
         .entries
         .insert(
