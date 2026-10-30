@@ -124,12 +124,15 @@ impl FileRunStore {
             return Err(StoreRefusal::Space { needed, free });
         }
         let (id, dir) = self.new_run(runs)?;
-        runs.sync().map_err(unsynced)?;
-        write_new(&dir, PLAN_PARTIAL, plan)?;
-        dir.rename(PLAN_PARTIAL, PLAN).map_err(refused)?;
-        dir.sync().map_err(unsynced)?;
-        write_new(&dir, JOURNAL, first)?;
-        dir.sync().map_err(unsynced)?;
+        runs.sync().map_err(unsynced("syncing runs/"))?;
+        write_new(&dir, PLAN_PARTIAL, plan).map_err(refused("writing plan.partial"))?;
+        dir.rename(PLAN_PARTIAL, PLAN)
+            .map_err(refused("renaming plan.partial to plan"))?;
+        dir.sync()
+            .map_err(unsynced("syncing the run after its plan"))?;
+        write_new(&dir, JOURNAL, first).map_err(refused("writing the journal"))?;
+        dir.sync()
+            .map_err(unsynced("syncing the run after its journal"))?;
         Ok(id)
     }
 
@@ -140,11 +143,13 @@ impl FileRunStore {
             let id = RunId::at(now, counter);
             match runs.create_dir(id.as_str()) {
                 Ok(()) => {
-                    let dir = runs.open_in(id.as_str()).map_err(refused)?;
+                    let dir = runs
+                        .open_in(id.as_str())
+                        .map_err(refused("opening the run's directory"))?;
                     return Ok((id, dir));
                 }
                 Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
-                Err(error) => return Err(refused(error)),
+                Err(error) => return Err(refused("creating the run's directory")(error)),
             }
         }
         Err(StoreRefusal::Write(ApplyError::new(
@@ -156,7 +161,7 @@ impl FileRunStore {
 impl RunStore for FileRunStore {
     fn lock(&self, cancel: &CancelToken) -> Result<Locked, StoreRefusal> {
         let data = self.data.as_deref().ok_or(StoreRefusal::NoDataDir)?;
-        let runs = make_runs(data).map_err(refused)?;
+        let runs = make_runs(data).map_err(refused("making runs/"))?;
         match runs.file_system() {
             Ok(FileSystemClass::Supported(_)) => {}
             Ok(FileSystemClass::Unsupported(why)) => return Err(StoreRefusal::FileSystem(why)),
@@ -249,8 +254,8 @@ impl RunStore for FileRunStore {
 
     fn create(&self, _: &Locked, plan: &[u8], first: &[u8]) -> Result<RunId, StoreRefusal> {
         let data = self.data.as_deref().ok_or(StoreRefusal::NoDataDir)?;
-        let runs = Folder::open(&data.join(RUNS)).map_err(refused)?;
-        let free = runs.free().map_err(refused)?;
+        let runs = Folder::open(&data.join(RUNS)).map_err(refused("opening runs/"))?;
+        let free = runs.free().map_err(refused("reading the free space"))?;
         self.create_in(&runs, free, plan, first)
     }
 
@@ -301,13 +306,13 @@ fn wait_for(file: &File, cancel: &CancelToken) -> Result<(), StoreRefusal> {
 
 /// Writes `bytes` to a new file `name` in `dir` and syncs it. A file left part-written
 /// is emptied, so a failed write doesn't keep the space it took.
-fn write_new(dir: &Folder, name: &str, bytes: &[u8]) -> Result<(), StoreRefusal> {
-    let mut file = dir.create(name).map_err(refused)?;
-    if let Err(error) = file.write_all(bytes).and_then(|()| file.sync_all()) {
+fn write_new(dir: &Folder, name: &str, bytes: &[u8]) -> io::Result<()> {
+    let mut file = dir.create(name)?;
+    let written = file.write_all(bytes).and_then(|()| file.sync_all());
+    if written.is_err() {
         file.set_len(0).ok();
-        return Err(refused(error));
     }
-    Ok(())
+    written
 }
 
 /// What [`append_at`] needs of a journal file. A file that fails stands in for a full
@@ -381,14 +386,24 @@ fn failed(error: io::Error) -> ApplyError {
     ApplyError::io(code, error)
 }
 
-/// Creating or writing a run failed.
-fn refused(error: io::Error) -> StoreRefusal {
-    StoreRefusal::Write(failed(error))
+/// Creating or writing a run failed at `step`.
+fn refused(step: &'static str) -> impl FnOnce(io::Error) -> StoreRefusal {
+    move |error| StoreRefusal::Write(during(step, failed(error)))
 }
 
-/// A run was written but couldn't be made durable.
-fn unsynced(error: io::Error) -> StoreRefusal {
-    StoreRefusal::Write(ApplyError::io(ErrorCode::Unsynced, error))
+/// A run was written but couldn't be made durable at `step`.
+fn unsynced(step: &'static str) -> impl FnOnce(io::Error) -> StoreRefusal {
+    move |error| StoreRefusal::Write(during(step, ApplyError::io(ErrorCode::Unsynced, error)))
+}
+
+/// `error` with `step` named in its detail, which is shown and never stored: the OS
+/// error alone doesn't say which of the store's calls failed.
+fn during(step: &'static str, mut error: ApplyError) -> ApplyError {
+    if let Some(detail) = error.detail.take() {
+        let named = io::Error::new(detail.kind(), format!("{step}: {detail}"));
+        error.detail = Some(Arc::new(named));
+    }
+    error
 }
 
 fn lock_failed(error: &io::Error) -> StoreRefusal {
