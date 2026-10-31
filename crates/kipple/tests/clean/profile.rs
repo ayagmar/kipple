@@ -101,9 +101,10 @@ fn a_profile_cleans_exactly_the_safe_set_it_was_made_with() {
 }
 
 /// Catches a profile run under a wider level than it was made with (J6, pinned 12, 13,
-/// docs/11 "Balanced to Thorough"): after `care.level` changes, the run exits 3, removes
-/// nothing, names the change and how to review it; `profile review` saves the profile
-/// as it is now, and then it runs again.
+/// 17, docs/11 "Balanced to Thorough"): after `care.level` changes, the run exits 3,
+/// removes nothing, names the change and how to review it, while its dry run names it
+/// too and exits 0 as a preview; `profile review` saves the profile as it is now, and
+/// then it runs again.
 #[test]
 fn a_changed_level_suspends_the_profile_until_it_is_reviewed() {
     let demo = Demo::new();
@@ -140,6 +141,27 @@ fn a_changed_level_suspends_the_profile_until_it_is_reviewed() {
     );
     assert!(present(&demo.at(ACME)), "acme's target stays");
     assert!(demo.history().is_empty(), "no run is stored");
+
+    let previewed = demo.run(&[
+        "--config",
+        &thorough,
+        "clean",
+        "--profile",
+        "safe",
+        "--dry-run",
+    ]);
+
+    assert_eq!(previewed.code, ExitCode::SUCCESS, "{}", previewed.err);
+    assert!(
+        previewed.out.contains("Dry run: nothing was changed."),
+        "{}",
+        previewed.out
+    );
+    assert!(
+        previewed.err.contains("its level changed"),
+        "{}",
+        previewed.err
+    );
 
     let reviewed = demo.answer(&["--config", &thorough, "profile", "review", "safe"], "y\n");
 

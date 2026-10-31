@@ -351,10 +351,6 @@ pub(crate) fn clean(host: &Host<'_>, args: &CleanArgs, io: &mut Io<'_>) -> ExitC
         policy,
         told: output::Told::NotYet,
     };
-    if let Some(check) = check.as_ref().filter(|check| check.grant().is_none()) {
-        let finished = profile::none_active(check, io.stderr);
-        return events.finish(&finished, &shown, io.stdout, io.stderr);
-    }
     let request = CleanRequest {
         scan: &scanned.report,
         selection: &picked.selection,
@@ -368,6 +364,9 @@ pub(crate) fn clean(host: &Host<'_>, args: &CleanArgs, io: &mut Io<'_>) -> ExitC
             ink: &ink,
         };
         return dry.show(io.stdout, io.stderr, &io.cancel);
+    }
+    if let Some(inactive) = check.as_ref().filter(|check| check.grant().is_none()) {
+        return events.finish(&profile::none_ran(inactive), &shown, io.stdout, io.stderr);
     }
     let Io {
         stdin,

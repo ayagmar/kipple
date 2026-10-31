@@ -106,7 +106,8 @@ pub(super) fn saved(
 }
 
 /// `saved` checked against `machine`'s config and the scan `report`: what of it is
-/// active now. Each entry it leaves out, and why, is said on `stderr`.
+/// active now. Each entry it leaves out, and why, is said on `stderr`, and when it
+/// grants nothing, that and how to make it run again.
 pub(super) fn checked(
     saved: &Profile,
     machine: &Machine,
@@ -118,13 +119,15 @@ pub(super) fn checked(
     for line in left_out(&check) {
         say(stderr, &line);
     }
+    if check.grant().is_none() {
+        say(stderr, &words::none_active(check.name().as_str()));
+    }
     check
 }
 
-/// How a profile run whose `check` left no entry active ends: nothing ran, said on
-/// `stderr` with how to make it run again, and the receipt names what was left out.
-pub(super) fn none_active(check: &ProfileCheck, stderr: &mut dyn Write) -> Finished {
-    say(stderr, &words::none_active(check.name().as_str()));
+/// How a profile run whose `check` left no entry active ends: nothing ran, and the
+/// receipt names what was left out.
+pub(super) fn none_ran(check: &ProfileCheck) -> Finished {
     Finished {
         ending: Ending::NoneRan,
         run: None,
