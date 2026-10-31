@@ -111,9 +111,25 @@ impl Demo {
     }
 
     fn run_with(&self, args: &[&str], asked: Asked, cancel: &CancelToken) -> Ran {
+        let mut out = Vec::new();
+        let ran = self.run_on(args, asked, cancel, &mut out);
+        Ran {
+            out: String::from_utf8(out).unwrap(),
+            ..ran
+        }
+    }
+
+    /// [`Demo::run_with`], writing stdout to `stdout`, so the result's `out` is empty.
+    fn run_on(
+        &self,
+        args: &[&str],
+        asked: Asked,
+        cancel: &CancelToken,
+        stdout: &mut dyn io::Write,
+    ) -> Ran {
         let cli = Cli::parse_from(std::iter::once("kipple").chain(args.iter().copied()));
-        let (mut out, mut err) = (Vec::new(), Vec::new());
-        let mut io = Io::redirected(&mut out, &mut err);
+        let mut err = Vec::new();
+        let mut io = Io::redirected(stdout, &mut err);
         io.cancel = cancel.clone();
         if let Asked::Person(terminal) = asked {
             io.person = Person::AtTerminal;
@@ -122,7 +138,7 @@ impl Demo {
         let code = kipple::run(&cli, &self.env(), io);
         Ran {
             code,
-            out: String::from_utf8(out).unwrap(),
+            out: String::new(),
             err: String::from_utf8(err).unwrap(),
         }
     }

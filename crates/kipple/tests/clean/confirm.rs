@@ -50,22 +50,29 @@ fn shows(out: &str, relative: &str) -> bool {
     out.lines().any(|line| line.ends_with(&relative))
 }
 
-/// Catches a dry run that writes anything, with or without a terminal (pinned 17: no
-/// lock, no reconciliation, no run, no trash folder, no config): it shows the plan the
-/// same command would confirm, exits 0, and every byte under the demo's home, data
-/// folder and trash is as it was.
+/// Catches a dry run that writes anything, with or without a terminal or a profile
+/// (pinned 17: no lock, no reconciliation, no run, no trash folder, no config, no profile
+/// folder): it shows the plan the same command would confirm, exits 0, and every byte
+/// under the demo's home, data folder and trash is as it was.
 #[test]
 fn a_dry_run_shows_the_plan_and_changes_nothing() {
     let demo = Demo::new();
     let config = demo.at("config.toml");
     fs::write(&config, "[clean]\nmethod = \"trash\"\n").unwrap();
     let config = config.to_str().unwrap();
+    let created = demo.answer(
+        &["profile", "create", "bins", "--from-safe", "--only", TARGET],
+        "y\n",
+    );
+    assert_eq!(created.code, ExitCode::SUCCESS, "{}", created.err);
     let before = tree(demo.temp.path());
 
     for args in [
         vec!["clean", "--dry-run"],
         vec!["clean", "--dry-run", "--only", TARGET, "--yes"],
         vec!["--config", config, "clean", "--dry-run", "--only", TARGET],
+        vec!["clean", "--profile", "bins", "--dry-run"],
+        vec!["clean", "--profile", "bins", "--dry-run", "--yes"],
     ] {
         let ran = demo.run(&args);
 

@@ -3,6 +3,7 @@
 //! and nothing is saved unless a person says yes at a terminal.
 
 use std::fs;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
@@ -340,6 +341,99 @@ fn review_adds_a_left_out_rule_only_when_named() {
         list.out.contains("bins  2 active, 0 suspended, 0 pending"),
         "{}",
         list.out
+    );
+}
+
+/// Catches `review` widening a profile with a rule new since it was made (pinned 12,
+/// 13): the rule stays pending, said and not saved, until `--add` names it.
+#[test]
+fn review_adds_a_pending_rule_only_when_named() {
+    let demo = Demo::new();
+    create(&demo, &[], "bins", &[TARGET]);
+    let file = stored(&demo, "bins").unwrap();
+    // The profile as an older kipple without the venv rule saved it.
+    let mut older: Value = serde_json::from_slice(&fs::read(&file).unwrap()).unwrap();
+    let entries = older["entries"].as_array_mut().unwrap();
+    entries.retain(|entry| entry["rule"] != VENV);
+    fs::write(&file, serde_json::to_vec(&older).unwrap()).unwrap();
+    let saved = fs::read(&file).unwrap();
+
+    let unchanged = demo.answer(&["profile", "review", "bins"], "y\n");
+
+    assert_eq!(unchanged.code, ExitCode::SUCCESS, "{}", unchanged.err);
+    assert!(
+        unchanged.err.contains(&format!(
+            "{VENV}: new since the profile was made, not added"
+        )),
+        "{}",
+        unchanged.err
+    );
+    assert_eq!(fs::read(&file).unwrap(), saved, "nothing was written");
+
+    let added = demo.answer(&["profile", "review", "bins", "--add", VENV], "y\n");
+
+    assert_eq!(added.code, ExitCode::SUCCESS, "{}", added.err);
+    assert!(
+        added.err.contains(&format!("{VENV}: added")),
+        "{}",
+        added.err
+    );
+    let list = demo.run(&["profile", "list"]);
+    assert!(
+        list.out.contains("bins  2 active, 0 suspended, 0 pending"),
+        "{}",
+        list.out
+    );
+}
+
+/// Stdout that replaces `file` with bytes that aren't a profile when the first thing is
+/// written to it.
+struct SpoilsOnWrite {
+    file: PathBuf,
+    spoiled: bool,
+}
+
+impl Write for SpoilsOnWrite {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if !self.spoiled {
+            fs::write(&self.file, b"not a profile")?;
+            self.spoiled = true;
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Catches a profile run reading its profile again once the scan is done (pinned 13: it
+/// is read once, before the scan): the file replaced while the scan streams its first
+/// event, before anything is planned, doesn't stop the run, which cleans what the
+/// profile it read holds.
+#[test]
+fn a_profile_replaced_during_the_scan_runs_as_it_was_read() {
+    let demo = Demo::new();
+    create(&demo, &[], "bins", &[TARGET]);
+    let file = stored(&demo, "bins").unwrap();
+    let mut stdout = SpoilsOnWrite {
+        file: file.clone(),
+        spoiled: false,
+    };
+
+    let ran = demo.run_on(
+        &["clean", "--profile", "bins", "--yes", "--events", "jsonl"],
+        Asked::Nobody,
+        &CancelToken::new(),
+        &mut stdout,
+    );
+
+    assert_eq!(ran.code, ExitCode::SUCCESS, "{}", ran.err);
+    assert!(stdout.spoiled, "replaced during the scan");
+    assert_eq!(fs::read(&file).unwrap(), b"not a profile");
+    assert!(
+        !present(&demo.at(ACME)) && !present(&demo.at(RUST_APP)),
+        "both cleaned"
     );
 }
 
