@@ -67,6 +67,8 @@ impl Integration for Trash {
             artifacts: &[],
             owner_files: &[],
             verified: &["freedesktop.org Trash specification 1.0"],
+            consequences: &[],
+            revision: 1,
         }
     }
 
@@ -99,6 +101,8 @@ impl Integration for Pacman {
             artifacts: &[],
             owner_files: &[],
             verified: &["pacman 7.1.0"],
+            consequences: &[],
+            revision: 1,
         }
     }
 
@@ -149,6 +153,8 @@ impl Integration for Journald {
             artifacts: &[],
             owner_files: &[],
             verified: &["systemd 262"],
+            consequences: &[],
+            revision: 1,
         }
     }
 

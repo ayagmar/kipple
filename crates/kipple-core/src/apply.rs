@@ -40,7 +40,7 @@ use crate::rule::Method;
 use crate::trash::TrashSlot;
 
 /// What to apply.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct ApplyRequest<'run> {
     /// The plan, as reviewed.
     pub plan: &'run Plan,
@@ -338,7 +338,7 @@ impl Run<'_> {
         admit(
             self.request.plan,
             entry.item(),
-            self.request.authorization,
+            &self.request.authorization,
             recheck,
         )
     }

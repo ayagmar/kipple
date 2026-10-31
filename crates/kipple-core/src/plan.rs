@@ -21,7 +21,7 @@ use crate::policy::{Caution, Facts, Level, Policy, Proposal, Verdict};
 use crate::probe::FileIdentity;
 use crate::root::SymbolicRoot;
 use crate::rule::{Method, Rule, RuleId};
-use crate::size::SpaceEstimate;
+use crate::size::{Completeness, SpaceEstimate};
 
 /// An item's place in its plan. A reference, never authorization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -375,5 +375,56 @@ impl Plan {
     #[must_use]
     pub const fn digest(&self) -> Digest {
         self.digest
+    }
+
+    /// What removing every item frees, as each item's [`SpaceEstimate::reclaim`] says:
+    /// the figure its heading and the typed size show. Incomplete when an item was
+    /// measured only in part or not at all (counted as one unreadable entry), and
+    /// cancelled when a measurement was.
+    #[must_use]
+    pub fn estimated_total(&self) -> Total {
+        self.entries.iter().fold(Total::default(), |total, entry| {
+            let (known, complete) = entry.estimate.as_ref().map_or(
+                (
+                    0,
+                    Completeness::Incomplete {
+                        unreadable: 1,
+                        skipped_mounts: 0,
+                    },
+                ),
+                |estimate| (estimate.reclaim(), estimate.completeness),
+            );
+            Total {
+                known: total.known.saturating_add(known),
+                complete: total.complete.and(complete),
+            }
+        })
+    }
+}
+
+/// What a plan frees in all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Total {
+    /// The bytes measured.
+    pub known: u64,
+    /// Whether that is all of it, or a lower bound.
+    pub complete: Completeness,
+}
+
+impl Default for Total {
+    fn default() -> Self {
+        Self {
+            known: 0,
+            complete: Completeness::Complete,
+        }
+    }
+}
+
+impl Total {
+    /// Whether removing it needs its size typed under a threshold of `threshold` bytes:
+    /// when it is above, or may be (it is a lower bound).
+    #[must_use]
+    pub const fn exceeds(&self, threshold: u64) -> bool {
+        self.known > threshold || !matches!(self.complete, Completeness::Complete)
     }
 }

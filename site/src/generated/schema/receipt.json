@@ -29,6 +29,17 @@
         "$ref": "#/$defs/ReceiptItemOut"
       }
     },
+    "profile": {
+      "description": "For `clean --profile`, the profile run and what of it was left out. Absent\notherwise.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ProfileRunOut"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "refused": {
       "description": "For `clean`, the selected findings planning refused; empty for `apply FILE`.",
       "type": "array",
@@ -857,6 +868,35 @@
             "found"
           ]
         }
+      ]
+    },
+    "ProfileRunOut": {
+      "description": "The profile a `clean` ran, and the entries it didn't run.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "description": "The profile's name.",
+          "type": "string"
+        },
+        "pending": {
+          "description": "The rules proposing removal that it has no entry for, sorted: they wait for\n`profile review`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "suspended": {
+          "description": "The rules of its suspended entries, sorted: their values changed since it was\nmade.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "name",
+        "suspended",
+        "pending"
       ]
     },
     "Protection": {

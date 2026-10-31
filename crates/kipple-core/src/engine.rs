@@ -20,6 +20,7 @@ use crate::cancel::CancelToken;
 use crate::discovery::{WalkPlan, Walks};
 use crate::event::{EventTx, ScanEvent, Stopped};
 use crate::facts::{Above, Repositories};
+use crate::format::{IntegrationDigests, integration_digest};
 use crate::integration::{
     ActivityEvidence, Advice, Evidence, FindingSink, Integration, IntegrationDescriptor,
     IntegrationError, IntegrationId, ScanContext,
@@ -318,6 +319,21 @@ impl Engine {
             integrations: registered,
             plan,
         })
+    }
+
+    /// The digest of each registered integration, as a profile freezes it and checks it
+    /// against (D-068).
+    #[must_use]
+    pub fn integration_digests(&self) -> IntegrationDigests {
+        IntegrationDigests(
+            self.integrations
+                .iter()
+                .map(|registered| {
+                    let digest = integration_digest(&registered.descriptor, registered.evidence);
+                    (registered.descriptor.id, digest)
+                })
+                .collect(),
+        )
     }
 
     /// Runs every integration concurrently, then sizes what each one found. Blocks until

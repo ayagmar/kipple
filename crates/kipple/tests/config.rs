@@ -234,10 +234,6 @@ fn every_config_kipple_cant_use_exits_2_with_the_reason_and_where_it_is() {
             "line 2, column 1: unknown key ui.colour",
         ),
         ("ui = 1", "ui: expected a table"),
-        (
-            "[review]\nconfirm_by_typing_above = \"5 GB\"",
-            "review is not supported yet",
-        ),
         ("[retention]", "retention is not supported yet"),
         (
             "[rules.\"builtin.cargo.target\"]\nmethod = \"trash\"",
@@ -1291,4 +1287,70 @@ fn config_show_prints_the_ui_settings_and_the_keys_that_differ_from_the_defaults
         !custom.contains("keys.move-down"),
         "same as the default:\n{custom}"
     );
+}
+
+// Catches a typed-size threshold kipple can't read being taken for some size, or blamed
+// on the wrong place (spec M3c pinned 16).
+#[test]
+fn a_typed_size_threshold_that_isnt_a_size_exits_2_with_where_it_is() {
+    let demo = Demo::new(&[], "");
+    let env = demo.env(&[]);
+    let cases = [
+        (
+            "[review]\nconfirm_by_typing_above = \"5 gigs\"",
+            "line 2, column 27: review.confirm_by_typing_above: expected a size",
+        ),
+        (
+            "[review]\nconfirm_by_typing_above = -1",
+            "line 2, column 27: review.confirm_by_typing_above: expected a size",
+        ),
+        (
+            "[review]\nconfirm_by_typing_above = \"20000000 TB\"",
+            "review.confirm_by_typing_above: expected a size",
+        ),
+        (
+            "[review]\nask = true",
+            "line 2, column 1: unknown key review.ask",
+        ),
+    ];
+    for (text, expected) in cases {
+        let file = demo.config("bad.toml", text);
+
+        let (code, _, err) = kipple(&env, &["--config", file.to_str().unwrap(), "scan"]);
+
+        assert_eq!(code, ExitCode::from(USAGE), "{text}");
+        assert!(err.contains(expected), "{text}: {err}");
+    }
+}
+
+// Catches a typed-size threshold read in the wrong unit: decimal units are powers of
+// 1000 and binary ones of 1024, a fraction counts, and spaces don't (spec M3c pinned 16).
+#[test]
+fn the_typed_size_threshold_reads_each_unit() {
+    let demo = Demo::new(&[], "");
+    let env = demo.env(&[]);
+    for (written, bytes) in [
+        ("1000", "1000 bytes"),
+        ("\"5 GB\"", "5000000000 bytes"),
+        ("\"5GiB\"", "5368709120 bytes"),
+        ("\"1.5 KiB\"", "1536 bytes"),
+        ("\" 2 TB \"", "2000000000000 bytes"),
+    ] {
+        let file = demo.config(
+            "t.toml",
+            &format!("[review]\nconfirm_by_typing_above = {written}\n"),
+        );
+        let (code, shown, err) = kipple(
+            &env,
+            &["--config", file.to_str().unwrap(), "config", "show"],
+        );
+        assert_eq!(code, ExitCode::SUCCESS, "{err}");
+        assert!(
+            shown
+                .lines()
+                .any(|line| line.starts_with("review.confirm_by_typing_above")
+                    && line.contains(bytes)),
+            "{written} reads as {bytes}:\n{shown}"
+        );
+    }
 }

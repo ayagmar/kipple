@@ -6,7 +6,8 @@
 use std::path::Path;
 
 use kipple_core::{
-    Ending, ItemOutcome, Left, Method, Plan, RunState, SpaceEstimate, Status, Totals,
+    Completeness, Ending, ItemOutcome, Left, Method, Plan, RunState, SpaceEstimate, Status, Total,
+    Totals,
 };
 
 use super::outcome::{error_text, found, left_reason, skip, status};
@@ -55,6 +56,58 @@ pub(crate) fn is_yes(answer: &str) -> bool {
     answer.eq_ignore_ascii_case("y") || answer.eq_ignore_ascii_case("yes")
 }
 
+/// The size a person types to confirm removing `total`, above
+/// `review.confirm_by_typing_above` (spec M3c pinned 16): as [`bytes`] writes it, and
+/// "at least" before it when part of it wasn't measured.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the M3c prompt and TUI review ask for it")
+)]
+pub(crate) fn typed_size(total: &Total) -> String {
+    match total.complete {
+        Completeness::Complete => bytes(total.known),
+        Completeness::Incomplete { .. } | Completeness::Cancelled => {
+            format!("at least {}", bytes(total.known))
+        }
+    }
+}
+
+/// Whether `typed`, a line a person typed, is `total`'s [`typed_size`], with case and
+/// spaces ignored.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the M3c prompt and TUI review ask for it")
+)]
+pub(crate) fn is_typed_size(typed: &str, total: &Total) -> bool {
+    let squeezed = |text: &str| -> String {
+        text.chars()
+            .filter(|c| !c.is_whitespace())
+            .flat_map(char::to_lowercase)
+            .collect()
+    };
+    squeezed(typed) == squeezed(&typed_size(total))
+}
+
+/// The question a person answers to run `items` items freeing `total`, above the
+/// threshold: the size, typed.
+#[expect(dead_code, reason = "the M3c prompt and TUI review ask for it")]
+pub(crate) fn typed_question(items: usize, total: &Total) -> String {
+    format!(
+        "Clean {}? Type {} to confirm, anything else declines: ",
+        items_word(items),
+        typed_size(total)
+    )
+}
+
+/// What a typed size that isn't the one asked for means.
+#[expect(dead_code, reason = "the M3c prompt and TUI review ask for it")]
+pub(crate) const NOT_THE_SIZE: &str = "That isn't the size shown, so nothing was changed.";
+
+/// `review.confirm_by_typing_above`, as `kipple config show` shows it.
+pub(crate) fn threshold(above: u64) -> String {
+    format!("{above} bytes ({})", bytes(above))
+}
+
 /// The plan's heading: what it removes, by method (J3).
 pub(crate) fn plan_heading(plan: &Plan) -> Vec<String> {
     [Method::Delete, Method::Trash]
@@ -68,7 +121,11 @@ pub(crate) fn plan_heading(plan: &Plan) -> Vec<String> {
             if entries.is_empty() {
                 return None;
             }
-            let size: u64 = entries.iter().map(|entry| on_disk(entry.estimate())).sum();
+            let size: u64 = entries
+                .iter()
+                .filter_map(|entry| entry.estimate())
+                .map(SpaceEstimate::reclaim)
+                .sum();
             Some(format!(
                 "{} {} in {}",
                 method_verb(method),

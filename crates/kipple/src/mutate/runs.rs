@@ -13,8 +13,9 @@ use kipple_core::{
 use kipple_platform::{OsNames, PLATFORM};
 
 use super::output::{Events, write_items};
-use super::{BLOCKED, Format, Machine, with_session};
+use super::{BLOCKED, Format};
 use crate::human::{outcome, receipt as words};
+use crate::machine::Machine;
 use crate::theme::Role;
 use crate::{Host, Io, USAGE, fail, say};
 
@@ -45,17 +46,21 @@ pub(crate) fn history(host: &Host<'_>, args: &HistoryArgs, io: &mut Io<'_>) -> E
         Ok(settings) => settings,
         Err(code) => return code,
     };
-    let machine = Machine::new(host, &settings, None);
-    let held = match machine.store.lock_state() {
+    let machine = match Machine::from_settings(host.builtin, host.env, settings, None) {
+        Ok(machine) => machine,
+        Err(message) => return fail(io.stderr, &message),
+    };
+    let store = machine.store();
+    let held = match store.lock_state() {
         Ok(held) => held,
         Err(why) => return fail(io.stderr, &outcome::store_refusal(&why)),
     };
-    let runs = match kipple_core::history(&machine.store, held, &OsNames) {
+    let runs = match kipple_core::history(store, held, &OsNames) {
         Ok(runs) => runs,
         Err(error) => return fail(io.stderr, &outcome::error_text(&error)),
     };
     for run in runs.iter().filter(|run| run.state == RunState::Unreadable) {
-        let why = match read_run(&machine.store, &run.id, Depth::Headers, &OsNames) {
+        let why = match read_run(store, &run.id, Depth::Headers, &OsNames) {
             RunRead::Unreadable(_, why) => outcome::unreadable(&why),
             RunRead::Read(_) | RunRead::NeverStarted(_) => outcome::run_state(run.state),
         };
@@ -96,15 +101,14 @@ pub(crate) fn restore(host: &Host<'_>, args: &RestoreArgs, io: &mut Io<'_>) -> E
         Ok(settings) => settings,
         Err(code) => return code,
     };
-    let engine = match host.engine() {
-        Ok(engine) => engine,
+    let machine = match Machine::from_settings(host.builtin, host.env, settings, None) {
+        Ok(machine) => machine,
         Err(message) => return fail(io.stderr, &message),
     };
-    let machine = Machine::new(host, &settings, None);
     // A well-formed ID no stored run has is a typo, not a damaged store: said before the
     // lock is taken or anything is created. A store that can't be listed is left to the
     // restore, which says why.
-    if machine.store.runs().is_ok_and(|runs| !runs.contains(&id)) {
+    if machine.store().runs().is_ok_and(|runs| !runs.contains(&id)) {
         say(io.stderr, &words::not_a_run(&args.run));
         return ExitCode::from(USAGE);
     }
@@ -114,12 +118,12 @@ pub(crate) fn restore(host: &Host<'_>, args: &RestoreArgs, io: &mut Io<'_>) -> E
     };
     let ink = host.ink(io.stderr);
     let mut events = Events::new(Format::Human, 0, io.cancel.clone(), ink.clone());
-    let finished = with_session(&engine, &settings, &machine, |session| {
+    let finished = machine.with_session(|session| {
         let mut sink = events.sink(&mut *io.stdout);
         run_restore(&ask, session, &mut sink, &io.cancel)
     });
     events.say_notices(io.stderr);
-    let stored = match read_run(&machine.store, &ask.run, Depth::Headers, &OsNames) {
+    let stored = match read_run(machine.store(), &ask.run, Depth::Headers, &OsNames) {
         RunRead::Read(stored) => Some(stored),
         RunRead::NeverStarted(_) | RunRead::Unreadable(..) => None,
     };

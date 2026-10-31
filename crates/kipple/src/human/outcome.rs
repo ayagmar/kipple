@@ -99,7 +99,7 @@ const fn method_name(method: Method) -> &'static str {
     }
 }
 
-fn unsupported(why: &Unsupported) -> String {
+pub(crate) fn unsupported(why: &Unsupported) -> String {
     match why {
         Unsupported::Network => "a network file system".to_owned(),
         Unsupported::UserSpace => "a user-space file system".to_owned(),

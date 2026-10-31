@@ -61,6 +61,8 @@ const PYTHON: IntegrationDescriptor = IntegrationDescriptor {
     artifacts: &[],
     owner_files: &[],
     verified: &[],
+    consequences: &[],
+    revision: 1,
 };
 
 const CARGO: IntegrationDescriptor = IntegrationDescriptor {

@@ -149,6 +149,8 @@ impl Integration for Venv {
             artifacts: &[],
             owner_files: &[],
             verified: &[],
+            consequences: &[],
+            revision: 1,
         }
     }
 
@@ -298,4 +300,52 @@ fn each_apply_value_has_its_own_words() {
     distinct(Stop::ALL, outcome::stop);
     distinct(GitGap::ALL, outcome::git_gap);
     distinct(RunState::ALL, outcome::run_state);
+    distinct(
+        kipple_core::profile::ProfileChange::ALL,
+        super::profile::change,
+    );
+}
+
+/// Catches a typed size that confirms when it shouldn't: another size, or the measured
+/// figure alone when part of the plan wasn't measured, so "at least" was asked for
+/// (spec M3c pinned 16). Case and spaces don't matter.
+#[test]
+fn only_the_size_shown_confirms_a_large_clean() {
+    use kipple_core::{Completeness, Total};
+
+    use super::receipt::{is_typed_size, typed_size};
+
+    let complete = Total {
+        known: 5 * 1024 * 1024 * 1024,
+        complete: Completeness::Complete,
+    };
+    let partial = Total {
+        complete: Completeness::Incomplete {
+            unreadable: 1,
+            skipped_mounts: 0,
+        },
+        ..complete
+    };
+    assert_eq!(typed_size(&complete), "5.0 GiB");
+    assert_eq!(typed_size(&partial), "at least 5.0 GiB");
+    for typed in ["5.0 GiB", "5.0gib", " 5.0  GIB "] {
+        assert!(
+            is_typed_size(typed, &complete),
+            "{typed:?} is the size shown"
+        );
+    }
+    for typed in ["5 GiB", "5.1 GiB", "y", ""] {
+        assert!(
+            !is_typed_size(typed, &complete),
+            "{typed:?} isn't the size shown"
+        );
+    }
+    assert!(
+        !is_typed_size("5.0 GiB", &partial),
+        "\"at least\" was asked for"
+    );
+    assert!(
+        is_typed_size("at least 5.0 GiB", &partial),
+        "the size shown confirms"
+    );
 }

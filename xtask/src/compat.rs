@@ -110,6 +110,11 @@ const FORMATS: &[Format] = &[
         version: kipple::json::STORED_PLAN,
         read_by: ReadBy::Kipple,
     },
+    Format {
+        name: "profile",
+        version: kipple::json::PROFILE,
+        read_by: ReadBy::Kipple,
+    },
 ];
 
 /// What `run` does with the baselines.

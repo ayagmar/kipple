@@ -21,10 +21,12 @@
 //! digest again: a digest kipple computed from how it prints a value
 //! ([`Digest::of_debug`]) is stored as written and only ever compared.
 
+mod digests;
 mod events;
 mod journal;
 mod outcome;
 mod plan_file;
+mod profile;
 mod receipt;
 mod stored_plan;
 
@@ -38,11 +40,16 @@ use crate::digest::Digest;
 use crate::frozen::{Component, NameCodec, RelPath};
 use crate::probe::FileIdentity;
 
+pub use digests::{IntegrationDigests, integration_digest, rule_digest};
 pub use events::{ApplyEventOut, EventKindOut};
 pub use journal::{decode_line, encode_line};
 pub use outcome::OutcomeOut;
 pub use plan_file::{PLAN_LIMIT, decode_plan_file, encode_plan_file};
-pub use receipt::{DroppedOut, DroppedWhyOut, HistoryOut, ReceiptOut, RefusedOut, RunOut};
+pub(crate) use profile::decode_profile;
+pub use profile::{PROFILE_LIMIT, encode_profile};
+pub use receipt::{
+    DroppedOut, DroppedWhyOut, HistoryOut, ProfileRunOut, ReceiptOut, RefusedOut, RunOut,
+};
 pub use stored_plan::{decode_stored_plan, encode_stored_plan};
 
 /// A run's stored plan.
@@ -57,6 +64,8 @@ pub const RECEIPT: &str = "kipple.receipt/v1";
 pub const HISTORY: &str = "kipple.history/v1";
 /// Each apply line of `--events jsonl`.
 pub const APPLY_EVENT: &str = "kipple.apply-event/v1";
+/// A stored profile (D-068).
+pub const PROFILE: &str = "kipple.profile/v1";
 
 /// The most bytes one frozen tree may take in a plan file: about 3M entries with unique
 /// names (D-063).
@@ -77,6 +86,14 @@ pub enum FormatError {
     #[error("a {found} document, not {format}")]
     Schema {
         /// The format expected.
+        format: &'static str,
+        /// What the document says it is.
+        found: String,
+    },
+    /// The schema field names a newer version of the format: a newer kipple wrote it.
+    #[error("a {found} document, made by a newer kipple than reads {format}")]
+    Newer {
+        /// The format and version this kipple reads.
         format: &'static str,
         /// What the document says it is.
         found: String,
@@ -324,6 +341,11 @@ pub fn schemas() -> Vec<FormatSchema> {
         schema("history", HISTORY, schemars::schema_for!(HistoryOut)),
         schema("journal", JOURNAL, schemars::schema_for!(journal::LineOut)),
         schema("plan", PLAN, schemars::schema_for!(plan_file::PlanFileOut)),
+        schema(
+            "profile",
+            PROFILE,
+            schemars::schema_for!(profile::ProfileOut),
+        ),
         schema("receipt", RECEIPT, schemars::schema_for!(ReceiptOut)),
         schema(
             "stored-plan",

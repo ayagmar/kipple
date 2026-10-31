@@ -29,6 +29,8 @@ impl Integration for ClaudeCode {
             artifacts: &[],
             owner_files: &[],
             verified: &[],
+            consequences: &[],
+            revision: 1,
         }
     }
 

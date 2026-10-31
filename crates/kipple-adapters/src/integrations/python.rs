@@ -49,6 +49,8 @@ impl Integration for Python {
             artifacts: &["__pycache__", ".venv"],
             owner_files: &["pyvenv.cfg"],
             verified: &["Python 3.14.8 venv", "uv 0.12.23"],
+            consequences: &[REINSTALLED, RECOMPILED],
+            revision: 1,
         }
     }
 

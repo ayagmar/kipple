@@ -4,6 +4,8 @@
 
 use std::io::{self, IsTerminal as _};
 
+use kipple_core::{CancelToken, Waited};
+
 /// Throws away what was typed at stdin's terminal and not read yet.
 ///
 /// The next answer read was then typed after this call. When stdin isn't a terminal,
@@ -17,6 +19,19 @@ pub fn discard_typeahead() -> io::Result<()> {
         return Ok(());
     }
     sys::discard(&stdin)
+}
+
+/// Waits until a line, or the end of input, is there to read at stdin, or `cancel` is
+/// cancelled.
+///
+/// This build doesn't wait: it answers [`Waited::Ready`] at once and the read that
+/// follows blocks, as before (spec M3c pinned 15 replaces it).
+///
+/// # Errors
+/// None yet; a terminal that refuses the wait will be one.
+pub const fn wait_for_line(cancel: &CancelToken) -> io::Result<Waited> {
+    let _ = cancel;
+    Ok(Waited::Ready)
 }
 
 #[cfg(unix)]

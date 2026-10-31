@@ -351,7 +351,7 @@ Exits 2 with the line and column: an unknown action or key name, two entries tak
 | `rules.<id>.recent_days` | integer | 1–365 | can only lengthen the effective window (04 §2a): the window is the longest of the level's, the rule's and this one. A shorter value is accepted but has no effect; `doctor` doesn't warn about it yet |
 | `rules.<id>.method` | string | one of the rule's `operation.methods` | not supported yet |
 | `retention.<id>.*` | per rule | ≥ the rule's defaults | not supported yet; can only keep more |
-| `review.confirm_by_typing_above` | size | | not supported yet |
+| `review.confirm_by_typing_above` | integer or string | whole bytes, or a number with `B`, `KB`, `MB`, `GB`, `TB` (powers of 1000) or `KiB`, `MiB`, `GiB`, `TiB` (powers of 1024) | read and shown by `config show`; the prompt doesn't ask for the size yet |
 
 `clean.method` is the method `clean` and `plan` use when `--method` isn't given. A key listed as not supported yet exits 2 with that message.
 

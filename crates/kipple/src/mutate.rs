@@ -11,29 +11,26 @@ mod output;
 mod prompt;
 mod runs;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{self, Read as _, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::Arc;
 
 use clap::{Args, ValueEnum};
 use kipple_core::format::{PLAN_LIMIT, decode_plan_file, encode_plan_file};
 use kipple_core::{
-    ApplyFile, ApplyPorts, Bucket, CleanRequest, Consent, Engine, Finding, Judge, Method, Methods,
-    MutationPorts, PlanMode, PlanRequest, Policy, Protections, RefusedItem, Rule, RuleId,
-    ScanOutcome, ScanReport, Selection, Session, StoreRefusal, SymbolicRoot, run_apply, run_clean,
+    ApplyFile, Bucket, CleanRequest, Consent, Finding, Method, PlanMode, PlanRequest, Policy,
+    RefusedItem, RuleId, ScanOutcome, ScanReport, Selection, StoreRefusal, run_apply, run_clean,
 };
-use kipple_platform::{
-    ConfinedFs, ConfinedTrash, FileRunStore, GitQuery, OsNames, clock, kipple_dirs, write_new,
-};
+use kipple_platform::{OsNames, kipple_dirs, write_new};
 
 pub use self::runs::{HistoryArgs, RestoreArgs};
 pub(crate) use self::runs::{history, restore};
-use crate::config::{Settings, held_at};
+use crate::config::Settings;
 use crate::human::{escaped, outcome, receipt as words};
 use crate::json::EventBody;
+use crate::machine::Machine;
 use crate::{CANCELLED, EventsFormat, Host, Io, Person, USAGE, absolute, fail, say, scan};
 
 /// The exit code when nothing ran: blocked, declined or stale (`docs/03-functional-spec.md`
@@ -144,61 +141,6 @@ enum Format {
     Events,
 }
 
-/// What every mutating command removes and records through, besides the engine.
-pub(crate) struct Machine {
-    rules: Vec<Rule>,
-    methods: Methods,
-    protections: Protections,
-    store: FileRunStore,
-    trash: ConfinedTrash,
-    git: GitQuery,
-}
-
-impl Machine {
-    /// The machine `settings` and `--method` describe: the run store under kipple's data
-    /// directory, the trash the roots resolve, and the host's protections, which hold
-    /// that data directory and every state root.
-    pub(crate) fn new(host: &Host<'_>, settings: &Settings, method: Option<Method>) -> Self {
-        let roots = &settings.roots;
-        let data = kipple_dirs(roots).data.path.ok();
-        let clock: Arc<dyn kipple_core::Clock> = Arc::from(clock(host.env));
-        let trash = match roots.get(SymbolicRoot::Trash) {
-            Some(Ok(resolved)) => Some(resolved.path.clone()),
-            Some(Err(_)) | None => None,
-        };
-        Self {
-            rules: host.builtin.platform_rules(),
-            methods: Methods {
-                command_line: method,
-                rules: BTreeMap::new(),
-                config: settings.loaded.config.method,
-            },
-            protections: Protections::of_host(roots, data.as_deref(), &|path| held_at(path, roots)),
-            store: FileRunStore::new(data, Arc::clone(&clock)),
-            trash: ConfinedTrash::new(trash, clock),
-            git: GitQuery::new(host.env),
-        }
-    }
-
-    fn judge<'machine>(&'machine self, policy: &'machine Policy) -> Judge<'machine> {
-        Judge {
-            rules: &self.rules,
-            policy,
-            methods: &self.methods,
-            protections: &self.protections,
-        }
-    }
-
-    fn mutation(&self) -> MutationPorts<'_> {
-        MutationPorts {
-            freezer: &ConfinedFs,
-            executor: &ConfinedFs,
-            trash: &self.trash,
-            tracked: &self.git,
-        }
-    }
-}
-
 /// Refuses a run whose store can't exist: with kipple's data folder unknown, the host's
 /// protections hold every item, which would read as items the system protects.
 fn store_known(settings: &Settings, stderr: &mut dyn Write) -> Result<(), ExitCode> {
@@ -211,48 +153,29 @@ fn store_known(settings: &Settings, stderr: &mut dyn Write) -> Result<(), ExitCo
     }
 }
 
-/// Runs `then` with the session over `machine`, judging with `settings`.
-fn with_session<R>(
-    engine: &Engine,
-    settings: &Settings,
-    machine: &Machine,
-    then: impl FnOnce(&Session<'_>) -> R,
-) -> R {
-    let request = scan::request(settings, None);
-    let rescan = engine.rescan(&request);
-    let mutation = machine.mutation();
-    let session = Session {
-        judge: machine.judge(&settings.policy),
-        store: &machine.store,
-        ports: ApplyPorts {
-            rescan: &rescan,
-            mutation: &mutation,
-        },
-        codec: &OsNames,
-    };
-    then(&session)
-}
-
-/// What a command scanned with: the settings, the engine and the scan's report.
+/// What a command scanned with: the machine it runs through, and the scan's report.
 struct Scanned {
-    settings: Settings,
-    engine: Engine,
+    machine: Machine,
     report: ScanReport,
     /// The `seq` the run's events continue from, after the scan's own.
     next_seq: u64,
 }
 
-/// Loads the settings for `roots`, and scans them, streaming the scan's events when
-/// `format` says so. A config that can't be used exits 2, a cancelled scan 130.
+/// Loads the settings for `roots`, makes the machine they and `method` describe, and
+/// scans the roots, streaming the scan's events when `format` says so. A config that
+/// can't be used exits 2, a cancelled scan 130.
 fn scanned(
     host: &Host<'_>,
     roots: &[PathBuf],
+    method: Option<Method>,
     format: Format,
     io: &mut Io<'_>,
 ) -> Result<Scanned, ExitCode> {
     let roots = absolute(roots).map_err(|error| fail(io.stderr, &format!("--root: {error}")))?;
-    let settings = host.settings(&roots, io.stderr)?;
-    let engine = host.engine().map_err(|message| fail(io.stderr, &message))?;
+    let loaded = host.settings(&roots, io.stderr)?;
+    let machine = Machine::from_settings(host.builtin, host.env, loaded, method)
+        .map_err(|message| fail(io.stderr, &message))?;
+    let (engine, settings) = (machine.engine(), machine.settings());
     let lenses = host.builtin.lenses();
     let mut stream = scan::Stream {
         lenses: &lenses,
@@ -262,8 +185,8 @@ fn scanned(
     let mut next_seq = 0;
     let stdout = &mut *io.stdout;
     let scan::Scanned { report, streamed } = scan::run(
-        &engine,
-        &settings,
+        engine,
+        settings,
         None,
         &mut |event| {
             next_seq = event.seq + 1;
@@ -294,8 +217,7 @@ fn scanned(
         return Err(ExitCode::from(CANCELLED));
     }
     Ok(Scanned {
-        settings,
-        engine,
+        machine,
         report,
         next_seq,
     })
@@ -375,16 +297,16 @@ pub(crate) fn clean(host: &Host<'_>, args: &CleanArgs, io: &mut Io<'_>) -> ExitC
         return ExitCode::from(BLOCKED);
     }
     let format = args.output.format();
-    let scanned = match scanned(host, &args.choice.roots, format, io) {
+    let method = args.choice.method.map(Method::from);
+    let scanned = match scanned(host, &args.choice.roots, method, format, io) {
         Ok(scanned) => scanned,
         Err(code) => return code,
     };
-    let picked = pick(&scanned.report, &scanned.settings.policy, only.as_ref());
-    let method = args.choice.method.map(Method::from);
-    if let Err(code) = store_known(&scanned.settings, io.stderr) {
+    let machine = &scanned.machine;
+    let picked = pick(&scanned.report, &machine.settings().policy, only.as_ref());
+    if let Err(code) = store_known(machine.settings(), io.stderr) {
         return code;
     }
-    let machine = Machine::new(host, &scanned.settings, method);
     let ink = host.ink(io.stderr);
     let request = CleanRequest {
         scan: &scanned.report,
@@ -399,14 +321,14 @@ pub(crate) fn clean(host: &Host<'_>, args: &CleanArgs, io: &mut Io<'_>) -> ExitC
         cancel,
         ..
     } = io;
-    let finished = with_session(&scanned.engine, &scanned.settings, &machine, |session| {
+    let finished = machine.with_session(|session| {
         let mut prompt = prompt::Prompt {
             input: &mut **stdin,
             out: &mut **stderr,
             ink: &ink,
             scan: &scanned.report,
             review: &picked.review,
-            policy: &scanned.settings.policy,
+            policy: &machine.settings().policy,
             told: output::Told::NotYet,
         };
         let consent = if args.yes {
@@ -421,7 +343,7 @@ pub(crate) fn clean(host: &Host<'_>, args: &CleanArgs, io: &mut Io<'_>) -> ExitC
     let (finished, told) = finished;
     let shown = output::Shown {
         review: &picked.review,
-        policy: &scanned.settings.policy,
+        policy: &machine.settings().policy,
         told,
     };
     events.finish(&finished, &shown, stdout, stderr)
@@ -435,20 +357,20 @@ pub(crate) fn plan(host: &Host<'_>, args: &PlanArgs, io: &mut Io<'_>) -> ExitCod
         Ok(only) => only,
         Err(code) => return code,
     };
-    let scanned = match scanned(host, &args.choice.roots, Format::Human, io) {
+    let method = args.choice.method.map(Method::from);
+    let scanned = match scanned(host, &args.choice.roots, method, Format::Human, io) {
         Ok(scanned) => scanned,
         Err(code) => return code,
     };
-    let picked = pick(&scanned.report, &scanned.settings.policy, only.as_ref());
-    let method = args.choice.method.map(Method::from);
-    let machine = Machine::new(host, &scanned.settings, method);
+    let machine = &scanned.machine;
+    let picked = pick(&scanned.report, &machine.settings().policy, only.as_ref());
     let planned = kipple_core::plan(
         &PlanRequest {
             scan: &scanned.report,
             selection: &picked.selection,
             mode: PlanMode::Safe,
         },
-        &machine.judge(&scanned.settings.policy),
+        &machine.judge(),
         &machine.mutation(),
         &io.cancel,
     );
@@ -475,7 +397,7 @@ pub(crate) fn plan(host: &Host<'_>, args: &PlanArgs, io: &mut Io<'_>) -> ExitCod
     let refused = RefusedItem::list(&scanned.report, &planned.refused);
     let shown = output::Shown {
         review: &picked.review,
-        policy: &scanned.settings.policy,
+        policy: &machine.settings().policy,
         told: output::Told::NotYet,
     };
     let lines = output::left_out(&refused, &[], &shown);
@@ -509,14 +431,14 @@ pub(crate) fn apply(host: &Host<'_>, args: &ApplyArgs, io: &mut Io<'_>) -> ExitC
         }
     };
     let format = args.output.format();
-    let scanned = match scanned(host, &args.roots, format, io) {
+    let scanned = match scanned(host, &args.roots, None, format, io) {
         Ok(scanned) => scanned,
         Err(code) => return code,
     };
-    if let Err(code) = store_known(&scanned.settings, io.stderr) {
+    let machine = &scanned.machine;
+    if let Err(code) = store_known(machine.settings(), io.stderr) {
         return code;
     }
-    let machine = Machine::new(host, &scanned.settings, None);
     let ink = host.ink(io.stderr);
     let mut events = output::Events::new(format, scanned.next_seq, io.cancel.clone(), ink.clone())
         .crashing_at(crate::crash_point(host.env));
@@ -527,14 +449,14 @@ pub(crate) fn apply(host: &Host<'_>, args: &ApplyArgs, io: &mut Io<'_>) -> ExitC
         cancel,
         ..
     } = io;
-    let finished = with_session(&scanned.engine, &scanned.settings, &machine, |session| {
+    let finished = machine.with_session(|session| {
         let mut prompt = prompt::Prompt {
             input: &mut **stdin,
             out: &mut **stderr,
             ink: &ink,
             scan: &scanned.report,
             review: &[],
-            policy: &scanned.settings.policy,
+            policy: &machine.settings().policy,
             told: output::Told::NotYet,
         };
         let consent = if args.yes {
@@ -553,7 +475,7 @@ pub(crate) fn apply(host: &Host<'_>, args: &ApplyArgs, io: &mut Io<'_>) -> ExitC
     let (finished, told) = finished;
     let shown = output::Shown {
         review: &[],
-        policy: &scanned.settings.policy,
+        policy: &machine.settings().policy,
         told,
     };
     events.finish(&finished, &shown, stdout, stderr)

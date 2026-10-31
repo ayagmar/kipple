@@ -85,6 +85,9 @@ pub struct Config {
     pub keep: Vec<Kept>,
     /// `rules.<id>`.
     pub rules: Vec<RuleConfig>,
+    /// `review.confirm_by_typing_above`, in bytes: above it, a person types the size to
+    /// confirm a removal.
+    pub confirm_by_typing_above: Option<u64>,
     /// `[ui]`.
     pub ui: UiConfig,
     /// `[keys]`.
@@ -190,8 +193,7 @@ impl Settings {
     ) -> Result<Self, ConfigError> {
         let upstream = resolve_roots(env, &[]);
         let location = locate(env, flag, &upstream);
-        let loaded = load(&location, catalog)?;
-        Self::from_loaded(env, loaded, given)
+        reload(env, &location, given, catalog)
     }
 
     /// The settings `loaded` gives, with the project roots `given` on the command line,
@@ -242,6 +244,25 @@ pub fn catalog(builtin: &Builtin) -> Catalog {
         .rules()
         .map(|BuiltinRule { rule, .. }| rule.id.clone())
         .collect()
+}
+
+/// The settings the config at `location` gives now.
+///
+/// The project roots are those `given` on the command line, if any. It is what a screen
+/// open for a while confirms under: the file read again from where it was found (spec
+/// M3c pinned 6).
+///
+/// # Errors
+/// When the config no longer loads ([`load`]), or names a project root under an unknown
+/// home directory.
+pub fn reload(
+    env: &Environment,
+    location: &Location,
+    given: &[PathBuf],
+    catalog: &Catalog,
+) -> Result<Settings, ConfigError> {
+    let loaded = load(location, catalog)?;
+    Settings::from_loaded(env, loaded, given)
 }
 
 /// Which config file to read: `--config`, then `KIPPLE_CONFIG`, then `config.toml` in
@@ -549,6 +570,13 @@ pub fn write_show(
             parts.push(format!("recent_days = {days}"));
         }
         show_line(out, &format!("rules.{rule}"), parts.join(", "))?;
+    }
+    if let Some(above) = config.confirm_by_typing_above {
+        show_line(
+            out,
+            "review.confirm_by_typing_above",
+            crate::human::receipt::threshold(above),
+        )?;
     }
     config.ui.write_show(out)?;
     config.keys.write_show(out)?;

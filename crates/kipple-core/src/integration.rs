@@ -54,6 +54,16 @@ pub struct IntegrationDescriptor {
     pub owner_files: &'static [&'static str],
     /// The upstream versions whose layouts it was verified against, with a fixture each.
     pub verified: &'static [&'static str],
+    /// Every consequence it can attach to one of its rules' findings
+    /// ([`FindingSink::add`]). A profile freezes them with the rule (D-068), so a laxer
+    /// recovery, loss or cost suspends the profile's entries for its rules.
+    pub consequences: &'static [Consequence],
+    /// Its revision: bumped whenever its code changes what it finds, how it verifies a
+    /// layout, or the consequence it attaches. A profile freezes it with the rule, so a
+    /// change that lives in code no [`Rule`] shows suspends the profile's entries for its
+    /// rules. `kipple-adapters/tests/integration_revision.rs` fails when an integration's
+    /// output over its layout fixtures changes and this didn't.
+    pub revision: u32,
 }
 
 /// What can show one of an integration's findings in use (`docs/04-safety-model.md` §4,

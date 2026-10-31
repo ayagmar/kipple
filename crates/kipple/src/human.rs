@@ -629,6 +629,15 @@ fn idle_except(unchecked: usize, by_command_line: usize) -> String {
 }
 
 pub(crate) mod outcome;
+// The words Phase 2 of M3c shows: the TUI's review, progress and result, and the
+// profile commands. Nothing reads them until those land.
+#[expect(dead_code, reason = "the M3c profile commands show these")]
+pub(crate) mod profile;
 pub(crate) mod receipt;
+#[expect(
+    dead_code,
+    reason = "the M3c TUI review, progress and result show these"
+)]
+pub(crate) mod review;
 #[cfg(test)]
 mod tests;

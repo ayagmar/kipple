@@ -44,6 +44,42 @@ pub struct SpaceEstimate {
     pub completeness: Completeness,
 }
 
+impl SpaceEstimate {
+    /// What removing it frees at once: the storage only it holds where that is known,
+    /// else its allocated storage, else its length.
+    #[must_use]
+    pub fn reclaim(&self) -> u64 {
+        self.unique_reclaim
+            .or(self.allocated)
+            .map_or(self.apparent.0, |allocated| allocated.0)
+    }
+}
+
+impl Completeness {
+    /// The completeness of two measurements together: cancelled if either was,
+    /// incomplete with both counts added if either was, else complete.
+    #[must_use]
+    pub const fn and(self, other: Self) -> Self {
+        match (self, other) {
+            (Self::Cancelled, _) | (_, Self::Cancelled) => Self::Cancelled,
+            (Self::Complete, other) | (other, Self::Complete) => other,
+            (
+                Self::Incomplete {
+                    unreadable: a,
+                    skipped_mounts: b,
+                },
+                Self::Incomplete {
+                    unreadable: c,
+                    skipped_mounts: d,
+                },
+            ) => Self::Incomplete {
+                unreadable: a.saturating_add(c),
+                skipped_mounts: b.saturating_add(d),
+            },
+        }
+    }
+}
+
 /// What measuring an item found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Measurement {

@@ -11,6 +11,7 @@ pub mod doctor;
 mod explain;
 mod human;
 pub mod json;
+pub mod machine;
 mod mutate;
 pub mod rules;
 mod scan;
@@ -26,7 +27,7 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use kipple_core::{CancelToken, Engine, Lens, ScanOutcome};
+use kipple_core::{CancelToken, Engine, Lens, ScanOutcome, Waited};
 use kipple_platform::Environment;
 
 use crate::config::{ConfigError, Settings};
@@ -297,6 +298,14 @@ pub trait Answers: BufRead {
     /// # Errors
     /// When the terminal refuses: the question then counts as answered no.
     fn discard_typeahead(&mut self) -> io::Result<()>;
+
+    /// Waits, after the question, until an answer is there to read or `cancel` is
+    /// cancelled, so Ctrl+C at the question stops the command at once (spec M3c pinned
+    /// 15).
+    ///
+    /// # Errors
+    /// When the terminal refuses the wait: the question then counts as answered no.
+    fn wait(&mut self, cancel: &CancelToken) -> io::Result<Waited>;
 }
 
 /// The process's stdin, which nothing reads before the question, so all that was typed
@@ -305,12 +314,21 @@ impl Answers for io::StdinLock<'_> {
     fn discard_typeahead(&mut self) -> io::Result<()> {
         kipple_platform::discard_typeahead()
     }
+
+    fn wait(&mut self, cancel: &CancelToken) -> io::Result<Waited> {
+        kipple_platform::wait_for_line(cancel)
+    }
 }
 
 /// Nobody to answer: nothing was typed.
 impl Answers for io::Empty {
     fn discard_typeahead(&mut self) -> io::Result<()> {
         Ok(())
+    }
+
+    /// The end of input is there at once: the read that follows answers no.
+    fn wait(&mut self, _: &CancelToken) -> io::Result<Waited> {
+        Ok(Waited::Ready)
     }
 }
 

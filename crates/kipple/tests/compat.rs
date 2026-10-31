@@ -20,6 +20,8 @@ use kipple_adapters::pack::{self, Catalog, Origin};
 #[cfg(unix)]
 use kipple_core::format::decode_plan_file;
 #[cfg(unix)]
+use kipple_core::profile::{self, ProfileName, ProfileStore, ProfileStoreError};
+#[cfg(unix)]
 use kipple_core::{
     ApplyError, CancelToken, Depth, ErrorCode, LockState, Locked, RunId, RunRead, RunState,
     RunStore, StoreRefusal, history, read_run,
@@ -286,6 +288,60 @@ fn every_baseline_plan_file_reads() {
             assert_eq!(
                 imported.map(|plan| plan.len()),
                 Ok(1),
+                "{}",
+                document.display()
+            );
+        }
+    }
+}
+
+/// One profile file, as a profile store holds it.
+#[cfg(unix)]
+#[derive(Debug)]
+struct OneProfile(Vec<u8>);
+
+#[cfg(unix)]
+impl ProfileStore for OneProfile {
+    fn read(&self, _: &ProfileName) -> Result<Option<Vec<u8>>, ProfileStoreError> {
+        Ok(Some(self.0.clone()))
+    }
+
+    fn create_new(&self, _: &ProfileName, _: &[u8]) -> Result<(), ProfileStoreError> {
+        Err(ProfileStoreError::Unsupported)
+    }
+
+    fn replace(&self, _: &ProfileName, _: &[u8]) -> Result<(), ProfileStoreError> {
+        Err(ProfileStoreError::Unsupported)
+    }
+
+    fn remove(&self, _: &ProfileName) -> Result<(), ProfileStoreError> {
+        Err(ProfileStoreError::Unsupported)
+    }
+
+    fn list(&self) -> Result<Vec<ProfileName>, ProfileStoreError> {
+        Ok(Vec::new())
+    }
+}
+
+// Catches a profile an earlier release saved refused after an upgrade (pinned 19): each
+// baseline profile reads under its file's name, every entry with it.
+#[cfg(unix)]
+#[test]
+fn every_baseline_profile_reads() {
+    for version in versions("profile") {
+        for document in documents_of(&version, "json")
+            .into_iter()
+            .filter(|path| !path.ends_with("schema.json"))
+        {
+            let stem = document.file_stem().unwrap().to_str().unwrap();
+            let name = ProfileName::parse(stem).unwrap();
+            let store = OneProfile(fs::read(&document).unwrap());
+
+            let read = profile::read(&store, &name, &OsNames);
+
+            assert_eq!(
+                read.map(|profile| profile.contents().entries().len()),
+                Ok(2),
                 "{}",
                 document.display()
             );

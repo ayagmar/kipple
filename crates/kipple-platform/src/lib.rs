@@ -18,6 +18,7 @@ mod host;
 mod interrupt;
 mod os;
 mod process;
+mod profiles;
 mod project_search;
 mod roots;
 mod runner;
@@ -37,6 +38,7 @@ pub use git::GitQuery;
 pub use host::{SystemClock, clock, processes};
 pub use interrupt::cancel_on_interrupt;
 pub use process::OsProcesses;
+pub use profiles::FileProfileStore;
 pub use project_search::{ProjectSearch, ProjectsFound, SearchLimits, search_projects};
 pub use roots::{
     CONFIG_FILE, KippleDir, KippleDirs, follow_root_links, kipple_dirs, resolve_roots,
@@ -44,7 +46,7 @@ pub use roots::{
 };
 pub use runs::FileRunStore;
 pub use trash::ConfinedTrash;
-pub use typeahead::discard_typeahead;
+pub use typeahead::{discard_typeahead, wait_for_line};
 pub use walk::Walker;
 
 /// The operating system kipple was built for.

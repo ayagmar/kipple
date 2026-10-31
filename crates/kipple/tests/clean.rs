@@ -43,7 +43,7 @@ use std::time::{Duration, SystemTime};
 
 use clap::Parser as _;
 use kipple::{Answers, CANCELLED, Cli, Io, Person};
-use kipple_core::{CancelToken, Platform};
+use kipple_core::{CancelToken, Platform, Waited};
 use kipple_platform::{Environment, PLATFORM};
 use serde_json::Value;
 use tempfile::TempDir;
@@ -208,6 +208,10 @@ impl Answers for Terminal {
         let at = self.typed.position().max(self.answer_at);
         self.typed.set_position(at);
         Ok(())
+    }
+
+    fn wait(&mut self, _: &CancelToken) -> io::Result<Waited> {
+        Ok(Waited::Ready)
     }
 }
 

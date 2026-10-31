@@ -39,6 +39,8 @@ impl Integration for Cargo {
             artifacts: &[],
             owner_files: &[],
             verified: &["Cargo 1.99.0"],
+            consequences: &[REBUILT],
+            revision: 1,
         }
     }
 
