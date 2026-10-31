@@ -316,7 +316,7 @@ impl Answers for io::StdinLock<'_> {
     }
 
     fn wait(&mut self, cancel: &CancelToken) -> io::Result<Waited> {
-        kipple_platform::wait_for_line(cancel)
+        kipple_platform::wait_for_line(self, cancel)
     }
 }
 
