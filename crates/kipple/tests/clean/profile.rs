@@ -1,10 +1,6 @@
 //! `kipple profile` and `clean --profile` (03 J6, spec M3c pinned 10–13, D-068): a
 //! profile cleans only what it was made with, a change suspends it until it is reviewed,
 //! and nothing is saved unless a person says yes at a terminal.
-//!
-//! The tests marked `needs the profile store` read and write profiles through the
-//! platform's store, which this build stubs to refuse every call; they run once the
-//! store lands (M3c-platform).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -82,7 +78,6 @@ fn config(demo: &Demo, text: &str) -> String {
 /// `clean --profile safe --yes` removes exactly the Safe set a scan reported, the receipt
 /// names the profile with nothing suspended, and a second run has nothing to clean.
 #[test]
-#[ignore = "needs the profile store (M3c-platform)"]
 fn a_profile_cleans_exactly_the_safe_set_it_was_made_with() {
     let demo = Demo::new();
     let safe = safe_now(&demo, &[]);
@@ -110,7 +105,6 @@ fn a_profile_cleans_exactly_the_safe_set_it_was_made_with() {
 /// nothing, names the change and how to review it; `profile review` saves the profile
 /// as it is now, and then it runs again.
 #[test]
-#[ignore = "needs the profile store (M3c-platform)"]
 fn a_changed_level_suspends_the_profile_until_it_is_reviewed() {
     let demo = Demo::new();
     create(&demo, &[], "safe", &[]);
@@ -169,7 +163,6 @@ fn a_changed_level_suspends_the_profile_until_it_is_reviewed() {
 /// creation showed the trash line moves them. Linux only: macOS's trash isn't driven
 /// here, and Windows has none (D-062).
 #[test]
-#[ignore = "needs the profile store (M3c-platform)"]
 fn a_trash_profile_moves_items_whole_while_only_yes_still_skips_them() {
     if PLATFORM != Platform::Linux {
         return;
@@ -217,7 +210,6 @@ fn a_trash_profile_moves_items_whole_while_only_yes_still_skips_them() {
 /// exits 3, and Ctrl+C at the question, with "y" already typed, exits 130 and saves
 /// nothing.
 #[test]
-#[ignore = "needs the profile store (M3c-platform)"]
 fn nothing_is_saved_without_a_yes() {
     let demo = Demo::new();
 
@@ -249,7 +241,6 @@ fn nothing_is_saved_without_a_yes() {
 /// for done (pinned 13): a taken name exits 2, removing it works once, and the second
 /// remove exits 2.
 #[test]
-#[ignore = "needs the profile store (M3c-platform)"]
 fn create_refuses_a_taken_name_and_remove_an_unknown_one() {
     let demo = Demo::new();
     create(&demo, &[], "safe", &[]);
@@ -272,7 +263,6 @@ fn create_refuses_a_taken_name_and_remove_an_unknown_one() {
 /// Catches a profile a newer kipple wrote being run by this one, which can't know what
 /// it means (pinned 11): it exits 2, says to upgrade, and removes nothing.
 #[test]
-#[ignore = "needs the profile store (M3c-platform)"]
 fn a_profile_from_a_newer_kipple_is_refused() {
     let demo = Demo::new();
     create(&demo, &[], "safe", &[]);
@@ -293,7 +283,6 @@ fn a_profile_from_a_newer_kipple_is_refused() {
 /// stays out, "nothing to review" writes nothing, and only `--add` includes it, shown
 /// before the question.
 #[test]
-#[ignore = "needs the profile store (M3c-platform)"]
 fn review_adds_a_left_out_rule_only_when_named() {
     let demo = Demo::new();
     create(&demo, &[], "bins", &[TARGET]);
@@ -329,7 +318,6 @@ fn review_adds_a_left_out_rule_only_when_named() {
 /// Catches a profile run without `--yes` skipping the person, or running on a pipe
 /// (pinned 13): at a terminal it shows the plan and runs on "y".
 #[test]
-#[ignore = "needs the profile store (M3c-platform)"]
 fn a_profile_run_without_yes_asks_first() {
     let demo = Demo::new();
     create(&demo, &[], "bins", &[TARGET]);
