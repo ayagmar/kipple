@@ -1,17 +1,16 @@
 ---
 source: crates/kipple/src/tui/app/tests/clean.rs
-assertion_line: 729
 expression: "text(&app, width, height)"
 ---
 ╭ kipple ─ Balanced ─ scanned in 1.2 s ─ ~/projects ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 │ Clean 2 items? Type 96.0 MiB to confirm, anything else declines:                                                                                             │
+│ Deleting is permanent: these can't be restored.                                                                                                              │
+│ 1 item needs review: see below.                                                                                                                              │
 │                                                                                                                                                              │
 │ delete 96.0 MiB in 2 items                                                                                                                                   │
 │   delete    32.0 MiB  ~/projects/rust-app/target                                                                                                             │
 │   delete    64.0 MiB  ~/projects/web/node_modules                                                                                                            │
 │                       needs review: recent                                                                                                                   │
-│ Deleting is permanent: these can't be restored.                                                                                                              │
-│                                                                                                                                                              │
 │                                                                                                                                                              │
 │                                                                                                                                                              │
 │                                                                                                                                                              │

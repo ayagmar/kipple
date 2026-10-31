@@ -1,9 +1,10 @@
-//! The review of a clean (`docs/03-functional-spec.md` §2 J3, spec M3c pinned 5): the
-//! plan as it will run, by method, each item with what it frees, a Review item's
-//! cautions under it, what deleting and a trash move mean, then what was left out of the
-//! plan and why. It is read-only: what it shows is exactly what `y` runs.
+//! The review of a clean (`docs/03-functional-spec.md` §2 J3, spec M3c pinned 5): above
+//! the list, however far it is scrolled, what deleting and a trash move mean and how
+//! many items need review or weren't planned; in it, the plan as it will run, by method,
+//! each item with what it frees, a Review item's cautions under it, then what was left
+//! out of the plan and why. It is read-only: what it shows is exactly what `y` runs.
 
-use kipple_core::Method;
+use kipple_core::{Method, Standing};
 use ratatui::text::Line as Text;
 
 use super::{Look, homed};
@@ -16,16 +17,41 @@ pub(super) fn title(review: &Review) -> String {
     review::review_title(review.prepared.plan().entries().len())
 }
 
-/// The review's lines, each in its role.
+/// What stays above the review's list, so `y` never confirms what wasn't drawn:
+/// `title`, why nothing can be cleaned when nothing can, what deleting and a trash move
+/// mean, and how many items need review and how many weren't planned.
+pub(super) fn head(title: String, review: &Review, look: Look<'_>) -> Vec<Text<'static>> {
+    let line = |role, text: String| Text::styled(text, look.style(role));
+    let prepared = &review.prepared;
+    let entries = prepared.plan().entries();
+    let mut head = vec![line(Role::Title, title)];
+    if prepared.ending().is_some() {
+        head.push(line(Role::Warning, review::NOTHING_TO_CLEAN.to_owned()));
+    }
+    let has = |method| entries.iter().any(|entry| entry.method() == method);
+    if has(Method::Delete) {
+        head.push(line(Role::Warning, receipt::DELETE_PERMANENT.to_owned()));
+    }
+    if has(Method::Trash) {
+        head.push(line(Role::Warning, receipt::TRASH_WHOLE.to_owned()));
+    }
+    let cautioned = entries
+        .iter()
+        .filter(|entry| matches!(entry.standing(), Standing::Review(_)))
+        .count();
+    if let Some(below) = review::below(cautioned, prepared.refused_items().len()) {
+        head.push(line(Role::Review, below));
+    }
+    head
+}
+
+/// The review's list, each line in its role.
 pub(super) fn lines(app: &App, review: &Review, look: Look<'_>) -> Vec<Text<'static>> {
     let line = |role, text: String| Text::styled(text, look.style(role));
     let home = app.home.as_deref();
     let prepared = &review.prepared;
     let plan = prepared.plan();
     let mut lines = Vec::new();
-    if prepared.ending().is_some() {
-        lines.push(line(Role::Warning, review::NOTHING_TO_CLEAN.to_owned()));
-    }
     lines.extend(
         receipt::plan_heading(plan)
             .into_iter()
@@ -38,13 +64,6 @@ pub(super) fn lines(app: &App, review: &Review, look: Look<'_>) -> Vec<Text<'sta
         if let Some(cautions) = review::cautions(entry.standing()) {
             lines.push(line(Role::Review, cautions));
         }
-    }
-    let has = |method| plan.entries().iter().any(|entry| entry.method() == method);
-    if has(Method::Delete) {
-        lines.push(line(Role::Warning, receipt::DELETE_PERMANENT.to_owned()));
-    }
-    if has(Method::Trash) {
-        lines.push(line(Role::Warning, receipt::TRASH_WHOLE.to_owned()));
     }
     let refused: Vec<String> = prepared
         .refused_items()

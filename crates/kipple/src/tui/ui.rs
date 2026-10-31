@@ -143,63 +143,102 @@ pub(crate) fn render(app: &App, look: Look<'_>, frame: &mut Frame<'_>) {
     }
 }
 
-/// A clean's screen in place of the tree and the detail pane: its title, then its
-/// lines from `scroll` on.
-fn clean(app: &App, cleaning: &Cleaning, look: Look<'_>, area: Rect, frame: &mut Frame<'_>) {
-    let (title, lines, scroll) = match cleaning {
-        Cleaning::Planning(_) => (crate::human::review::PLANNING.to_owned(), Vec::new(), 0),
-        Cleaning::Reviewing(shown) => (
-            review::title(shown),
-            review::lines(app, shown, look),
-            shown.scroll,
-        ),
+/// What a clean's screen shows: the head that stays above its list, and the list from
+/// `scroll` on.
+struct Page {
+    head: Vec<Text<'static>>,
+    lines: Vec<Text<'static>>,
+    scroll: usize,
+}
+
+/// The page of `cleaning`.
+fn page(app: &App, cleaning: &Cleaning, look: Look<'_>) -> Page {
+    let titled = |title: String| vec![Text::styled(title, look.style(Role::Title))];
+    match cleaning {
+        Cleaning::Planning(_) => Page {
+            head: titled(crate::human::review::PLANNING.to_owned()),
+            lines: Vec::new(),
+            scroll: 0,
+        },
+        Cleaning::Reviewing(shown) => Page {
+            head: review::head(review::title(shown), shown, look),
+            lines: review::lines(app, shown, look),
+            scroll: shown.scroll,
+        },
         // The question the typed size answers, above the plan it runs.
         Cleaning::Typing(shown, _) => {
             let items = shown.prepared.plan().entries().len();
             let question = receipt::typed_question(items, &shown.total);
-            (
-                question.trim_end().to_owned(),
-                review::lines(app, shown, look),
-                shown.scroll,
-            )
+            Page {
+                head: review::head(question.trim_end().to_owned(), shown, look),
+                lines: review::lines(app, shown, look),
+                scroll: shown.scroll,
+            }
         }
-        Cleaning::Applying(applying) => (
-            progress::title(applying),
-            progress::lines(applying, app.home.as_deref(), look),
-            0,
-        ),
-        Cleaning::Ended(ended) => {
-            let scroll = match ended {
+        Cleaning::Applying(applying) => Page {
+            head: titled(progress::title(applying)),
+            lines: progress::lines(applying, app.home.as_deref(), look),
+            scroll: 0,
+        },
+        Cleaning::Ended(ended) => Page {
+            head: titled(result::title(ended)),
+            lines: result::lines(ended, app.home.as_deref(), look),
+            scroll: match ended {
                 Ended::Ran { scroll, .. } => *scroll,
                 Ended::Failed { .. } => 0,
-            };
-            let lines = result::lines(ended, app.home.as_deref(), look);
-            (result::title(ended), lines, scroll)
-        }
-    };
+            },
+        },
+    }
+}
+
+/// A page's rows laid out in a clean's `area`: the head's, a blank row, then the list's
+/// in the rest. Each line too wide for the terminal breaks into rows that start where it
+/// does.
+struct Laid {
+    head: Vec<Text<'static>>,
+    head_area: Rect,
+    rows: Vec<Text<'static>>,
+    list: Rect,
+}
+
+fn lay(page: Page, area: Rect) -> Laid {
     let area = area.inner(Margin::new(1, 0));
-    let [head, list] = Layout::vertical([Constraint::Length(2), Constraint::Fill(1)]).areas(area);
-    frame.render_widget(
-        Paragraph::new(Text::styled(title, look.style(Role::Title))),
+    let head = wrap(hung(page.head), area.width);
+    let height = u16::try_from(head.len() + 1).unwrap_or(u16::MAX);
+    let [head_area, list] =
+        Layout::vertical([Constraint::Length(height), Constraint::Fill(1)]).areas(area);
+    Laid {
         head,
-    );
-    // Each line too wide for the terminal breaks into rows that start where it does.
-    let lines = wrap(
-        lines
-            .into_iter()
-            .map(|line| {
-                let hang = line.spans.first().map_or(0, |span| {
-                    span.content.len() - span.content.trim_start().len()
-                });
-                Hung { line, hang }
-            })
-            .collect(),
-        list.width,
-    );
-    let rows = usize::from(list.height);
+        head_area,
+        rows: wrap(hung(page.lines), list.width),
+        list,
+    }
+}
+
+/// `lines`, each hung where its text starts.
+fn hung(lines: Vec<Text<'static>>) -> Vec<Hung> {
+    lines
+        .into_iter()
+        .map(|line| {
+            let hang = line.spans.first().map_or(0, |span| {
+                span.content.len() - span.content.trim_start().len()
+            });
+            Hung { line, hang }
+        })
+        .collect()
+}
+
+/// A clean's screen in place of the tree and the detail pane: its head, then its list
+/// from where it was scrolled.
+fn clean(app: &App, cleaning: &Cleaning, look: Look<'_>, area: Rect, frame: &mut Frame<'_>) {
+    let page = page(app, cleaning, look);
+    let scroll = page.scroll;
+    let laid = lay(page, area);
+    frame.render_widget(Paragraph::new(laid.head), laid.head_area);
+    let rows = usize::from(laid.list.height);
     // Running, the newest rows show; otherwise from where it was scrolled, never past
     // the last page.
-    let bottom = lines.len().saturating_sub(rows);
+    let bottom = laid.rows.len().saturating_sub(rows);
     let first = match cleaning {
         Cleaning::Applying(_) => bottom,
         Cleaning::Planning(_)
@@ -207,8 +246,8 @@ fn clean(app: &App, cleaning: &Cleaning, look: Look<'_>, area: Rect, frame: &mut
         | Cleaning::Typing(..)
         | Cleaning::Ended(_) => scroll.min(bottom),
     };
-    let shown: Vec<Text<'static>> = lines.into_iter().skip(first).collect();
-    frame.render_widget(Paragraph::new(shown), list);
+    let shown: Vec<Text<'static>> = laid.rows.into_iter().skip(first).collect();
+    frame.render_widget(Paragraph::new(shown), laid.list);
 }
 
 /// `path` as the home screen shows it in a clean's lines: below the home directory,

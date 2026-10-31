@@ -110,6 +110,15 @@ impl Home {
         home
     }
 
+    /// Adds `count` more Rust projects, each with its `target`, under `projects/many`.
+    fn more_projects(&self, count: usize) {
+        let mut more = tree::FixtureTree::new();
+        for at in 0..count {
+            cargo_v1_99_0::project(&mut more, &format!("home/projects/many/p{at:02}"));
+        }
+        more.build_in(self.temp.path()).unwrap();
+    }
+
     fn write_config(&self, text: &str) {
         fs::write(&self.config, text).unwrap();
     }
@@ -513,6 +522,39 @@ fn an_empty_plan_says_why_and_y_does_nothing() {
         "the review didn't stay open: {:?}",
         app.cleaning
     );
+}
+
+// Catches `y` running a plan whose permanence warning, cautions or refusals were never
+// drawn: with more items than the review has rows, they still show on its first page,
+// above the list.
+#[test]
+fn what_deleting_means_and_what_to_read_below_show_above_a_long_review() {
+    let home = Home::new("");
+    home.more_projects(30);
+    let mut app = home.app(80, 24);
+    select(&mut app, &[WEB]);
+    // Kept after it was selected: Protected when planned.
+    home.keep(ACME);
+    press(&mut app, &[Key::Char('c')]);
+    home.plan(&mut app);
+
+    let shown = text(&app, 80, 24);
+    let Some(Cleaning::Reviewing(review)) = &app.cleaning else {
+        panic!("no review: {:?}", app.cleaning);
+    };
+    let last = review.prepared.plan().entries().last().unwrap().path();
+    let last = last
+        .parent()
+        .unwrap()
+        .file_name()
+        .unwrap()
+        .to_string_lossy();
+    assert!(
+        !shown.contains(&format!("{last}/target")),
+        "the whole plan fits, so nothing is below the fold: {shown}"
+    );
+    assert!(shown.contains(receipt::DELETE_PERMANENT), "{shown}");
+    assert!(shown.contains(&review::below(1, 1).unwrap()), "{shown}");
 }
 
 /// A run's events as the loop passes them on: the run stored, its first item started.

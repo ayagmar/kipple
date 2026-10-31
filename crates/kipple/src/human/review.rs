@@ -75,6 +75,21 @@ pub(crate) const PLANNING_FAILED: &str = "Planning failed, so nothing was change
 /// What the review says above what was left out when nothing selected can be cleaned.
 pub(crate) const NOTHING_TO_CLEAN: &str = "Nothing selected can be cleaned, for the reasons below.";
 
+/// What the review's head says of the list under it, when it holds anything a person
+/// should read before confirming: how many items need review, with their cautions under
+/// them, and how many selected findings weren't planned.
+pub(crate) fn below(cautioned: usize, refused: usize) -> Option<String> {
+    let mut said = Vec::new();
+    if cautioned > 0 {
+        let verb = if cautioned == 1 { "needs" } else { "need" };
+        said.push(format!("{} {verb} review", items_word(cautioned)));
+    }
+    if refused > 0 {
+        said.push(format!("{} not planned", items_word(refused)));
+    }
+    (!said.is_empty()).then(|| format!("{}: see below.", said.join(", ")))
+}
+
 /// The heading of the selected findings that are part of another item.
 pub(crate) const MERGED: &str = "Part of another item:";
 

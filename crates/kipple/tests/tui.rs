@@ -444,8 +444,21 @@ fn the_review_and_the_result_say_what_the_command_line_says() {
         .map(|line| line.trim().to_owned())
         .filter(|line| !line.is_empty())
         .collect();
+    // The review's head, under its title and above the plan, says what deleting means,
+    // as the prompt says it after the plan; the plan follows in the prompt's order.
     let reviewed = rows(&frames.looked[0]);
-    assert_eq!(reviewed[1..], prompt[..], "{}", asked.err);
+    let plan = reviewed
+        .iter()
+        .position(|row| *row == prompt[0])
+        .unwrap_or_else(|| panic!("the review doesn't show the plan: {reviewed:?}"));
+    let head = &reviewed[1..plan];
+    let rest: Vec<String> = prompt
+        .iter()
+        .filter(|line| !head.contains(line))
+        .cloned()
+        .collect();
+    assert_eq!(head.len(), prompt.len() - rest.len(), "{reviewed:?}");
+    assert_eq!(reviewed[plan..], rest[..], "{}", asked.err);
     let receipt: Vec<String> = homed(&cleaned.out)
         .lines()
         .skip(1)
