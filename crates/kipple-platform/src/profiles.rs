@@ -2,9 +2,9 @@
 //!
 //! The data directory is opened without following a link, `profiles/` (mode 0700) in it
 //! the same way, and every file in it relative to that handle (mode 0600), never through
-//! a link. A data directory on a file system the run store refuses (D-065), network and
-//! user-space ones included, is refused. The store moves bytes; the core decides what
-//! they say.
+//! a link. A data directory, or a `profiles/` in it, on a file system the run store
+//! refuses (D-065), network and user-space ones included, is refused, for writing as for
+//! reading. The store moves bytes; the core decides what they say.
 //!
 //! A profile is written to a temporary name in `profiles/` that only this process uses,
 //! synced, renamed to its name (over the old one when it is replaced) and `profiles/`
@@ -75,7 +75,8 @@ impl FileProfileStore {
     }
 
     /// `<data>/profiles`, opened, making it and the data directory first when they are
-    /// missing. Their file system is checked before anything is made.
+    /// missing. The data directory's file system is checked before anything is made, and
+    /// that of `profiles/` once it is open: it may be a mount of another.
     fn make(&self) -> Result<Folder, ProfileStoreError> {
         let as_: Failure = ProfileStoreError::Write;
         let data = self.data()?;
@@ -84,13 +85,15 @@ impl FileProfileStore {
             .and_then(|()| Folder::open(data))
             .map_err(|error| as_(failed(error)))?;
         supported(data.file_system(), as_)?;
-        match data.create_dir(PROFILES) {
+        let profiles = match data.create_dir(PROFILES) {
             Ok(()) => data.sync(),
             Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(()),
             Err(error) => Err(error),
         }
         .and_then(|()| data.open_in(PROFILES))
-        .map_err(|error| as_(failed(error)))
+        .map_err(|error| as_(failed(error)))?;
+        supported(profiles.file_system(), as_)?;
+        Ok(profiles)
     }
 }
 
