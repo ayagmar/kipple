@@ -70,7 +70,7 @@ Verify:
 
 ## M2: TUI home
 
-Status (2026-10-16): in progress. Built: bucket classification at Careful, Balanced and Thorough with the facts it needs (D-047) and the 80% check on `demo-home`; the config file (D-051); project activity scoped by declared evidence (D-050); the home screen (D-048) in the bucket layout the founder chose (D-049), with keep (`p`/`P`), the settings screen and the first-run onboarding (J0), their state-transition tests and buffer snapshots at 80×24 and 160×48; `cargo xtask bench-tui` (p95 2.2 ms on the founder's workstation); the `demo-home` snapshots at Careful, Balanced and Thorough; and the vhs tapes for the first scan and navigation, which CI's `tapes` job (09 §7) rendered green in run 38786997494. M2c, the polish the founder asked for after a first look (2026-10-16), is under way: the project roots in the header, project grouping, `o` and size bars (D-054), the suggested roots in onboarding and settings (D-053), the detail pane's scrolling and wording, a project's detail and `y` (D-054) are built. Left: the M2c review, then the founder's sign-off on the result.
+Status (2026-10-18): complete. Built: bucket classification at Careful, Balanced and Thorough with the facts it needs (D-047) and the 80% check on `demo-home`; the config file (D-051); project activity scoped by declared evidence (D-050); the home screen (D-048) in the bucket layout the founder chose (D-049), with keep (`p`/`P`), the settings screen and the first-run onboarding (J0), their state-transition tests and buffer snapshots at 80×24 and 160×48; `cargo xtask bench-tui` (p95 2.2 ms on the founder's workstation); the `demo-home` snapshots at Careful, Balanced and Thorough; and the vhs tapes for the first scan and navigation, which CI's `tapes` job (09 §7) rendered green in run 38786997494. M2c, the polish the founder asked for after a first look (2026-10-16), added the project roots in the header, project grouping, `o` and size bars (D-054), the suggested roots in onboarding and settings (D-053), the detail pane's scrolling and wording, a project's detail and `y` (D-054).
 
 Build:
 - state machine plus a pure renderer: Safe / Review / Protected buckets with Agents / Dev / System grouping, detail pane (what it is, why it's here, why kipple thinks it's safe, what you lose, how it comes back), streaming sizes, filter, selection and the `c` Safe shortcut, help, narrow layout, `NO_COLOR` and `--ascii`
@@ -89,6 +89,8 @@ Verify:
 - The founder compares the bucket and lens layouts on the same fixture data, picks one, and signs off on the feel. The loser is removed. Done: D-049. The sign-off on the feel comes after M2c.
 
 ## M3: Safe mutation (two sessions)
+
+Status (2026-10-31): in progress. Built: spikes S1 and S4, the confined executor and the trash backend (D-061, D-062); the core's planner, revalidation, apply loop and reconciliation with the frozen-tree budget (D-063, D-064) (M3a); the stored runs with their journal and lock (D-065), the git query apply asks again before each item (D-066), plan files that are planned again from a fresh scan (D-067), and `clean`, `plan -o`, `apply`, `history` and `restore` with their receipts and exit codes (M3b). Left: profiles, the TUI's review and result screens, and a prompt that Ctrl+C interrupts at once (M3c).
 
 Build:
 - spike S1, then the platform executor and runner
