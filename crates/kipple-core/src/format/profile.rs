@@ -13,8 +13,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::stored_plan::rule_id_ok;
-use super::{FormatError, IdentityOut, PROFILE, TextOut, path_out, shape};
-use crate::digest::Sha256;
+use super::{DigestOut, FormatError, IdentityOut, PROFILE, TextOut, path_out, shape};
 use crate::frozen::NameCodec;
 use crate::policy::Level;
 use crate::profile::{
@@ -65,10 +64,10 @@ pub(crate) struct EntryOut {
     pub rule: String,
     /// Whether the profile authorizes it.
     pub scope: EntryScope,
-    /// SHA-256 of the rule's canonical encoding.
-    pub rule_digest: Sha256Out,
-    /// SHA-256 of its integration's canonical encoding.
-    pub integration_digest: Sha256Out,
+    /// The digest of the rule's canonical encoding.
+    pub rule_digest: DigestOut,
+    /// The digest of its integration's canonical encoding.
+    pub integration_digest: DigestOut,
     /// Whether the config turned it on.
     pub enabled: RuleState,
     /// Its effective level.
@@ -92,35 +91,6 @@ pub(crate) struct RootOut {
     pub path: TextOut,
     /// Its identity when the scan opened it; `null` when it didn't.
     pub identity: Option<IdentityOut>,
-}
-
-/// A SHA-256 as stored: 64 lowercase hexadecimal digits.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct Sha256Out(pub Sha256);
-
-impl Serialize for Sha256Out {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(&self.0)
-    }
-}
-
-impl<'de> Deserialize<'de> for Sha256Out {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let text = String::deserialize(deserializer)?;
-        Sha256::parse(&text)
-            .map(Self)
-            .ok_or_else(|| serde::de::Error::custom("a SHA-256 is 64 lowercase hex digits"))
-    }
-}
-
-impl JsonSchema for Sha256Out {
-    fn schema_name() -> std::borrow::Cow<'static, str> {
-        "Sha256".into()
-    }
-
-    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        schemars::json_schema!({ "type": "string", "pattern": "^[0-9a-f]{64}$" })
-    }
 }
 
 /// `contents` as a profile file.
@@ -155,8 +125,8 @@ fn entry_out(entry: &ProfileEntry, codec: &dyn NameCodec) -> EntryOut {
     EntryOut {
         rule: entry.rule.0.clone(),
         scope: entry.scope,
-        rule_digest: Sha256Out(entry.rule_digest),
-        integration_digest: Sha256Out(entry.integration_digest),
+        rule_digest: DigestOut(entry.rule_digest),
+        integration_digest: DigestOut(entry.integration_digest),
         enabled: entry.enabled,
         level: entry.level,
         recent_days: entry.recent_days,

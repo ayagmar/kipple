@@ -50,6 +50,10 @@
     "entries"
   ],
   "$defs": {
+    "Digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
     "EntryOut": {
       "description": "What a profile froze about one rule.",
       "type": "object",
@@ -59,8 +63,8 @@
           "$ref": "#/$defs/RuleState"
         },
         "integration_digest": {
-          "description": "SHA-256 of its integration's canonical encoding.",
-          "$ref": "#/$defs/Sha256"
+          "description": "The digest of its integration's canonical encoding.",
+          "$ref": "#/$defs/Digest"
         },
         "level": {
           "description": "Its effective level.",
@@ -90,8 +94,8 @@
           "pattern": "^[a-z0-9-]+(\\.[a-z0-9-]+)+$"
         },
         "rule_digest": {
-          "description": "SHA-256 of the rule's canonical encoding.",
-          "$ref": "#/$defs/Sha256"
+          "description": "The digest of the rule's canonical encoding.",
+          "$ref": "#/$defs/Digest"
         },
         "scope": {
           "description": "Whether the profile authorizes it.",
@@ -199,10 +203,6 @@
         "enabled",
         "disabled"
       ]
-    },
-    "Sha256": {
-      "type": "string",
-      "pattern": "^[0-9a-f]{64}$"
     },
     "SymbolicRoot": {
       "type": "string",

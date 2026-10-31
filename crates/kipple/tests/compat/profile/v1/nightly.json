@@ -13,8 +13,8 @@
     {
       "rule": "builtin.cargo.target",
       "scope": "included",
-      "rule_digest": "2c26b46b68ffc68ff99b453c1d30413413422d706483bfa0f98a5e886266e7ae",
-      "integration_digest": "fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9",
+      "rule_digest": "2c26b46b68ffc68ff99b453c1d304134",
+      "integration_digest": "fcde2b2edba56bf408601fb721fe9b5c",
       "enabled": "enabled",
       "level": "balanced",
       "recent_days": 7,
@@ -30,8 +30,8 @@
     {
       "rule": "builtin.node.modules",
       "scope": "left-out",
-      "rule_digest": "baa5a0964d3320fbc0c6a922140453c8513ea24ab8fd0577034804a967248096",
-      "integration_digest": "fcde2b2edba56bf408601fb721fe9b5c338d10ee429ea04fae5511b68fbf8fb9",
+      "rule_digest": "baa5a0964d3320fbc0c6a922140453c8",
+      "integration_digest": "fcde2b2edba56bf408601fb721fe9b5c",
       "enabled": "disabled",
       "level": "careful",
       "recent_days": 30,

@@ -114,7 +114,7 @@ pub use apply::{
 pub use authorize::{Authorization, Authorized, AuthorizedOp, DeleteOp, ReviewedPlan, TrashOp};
 pub use cancel::{CancelToken, Waited};
 pub use capability::{NativeTool, ToolError, ToolStatus, ToolVersion};
-pub use digest::{Digest, Sha256};
+pub use digest::Digest;
 pub use discovery::WalkStop;
 pub use engine::{
     Engine, EngineError, EngineRescan, FRESH, Finding, FindingId, IntegrationReport, Omission,

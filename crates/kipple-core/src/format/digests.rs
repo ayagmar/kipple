@@ -1,6 +1,7 @@
-//! The digests a profile freezes about each rule it authorizes (D-068): SHA-256 over a
-//! canonical encoding of what decides the rule's findings, never over how kipple prints
-//! a value.
+//! The digests a profile freezes about each rule it authorizes (D-068): a [`Digest`] over
+//! a canonical encoding of what decides the rule's findings, never over how kipple prints
+//! a value. Like every digest kipple stores, it detects change: a different one only
+//! suspends an entry, never authorizes.
 //!
 //! The encoding is a sequence of named fields, each a length-prefixed name then its
 //! value: text as its length then its UTF-8 bytes, numbers as eight big-endian bytes,
@@ -11,7 +12,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use crate::digest::{Sha256, Sha256Hasher};
+use crate::digest::{Digest, Hasher};
 use crate::integration::{ActivityEvidence, Integration, IntegrationDescriptor, IntegrationId};
 use crate::policy::Consequence;
 use crate::rule::{Bounds, Name, Operation, Predicate, Rule, Selector, Test};
@@ -22,7 +23,7 @@ use crate::rule::{Bounds, Name, Operation, Predicate, Rule, Selector, Test};
 /// recent window. Its ID is the profile entry's key, and its text and category are
 /// shown, never decide anything, so they are left out.
 #[must_use]
-pub fn rule_digest(rule: &Rule) -> Sha256 {
+pub fn rule_digest(rule: &Rule) -> Digest {
     #[expect(
         clippy::unneeded_field_pattern,
         reason = "naming every field left out makes a new field fail to compile until it is encoded or left out here"
@@ -73,7 +74,7 @@ pub fn rule_digest(rule: &Rule) -> Sha256 {
 pub fn integration_digest(
     descriptor: &IntegrationDescriptor,
     evidence: ActivityEvidence,
-) -> Sha256 {
+) -> Digest {
     let IntegrationDescriptor {
         id,
         lens,
@@ -120,7 +121,7 @@ pub fn integration_digest(
 
 /// Each integration's [`integration_digest`], as a profile is frozen and checked with.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct IntegrationDigests(pub(crate) BTreeMap<IntegrationId, Sha256>);
+pub struct IntegrationDigests(pub(crate) BTreeMap<IntegrationId, Digest>);
 
 impl IntegrationDigests {
     /// The digests of `integrations`, from what each declares about itself.
@@ -140,7 +141,7 @@ impl IntegrationDigests {
 
     /// The digest of the integration `id`, if it is one of them.
     #[must_use]
-    pub fn get(&self, id: IntegrationId) -> Option<Sha256> {
+    pub fn get(&self, id: IntegrationId) -> Option<Digest> {
         self.0.get(&id).copied()
     }
 }
@@ -232,13 +233,13 @@ fn consequence_into(canon: &mut Canon, consequence: &Consequence) {
     canon.text(cost.name());
 }
 
-/// Writes a canonical encoding into a SHA-256.
-struct Canon(Sha256Hasher);
+/// Writes a canonical encoding into a [`Digest`].
+struct Canon(Hasher);
 
 impl Canon {
     /// An encoding of the kind `kind`, so two kinds of value never share bytes.
     fn new(kind: &str) -> Self {
-        let mut canon = Self(Sha256Hasher::new());
+        let mut canon = Self(Hasher::new());
         canon.text(kind);
         canon
     }
@@ -282,7 +283,7 @@ impl Canon {
         }
     }
 
-    fn finish(self) -> Sha256 {
+    const fn finish(self) -> Digest {
         self.0.finish()
     }
 }

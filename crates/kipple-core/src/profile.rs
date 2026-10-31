@@ -57,7 +57,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::digest::{Digest, Sha256};
+use crate::digest::Digest;
 use crate::engine::{ScanOutcome, ScanReport};
 use crate::format::{IntegrationDigests, rule_digest};
 use crate::integration::IntegrationId;
@@ -231,8 +231,8 @@ impl FrozenRoot {
 pub struct ProfileEntry {
     pub(crate) rule: RuleId,
     pub(crate) scope: EntryScope,
-    pub(crate) rule_digest: Sha256,
-    pub(crate) integration_digest: Sha256,
+    pub(crate) rule_digest: Digest,
+    pub(crate) integration_digest: Digest,
     pub(crate) enabled: RuleState,
     pub(crate) level: Level,
     pub(crate) recent_days: u16,
@@ -255,13 +255,13 @@ impl ProfileEntry {
 
     /// [`rule_digest`] of the rule.
     #[must_use]
-    pub const fn rule_digest(&self) -> Sha256 {
+    pub const fn rule_digest(&self) -> Digest {
         self.rule_digest
     }
 
     /// [`integration_digest`](crate::format::integration_digest) of its integration.
     #[must_use]
-    pub const fn integration_digest(&self) -> Sha256 {
+    pub const fn integration_digest(&self) -> Digest {
         self.integration_digest
     }
 
