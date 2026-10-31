@@ -53,14 +53,18 @@ const HISTORY: &[(&str, u32, &str)] = &[
     ("cargo", 1, "0e697897cb5b69e21c7e9c0e34286df0"),
     ("claude-code", 1, "6c62272e07bb014262b821756295c58d"),
     ("journald", 1, "e49780136435bcd315cc754678ba943d"),
-    ("node", 1, "8129e5b8c2750c6079f0f1086839e6d5"),
+    ("node", 1, "33375509d0fb63b07c0536a2f84bf3d4"),
     ("pacman", 1, "3cacf4638284236d5a3f07f4f76e18c2"),
-    ("python", 1, "26706de1cc2c65b5a5c04770e8cb3ab2"),
+    ("python", 1, "dbd2f33b7e200232c1e2b0ec124102b1"),
     ("trash", 1, "0ec6cbf58676b78efbb8d575ed1f1bca"),
 ];
 
-/// Layouts kipple must not take for supported ones: a cargo target without its tag or
-/// with a forged one, and bytecode beside other files or inside an environment.
+/// Layouts beside the supported ones: a cargo target without its tag or with a forged
+/// one, bytecode beside other files or inside an environment, a `node_modules` without
+/// its install record or with one of an unknown version, and a `.venv` without its
+/// `pyvenv.cfg` or with one of an unknown version. The evidence `docs/06` §5 names for
+/// the last two is the file being there, so a record or config of an unknown version is
+/// still verified; the digest holds that too.
 fn negative() -> FixtureTree {
     let mut tree = FixtureTree::new();
     tree.file("home/projects/a/Cargo.toml", b"")
@@ -77,7 +81,64 @@ fn negative() -> FixtureTree {
             b"",
         );
     venv_v3_14_8::environment(&mut tree, "home/projects/env");
+    node_negatives(&mut tree);
+    venv_negatives(&mut tree);
     tree
+}
+
+/// npm 11.19.0's project (`npm_v11_19_0`), once without `node_modules/.package-lock.json`
+/// and once with a lockfile version npm 11.19.0 doesn't write.
+fn node_negatives(tree: &mut FixtureTree) {
+    let records: [(&str, Option<&[u8]>); 2] = [
+        ("home/projects/no-record", None),
+        (
+            "home/projects/unknown-record",
+            Some(b"{\"lockfileVersion\":99}"),
+        ),
+    ];
+    for (at, record) in records {
+        tree.file(
+            &format!("{at}/package.json"),
+            b"{\"name\":\"web\",\"dependencies\":{\"dep\":\"1.0.0\"}}",
+        )
+        .file(
+            &format!("{at}/package-lock.json"),
+            record.unwrap_or(b"{\"lockfileVersion\":3}"),
+        )
+        .file(
+            &format!("{at}/node_modules/dep/package.json"),
+            b"{\"name\":\"dep\"}",
+        );
+        if let Some(record) = record {
+            tree.file(&format!("{at}/node_modules/.package-lock.json"), record);
+        }
+    }
+}
+
+/// Python 3.14.8's project environment (`venv_v3_14_8`), once without `pyvenv.cfg` and
+/// once with a `version =` line of a Python it wasn't verified against.
+fn venv_negatives(tree: &mut FixtureTree) {
+    let configs: [(&str, Option<&[u8]>); 2] = [
+        ("home/projects/no-cfg", None),
+        (
+            "home/projects/unknown-cfg",
+            Some(b"home = /usr/bin\ninclude-system-site-packages = false\nversion = 9.0.0\n"),
+        ),
+    ];
+    for (at, config) in configs {
+        tree.file(
+            &format!("{at}/pyproject.toml"),
+            b"[project]\nname = \"tool\"\n",
+        )
+        .file(&format!("{at}/.venv/bin/activate"), b"# activate\n")
+        .file(
+            &format!("{at}/.venv/lib/python3.14/site-packages/pip/__init__.py"),
+            b"",
+        );
+        if let Some(config) = config {
+            tree.file(&format!("{at}/.venv/pyvenv.cfg"), config);
+        }
+    }
 }
 
 /// What each integration found in `report`, a line per finding: its rule, path below the
