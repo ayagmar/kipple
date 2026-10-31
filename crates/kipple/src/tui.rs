@@ -3,8 +3,9 @@
 //! file yet.
 //!
 //! A state machine (`app`) and pure drawing (`ui`), driven by one loop that
-//! reads keys and scan events and draws at most once a frame. It is read-only: selecting
-//! marks findings and nothing else.
+//! reads keys and scan events and draws at most once a frame. Selecting marks findings
+//! and nothing else; a clean is planned, reviewed, confirmed and run on workers (`work`)
+//! whose answers and events the loop reads like the scan's.
 
 mod app;
 mod filter;
@@ -13,17 +14,21 @@ mod onboarding;
 mod settings;
 mod themes;
 mod ui;
+mod work;
 
 use std::ffi::OsString;
 use std::io;
 use std::path::PathBuf;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::{Arc, Mutex};
 use std::thread::{self, Scope, ScopedJoinHandle};
 use std::time::{Duration, Instant};
 
 use kipple_core::format::base64;
 use kipple_core::{
-    CancelToken, Engine, EventChannel, EventRx, ScanOutcome, ScanReport, ScanRequest, Selector,
-    SymbolicRoot, event_channel, suggest,
+    ApplyEvent, CancelToken, Engine, EventChannel, EventRx, Finished, Prepared, RunId, ScanOutcome,
+    ScanReport, ScanRequest, Selection, Selector, StoreRefusal, SymbolicRoot, event_channel,
+    suggest,
 };
 use kipple_platform::{
     Environment, ProjectSearch, SearchLimits, SystemClock, kipple_dirs, search_projects,
@@ -33,12 +38,14 @@ use ratatui::backend::Backend;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 pub use self::app::Key;
-use self::app::{App, Catalog, Effect, Msg, Saved};
+use self::app::{App, Catalog, Confirmation, Effect, Generation, Msg, Saved, needs_typing};
 pub use self::onboarding::{LevelTotals, due as first_run_due, level_totals};
 use self::onboarding::{Onboarding, Outcome};
 use self::settings::Found;
 use self::themes::Picker;
-use crate::config::{self, Edit, Loaded, Settings};
+use self::work::{Caught, Failed, Ground, guarded};
+use crate::config::{self, ConfigError, Edit, Loaded, Settings};
+use crate::human::{outcome, review};
 use crate::setup::{Builtin, BuiltinRule};
 use crate::theme::{self, Colours, Glyphs, Look, ThemeError};
 
@@ -124,17 +131,30 @@ where
         settings,
         appearance,
         first: false,
+        exit: Exit::Return,
     };
     session(terminal, keys, start)
 }
 
-/// What a session runs with: the machine, the settings and the appearance, and whether
-/// the first run's questions come before the home screen.
+/// How a session that runs a clean may end besides returning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Exit {
+    /// On the real terminal: the second Ctrl+C during a clean's apply restores the
+    /// terminal and ends the process with 130, and leaving while one runs restores the
+    /// terminal before it waits for the current item (spec M3c pinned 7, 8).
+    Process,
+    /// On a test terminal: the second Ctrl+C only closes the screen.
+    Return,
+}
+
+/// What a session runs with: the machine, the settings and the appearance, whether
+/// the first run's questions come before the home screen, and how it may end.
 struct Start<'env> {
     env: &'env Environment,
     settings: &'env Settings,
     appearance: Appearance,
     first: bool,
+    exit: Exit,
 }
 
 /// [`run`], with the first run's questions over the home screen, while the scan already
@@ -152,6 +172,7 @@ where
         settings,
         appearance,
         first,
+        exit,
     } = start;
     let builtin = Builtin::load().map_err(io::Error::other)?;
     let engine = builtin.engine(env).map_err(io::Error::other)?;
@@ -177,51 +198,63 @@ where
             onboarding,
             store,
             scope,
+            builtin: &builtin,
             engine: &engine,
             markers: &markers,
             scan: None,
             search: None,
+            planning: None,
+            applying: None,
+            exit,
             elapsed: None,
         };
         screen.start();
         let ran = screen.effects().and_then(|()| screen.drive(keys));
-        // Stops a scan or search still running, so leaving the scope doesn't wait for it.
-        screen.stop();
-        if let Some(search) = &screen.search {
-            search.cancel.cancel();
-        }
+        // Dropping the screen stops what still runs, so leaving the scope doesn't wait
+        // for more than the item a run is on.
         ran.map(|()| screen.elapsed)
     })
 }
 
 /// Opens the home screen in this terminal and restores the terminal however it ends:
-/// on quit, on error, and on panic (ratatui's panic hook). Without a config file at the
-/// default location, the first run's questions come first (J0).
+/// on quit, on error, and on a panic of the screen's thread (ratatui's panic hook, kept
+/// for that thread only). A worker's panic is told on stderr once the terminal is
+/// restored. Without a config file at the default location, the first run's questions
+/// come first (J0).
 pub(crate) fn open(
     env: &Environment,
     settings: &Settings,
     appearance: Appearance,
 ) -> io::Result<()> {
     let first = onboarding::due(&settings.loaded);
+    let caught: Caught = Arc::new(Mutex::new(Vec::new()));
     // Before `try_init`: it enables raw mode first, and that stays on if entering the
     // alternate screen then fails.
-    let _restore = Restore;
+    let _restore = Restore {
+        caught: Arc::clone(&caught),
+    };
     let mut terminal = ratatui::try_init()?;
+    work::quiet_workers(thread::current().id(), caught);
     let start = Start {
         env,
         settings,
         appearance,
         first,
+        exit: Exit::Process,
     };
     session(&mut terminal, &mut TerminalKeys, start).map(|_| ())
 }
 
-/// Leaves raw mode and the alternate screen when dropped.
-struct Restore;
+/// Leaves raw mode and the alternate screen when dropped, then tells what other threads'
+/// panics said.
+struct Restore {
+    caught: Caught,
+}
 
 impl Drop for Restore {
     fn drop(&mut self) {
         ratatui::restore();
+        work::tell(&self.caught);
     }
 }
 
@@ -258,6 +291,15 @@ impl Store<'_> {
     }
 }
 
+impl Store<'_> {
+    /// The settings the config file gives now, as a clean plans and runs under them
+    /// (spec M3c pinned 4, 6).
+    fn reload(&self) -> Result<Settings, ConfigError> {
+        let location = &self.settings.loaded.location;
+        config::reload(self.env, location, &[], &self.catalog)
+    }
+}
+
 /// A scan in progress, or finished.
 struct Scan<'scope> {
     cancel: CancelToken,
@@ -279,10 +321,33 @@ struct Screen<'ui, 'scope, 'env, B: Backend> {
     engine: &'env Engine,
     /// The file names that mark a project for the root search.
     markers: &'env [OsString],
+    /// The built-in rules a clean's workers build their machine from.
+    builtin: &'env Builtin,
     scan: Option<Scan<'scope>>,
     /// The root search, until its answer has been taken.
     search: Option<RootSearch<'scope>>,
+    /// The worker planning a clean, until its answer has been taken.
+    planning: Option<Planning<'scope>>,
+    /// The worker running a confirmed clean, until its answer has been taken.
+    applying: Option<Running<'scope>>,
+    exit: Exit,
     elapsed: Option<Duration>,
+}
+
+/// A clean being planned on its own thread, for one request.
+struct Planning<'scope> {
+    generation: Generation,
+    /// `review.confirm_by_typing_above` in the config it plans under.
+    threshold: Option<u64>,
+    cancel: CancelToken,
+    answer: ScopedJoinHandle<'scope, Result<Result<Prepared, String>, Failed>>,
+}
+
+/// A confirmed clean running on its own thread.
+struct Running<'scope> {
+    cancel: CancelToken,
+    events: Receiver<ApplyEvent>,
+    answer: ScopedJoinHandle<'scope, Result<Result<Finished, String>, Failed>>,
 }
 
 /// The search for roots to suggest, running on its own thread.
@@ -345,6 +410,180 @@ where
         self.scan.as_ref().is_some_and(|scan| scan.report.is_some())
     }
 
+    /// Whether a clean's worker is planning or running.
+    const fn working(&self) -> bool {
+        self.planning.is_some() || self.applying.is_some()
+    }
+
+    /// Starts planning `selection` of the finished scan for request `generation`, under
+    /// the config as it is now, stopping the planning of an earlier request.
+    fn plan(&mut self, generation: Generation, selection: Selection) {
+        self.stop_planning();
+        let Some(report) = self.app.report().cloned() else {
+            return;
+        };
+        let settings = match self.store.reload() {
+            Ok(settings) => settings,
+            Err(error) => {
+                let why = review::config_changed(&error.to_string());
+                self.app.update(Msg::NotPlanned { generation, why });
+                return;
+            }
+        };
+        let threshold = settings.loaded.config.confirm_by_typing_above;
+        let ground = Ground {
+            builtin: self.builtin,
+            env: self.store.env,
+            settings,
+        };
+        let cancel = CancelToken::new();
+        let token = cancel.clone();
+        let answer = self
+            .scope
+            .spawn(move || guarded(|| work::plan(ground, &report, &selection, &token)));
+        self.planning = Some(Planning {
+            generation,
+            threshold,
+            cancel,
+            answer,
+        });
+    }
+
+    /// Stops the planning under way; its answer is never read.
+    fn stop_planning(&mut self) {
+        if let Some(planning) = self.planning.take() {
+            planning.cancel.cancel();
+        }
+    }
+
+    /// Runs the plan the person confirmed `by`, under the config as it is now: refused,
+    /// with nothing run, when that config doesn't load, kipple's data folder isn't known,
+    /// or it now asks for the size to be typed and `by` didn't (pinned 6, 16).
+    fn apply(&mut self, by: Confirmation) {
+        let Some(prepared) = self.app.confirmed().cloned() else {
+            return;
+        };
+        let settings = match self.store.reload() {
+            Ok(settings) => settings,
+            Err(error) => {
+                let why = review::config_changed(&error.to_string());
+                self.app.update(Msg::NotApplied(why));
+                return;
+            }
+        };
+        if kipple_dirs(&settings.roots).data.path.is_err() {
+            let why = outcome::store_refusal(&StoreRefusal::NoDataDir);
+            self.app.update(Msg::NotApplied(review::not_run(&why)));
+            return;
+        }
+        let threshold = settings.loaded.config.confirm_by_typing_above;
+        let total = prepared.plan().estimated_total();
+        if by == Confirmation::Key && needs_typing(threshold, &total) {
+            self.app.update(Msg::MustType);
+            return;
+        }
+        let ground = Ground {
+            builtin: self.builtin,
+            env: self.store.env,
+            settings,
+        };
+        let cancel = CancelToken::new();
+        let token = cancel.clone();
+        let (sender, events) = mpsc::channel();
+        let answer = self
+            .scope
+            .spawn(move || guarded(|| work::apply(ground, &prepared, sender, &token)));
+        self.applying = Some(Running {
+            cancel,
+            events,
+            answer,
+        });
+    }
+
+    /// Stops the run after the item under way (the first Ctrl+C).
+    fn stop_apply(&self) {
+        if let Some(running) = &self.applying {
+            running.cancel.cancel();
+        }
+    }
+
+    /// The second Ctrl+C during a run: on the real terminal, restores it, says which run
+    /// the next command reconciles, and ends kipple at once with 130 (pinned 8).
+    fn abort(&mut self, run: Option<&RunId>) {
+        if self.exit == Exit::Return {
+            self.app.quit = true;
+            return;
+        }
+        ratatui::restore();
+        let line = run.map_or_else(
+            || review::INTERRUPTED_RECONCILING.to_owned(),
+            |run| review::interrupted_run(run.as_str()),
+        );
+        crate::say(&mut io::stderr().lock(), &line);
+        std::process::exit(i32::from(crate::CANCELLED));
+    }
+
+    /// Passes the planning worker's answer on once it has ended. Whether it had.
+    fn planned(&mut self) -> bool {
+        if !self
+            .planning
+            .as_ref()
+            .is_some_and(|planning| planning.answer.is_finished())
+        {
+            return false;
+        }
+        let Some(planning) = self.planning.take() else {
+            return false;
+        };
+        let generation = planning.generation;
+        let msg = match planning.answer.join().unwrap_or(Err(Failed)) {
+            Ok(Ok(prepared)) => Msg::Planned {
+                generation,
+                prepared: Box::new(prepared),
+                threshold: planning.threshold,
+            },
+            Ok(Err(why)) => Msg::NotPlanned {
+                generation,
+                why: review::not_run(&why),
+            },
+            Err(Failed) => Msg::PlanFailed { generation },
+        };
+        self.app.update(msg);
+        true
+    }
+
+    /// Applies the run's events that have arrived, at most a batch of them while it
+    /// runs and all of them once it has ended, then its answer. Whether anything changed.
+    fn ran(&mut self) -> bool {
+        let Some(running) = &self.applying else {
+            return false;
+        };
+        let ended = running.answer.is_finished();
+        let mut changed = false;
+        for _ in 0..if ended { usize::MAX } else { BATCH } {
+            match running.events.try_recv() {
+                Ok(event) => {
+                    self.app.update(Msg::Applied(Box::new(event)));
+                    changed = true;
+                }
+                Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+            }
+        }
+        if !ended {
+            return changed;
+        }
+        let Some(done) = self.applying.take() else {
+            return changed;
+        };
+        let msg = match done.answer.join().unwrap_or(Err(Failed)) {
+            Ok(Ok(finished)) => Msg::Ran(Box::new(finished)),
+            Ok(Err(why)) => Msg::NotApplied(review::not_run(&why)),
+            Err(Failed) => Msg::ApplyFailed,
+        };
+        self.app.update(msg);
+        true
+    }
+
     /// Carries out what the home screen asked for: config writes, new scans, the root
     /// search and the clipboard.
     fn effects(&mut self) -> io::Result<()> {
@@ -357,19 +596,31 @@ where
                 Effect::Rescan => self.start(),
                 Effect::Search => self.search(),
                 Effect::Clipboard(text) => osc52(self.terminal.backend_mut(), &text)?,
+                Effect::Plan {
+                    generation,
+                    selection,
+                } => self.plan(generation, selection),
+                Effect::StopPlanning => self.stop_planning(),
+                Effect::Apply(by) => self.apply(by),
+                Effect::StopApply => self.stop_apply(),
+                Effect::Abort(run) => self.abort(run.as_ref()),
             }
         }
         Ok(())
     }
 
     /// Reads keys and scan events until the screen is closed. A key is drawn at once;
-    /// scan events are drawn at most once a frame.
+    /// scan and clean events are drawn at most once a frame, and at once when they end.
     fn drive(&mut self, keys: &mut dyn Keys) -> io::Result<()> {
         self.draw()?;
         let mut drawn = Instant::now();
         let mut stale = false;
         while !self.app.quit {
-            let wait = if self.scanning() { FRAME } else { IDLE };
+            let wait = if self.scanning() || self.working() {
+                FRAME
+            } else {
+                IDLE
+            };
             if let Some(input) = keys.next(wait)? {
                 self.input(input);
                 self.effects()?;
@@ -379,7 +630,12 @@ where
             }
             stale |= self.receive();
             stale |= self.suggested();
-            if stale && drawn.elapsed() >= FRAME {
+            stale |= self.planned();
+            stale |= self.ran();
+            // At most a frame's worth of changes waits while something runs; once it
+            // has ended, what it ended with is drawn before the wait for a key.
+            let busy = self.scanning() || self.working();
+            if stale && (!busy || drawn.elapsed() >= FRAME) {
                 self.draw()?;
                 drawn = Instant::now();
                 stale = false;
@@ -439,7 +695,7 @@ where
             let elapsed = scan.started.elapsed();
             self.elapsed = Some(elapsed);
             self.app.update(Msg::Finished {
-                report: Box::new(report),
+                report: Arc::new(report),
                 elapsed,
             });
             changed = true;
@@ -481,6 +737,30 @@ where
             })
             .map(|_| ())
             .map_err(io::Error::other)
+    }
+}
+
+impl<B: Backend> Drop for Screen<'_, '_, '_, B> {
+    /// Stops everything still running, so leaving the scope waits only for the item a
+    /// run is on. On the real terminal, a run still going restores the terminal first
+    /// and says it stops after that item (pinned 7).
+    fn drop(&mut self) {
+        if let Some(scan) = &self.scan {
+            scan.cancel.cancel();
+        }
+        if let Some(search) = &self.search {
+            search.cancel.cancel();
+        }
+        if let Some(planning) = &self.planning {
+            planning.cancel.cancel();
+        }
+        if let Some(running) = &self.applying {
+            running.cancel.cancel();
+            if self.exit == Exit::Process {
+                ratatui::restore();
+                crate::say(&mut io::stderr().lock(), review::STOPPING);
+            }
+        }
     }
 }
 

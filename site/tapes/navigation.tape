@@ -57,12 +57,12 @@ Sleep 2s
 Escape
 Sleep 1s
 
-# Select the Safe bucket, then ask what is selected. Nothing is changed in this version.
+# Select the Safe bucket, which opens its review. Leaving the review cleans nothing.
 Type "c"
-Sleep 1s
-Enter
-Wait+Screen /nothing was changed/
+Wait+Screen /Review: clean/
 Sleep 2500ms
+Escape
+Sleep 1s
 
 # The settings screen, then the help.
 Type ","

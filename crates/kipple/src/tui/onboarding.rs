@@ -273,7 +273,8 @@ impl Onboarding {
             | Action::Help
             | Action::ChangeBack
             | Action::Change
-            | Action::Remove => {}
+            | Action::Remove
+            | Action::Confirm => {}
         }
         Outcome::Stay
     }

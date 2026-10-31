@@ -631,12 +631,6 @@ fn idle_except(unchecked: usize, by_command_line: usize) -> String {
 pub(crate) mod outcome;
 pub(crate) mod profile;
 pub(crate) mod receipt;
-// The words the M3c TUI shows: its review, progress and result. Nothing reads them until
-// it lands.
-#[expect(
-    dead_code,
-    reason = "the M3c TUI review, progress and result show these"
-)]
 pub(crate) mod review;
 #[cfg(test)]
 mod tests;

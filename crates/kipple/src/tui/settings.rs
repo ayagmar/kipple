@@ -173,7 +173,8 @@ impl Panel {
             | Action::Review
             | Action::Help
             | Action::Check
-            | Action::Skip => Outcome::Nothing,
+            | Action::Skip
+            | Action::Confirm => Outcome::Nothing,
         }
     }
 
