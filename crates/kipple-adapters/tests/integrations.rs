@@ -30,10 +30,9 @@ mod uv_v0_12_23;
 #[path = "fixtures/python/venv_v3_14_8.rs"]
 mod venv_v3_14_8;
 
-use std::fs;
 use std::path::Path;
 
-use harness::{Scanned, scan, scan_built};
+use harness::{Scanned, scan};
 use kipple_adapters::builtin;
 use kipple_core::{Advice, Evidence, ScanReport, SymbolicRoot};
 use tree::FixtureTree;
@@ -197,7 +196,10 @@ fn a_pycache_with_anything_but_bytecode_or_inside_any_virtual_environment_is_not
 #[test]
 #[cfg(unix)]
 fn a_pycache_that_cant_be_listed_is_reported_without_layout_evidence_rather_than_dropped() {
+    use std::fs;
     use std::os::unix::fs::PermissionsExt as _;
+
+    use harness::scan_built;
 
     let mut tree = FixtureTree::new();
     tree.file("home/projects/p/pkg/__pycache__/mod.cpython-314.pyc", b"");
