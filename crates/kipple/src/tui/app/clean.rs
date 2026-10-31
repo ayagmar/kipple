@@ -235,6 +235,20 @@ impl App {
         }
     }
 
+    /// The run of the clean under way, once its events said it was stored.
+    pub(crate) const fn run(&self) -> Option<&RunId> {
+        match &self.cleaning {
+            Some(Cleaning::Applying(applying)) => applying.run.as_ref(),
+            Some(
+                Cleaning::Planning(_)
+                | Cleaning::Reviewing(_)
+                | Cleaning::Typing(..)
+                | Cleaning::Ended(_),
+            )
+            | None => None,
+        }
+    }
+
     /// The notices of the apply that ended.
     fn leave_applying(&mut self) -> Vec<String> {
         match self.cleaning.take() {
@@ -367,7 +381,7 @@ impl App {
                 self.notice = Some(review::STOPPING.to_owned());
             }
             (Key::Interrupt, Stopping::Asked) => {
-                self.effect = Some(Effect::Abort(applying.run.clone()));
+                self.effect = Some(Effect::Abort);
             }
             (_, Stopping::Asked) => self.notice = Some(review::STOPPING.to_owned()),
             (_, Stopping::No) => self.notice = Some(review::STOP_KEY.to_owned()),

@@ -7,7 +7,7 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use kipple_core::{FindingId, Lineage, Policy, RunId, Selection, SymbolicRoot};
+use kipple_core::{FindingId, Lineage, Policy, Selection, SymbolicRoot};
 
 use super::{App, Confirmation, Found, Generation, Key, Mode, Node, Progress, Row, Search, Shelf};
 use crate::config::{self, Config, Edit, Settings};
@@ -43,8 +43,9 @@ pub(crate) enum Effect {
     /// Stop the run after the item under way (the first Ctrl+C).
     StopApply,
     /// End kipple now, leaving the run, if it was stored, for the next command to
-    /// reconcile (the second Ctrl+C).
-    Abort(Option<RunId>),
+    /// reconcile (the second Ctrl+C). The loop names the run once it has passed on the
+    /// events already sent, so a run stored just before is named.
+    Abort,
 }
 
 /// What the config file says, with the policy and project roots it gives.

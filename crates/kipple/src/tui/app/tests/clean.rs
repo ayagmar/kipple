@@ -628,9 +628,10 @@ fn during_apply_q_says_how_to_stop_and_ctrl_c_stops_then_ends_kipple() {
 
     press(&mut app, &[Key::Interrupt]);
     press(&mut app, &[Key::Interrupt]);
+    assert_eq!(app.take_effect(), Some(Effect::Abort));
     assert_eq!(
-        app.take_effect(),
-        Some(Effect::Abort(None)),
+        app.run(),
+        None,
         "before the run is stored there is no run to name"
     );
 
@@ -646,7 +647,8 @@ fn during_apply_q_says_how_to_stop_and_ctrl_c_stops_then_ends_kipple() {
     assert_eq!(stored.take_effect(), Some(Effect::StopApply));
     assert_eq!(stored.notice.as_deref(), Some(review::STOPPING));
     press(&mut stored, &[Key::Interrupt]);
-    assert_eq!(stored.take_effect(), Some(Effect::Abort(Some(run_id()))));
+    assert_eq!(stored.take_effect(), Some(Effect::Abort));
+    assert_eq!(stored.run(), Some(&run_id()));
 }
 
 // Catches a worker's panic leaving the screen in progress forever, or a failed planner

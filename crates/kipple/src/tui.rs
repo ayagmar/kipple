@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use kipple_core::format::base64;
 use kipple_core::{
-    ApplyEvent, CancelToken, Engine, EventChannel, EventRx, Finished, Prepared, RunId, ScanOutcome,
+    ApplyEvent, CancelToken, Engine, EventChannel, EventRx, Finished, Prepared, ScanOutcome,
     ScanReport, ScanRequest, Selection, Selector, StoreRefusal, SymbolicRoot, event_channel,
     suggest,
 };
@@ -510,14 +510,17 @@ where
     }
 
     /// The second Ctrl+C during a run: on the real terminal, restores it, says which run
-    /// the next command reconciles, and ends kipple at once with 130 (pinned 8).
-    fn abort(&mut self, run: Option<&RunId>) {
+    /// the next command reconciles, and ends kipple at once with 130 (pinned 8). The
+    /// events the run already sent are passed on first, so a run stored just before is
+    /// named.
+    fn abort(&mut self) {
         if self.exit == Exit::Return {
             self.app.quit = true;
             return;
         }
+        self.take_events(usize::MAX);
         ratatui::restore();
-        let line = run.map_or_else(
+        let line = self.app.run().map_or_else(
             || review::INTERRUPTED_RECONCILING.to_owned(),
             |run| review::interrupted_run(run.as_str()),
         );
@@ -582,15 +585,13 @@ where
         true
     }
 
-    /// Applies the run's events that have arrived, at most a batch of them while it
-    /// runs and all of them once it has ended, then its answer. Whether anything changed.
-    fn ran(&mut self) -> bool {
+    /// Passes on at most `most` of the events the run has sent. Whether there were any.
+    fn take_events(&mut self, most: usize) -> bool {
         let Some(running) = &self.applying else {
             return false;
         };
-        let ended = running.answer.is_finished();
         let mut changed = false;
-        for _ in 0..if ended { usize::MAX } else { BATCH } {
+        for _ in 0..most {
             match running.events.try_recv() {
                 Ok(event) => {
                     self.app.update(Msg::Applied(Box::new(event)));
@@ -599,6 +600,17 @@ where
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             }
         }
+        changed
+    }
+
+    /// Applies the run's events that have arrived, at most a batch of them while it
+    /// runs and all of them once it has ended, then its answer. Whether anything changed.
+    fn ran(&mut self) -> bool {
+        let Some(running) = &self.applying else {
+            return false;
+        };
+        let ended = running.answer.is_finished();
+        let changed = self.take_events(if ended { usize::MAX } else { BATCH });
         if !ended {
             return changed;
         }
@@ -633,7 +645,7 @@ where
                 Effect::StopPlanning => self.stop_planning(),
                 Effect::Apply(by) => self.apply(by),
                 Effect::StopApply => self.stop_apply(),
-                Effect::Abort(run) => self.abort(run.as_ref()),
+                Effect::Abort => self.abort(),
             }
         }
         Ok(())
