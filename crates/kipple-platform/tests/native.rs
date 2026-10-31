@@ -5,10 +5,14 @@
 
 #[path = "native/executor.rs"]
 mod executor;
+#[path = "native/profiles.rs"]
+mod profiles;
 #[path = "native/runs.rs"]
 mod runs;
 #[path = "native/trash.rs"]
 mod trash;
+#[path = "native/typeahead.rs"]
+mod typeahead;
 
 use std::ffi::OsString;
 
