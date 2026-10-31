@@ -53,9 +53,14 @@ pub(crate) fn config_changed(why: &str) -> String {
     format!("nothing was changed: the config no longer loads: {why}")
 }
 
-/// Progress: the item being removed, of how many (pinned 7).
-pub(crate) fn item_of(item: usize, items: usize) -> String {
-    format!("item {item} of {items}")
+/// Progress (pinned 7): the item under way, by the number its line and the receipt
+/// give it, when one is, and how many of the run's `items` have `ended`.
+pub(crate) fn cleaning(under_way: Option<u32>, ended: usize, items: usize) -> String {
+    let counted = format!("{ended} of {items} ended");
+    under_way.map_or_else(
+        || format!("Cleaning: {counted}"),
+        |item| format!("Cleaning item {item}: {counted}"),
+    )
 }
 
 /// What progress says before the run starts, while earlier runs are reconciled.
@@ -137,9 +142,6 @@ pub(crate) fn not_run(why: &str) -> String {
 /// What the review says when the config now asks for the size to be typed (pinned 16).
 pub(crate) const TYPE_THE_SIZE: &str =
     "The config now asks for the size to be typed: type it, then press enter.";
-
-/// The progress heading while the run's items go.
-pub(crate) const CLEANING: &str = "Cleaning";
 
 /// The item being removed now, and how.
 pub(crate) fn working_on(method: Method, path: &Path) -> String {

@@ -11,26 +11,15 @@ use crate::human::{receipt, review};
 use crate::theme::Role;
 use crate::tui::app::{Applying, ItemEnded};
 
-/// The progress's title: the item under way, of how many, or the reconciling of earlier
-/// runs before this one starts.
+/// The progress's title: the item under way and how many have ended, or the reconciling
+/// of earlier runs before this one starts.
 pub(super) fn title(applying: &Applying) -> String {
     let items = applying.review.prepared.plan().entries().len();
-    match (&applying.run, applying.current) {
-        (None, _) => review::RECONCILING.to_owned(),
-        (Some(_), Some(item)) => format!(
-            "{}: {}",
-            review::CLEANING,
-            review::item_of(
-                usize::try_from(item.0).map_or(usize::MAX, |at| at + 1),
-                items
-            )
-        ),
-        (Some(_), None) => format!(
-            "{}: {}",
-            review::CLEANING,
-            review::item_of(applying.ended.len(), items)
-        ),
+    if applying.run.is_none() {
+        return review::RECONCILING.to_owned();
     }
+    let under_way = applying.current.map(|item| item.0);
+    review::cleaning(under_way, applying.ended.len(), items)
 }
 
 /// The progress's lines, each in its role.

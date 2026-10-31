@@ -800,6 +800,20 @@ fn the_progress_at_80_by_24_and_160_by_48() {
     }
 }
 
+// Catches the progress numbering the item under way apart from its line and the receipt:
+// "item 2" runs, but no line 2 ever appears, since that item ends as "1".
+#[test]
+fn the_progress_names_the_item_under_way_by_its_receipt_number() {
+    let home = Home::new("");
+    // Item 0 ended, item 1 under way.
+    let app = applying(&home, 160, 48);
+
+    let shown = text(&app, 160, 48);
+    let title = shown.lines().nth(1).unwrap();
+    assert!(title.contains("item 1:"), "{title}");
+    assert!(!title.contains("item 2"), "{title}");
+}
+
 #[test]
 fn the_result_at_80_by_24_and_160_by_48() {
     let home = Home::new("");

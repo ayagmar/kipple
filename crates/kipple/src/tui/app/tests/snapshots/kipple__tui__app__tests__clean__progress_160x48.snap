@@ -1,10 +1,9 @@
 ---
 source: crates/kipple/src/tui/app/tests/clean.rs
-assertion_line: 741
 expression: "text(&app, width, height)"
 ---
 ╭ kipple ─ Balanced ─ scanned in 1.2 s ─ ~/projects ───────────────────────────────────────────────────────────────────────────────────────────────────────────╮
-│ Cleaning: item 2 of 2                                                                                                                                        │
+│ Cleaning item 1: 1 of 2 ended                                                                                                                                │
 │                                                                                                                                                              │
 │ run 20261014T174640Z-0000 item 3 was interrupted: can't tell: it is gone                                                                                     │
 │     0  done         delete  ~/projects/rust-app/target                                                                                                       │
