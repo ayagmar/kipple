@@ -17,8 +17,8 @@ use kipple_core::profile::{
     ProfileEntry, ProfileError, ProfileName, ProfileScene, ProfileStore as _, ProfileStoreError,
 };
 use kipple_core::{
-    CancelToken, CleanRequest, Ending, Finding, Finished, PlanMode, Policy, Receipt, RuleId,
-    ScanReport, Selection, Verdict, prepare_clean,
+    CancelToken, CleanRequest, Ending, Finished, PlanMode, Receipt, RuleId, ScanReport,
+    prepare_clean,
 };
 use kipple_platform::OsNames;
 
@@ -292,7 +292,7 @@ fn confirmed(
 ) -> Result<bool, ExitCode> {
     let contents = draft.contents();
     let mut lines = entry_lines(contents);
-    lines.extend(today(contents, scanned, &io.cancel));
+    lines.extend(today(draft, scanned, &io.cancel));
     if io.cancel.is_cancelled() {
         return Err(ExitCode::from(CANCELLED));
     }
@@ -341,12 +341,12 @@ fn entry_lines(contents: &ProfileContents) -> Vec<Line> {
     lines
 }
 
-/// What a run of `contents` would clean today, planned from `scanned` as a profile run
-/// plans it: the Safe findings of its included rules below their frozen roots that
-/// opened. Nothing is written.
-fn today(contents: &ProfileContents, scanned: &Scanned, cancel: &CancelToken) -> Vec<Line> {
+/// What a run of `draft` would clean today, planned from `scanned` as a profile run
+/// plans it, from the selection the core makes for it. Nothing is written.
+fn today(draft: &DraftProfile, scanned: &Scanned, cancel: &CancelToken) -> Vec<Line> {
     let machine = &scanned.machine;
-    let selection = selected(contents, &scanned.report, &machine.settings().policy);
+    let integrations = machine.engine().integration_digests();
+    let selection = draft.selection(&scene(machine, &scanned.report, &integrations));
     let request = CleanRequest {
         scan: &scanned.report,
         selection: &selection,
@@ -366,30 +366,6 @@ fn today(contents: &ProfileContents, scanned: &Scanned, cancel: &CancelToken) ->
     let refused = prepared.refused_items();
     lines.extend(super::output::left_out(refused, &[], &shown));
     lines
-}
-
-/// The findings of `report` a profile of `contents` selects: each of an included rule,
-/// Safe under `policy`, below one of its rule's frozen roots that opened.
-fn selected(contents: &ProfileContents, report: &ScanReport, policy: &Policy) -> Selection {
-    let included = |finding: &Finding| {
-        contents.entries().iter().any(|entry| {
-            entry.rule() == &finding.rule
-                && entry.scope() == EntryScope::Included
-                && entry
-                    .roots()
-                    .iter()
-                    .any(|root| root.identity().is_some() && finding.path.starts_with(root.path()))
-        })
-    };
-    Selection(
-        report
-            .findings
-            .iter()
-            .filter(|finding| included(finding))
-            .filter(|finding| finding.verdict(policy) == Some(Verdict::Safe))
-            .map(|finding| finding.id)
-            .collect(),
-    )
 }
 
 /// `kipple profile list`: each profile checked against the config, without a scan.

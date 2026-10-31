@@ -378,6 +378,13 @@ impl DraftProfile {
     pub const fn contents(&self) -> &ProfileContents {
         &self.contents
     }
+
+    /// What a run of it would plan from `scene` once stored: the selection [`check`]
+    /// makes, for showing a person before they confirm it. It authorizes nothing.
+    #[must_use]
+    pub fn selection(&self, scene: &ProfileScene<'_>) -> Selection {
+        checked(&self.contents, scene).selection
+    }
 }
 
 /// What a profile is frozen and checked against now: the current config, the scan and
@@ -664,7 +671,7 @@ impl ProfileCheck {
         self.grant.as_ref()
     }
 
-    /// The scan's Safe findings of active entries below their frozen roots: what a
+    /// The scan's Safe findings of active entries anchored at their frozen roots: what a
     /// profile run plans. Empty without a grant.
     #[must_use]
     pub const fn selection(&self) -> &Selection {
@@ -696,17 +703,17 @@ pub struct ProfileRun {
 /// Checks `profile` against `scene`.
 ///
 /// Each entry is active only while every value it froze equals the current one, and only
-/// active entries are authorized, for the Safe findings of the scan below their frozen
-/// roots. Stateless: putting a value back as it was makes its entry active again, at
+/// active entries are authorized, for the Safe findings of the scan anchored at their
+/// frozen roots. Stateless: putting a value back as it was makes its entry active again, at
 /// exactly its frozen scope.
 #[must_use]
 pub fn check(profile: &Profile, scene: &ProfileScene<'_>) -> ProfileCheck {
-    let mut checked = compare(
-        &profile.contents,
-        scene.judge,
-        scene.integrations,
-        Some(scene),
-    );
+    checked(&profile.contents, scene)
+}
+
+/// [`check`] of `contents`, stored or not.
+fn checked(contents: &ProfileContents, scene: &ProfileScene<'_>) -> ProfileCheck {
+    let mut checked = compare(contents, scene.judge, scene.integrations, Some(scene));
     if scene.scan.outcome != ScanOutcome::Completed {
         // A scan that stopped early proves nothing about the roots it didn't reach.
         return checked;
@@ -715,7 +722,7 @@ pub fn check(profile: &Profile, scene: &ProfileScene<'_>) -> ProfileCheck {
         .active
         .iter()
         .filter_map(|rule| {
-            let entry = profile.contents.entry(rule)?;
+            let entry = contents.entry(rule)?;
             let now = scene.judge.rules.iter().find(|now| now.id == *rule)?;
             let granted = Granted {
                 rule: Digest::of_debug(now),
@@ -846,20 +853,25 @@ fn changes(
 }
 
 /// The findings of `scene`'s scan a profile run plans: each of a granted rule, Safe now,
-/// below one of its rule's frozen roots that has an identity.
+/// anchored at one of its rule's frozen roots with the identity it had then, as
+/// [`ProfileGrant::admits`] checks each plan item. A finding below a frozen root but
+/// anchored at a deeper root the scan opened isn't selected.
 fn selection(granted: &BTreeMap<RuleId, Granted>, scene: &ProfileScene<'_>) -> Selection {
     let policy = scene.judge.policy;
+    let scan = scene.scan;
     Selection(
-        scene
-            .scan
-            .findings
+        scan.findings
             .iter()
             .filter(|finding| {
+                let anchor = scan.anchor_root(finding).and_then(|opened| {
+                    Some(VerifiedRoot {
+                        root: opened.root,
+                        path: opened.path.clone(),
+                        identity: opened.identity?,
+                    })
+                });
                 granted.get(&finding.rule).is_some_and(|granted| {
-                    granted
-                        .roots
-                        .iter()
-                        .any(|root| finding.path.starts_with(&root.path))
+                    anchor.is_some_and(|anchor| granted.roots.contains(&anchor))
                 })
             })
             .filter(|finding| finding.verdict(policy) == Some(Verdict::Safe))

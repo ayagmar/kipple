@@ -203,6 +203,20 @@ pub struct ScanReport {
     pub by_command_line: usize,
 }
 
+impl ScanReport {
+    /// The root `finding` is anchored below: the deepest root its integration opened that
+    /// holds it. What a plan item's anchor is, so what a profile's grant is checked
+    /// against.
+    pub(crate) fn anchor_root(&self, finding: &Finding) -> Option<&OpenedRoot> {
+        self.integrations
+            .iter()
+            .filter(|report| report.id == finding.integration)
+            .flat_map(|report| &report.opened)
+            .filter(|opened| finding.path.starts_with(&opened.path))
+            .max_by_key(|opened| opened.path.components().count())
+    }
+}
+
 /// What to scan with.
 #[derive(Debug, Clone, Default)]
 pub struct ScanRequest {

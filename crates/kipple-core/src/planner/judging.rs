@@ -261,12 +261,7 @@ impl<'scan> Scene<'scan> {
             .ok_or_else(|| unanchored.clone())?;
         let root = self
             .scan
-            .integrations
-            .iter()
-            .filter(|report| report.id == finding.integration)
-            .flat_map(|report| &report.opened)
-            .filter(|opened| finding.path.starts_with(&opened.path))
-            .max_by_key(|opened| opened.path.components().count())
+            .anchor_root(finding)
             .ok_or_else(|| unanchored.clone())?;
         let identity = root.identity.ok_or_else(|| unanchored.clone())?;
         let relative = finding

@@ -592,6 +592,57 @@ fn a_profile_moves_to_the_trash_where_safe_only_does_not() {
     }
 }
 
+/// Catches a profile that selects and previews by path prefix while its grant admits by
+/// anchor root: with a root of another kind opened inside the frozen project root, a
+/// finding below both is anchored at the inner root, which the profile never froze. It
+/// is neither previewed nor selected, so nothing is planned that the run would skip
+/// (spec M3c pinned 3, 17).
+#[test]
+fn a_finding_anchored_at_a_root_the_profile_never_froze_is_not_selected() {
+    let mut desk = desk();
+    let inner = home("p0");
+    for report in &mut desk.scan.integrations {
+        report.opened.push(OpenedRoot {
+            root: SymbolicRoot::XdgCache,
+            path: inner.clone(),
+            identity: Some(id(99)),
+        });
+    }
+    let selected = |selection: &kipple_core::Selection| -> BTreeSet<PathBuf> {
+        desk.scan
+            .findings
+            .iter()
+            .filter(|finding| selection.0.contains(&finding.id))
+            .map(|finding| finding.path.clone())
+            .collect()
+    };
+    let outside: BTreeSet<PathBuf> = [home("p1/target"), home("p2/out")].into();
+
+    let draft = profile::freeze(name("nightly"), &desk.scene(), UNIX_EPOCH, None).unwrap();
+    let mut frozen = draft
+        .contents()
+        .entries()
+        .iter()
+        .flat_map(profile::ProfileEntry::roots);
+    assert!(
+        frozen.all(|root| root.path() != &inner),
+        "only the outer root is frozen"
+    );
+    assert_eq!(
+        selected(&draft.selection(&desk.scene())),
+        outside,
+        "preview"
+    );
+
+    let stored = profile::create(&Shelf::default(), &draft, &TestCodec).unwrap();
+    let check = desk.check(&stored);
+    assert_eq!(check.suspended(), []);
+    assert_eq!(selected(check.selection()), outside, "selection");
+    let ran = desk.run_now(&stored).unwrap();
+    assert_eq!(ran.done, outside, "run");
+    assert!(ran.skipped.is_empty(), "nothing planned was skipped");
+}
+
 /// Catches a grant that authorizes what its check didn't select: a plan holding a
 /// left-out or suspended rule's Safe item, an item below a root the entry didn't freeze,
 /// or one removed by another method is refused item by item as not reviewed (pinned 3).
