@@ -115,29 +115,40 @@ pub fn read(
 /// Stores `draft` as a new profile and reads it back: the profile exactly as shown.
 ///
 /// # Errors
-/// When one of that name exists, the store refuses, or what it reads back differs.
+/// When `draft` wouldn't read back as itself (it is then not stored), one of that name
+/// exists, the store refuses, or what it reads back differs.
 pub fn create(
     store: &dyn ProfileStore,
     draft: &DraftProfile,
     codec: &dyn NameCodec,
 ) -> Result<Profile, ProfileError> {
-    let name = &draft.contents.name;
-    store.create_new(name, &encode_profile(&draft.contents, codec))?;
+    store.create_new(&draft.contents.name, &readable(draft, codec)?)?;
     read_back(store, draft, codec)
 }
 
 /// Replaces the profile `draft` names with `draft`, atomically, and reads it back.
 ///
 /// # Errors
-/// When there is no such profile, the store refuses, or what it reads back differs.
+/// When `draft` wouldn't read back as itself (the stored profile is then kept), there is
+/// no such profile, the store refuses, or what it reads back differs.
 pub fn replace(
     store: &dyn ProfileStore,
     draft: &DraftProfile,
     codec: &dyn NameCodec,
 ) -> Result<Profile, ProfileError> {
-    let name = &draft.contents.name;
-    store.replace(name, &encode_profile(&draft.contents, codec))?;
+    store.replace(&draft.contents.name, &readable(draft, codec)?)?;
     read_back(store, draft, codec)
+}
+
+/// `draft` encoded, once it is known to decode to itself: a file no read accepts is
+/// never stored.
+fn readable(draft: &DraftProfile, codec: &dyn NameCodec) -> Result<Vec<u8>, ProfileError> {
+    let bytes = encode_profile(&draft.contents, codec);
+    if decode_profile(&bytes, codec)? == draft.contents {
+        Ok(bytes)
+    } else {
+        Err(ProfileError::ReadBack)
+    }
 }
 
 fn read_back(

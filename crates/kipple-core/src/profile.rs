@@ -885,7 +885,8 @@ pub struct ProfileReview {
 ///
 /// # Errors
 /// When the scan didn't finish, `add` names a rule that isn't a built-in rule proposing
-/// removal here, or a rule's integration isn't known.
+/// removal here, a rule's integration isn't known, or the profile would include no rule:
+/// every included rule is gone and `add` names none.
 pub fn review(
     profile: &Profile,
     scene: &ProfileScene<'_>,
@@ -936,6 +937,12 @@ pub fn review(
     }
     if review.refrozen.is_empty() && review.added.is_empty() && review.dropped.is_empty() {
         return Ok(review);
+    }
+    if !entries
+        .iter()
+        .any(|entry| entry.scope == EntryScope::Included)
+    {
+        return Err(FreezeError::Empty);
     }
     entries.sort_by(|a, b| a.rule.cmp(&b.rule));
     let changed = |change| {
