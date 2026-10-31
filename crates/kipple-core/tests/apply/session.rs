@@ -516,6 +516,34 @@ fn a_cancel_during_the_last_item_still_exits_130() {
     assert_eq!(finished.ending.code(), 130);
 }
 
+/// Catches a declined plan file losing what dropped from it (D-067: the dropped items,
+/// with why, are part of what the command reports): the person said no, and the receipt
+/// still names the item that is gone.
+#[test]
+fn a_declined_plan_file_still_says_what_dropped() {
+    let mut machine = Machine::new(Method::Delete);
+    let planned = plan_all(
+        &machine.scan,
+        &machine.config,
+        &machine.world,
+        PlanMode::Safe,
+    );
+    let file = encode_plan_file(&planned.plan, &TestCodec).unwrap();
+    let imported = decode_plan_file(&file, &TestCodec).unwrap();
+    machine.scan.findings.pop();
+
+    let mut no = person(Answer::No);
+    let finished = machine.apply(&imported, Consent::Ask(&mut no));
+    assert_eq!(finished.ending, Ending::Declined);
+    assert_eq!(
+        no.shown.len(),
+        1,
+        "the person was asked about the item left"
+    );
+    assert_eq!(finished.dropped.len(), 1, "{:?}", finished.dropped);
+    assert!(machine.world.state().runs.is_empty(), "nothing was stored");
+}
+
 /// Catches apply trusting the scan's activity or git's answer from planning (pinned 3,
 /// 4, 15): a program using the item now, or git tracking more of it now, only takes
 /// away; git failing now skips it.

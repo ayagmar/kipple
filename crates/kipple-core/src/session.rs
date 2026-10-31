@@ -433,7 +433,10 @@ pub fn run_apply(
     let authorization = match consent.authorize(&review, cancel) {
         Ok(authorization) => authorization,
         Err(ending) => {
-            return Finished::before(ending);
+            return Finished {
+                dropped: replanned.dropped,
+                ..Finished::before(ending)
+            };
         }
     };
     let session = Session {
