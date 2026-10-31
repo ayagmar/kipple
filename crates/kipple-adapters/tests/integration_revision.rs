@@ -1,6 +1,8 @@
 //! The golden of what each built-in integration finds and says about it over its layout
 //! fixtures, negative ones included (spec M3c pinned 14): a profile freezes each
-//! integration's `revision`, so the revision must change whenever this output does.
+//! integration's `revision`, so the revision must change whenever this output does. The
+//! golden is a history, so changed output can't pass by its digest being pasted over the
+//! old one.
 #![expect(
     clippy::unwrap_used,
     reason = "a fixture that fails to build fails the test"
@@ -41,22 +43,28 @@ use kipple_adapters::builtin;
 use kipple_core::{Digest, ScanReport};
 use tree::FixtureTree;
 
-/// Each built-in integration, sorted: its ID, its revision and the digest of what it
-/// found over the fixtures.
-/// Linux runs every integration; the other systems leave some out, so the golden is
+/// Every revision each built-in integration has had, by ID, oldest first: its ID, the
+/// revision and the digest of what it found over the fixtures. A change to what one finds
+/// appends a row with its next revision; a row is never edited, so pasting a new digest
+/// over the current one fails.
+/// Linux runs every integration; the other systems leave some out, so the digests are
 /// Linux's, which CI runs.
-const GOLDEN: &[(&str, u32, &str)] = &[
+const HISTORY: &[(&str, u32, &str)] = &[
     ("cargo", 1, "0e697897cb5b69e21c7e9c0e34286df0"),
     ("claude-code", 1, "6c62272e07bb014262b821756295c58d"),
     ("journald", 1, "e49780136435bcd315cc754678ba943d"),
-    ("node", 1, "8129e5b8c2750c6079f0f1086839e6d5"),
+    ("node", 1, "33375509d0fb63b07c0536a2f84bf3d4"),
     ("pacman", 1, "3cacf4638284236d5a3f07f4f76e18c2"),
-    ("python", 1, "26706de1cc2c65b5a5c04770e8cb3ab2"),
+    ("python", 1, "dbd2f33b7e200232c1e2b0ec124102b1"),
     ("trash", 1, "0ec6cbf58676b78efbb8d575ed1f1bca"),
 ];
 
-/// Layouts kipple must not take for supported ones: a cargo target without its tag or
-/// with a forged one, and bytecode beside other files or inside an environment.
+/// Layouts beside the supported ones: a cargo target without its tag or with a forged
+/// one, bytecode beside other files or inside an environment, a `node_modules` without
+/// its install record or with one of an unknown version, and a `.venv` without its
+/// `pyvenv.cfg` or with one of an unknown version. The evidence `docs/06` §5 names for
+/// the last two is the file being there, so a record or config of an unknown version is
+/// still verified; the digest holds that too.
 fn negative() -> FixtureTree {
     let mut tree = FixtureTree::new();
     tree.file("home/projects/a/Cargo.toml", b"")
@@ -73,7 +81,64 @@ fn negative() -> FixtureTree {
             b"",
         );
     venv_v3_14_8::environment(&mut tree, "home/projects/env");
+    node_negatives(&mut tree);
+    venv_negatives(&mut tree);
     tree
+}
+
+/// npm 11.19.0's project (`npm_v11_19_0`), once without `node_modules/.package-lock.json`
+/// and once with a lockfile version npm 11.19.0 doesn't write.
+fn node_negatives(tree: &mut FixtureTree) {
+    let records: [(&str, Option<&[u8]>); 2] = [
+        ("home/projects/no-record", None),
+        (
+            "home/projects/unknown-record",
+            Some(b"{\"lockfileVersion\":99}"),
+        ),
+    ];
+    for (at, record) in records {
+        tree.file(
+            &format!("{at}/package.json"),
+            b"{\"name\":\"web\",\"dependencies\":{\"dep\":\"1.0.0\"}}",
+        )
+        .file(
+            &format!("{at}/package-lock.json"),
+            record.unwrap_or(b"{\"lockfileVersion\":3}"),
+        )
+        .file(
+            &format!("{at}/node_modules/dep/package.json"),
+            b"{\"name\":\"dep\"}",
+        );
+        if let Some(record) = record {
+            tree.file(&format!("{at}/node_modules/.package-lock.json"), record);
+        }
+    }
+}
+
+/// Python 3.14.8's project environment (`venv_v3_14_8`), once without `pyvenv.cfg` and
+/// once with a `version =` line of a Python it wasn't verified against.
+fn venv_negatives(tree: &mut FixtureTree) {
+    let configs: [(&str, Option<&[u8]>); 2] = [
+        ("home/projects/no-cfg", None),
+        (
+            "home/projects/unknown-cfg",
+            Some(b"home = /usr/bin\ninclude-system-site-packages = false\nversion = 9.0.0\n"),
+        ),
+    ];
+    for (at, config) in configs {
+        tree.file(
+            &format!("{at}/pyproject.toml"),
+            b"[project]\nname = \"tool\"\n",
+        )
+        .file(&format!("{at}/.venv/bin/activate"), b"# activate\n")
+        .file(
+            &format!("{at}/.venv/lib/python3.14/site-packages/pip/__init__.py"),
+            b"",
+        );
+        if let Some(config) = config {
+            tree.file(&format!("{at}/.venv/pyvenv.cfg"), config);
+        }
+    }
 }
 
 /// What each integration found in `report`, a line per finding: its rule, path below the
@@ -114,22 +179,48 @@ fn every_integration_changes_only_with_its_revision() {
         let harness::Scanned { temp, report } = harness::scan(&tree);
         lines(temp.path(), &report, &mut found);
     }
-    let mut now: Vec<(String, u32, String)> = builtin::descriptors()
+    let wrong: Vec<String> = builtin::descriptors()
         .into_iter()
-        .map(|descriptor| {
+        .filter_map(|descriptor| {
             let id = descriptor.id.0;
             let text = found.get(id).map_or("", String::as_str);
-            (
-                id.to_owned(),
-                descriptor.revision,
-                Digest::of_bytes(text.as_bytes()).to_string(),
-            )
+            let digest = Digest::of_bytes(text.as_bytes()).to_string();
+            out_of_history(id, descriptor.revision, &digest)
         })
         .collect();
-    now.sort();
-    let golden: Vec<(String, u32, String)> = GOLDEN
+    assert_eq!(wrong, [] as [String; 0]);
+}
+
+/// Why `revision` and `digest`, the integration `id` now, aren't its newest row in
+/// [`HISTORY`]; `None` when they are.
+fn out_of_history(id: &str, revision: u32, digest: &str) -> Option<String> {
+    let rows: Vec<(u32, &str)> = HISTORY
         .iter()
-        .map(|(id, revision, digest)| ((*id).to_owned(), *revision, (*digest).to_owned()))
+        .filter(|(listed, ..)| *listed == id)
+        .map(|(_, listed, its)| (*listed, *its))
         .collect();
-    assert_eq!(now, golden, "integration output changed: bump its revision");
+    let revisions: Vec<u32> = rows.iter().map(|(listed, _)| *listed).collect();
+    if !revisions.is_sorted_by(|a, b| a < b) {
+        return Some(format!(
+            "{id}: its revisions aren't increasing: {revisions:?}"
+        ));
+    }
+    if let Some((_, listed)) = rows
+        .iter()
+        .find(|(listed, other)| *listed == revision && *other != digest)
+    {
+        let next = revisions.last().map_or(1, |newest| newest + 1);
+        return Some(format!(
+            "{id}: its output changed, but revision {revision} is listed with {listed}: bump \
+             its revision to {next} and append (\"{id}\", {next}, \"{digest}\") to HISTORY; \
+             never edit a row"
+        ));
+    }
+    let newest = rows.last().copied();
+    (newest != Some((revision, digest))).then(|| {
+        format!(
+            "{id}: its newest row is {newest:?}, but it is now ({revision}, \"{digest}\"): a \
+             change bumps its revision and appends that row; never edit one"
+        )
+    })
 }

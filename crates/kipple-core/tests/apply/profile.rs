@@ -8,10 +8,10 @@ use std::path::PathBuf;
 use std::sync::{Mutex, MutexGuard};
 use std::time::{Duration, UNIX_EPOCH};
 
-use kipple_core::format::{IntegrationDigests, encode_profile};
+use kipple_core::format::{FormatError, IntegrationDigests, PROFILE, encode_profile};
 use kipple_core::profile::{
-    self, Profile, ProfileChange, ProfileCheck, ProfileError, ProfileName, ProfileScene,
-    ProfileStore, ProfileStoreError,
+    self, FreezeError, Profile, ProfileChange, ProfileCheck, ProfileError, ProfileName,
+    ProfileScene, ProfileStore, ProfileStoreError,
 };
 use kipple_core::{
     ActivityEvidence, ApplyPorts, Authorization, Bucket, CancelToken, CleanRequest, Confirmed,
@@ -708,6 +708,55 @@ fn only_leaves_the_rest_out_and_a_later_rule_stays_pending() {
     assert_eq!(after.left_out(), [rule_id(OTHER_RULE)], "still left out");
 }
 
+/// Catches `profile review` offering a profile that includes nothing: when every
+/// included rule is gone, saving it would overwrite the profile with a file no read
+/// accepts.
+#[test]
+fn a_review_dropping_every_included_rule_offers_nothing_to_save() {
+    let mut desk = desk();
+    let profile = desk.make(Some(&[CARGO_RULE]));
+    desk.config
+        .rules
+        .retain(|rule| rule.id != rule_id(CARGO_RULE));
+    let review = profile::review(&profile, &desk.scene(), &BTreeSet::new());
+    assert_eq!(review, Err(FreezeError::Empty));
+}
+
+/// Catches `create` and `replace` storing a draft the decoder refuses: the name is then
+/// taken, or the profile it replaced destroyed, by a file no later read accepts.
+#[test]
+fn a_draft_kipple_could_not_read_back_is_never_stored() {
+    let mut desk = desk();
+    let stored = desk.make(None);
+    let long = "p".repeat(1024 * 1024);
+    desk.config.policy.keep = (0..17).map(|n| held(&format!("{n}{long}"))).collect();
+    let too_large = profile::freeze(name("nightly"), &desk.scene(), UNIX_EPOCH, None).unwrap();
+
+    let empty = Shelf::default();
+    assert_eq!(
+        profile::create(&empty, &too_large, &TestCodec),
+        Err(ProfileError::Format(FormatError::TooLarge(PROFILE)))
+    );
+    assert_eq!(
+        empty.list().unwrap(),
+        [] as [ProfileName; 0],
+        "nothing stored"
+    );
+
+    let shelf = Shelf::default();
+    let bytes = encode_profile(stored.contents(), &TestCodec);
+    shelf.create_new(&name("nightly"), &bytes).unwrap();
+    assert_eq!(
+        profile::replace(&shelf, &too_large, &TestCodec),
+        Err(ProfileError::Format(FormatError::TooLarge(PROFILE)))
+    );
+    assert_eq!(
+        profile::read(&shelf, &name("nightly"), &TestCodec),
+        Ok(stored),
+        "the profile it would have replaced is kept"
+    );
+}
+
 /// Catches a stored profile read leniently: a field this version doesn't know, a newer
 /// version, or a profile including no rule would each be taken for one it can run.
 #[test]
@@ -737,25 +786,19 @@ fn a_stored_profile_kipple_cant_vouch_for_is_refused() {
         refused.push(profile::read(&shelf, &name("nightly"), &TestCodec).unwrap_err());
     }
     assert!(
-        matches!(
-            refused[0],
-            ProfileError::Format(kipple_core::format::FormatError::Shape { .. })
-        ),
+        matches!(refused[0], ProfileError::Format(FormatError::Shape { .. })),
         "an unknown field is refused as the wrong shape: {:?}",
         refused[0]
     );
     assert!(
-        matches!(
-            refused[1],
-            ProfileError::Format(kipple_core::format::FormatError::Newer { .. })
-        ),
+        matches!(refused[1], ProfileError::Format(FormatError::Newer { .. })),
         "a v2 profile reads as made by a newer kipple: {:?}",
         refused[1]
     );
     assert!(
         matches!(
             refused[2],
-            ProfileError::Format(kipple_core::format::FormatError::Invalid { .. })
+            ProfileError::Format(FormatError::Invalid { .. })
         ),
         "a profile with no included entry is refused as invalid: {:?}",
         refused[2]

@@ -1,6 +1,7 @@
 //! The golden of what [`Policy::verdict`] decides (spec M3c pinned 14): a profile made
 //! under one classification is suspended under another only when [`POLICY_VERSION`]
-//! changes, so the version must change exactly when a verdict does.
+//! changes, so the version must change exactly when a verdict does. The golden is a
+//! history, so a changed verdict can't pass by its digest being pasted over the old one.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
@@ -12,8 +13,10 @@ use kipple_core::{
     RuleId, RuleSettings, Seen, Tracked, WalkGap,
 };
 
-/// The version and the digest of every verdict below. A change to either alone fails.
-const GOLDEN: (u32, &str) = (1, "8465c62ae444a033bfb801d45aca1aed");
+/// Every classification there has been, oldest first: its version and the digest of
+/// every verdict below. A change to the classification appends a row with the next
+/// version; a row is never edited, so pasting a new digest over the current one fails.
+const HISTORY: &[(u32, &str)] = &[(1, "8465c62ae444a033bfb801d45aca1aed")];
 
 const DAY: u64 = 24 * 60 * 60;
 
@@ -24,6 +27,13 @@ const BASE: &str = "C:/home/u";
 
 fn at(rest: &str) -> PathBuf {
     Path::new(BASE).join(rest)
+}
+
+/// `lines` with every path in the unix form, so the golden is the same on every OS: the
+/// cases' names and verdicts print the paths they carry, and Windows writes `BASE` with
+/// a drive and joins with `\\`.
+fn portable(lines: &str) -> String {
+    lines.replace(BASE, "/home/u").replace(r"\\", "/")
 }
 
 const fn id(file: u128) -> FileIdentity {
@@ -266,10 +276,35 @@ fn the_classification_matches_its_version() {
         // The path as written here, so the golden is the same on every OS.
         writeln!(lines, "holds {rest:?} {lineage:?} => {holds}").unwrap();
     }
-    let digest = Digest::of_bytes(lines.as_bytes()).to_string();
-    assert_eq!(
-        (POLICY_VERSION, digest.as_str()),
-        GOLDEN,
-        "classification changed: bump POLICY_VERSION, then update GOLDEN to the new pair"
-    );
+    let digest = Digest::of_bytes(portable(&lines).as_bytes()).to_string();
+    assert_eq!(out_of_history(POLICY_VERSION, &digest), None);
+}
+
+/// Why `version` and `digest`, the classification now, aren't [`HISTORY`]'s newest row;
+/// `None` when they are.
+fn out_of_history(version: u32, digest: &str) -> Option<String> {
+    let versions: Vec<u32> = HISTORY.iter().map(|(listed, _)| *listed).collect();
+    if !versions.is_sorted_by(|a, b| a < b) {
+        return Some(format!(
+            "HISTORY's versions aren't increasing: {versions:?}"
+        ));
+    }
+    if let Some((_, listed)) = HISTORY
+        .iter()
+        .find(|(listed, other)| *listed == version && *other != digest)
+    {
+        let next = versions.last().map_or(1, |newest| newest + 1);
+        return Some(format!(
+            "the classification changed, but POLICY_VERSION {version} is listed with {listed}: \
+             bump POLICY_VERSION to {next} and append ({next}, \"{digest}\") to HISTORY; never \
+             edit a row"
+        ));
+    }
+    let newest = HISTORY.last().copied();
+    (newest != Some((version, digest))).then(|| {
+        format!(
+            "HISTORY's newest row is {newest:?}, but the classification now is ({version}, \
+             \"{digest}\"): a change bumps POLICY_VERSION and appends that row; never edit one"
+        )
+    })
 }

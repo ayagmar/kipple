@@ -25,10 +25,17 @@
 //! }
 //! ```
 //!
-//! ```compile_fail,E0599
+//! ```compile_fail,E0277
 //! // A draft can't be checked: it was never stored or confirmed.
 //! fn forge(draft: kipple_core::profile::DraftProfile) -> kipple_core::profile::Profile {
-//!     draft.into_profile()
+//!     kipple_core::profile::Profile::from(draft)
+//! }
+//! ```
+//!
+//! ```compile_fail,E0277
+//! // Nor by a conversion that may refuse it.
+//! fn forge(draft: kipple_core::profile::DraftProfile) -> kipple_core::profile::Profile {
+//!     kipple_core::profile::Profile::try_from(draft).unwrap()
 //! }
 //! ```
 //!
@@ -796,6 +803,7 @@ fn compare(
             });
         }
     }
+    checked.pending.sort();
     checked
 }
 
@@ -884,7 +892,8 @@ pub struct ProfileReview {
 ///
 /// # Errors
 /// When the scan didn't finish, `add` names a rule that isn't a built-in rule proposing
-/// removal here, or a rule's integration isn't known.
+/// removal here, a rule's integration isn't known, or the profile would include no rule:
+/// every included rule is gone and `add` names none.
 pub fn review(
     profile: &Profile,
     scene: &ProfileScene<'_>,
@@ -935,6 +944,12 @@ pub fn review(
     }
     if review.refrozen.is_empty() && review.added.is_empty() && review.dropped.is_empty() {
         return Ok(review);
+    }
+    if !entries
+        .iter()
+        .any(|entry| entry.scope == EntryScope::Included)
+    {
+        return Err(FreezeError::Empty);
     }
     entries.sort_by(|a, b| a.rule.cmp(&b.rule));
     let changed = |change| {
