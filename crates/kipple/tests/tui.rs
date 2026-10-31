@@ -52,8 +52,8 @@ use kipple::setup::Builtin;
 use kipple::theme::{Catalog, Colours, Glyphs};
 use kipple::tui::{self, Appearance, Input, Key, Keys};
 use kipple::{Answers, Cli, Io, Person};
-use kipple_core::{CancelToken, Clock, RunStore as _, Waited};
-use kipple_platform::{Environment, FileRunStore};
+use kipple_core::{CancelToken, Clock, Platform, RunStore as _, Waited};
+use kipple_platform::{Environment, FileRunStore, PLATFORM};
 use ratatui::Terminal;
 use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
 use ratatui::buffer::Cell;
@@ -62,8 +62,14 @@ use tempfile::TempDir;
 
 const ACME: &str = "home/projects/clients/acme/api/target";
 const RUST_APP: &str = "home/projects/rust-app/target";
-/// Recent at Balanced: a Review finding, never cleaned by the command line.
+/// Recent at Balanced: a Review finding, never cleaned by the command line, where the OS
+/// shows which paths running programs use. Windows doesn't, so there it is Protected as
+/// unknown activity (D-050), as every finding of demo-home but the Cargo targets is.
 const WEB: &str = "home/projects/web/node_modules";
+
+/// Whether demo-home has a Review finding to select here: not on Windows (see [`WEB`]).
+const REVIEW_FINDINGS: bool = !matches!(PLATFORM, Platform::Windows);
+
 /// Wide enough that no line of a clean's screens breaks.
 const WIDTH: u16 = 200;
 const HEIGHT: u16 = 60;
@@ -402,6 +408,11 @@ fn present(path: &Path) -> bool {
 // or the result not showing what the run did.
 #[test]
 fn s_enter_y_on_a_review_finding_removes_it_and_the_result_shows_it() {
+    // Windows has no Review finding (see [`WEB`]); the app's tests check that it is
+    // Protected there.
+    if !REVIEW_FINDINGS {
+        return;
+    }
     let demo = Demo::new();
     let mut script = filtered_to("web/node_modules", Bucket::Review);
     script.extend(press(&[Key::Char('s'), Key::Enter]));
@@ -661,7 +672,14 @@ fn crash_a_clean(demo: &Demo) {
 fn a_run_a_crash_left_pending_is_reconciled_first_and_shown() {
     let demo = Demo::new();
     crash_a_clean(&demo);
-    let mut script = filtered_to("web/node_modules", Bucket::Review);
+    // Another item than the crashed run's first: the Review finding, or on Windows,
+    // which has none, the other Cargo target.
+    let (query, bucket, cleaned) = if REVIEW_FINDINGS {
+        ("web/node_modules", Bucket::Review, WEB)
+    } else {
+        ("acme/api/target", Bucket::Safe, ACME)
+    };
+    let mut script = filtered_to(query, bucket);
     script.extend(press(&[Key::Char('s'), Key::Enter, Key::Char('y')]));
 
     let frames = demo.home(script);
@@ -672,5 +690,5 @@ fn a_run_a_crash_left_pending_is_reconciled_first_and_shown() {
         present(&demo.at(RUST_APP)),
         "the crashed run's item ran again"
     );
-    assert!(!present(&demo.at(WEB)), "the run after it didn't run");
+    assert!(!present(&demo.at(cleaned)), "the run after it didn't run");
 }

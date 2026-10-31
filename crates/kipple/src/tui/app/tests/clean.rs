@@ -44,10 +44,11 @@ use std::time::{Duration, SystemTime};
 use kipple_core::{
     Allocated, Apparent, ApplyEvent, CancelToken, Completeness, Effect as Removal, Ending,
     EventChannel, Finding, FindingId, Finished, Found, ItemEvent, ItemId, ItemOutcome,
-    JudgementField, Left, LeftCount, LeftReason, Method, Receipt, ReceiptItem, Reconciled, Removed,
-    RunId, ScanEvent, ScanReport, ScanRequest, Skip, SpaceEstimate, event_channel,
+    JudgementField, Left, LeftCount, LeftReason, Method, Platform, Receipt, ReceiptItem,
+    Reconciled, Removed, RunId, ScanEvent, ScanReport, ScanRequest, Skip, SpaceEstimate,
+    event_channel,
 };
-use kipple_platform::Environment;
+use kipple_platform::{Environment, PLATFORM};
 use tempfile::TempDir;
 
 use super::{Paint, look, press, screen, to, typed};
@@ -55,14 +56,21 @@ use crate::config::{self, Settings};
 use crate::human::{receipt, review};
 use crate::setup::Builtin;
 use crate::theme::Glyphs;
-use crate::tui::app::{App, Catalog, Cleaning, Confirmation, Effect, Ended, Key, Msg, Saved};
+use crate::tui::app::{
+    App, Catalog, Cleaning, Confirmation, Effect, Ended, Key, Msg, Saved, Shelf,
+};
 use crate::tui::work::{self, Ground};
 
 const MIB: u64 = 1024 * 1024;
 const RUST_APP: &str = "home/projects/rust-app/target";
 const ACME: &str = "home/projects/clients/acme/api/target";
-/// Recent at Balanced: Review, with the `recent` caution.
+/// Recent at Balanced: Review, with the `recent` caution, where the OS shows which paths
+/// running programs use. Windows doesn't, so there it is Protected as unknown activity
+/// (D-050), as every finding of demo-home but the Cargo targets is.
 const WEB: &str = "home/projects/web/node_modules";
+
+/// Whether demo-home has a Review finding to select here: not on Windows (see [`WEB`]).
+const REVIEW_FINDINGS: bool = !matches!(PLATFORM, Platform::Windows);
 
 /// `demo-home` in a temp dir, a roots file that points every root into it, and a config
 /// file of its own.
@@ -302,7 +310,8 @@ fn reviewed(app: &App) -> Vec<String> {
         .collect()
 }
 
-/// A home with a Safe and a Review finding selected, and its review open.
+/// A home with a Safe and a Review finding selected, and its review open. On Windows
+/// `s` refuses the Protected one, so only the Safe one is selected.
 fn reviewing(home: &Home, width: u16, height: u16) -> App {
     let mut app = home.app(width, height);
     select(&mut app, &[RUST_APP, WEB]);
@@ -323,6 +332,12 @@ fn enter_plans_the_selection_review_items_included_and_the_review_shows_that_pla
     let home = Home::new("");
     let app = reviewing(&home, 160, 48);
 
+    if !REVIEW_FINDINGS {
+        let web = app.row(finding(&app, WEB)).unwrap();
+        assert_eq!(web.shelf(), Shelf::PROTECTED, "unknown activity isn't held");
+        assert_eq!(reviewed(&app), ["rust-app/target"]);
+        return;
+    }
     assert_eq!(reviewed(&app), ["rust-app/target", "web/node_modules"]);
     let shown = text(&app, 160, 48);
     assert!(shown.contains("Review: clean 2 items"), "{shown}");
@@ -342,7 +357,11 @@ fn y_runs_the_plan_shown_and_the_result_shows_its_receipt() {
     home.apply(&mut app);
 
     assert!(!home.at(RUST_APP).exists(), "the Safe item stays");
-    assert!(!home.at(WEB).exists(), "the Review item stays");
+    assert_eq!(
+        home.at(WEB).exists(),
+        !REVIEW_FINDINGS,
+        "the Review item stays, or the Protected one went"
+    );
     assert!(home.at(ACME).exists(), "an item that wasn't selected went");
     let Some(Cleaning::Ended(Ended::Ran { finished, .. })) = &app.cleaning else {
         panic!("no result: {:?}", app.cleaning);
@@ -554,7 +573,11 @@ fn what_deleting_means_and_what_to_read_below_show_above_a_long_review() {
         "the whole plan fits, so nothing is below the fold: {shown}"
     );
     assert!(shown.contains(receipt::DELETE_PERMANENT), "{shown}");
-    assert!(shown.contains(&review::below(1, 1).unwrap()), "{shown}");
+    let cautioned = usize::from(REVIEW_FINDINGS);
+    assert!(
+        shown.contains(&review::below(cautioned, 1).unwrap()),
+        "{shown}"
+    );
 }
 
 // Catches the key bar's selection total (which counts what planning refused) showing
@@ -565,7 +588,12 @@ fn a_clean_shows_what_its_plan_frees_and_not_the_selections_total() {
     let app = reviewing_with_refused(&home, 80, 24);
 
     let shown = text(&app, 80, 24);
-    assert!(shown.contains("delete 96.0 MiB in 2 items"), "{shown}");
+    let frees = if REVIEW_FINDINGS {
+        "delete 96.0 MiB in 2 items"
+    } else {
+        "delete 32.0 MiB in 1 item"
+    };
+    assert!(shown.contains(frees), "{shown}");
     assert!(!shown.contains("frees"), "{shown}");
 }
 
@@ -807,6 +835,11 @@ const SIZES: [(u16, u16); 2] = [(80, 24), (160, 48)];
 
 #[test]
 fn the_review_at_80_by_24_and_160_by_48() {
+    // These screens show a Review item's line and its cautions; the Windows plan has
+    // none (see [`WEB`]), and what they lay out doesn't differ by platform.
+    if !REVIEW_FINDINGS {
+        return;
+    }
     for (width, height) in SIZES {
         let home = Home::new("");
         let app = reviewing_with_refused(&home, width, height);
@@ -819,6 +852,11 @@ fn the_review_at_80_by_24_and_160_by_48() {
 
 #[test]
 fn the_typed_size_at_80_by_24_and_160_by_48() {
+    // These screens show a Review item's line and its cautions; the Windows plan has
+    // none (see [`WEB`]), and what they lay out doesn't differ by platform.
+    if !REVIEW_FINDINGS {
+        return;
+    }
     let home = Home::new("[review]\nconfirm_by_typing_above = \"1 MB\"\n");
     for (width, height) in SIZES {
         let mut app = reviewing(&home, width, height);
@@ -833,6 +871,11 @@ fn the_typed_size_at_80_by_24_and_160_by_48() {
 
 #[test]
 fn the_progress_at_80_by_24_and_160_by_48() {
+    // These screens show a Review item's line and its cautions; the Windows plan has
+    // none (see [`WEB`]), and what they lay out doesn't differ by platform.
+    if !REVIEW_FINDINGS {
+        return;
+    }
     let home = Home::new("");
     for (width, height) in SIZES {
         let app = applying(&home, width, height);
@@ -859,6 +902,11 @@ fn the_progress_names_the_item_under_way_by_its_receipt_number() {
 
 #[test]
 fn the_result_at_80_by_24_and_160_by_48() {
+    // These screens show a Review item's line and its cautions; the Windows plan has
+    // none (see [`WEB`]), and what they lay out doesn't differ by platform.
+    if !REVIEW_FINDINGS {
+        return;
+    }
     let home = Home::new("");
     for (width, height) in SIZES {
         let mut app = reviewing(&home, width, height);
