@@ -1,6 +1,8 @@
 //! The golden of what each built-in integration finds and says about it over its layout
 //! fixtures, negative ones included (spec M3c pinned 14): a profile freezes each
-//! integration's `revision`, so the revision must change whenever this output does.
+//! integration's `revision`, so the revision must change whenever this output does. The
+//! golden is a history, so changed output can't pass by its digest being pasted over the
+//! old one.
 #![expect(
     clippy::unwrap_used,
     reason = "a fixture that fails to build fails the test"
@@ -41,11 +43,13 @@ use kipple_adapters::builtin;
 use kipple_core::{Digest, ScanReport};
 use tree::FixtureTree;
 
-/// Each built-in integration, sorted: its ID, its revision and the digest of what it
-/// found over the fixtures.
-/// Linux runs every integration; the other systems leave some out, so the golden is
+/// Every revision each built-in integration has had, by ID, oldest first: its ID, the
+/// revision and the digest of what it found over the fixtures. A change to what one finds
+/// appends a row with its next revision; a row is never edited, so pasting a new digest
+/// over the current one fails.
+/// Linux runs every integration; the other systems leave some out, so the digests are
 /// Linux's, which CI runs.
-const GOLDEN: &[(&str, u32, &str)] = &[
+const HISTORY: &[(&str, u32, &str)] = &[
     ("cargo", 1, "0e697897cb5b69e21c7e9c0e34286df0"),
     ("claude-code", 1, "6c62272e07bb014262b821756295c58d"),
     ("journald", 1, "e49780136435bcd315cc754678ba943d"),
@@ -114,22 +118,48 @@ fn every_integration_changes_only_with_its_revision() {
         let harness::Scanned { temp, report } = harness::scan(&tree);
         lines(temp.path(), &report, &mut found);
     }
-    let mut now: Vec<(String, u32, String)> = builtin::descriptors()
+    let wrong: Vec<String> = builtin::descriptors()
         .into_iter()
-        .map(|descriptor| {
+        .filter_map(|descriptor| {
             let id = descriptor.id.0;
             let text = found.get(id).map_or("", String::as_str);
-            (
-                id.to_owned(),
-                descriptor.revision,
-                Digest::of_bytes(text.as_bytes()).to_string(),
-            )
+            let digest = Digest::of_bytes(text.as_bytes()).to_string();
+            out_of_history(id, descriptor.revision, &digest)
         })
         .collect();
-    now.sort();
-    let golden: Vec<(String, u32, String)> = GOLDEN
+    assert_eq!(wrong, [] as [String; 0]);
+}
+
+/// Why `revision` and `digest`, the integration `id` now, aren't its newest row in
+/// [`HISTORY`]; `None` when they are.
+fn out_of_history(id: &str, revision: u32, digest: &str) -> Option<String> {
+    let rows: Vec<(u32, &str)> = HISTORY
         .iter()
-        .map(|(id, revision, digest)| ((*id).to_owned(), *revision, (*digest).to_owned()))
+        .filter(|(listed, ..)| *listed == id)
+        .map(|(_, listed, its)| (*listed, *its))
         .collect();
-    assert_eq!(now, golden, "integration output changed: bump its revision");
+    let revisions: Vec<u32> = rows.iter().map(|(listed, _)| *listed).collect();
+    if !revisions.is_sorted_by(|a, b| a < b) {
+        return Some(format!(
+            "{id}: its revisions aren't increasing: {revisions:?}"
+        ));
+    }
+    if let Some((_, listed)) = rows
+        .iter()
+        .find(|(listed, other)| *listed == revision && *other != digest)
+    {
+        let next = revisions.last().map_or(1, |newest| newest + 1);
+        return Some(format!(
+            "{id}: its output changed, but revision {revision} is listed with {listed}: bump \
+             its revision to {next} and append (\"{id}\", {next}, \"{digest}\") to HISTORY; \
+             never edit a row"
+        ));
+    }
+    let newest = rows.last().copied();
+    (newest != Some((revision, digest))).then(|| {
+        format!(
+            "{id}: its newest row is {newest:?}, but it is now ({revision}, \"{digest}\"): a \
+             change bumps its revision and appends that row; never edit one"
+        )
+    })
 }
