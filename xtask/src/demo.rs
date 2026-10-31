@@ -1,10 +1,10 @@
 //! `cargo xtask demo-home` and `cargo xtask verify-demo` (`docs/11-delivery-plan.md`,
-//! M1): the shared demo tree, and the end-to-end check of the built `kipple scan --json`
-//! against it with every root redirected into it.
+//! M1, M3b): the shared demo tree, and the end-to-end check of the built `kipple scan
+//! --json` and `kipple clean` against it with every root redirected into it.
 
 use std::fmt::Write as _;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use anyhow::{Context, Result, bail};
@@ -40,7 +40,7 @@ const FEATURES: [&str; 3] = ["--features", "test-roots", "--locked"];
 
 /// Lints and tests the `test-roots` build, then scans `demo-home` with the built binary
 /// at each carefulness level and compares each result with its committed snapshot for
-/// this platform.
+/// this platform, then cleans the demo's Cargo targets.
 pub(crate) fn verify(root: &Path) -> Result<()> {
     cmd::run(
         cmd::command("cargo", root)
@@ -65,7 +65,93 @@ pub(crate) fn verify(root: &Path) -> Result<()> {
         fs::write(&config, format!("[care]\nlevel = \"{level}\"\n"))?;
         snapshot(root, &demo, Some(&config), &format!("demo-scan-{level}"))?;
     }
+    clean(root, &demo)
+}
+
+/// The rule `verify` cleans with.
+const CARGO_TARGET: &str = "builtin.cargo.target";
+
+/// Runs `clean --only builtin.cargo.target --yes` on `demo`: it must remove exactly the
+/// Safe Cargo targets a scan finds and store a run, `history` must list that run, and a
+/// second `clean` must find nothing to clean.
+fn clean(root: &Path, demo: &Path) -> Result<()> {
+    let scan = kipple(root, demo, &["scan", "--json"])?;
+    let mut safe: Vec<PathBuf> = array(&scan, "findings")?
+        .iter()
+        .filter(|finding| {
+            text(finding, "/rule") == Some(CARGO_TARGET)
+                && text(finding, "/verdict/bucket") == Some("safe")
+        })
+        .filter_map(|finding| text(finding, "/path/display").map(PathBuf::from))
+        .collect();
+    safe.sort();
+    if safe.is_empty() {
+        bail!("the scan found no Safe Cargo target in demo-home");
+    }
+    let only = ["clean", "--only", CARGO_TARGET, "--yes", "--json"];
+    let receipt = kipple(root, demo, &only)?;
+    let mut removed = Vec::new();
+    for item in array(&receipt, "items")? {
+        if text(item, "/outcome/status") != Some("done") {
+            bail!("clean didn't finish an item: {item}");
+        }
+        removed.extend(text(item, "/path").map(PathBuf::from));
+    }
+    removed.sort();
+    if removed != safe {
+        let refused = receipt.get("refused").unwrap_or(&Value::Null);
+        bail!("clean removed {removed:?}, not the Safe Cargo targets {safe:?}; refused: {refused}");
+    }
+    if let Some(left) = safe.iter().find(|path| path.symlink_metadata().is_ok()) {
+        bail!(
+            "clean said it removed {} but it is still there",
+            left.display()
+        );
+    }
+    let Some(run) = text(&receipt, "/run") else {
+        bail!("clean stored no run");
+    };
+    let history = kipple(root, demo, &["history", "--json"])?;
+    if !array(&history, "runs")?
+        .iter()
+        .any(|listed| text(listed, "/id") == Some(run))
+    {
+        bail!("history doesn't list the run {run}");
+    }
+    let again = kipple(root, demo, &only)?;
+    if !array(&again, "items")?.is_empty() {
+        bail!("a second clean found something: {again}");
+    }
     Ok(())
+}
+
+/// Runs the built binary on `demo` with `args` and returns the JSON it printed.
+fn kipple(root: &Path, demo: &Path, args: &[&str]) -> Result<Value> {
+    let output = cmd::stdout(
+        cmd::command("cargo", root)
+            .args(["run", "--quiet", "-p", "kipple"])
+            .args(FEATURES)
+            .arg("--")
+            .args(args)
+            .env("KIPPLE_TEST_ROOTS", demo.join("roots.txt"))
+            .env_remove("KIPPLE_CONFIG"),
+    )?;
+    serde_json::from_slice(&output)
+        .with_context(|| format!("`kipple {}` printed no JSON", args.join(" ")))
+}
+
+/// The array `key` of `value`.
+fn array<'value>(value: &'value Value, key: &str) -> Result<&'value [Value]> {
+    value
+        .get(key)
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .with_context(|| format!("no `{key}` array in {value}"))
+}
+
+/// The string at `pointer` in `value`.
+fn text<'value>(value: &'value Value, pointer: &str) -> Option<&'value str> {
+    value.pointer(pointer).and_then(Value::as_str)
 }
 
 /// Scans `demo` with the built binary, with `config` when given, and compares the

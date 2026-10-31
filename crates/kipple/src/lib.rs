@@ -11,6 +11,7 @@ pub mod doctor;
 mod explain;
 mod human;
 pub mod json;
+mod mutate;
 pub mod rules;
 mod scan;
 pub mod setup;
@@ -19,16 +20,20 @@ pub mod theme;
 pub mod tui;
 
 use std::collections::HashMap;
-use std::io::{self, Write};
+use std::fmt;
+use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use kipple_core::{Engine, Lens, ScanOutcome};
+use kipple_core::{CancelToken, Engine, Lens, ScanOutcome};
 use kipple_platform::Environment;
 
 use crate::config::{ConfigError, Settings};
 use crate::json::{EventBody, ScanOut};
+pub use crate::mutate::{
+    ApplyArgs, Choice, CleanArgs, HistoryArgs, MethodArg, PlanArgs, RestoreArgs,
+};
 use crate::setup::{Builtin, BuiltinRule};
 use crate::theme::{ColorChoice, Colours, Glyphs, Ink, Stdout, Theme, Themes};
 
@@ -119,6 +124,19 @@ pub enum Command {
         /// A rule ID such as `builtin.cargo.target`, or a path.
         target: String,
     },
+    /// Remove Safe findings: shows the plan and asks on a terminal, or, with `--yes`,
+    /// deletes the Safe findings of the rules `--only` names. Each run is recorded.
+    Clean(CleanArgs),
+    /// Write the plan `clean` would show to a new file, for `kipple apply` to run later.
+    /// Nothing else is written.
+    Plan(PlanArgs),
+    /// Run a plan file: its items are planned again from a fresh scan under the current
+    /// config, so it can only remove less.
+    Apply(ApplyArgs),
+    /// List the runs kept, each item with what happened to it. Read-only.
+    History(HistoryArgs),
+    /// Move a run's trashed items back where they were (Linux and macOS).
+    Restore(RestoreArgs),
     /// Show where kipple looks, what it can read and which tools it found. Read-only.
     Doctor {
         /// Print one JSON envelope.
@@ -217,58 +235,178 @@ pub const CANCELLED: u8 = 130;
 /// §4).
 pub const USAGE: u8 = 2;
 
-/// Runs `cli`, writing data to `stdout` and diagnostics to `stderr`. Human output is in
-/// colour when `--color` says so, or by default when `goes_to` is a terminal.
-pub fn run(
-    cli: &Cli,
-    env: &Environment,
-    goes_to: Stdout,
-    stdout: &mut dyn Write,
-    stderr: &mut dyn Write,
-) -> ExitCode {
+impl Cli {
+    /// Whether its command can change the disk, so Ctrl+C should stop it between items
+    /// rather than end it at once.
+    #[must_use]
+    pub const fn mutates(&self) -> bool {
+        matches!(
+            self.command,
+            Some(Command::Clean(_) | Command::Apply(_) | Command::Restore(_))
+        )
+    }
+}
+
+/// Who can answer a question: a person at a terminal, or nobody.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Person {
+    /// stdin and stderr are both a terminal: someone reads the question and types.
+    AtTerminal,
+    /// Not both a terminal: a script, a pipe or a scheduled job.
+    Absent,
+}
+
+/// Who can answer, as `seen` from the terminals and, in a `test-roots` build only, as
+/// `KIPPLE_TEST_TERMINAL` in `env` says: an end-to-end test answers through a pipe.
+#[must_use]
+pub fn person(env: &Environment, seen: Person) -> Person {
+    if cfg!(feature = "test-roots") && env.get(TEST_TERMINAL).is_some() {
+        Person::AtTerminal
+    } else {
+        seen
+    }
+}
+
+/// The variable a `test-roots` build reads as a person at a terminal.
+const TEST_TERMINAL: &str = "KIPPLE_TEST_TERMINAL";
+
+/// The variable a `test-roots` build reads as the item to crash at.
+const TEST_CRASH: &str = "KIPPLE_TEST_CRASH_AT";
+
+/// In a `test-roots` build only, the item of a mutating command's run that ends the
+/// process the moment its intent is durable, as a crash would (`KIPPLE_TEST_CRASH_AT`),
+/// so an end-to-end test can reconcile a run a crash left through the real store.
+pub(crate) fn crash_point(env: &Environment) -> Option<u32> {
+    if !cfg!(feature = "test-roots") {
+        return None;
+    }
+    env.get(TEST_CRASH)?.to_str()?.parse().ok()
+}
+
+/// Warns that Ctrl+C will end a mutating command at once, since its handler couldn't be
+/// installed.
+pub fn warn_no_interrupt(stderr: &mut dyn Write, error: &io::Error) {
+    say(stderr, &human::receipt::no_interrupt(&error.to_string()));
+}
+
+/// Where a person's answers are read from: a terminal, or in tests any reader.
+pub trait Answers: BufRead {
+    /// Throws away what was typed before the question, so only an answer typed after it
+    /// counts.
+    ///
+    /// # Errors
+    /// When the terminal refuses: the question then counts as answered no.
+    fn discard_typeahead(&mut self) -> io::Result<()>;
+}
+
+/// The process's stdin, which nothing reads before the question, so all that was typed
+/// early is still at the terminal.
+impl Answers for io::StdinLock<'_> {
+    fn discard_typeahead(&mut self) -> io::Result<()> {
+        kipple_platform::discard_typeahead()
+    }
+}
+
+/// Nobody to answer: nothing was typed.
+impl Answers for io::Empty {
+    fn discard_typeahead(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+/// What a command reads and writes besides its arguments and environment.
+pub struct Io<'io> {
+    /// Where stdout goes, which decides colour by default.
+    pub goes_to: Stdout,
+    /// Where a person's answers are read from.
+    pub stdin: Box<dyn Answers + 'io>,
+    /// Data.
+    pub stdout: &'io mut dyn Write,
+    /// Diagnostics, and the questions a person answers.
+    pub stderr: &'io mut dyn Write,
+    /// Who can answer a question.
+    pub person: Person,
+    /// Set when the command should stop: Ctrl+C, for a command that mutates.
+    pub cancel: CancelToken,
+}
+
+impl<'io> Io<'io> {
+    /// A command run by a script: its output redirected, nobody to answer, and nothing to
+    /// cancel it.
+    pub fn redirected(stdout: &'io mut dyn Write, stderr: &'io mut dyn Write) -> Self {
+        Self {
+            goes_to: Stdout::Redirected,
+            stdin: Box::new(io::empty()),
+            stdout,
+            stderr,
+            person: Person::Absent,
+            cancel: CancelToken::new(),
+        }
+    }
+}
+
+impl fmt::Debug for Io<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Io")
+            .field("goes_to", &self.goes_to)
+            .field("person", &self.person)
+            .field("cancel", &self.cancel)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Runs `cli`, writing data to `io.stdout` and diagnostics to `io.stderr`. Human output
+/// is in colour when `--color` says so, or by default when stdout is a terminal.
+#[must_use]
+pub fn run(cli: &Cli, env: &Environment, mut io: Io<'_>) -> ExitCode {
     // Clap can't exempt the global `--config` from a conflict with the commands, so the
     // home screen's own option is refused here.
     if cli.command.is_some() && cli.home.ascii {
-        say(stderr, "--ascii is for the home screen, not a command");
+        say(io.stderr, "--ascii is for the home screen, not a command");
         return ExitCode::from(USAGE);
     }
     let builtin = match Builtin::load() {
         Ok(builtin) => builtin,
-        Err(message) => return fail(stderr, &message),
+        Err(message) => return fail(io.stderr, &message),
     };
     let host = Host {
         builtin: &builtin,
         env,
         config: cli.config.as_deref(),
         theme: cli.theme.as_deref(),
-        colours: Colours::detect(cli.colour_choice(), env, goes_to),
+        colours: Colours::detect(cli.colour_choice(), env, io.goes_to),
     };
     match &cli.command {
-        None => summary(&host, stdout, stderr),
-        Some(Command::Scan(args)) => scan(&host, args, stdout, stderr),
+        None => summary(&host, io.stdout, io.stderr),
+        Some(Command::Scan(args)) => scan(&host, args, io.stdout, io.stderr),
+        Some(Command::Clean(args)) => mutate::clean(&host, args, &mut io),
+        Some(Command::Plan(args)) => mutate::plan(&host, args, &mut io),
+        Some(Command::Apply(args)) => mutate::apply(&host, args, &mut io),
+        Some(Command::History(args)) => mutate::history(&host, args, &mut io),
+        Some(Command::Restore(args)) => mutate::restore(&host, args, &mut io),
         Some(Command::Rules { json }) => {
             let rules = rules::RulesOut::new(&builtin);
             let written = if *json {
-                write_json(stdout, &rules)
+                write_json(io.stdout, &rules)
             } else {
-                rules::write_human(stdout, &rules, &host.ink(stderr))
+                rules::write_human(io.stdout, &rules, &host.ink(io.stderr))
             };
-            exit_code(written, stderr)
+            exit_code(written, io.stderr)
         }
-        Some(Command::Explain { target }) => explain(&host, target, stdout, stderr),
-        Some(Command::Config { action }) => config_command(&host, *action, stdout, stderr),
-        Some(Command::Theme { action }) => theme_command(&host, action, stdout, stderr),
+        Some(Command::Explain { target }) => explain(&host, target, io.stdout, io.stderr),
+        Some(Command::Config { action }) => config_command(&host, *action, io.stdout, io.stderr),
+        Some(Command::Theme { action }) => theme_command(&host, action, io.stdout, io.stderr),
         Some(Command::Doctor { json }) => {
             let report = doctor::gather(env, host.config, &builtin);
             let written = if *json {
-                write_json(stdout, &report.to_json())
+                write_json(io.stdout, &report.to_json())
             } else {
-                let ink = host.ink(stderr);
+                let ink = host.ink(io.stderr);
                 report
-                    .write_to(stdout, &ink)
-                    .and_then(|()| doctor::write_themes(stdout, &ink, &host.theme_check()))
+                    .write_to(io.stdout, &ink)
+                    .and_then(|()| doctor::write_themes(io.stdout, &ink, &host.theme_check()))
             };
-            exit_code(written, stderr)
+            exit_code(written, io.stderr)
         }
     }
 }
@@ -412,7 +550,14 @@ fn summary(host: &Host<'_>, stdout: &mut dyn Write, stderr: &mut dyn Write) -> E
         Ok(engine) => engine,
         Err(message) => return fail(stderr, &message),
     };
-    let report = scan::run(&engine, &settings, None, &mut |_| Ok(())).report;
+    let report = scan::run(
+        &engine,
+        &settings,
+        None,
+        &mut |_| Ok(()),
+        &CancelToken::new(),
+    )
+    .report;
     let out = ScanOut::new(&report, &host.builtin.lenses(), &settings.policy);
     exit_code(scan::write_summary(stdout, &out, &host.ink(stderr)), stderr)
 }
@@ -443,13 +588,19 @@ fn scan(
         policy: &settings.policy,
         found: HashMap::new(),
     };
-    let scan::Scanned { report, streamed } = scan::run(&engine, &settings, lens, &mut |event| {
-        last_seq = Some(event.seq);
-        match args.events {
-            Some(EventsFormat::Jsonl) => scan::write_event(stdout, &event, &mut stream),
-            None => Ok(()),
-        }
-    });
+    let scan::Scanned { report, streamed } = scan::run(
+        &engine,
+        &settings,
+        lens,
+        &mut |event| {
+            last_seq = Some(event.seq);
+            match args.events {
+                Some(EventsFormat::Jsonl) => scan::write_event(stdout, &event, &mut stream),
+                None => Ok(()),
+            }
+        },
+        &CancelToken::new(),
+    );
     let out = ScanOut::new(&report, &lenses, &settings.policy);
     let written = streamed.and_then(|()| match args.events {
         Some(EventsFormat::Jsonl) => {
@@ -498,7 +649,14 @@ fn explain(
         Ok(engine) => engine,
         Err(message) => return fail(stderr, &message),
     };
-    let report = scan::run(&engine, &settings, None, &mut |_| Ok(())).report;
+    let report = scan::run(
+        &engine,
+        &settings,
+        None,
+        &mut |_| Ok(()),
+        &CancelToken::new(),
+    )
+    .report;
     let path = PathBuf::from(target);
     let ink = host.ink(stderr);
     let judged = explain::Judged {
@@ -577,26 +735,26 @@ fn theme_command(
 }
 
 /// `roots`, each made absolute against the current directory.
-fn absolute(roots: &[PathBuf]) -> io::Result<Vec<PathBuf>> {
+pub(crate) fn absolute(roots: &[PathBuf]) -> io::Result<Vec<PathBuf>> {
     roots.iter().map(std::path::absolute).collect()
 }
 
 /// Writes `value` as one pretty JSON document.
-fn write_json(out: &mut dyn Write, value: &impl serde::Serialize) -> io::Result<()> {
+pub(crate) fn write_json(out: &mut dyn Write, value: &impl serde::Serialize) -> io::Result<()> {
     serde_json::to_writer_pretty(&mut *out, value)?;
     writeln!(out)?;
     out.flush()
 }
 
 /// Reports an internal failure, which is a bug in kipple or its environment.
-fn fail(stderr: &mut dyn Write, message: &str) -> ExitCode {
+pub(crate) fn fail(stderr: &mut dyn Write, message: &str) -> ExitCode {
     say(stderr, message);
     ExitCode::FAILURE
 }
 
 /// Writes one diagnostic line on `stderr`, escaped: config and theme errors, warnings and
 /// OS messages carry names and paths from files, which may hold control characters.
-fn say(stderr: &mut dyn Write, message: &str) {
+pub(crate) fn say(stderr: &mut dyn Write, message: &str) {
     writeln!(stderr, "kipple: {}", human::escaped(message)).ok();
 }
 
@@ -611,5 +769,26 @@ pub fn exit_code(written: io::Result<()>, stderr: &mut dyn Write) -> ExitCode {
             say(stderr, &format!("could not write the output: {error}"));
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(all(test, not(feature = "test-roots")))]
+mod tests {
+    use std::ffi::OsString;
+
+    use super::*;
+
+    /// Catches a test hook reaching a release build: there, `KIPPLE_TEST_TERMINAL` makes
+    /// no pipe a person who can confirm a plan, and `KIPPLE_TEST_CRASH_AT` crashes
+    /// nothing.
+    #[test]
+    fn a_release_build_has_no_test_hooks() {
+        let env = Environment::from_vars([
+            (OsString::from(TEST_TERMINAL), OsString::from("1")),
+            (OsString::from(TEST_CRASH), OsString::from("0")),
+        ]);
+
+        assert_eq!(person(&env, Person::Absent), Person::Absent);
+        assert_eq!(crash_point(&env), None);
     }
 }

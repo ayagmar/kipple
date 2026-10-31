@@ -1,6 +1,5 @@
 ---
 source: crates/kipple/src/tui/app/tests/settings.rs
-assertion_line: 548
 expression: "screen(&app, colour(), 160, 48)"
 ---
 ╭ kipple ─ Balanced ─ scanning… ─ ~/projects +1 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
@@ -17,7 +16,7 @@ expression: "screen(&app, colour(), 160, 48)"
 │ Suggested roots   ~/Documents (4 projects: thesis, uni/compilers, uni/os, …)                                                                                 │
 │                   ~/notes (1 project: notes)                                                                                                                 │
 │                   stopped early: the list may be incomplete                                                                                                  │
-│ Default method    trash  stored only: nothing is removed yet                                                                                                 │
+│ Default method    trash  used by kipple clean; nothing is removed here                                                                                       │
 │ Kept              ~/projects/api/target  benchmark baseline                                                                                                  │
 │ Rules turned off  pacman package cache  builtin.pacman.cache                                                                                                 │
 │                                                                                                                                                              │

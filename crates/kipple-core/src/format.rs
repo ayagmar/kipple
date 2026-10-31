@@ -41,8 +41,8 @@ use crate::probe::FileIdentity;
 pub use events::{ApplyEventOut, EventKindOut};
 pub use journal::{decode_line, encode_line};
 pub use outcome::OutcomeOut;
-pub use plan_file::{decode_plan_file, encode_plan_file};
-pub use receipt::{HistoryOut, ReceiptOut, RunOut};
+pub use plan_file::{PLAN_LIMIT, decode_plan_file, encode_plan_file};
+pub use receipt::{DroppedOut, DroppedWhyOut, HistoryOut, ReceiptOut, RefusedOut, RunOut};
 pub use stored_plan::{decode_stored_plan, encode_stored_plan};
 
 /// A run's stored plan.

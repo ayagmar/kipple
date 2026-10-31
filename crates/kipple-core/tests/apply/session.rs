@@ -74,7 +74,12 @@ impl Machine {
         }
     }
 
-    fn clean(&self, consent: Consent<'_>, events: &mut Events, cancel: &CancelToken) -> Finished {
+    fn clean(
+        &self,
+        consent: Consent<'_>,
+        events: &mut dyn EventSink,
+        cancel: &CancelToken,
+    ) -> Finished {
         let mutation = ports(&self.world);
         let session = Session {
             judge: self.config.judge(),
@@ -440,6 +445,103 @@ fn a_cancel_while_waiting_for_the_lock_exits_130() {
     assert_eq!(finished.ending, Ending::Cancelled);
     assert_eq!(finished.ending.code(), 130);
     assert_eq!(machine.world.state().ran, Vec::new());
+}
+
+/// A person who presses Ctrl+C while asked, then answers.
+struct Interrupted<'token> {
+    answer: Answer,
+    cancel: &'token CancelToken,
+}
+
+impl Confirm for Interrupted<'_> {
+    fn confirm(&mut self, _: &Review<'_>) -> Answer {
+        self.cancel.cancel();
+        self.answer
+    }
+}
+
+/// Catches Ctrl+C at the prompt exiting 3 when the person then answers no, or running
+/// when they answer yes (pinned 17): either way the command is cancelled, exit 130, and
+/// nothing is stored or run.
+#[test]
+fn a_cancel_at_the_prompt_exits_130_whatever_the_answer() {
+    for answer in [Answer::No, Answer::Yes] {
+        let machine = Machine::new(Method::Delete);
+        let cancel = CancelToken::new();
+        let mut person = Interrupted {
+            answer,
+            cancel: &cancel,
+        };
+        let finished = machine.clean(Consent::Ask(&mut person), &mut Events::default(), &cancel);
+        assert_eq!(finished.ending, Ending::Cancelled, "{answer:?}");
+        assert!(machine.world.state().runs.is_empty(), "{answer:?}: no run");
+        assert_eq!(machine.world.state().ran, Vec::new(), "{answer:?}");
+    }
+}
+
+/// Cancels the token as the run's last item ends, as Ctrl+C during its last moments
+/// does.
+struct CancelAtLastEnd<'token> {
+    events: Events,
+    cancel: &'token CancelToken,
+}
+
+impl EventSink for CancelAtLastEnd<'_> {
+    fn event(&mut self, event: ApplyEvent) {
+        if let ApplyEvent::Item {
+            event: ItemEvent::Ended { item, .. },
+            ..
+        } = &event
+            && *item == ItemId(1)
+        {
+            self.cancel.cancel();
+        }
+        self.events.event(event);
+    }
+}
+
+/// Catches a cancel that no item noticed ending the command as done, exit 0 (pinned
+/// 17): what finished stays finished, and the command exits 130.
+#[test]
+fn a_cancel_during_the_last_item_still_exits_130() {
+    let machine = Machine::new(Method::Delete);
+    let cancel = CancelToken::new();
+    let mut events = CancelAtLastEnd {
+        events: Events::default(),
+        cancel: &cancel,
+    };
+    let finished = machine.clean(Consent::Yes, &mut events, &cancel);
+    assert_eq!(Machine::statuses(&finished), [Status::Done, Status::Done]);
+    assert_eq!(finished.ending, Ending::Cancelled);
+    assert_eq!(finished.ending.code(), 130);
+}
+
+/// Catches a declined plan file losing what dropped from it (D-067: the dropped items,
+/// with why, are part of what the command reports): the person said no, and the receipt
+/// still names the item that is gone.
+#[test]
+fn a_declined_plan_file_still_says_what_dropped() {
+    let mut machine = Machine::new(Method::Delete);
+    let planned = plan_all(
+        &machine.scan,
+        &machine.config,
+        &machine.world,
+        PlanMode::Safe,
+    );
+    let file = encode_plan_file(&planned.plan, &TestCodec).unwrap();
+    let imported = decode_plan_file(&file, &TestCodec).unwrap();
+    machine.scan.findings.pop();
+
+    let mut no = person(Answer::No);
+    let finished = machine.apply(&imported, Consent::Ask(&mut no));
+    assert_eq!(finished.ending, Ending::Declined);
+    assert_eq!(
+        no.shown.len(),
+        1,
+        "the person was asked about the item left"
+    );
+    assert_eq!(finished.dropped.len(), 1, "{:?}", finished.dropped);
+    assert!(machine.world.state().runs.is_empty(), "nothing was stored");
 }
 
 /// Catches apply trusting the scan's activity or git's answer from planning (pinned 3,

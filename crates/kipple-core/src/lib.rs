@@ -176,8 +176,8 @@ pub use run::{
 };
 pub use session::{
     Answer, ApplyEvent, ApplyFile, CleanRequest, Confirm, Consent, Ending, EventSink, Finished,
-    RestoreAsk, RestoreFinished, Restored, Restoring, Review, Session, run_apply, run_clean,
-    run_reconcile, run_restore,
+    RefusedItem, RestoreAsk, RestoreFinished, Restored, Restoring, Review, Session, run_apply,
+    run_clean, run_reconcile, run_restore,
 };
 pub use size::{Allocated, Apparent, Completeness, Measurement, SpaceEstimate};
 pub use store::{

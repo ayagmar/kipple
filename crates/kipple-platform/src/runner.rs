@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use kipple_core::{CancelToken, ToolError};
 
 use crate::environment::Environment;
+use crate::interrupt;
 use crate::os;
 
 /// How often the runner checks on a child that has closed its output but not exited.
@@ -68,7 +69,8 @@ enum Stream {
 }
 
 /// Runs `program` with `args`, no stdin and a minimal environment (`LC_ALL=C` plus what
-/// the OS needs to start a process), and waits at most `deadline`.
+/// the OS needs to start a process), out of reach of the terminal's Ctrl+C, and waits at
+/// most `deadline`.
 ///
 /// A child that misses its deadline is killed: kipple stops only processes it started
 /// itself, never anything else (`docs/04-safety-model.md` §3.8).
@@ -112,6 +114,9 @@ pub(crate) fn invoke(invocation: &Invocation<'_>, env: &Environment) -> Result<O
     }
     for var in invocation.vars {
         command.env(var.name, var.value);
+    }
+    if interrupt::armed() {
+        os::own_process_group(&mut command);
     }
     let mut child = command.spawn().map_err(|e| ToolError::Start(Arc::new(e)))?;
     let started = Instant::now();
@@ -216,6 +221,60 @@ mod tests {
         loop {
             thread::park();
         }
+    }
+
+    /// Not a test: the child the process group tests start. It passes when it leads a
+    /// process group of its own.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "started by the process group tests"]
+    #[expect(unsafe_code, reason = "libc's getpgrp is a raw call")]
+    fn leads_its_own_process_group() {
+        // SAFETY: getpgrp takes nothing and can't fail.
+        let group = unsafe { libc::getpgrp() };
+        assert_eq!(u32::try_from(group).ok(), Some(std::process::id()));
+    }
+
+    #[cfg(unix)]
+    fn child_leads_its_own_group() -> bool {
+        let this_test_binary = std::env::current_exe().unwrap();
+        let args = [
+            "--exact",
+            "runner::tests::leads_its_own_process_group",
+            "--ignored",
+        ];
+        run(
+            &this_test_binary,
+            &args,
+            &Environment::default(),
+            Duration::from_secs(60),
+        )
+        .unwrap()
+        .status
+        .success()
+    }
+
+    /// Catches a terminal Ctrl+C killing git midway, which turns a cancel into an item
+    /// skipped for unknown git: the terminal interrupts its foreground process group,
+    /// and each tool kipple starts leads a group of its own.
+    #[cfg(unix)]
+    #[test]
+    fn a_tool_is_out_of_reach_of_the_terminals_interrupt() {
+        crate::cancel_on_interrupt(&CancelToken::new()).unwrap();
+
+        assert!(child_leads_its_own_group(), "the tool leads its own group");
+    }
+
+    /// Catches a read-only command leaving a hung probe running after Ctrl+C ends kipple:
+    /// with no interrupt handler, each tool stays in kipple's group, where the terminal's
+    /// interrupt reaches it too.
+    #[cfg(unix)]
+    #[test]
+    fn without_a_handler_a_tool_shares_the_terminals_interrupt() {
+        assert!(
+            !child_leads_its_own_group(),
+            "the tool is in kipple's group"
+        );
     }
 
     #[test]

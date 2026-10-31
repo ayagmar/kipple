@@ -12,6 +12,7 @@
 //! holds Safe items only until the TUI's review (M3c).
 
 use std::fmt;
+use std::path::PathBuf;
 
 use crate::apply::{
     ApplyPorts, ApplyRequest, ItemEvent, ItemSink, Reconciled, Recorders, apply, reconcile,
@@ -162,17 +163,27 @@ impl Consent<'_> {
         }
     }
 
-    /// The authorization for `plan`, or `None` when the person said no.
-    fn authorize(&mut self, review: &Review<'_>) -> Option<Authorization> {
-        match self {
-            Self::Yes => Some(Authorization::SafeOnly),
+    /// The authorization for `review`'s plan, or how the command ends without running:
+    /// declined when the person said no, cancelled when `cancel` was set meanwhile,
+    /// whatever they answered.
+    fn authorize(
+        &mut self,
+        review: &Review<'_>,
+        cancel: &CancelToken,
+    ) -> Result<Authorization, Ending> {
+        let authorization = match self {
+            Self::Yes => Ok(Authorization::SafeOnly),
             Self::Ask(confirm) => match confirm.confirm(review) {
-                Answer::Yes => Some(Authorization::Reviewed {
+                Answer::Yes => Ok(Authorization::Reviewed {
                     plan: review.plan.digest(),
                 }),
-                Answer::No => None,
+                Answer::No => Err(Ending::Declined),
             },
+        };
+        if cancel.is_cancelled() {
+            return Err(Ending::Cancelled);
         }
+        authorization
     }
 }
 
@@ -261,6 +272,38 @@ pub struct Finished {
     pub receipt: Receipt,
     /// The plan file's items left out of the fresh plan, with why; empty for `clean`.
     pub dropped: Vec<DroppedItem>,
+    /// For `clean`, the selected findings planning refused, with why; empty for
+    /// `apply FILE`, whose refusals are among `dropped`.
+    pub refused: Vec<RefusedItem>,
+}
+
+/// A selected finding `clean` didn't plan.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RefusedItem {
+    /// Its path, as the scan reported it.
+    pub path: PathBuf,
+    /// Why it wasn't planned.
+    pub skip: Skip,
+}
+
+impl RefusedItem {
+    /// `refused`, each with its finding's path in `scan`, the scan it was planned from.
+    #[must_use]
+    pub fn list(scan: &ScanReport, refused: &[Refused]) -> Vec<Self> {
+        refused
+            .iter()
+            .filter_map(|refused| {
+                let finding = scan
+                    .findings
+                    .iter()
+                    .find(|finding| finding.id == refused.finding)?;
+                Some(Self {
+                    path: finding.path.clone(),
+                    skip: refused.skip.clone(),
+                })
+            })
+            .collect()
+    }
 }
 
 impl Finished {
@@ -270,6 +313,7 @@ impl Finished {
             run: None,
             receipt: Receipt::default(),
             dropped: Vec::new(),
+            refused: Vec::new(),
         }
     }
 }
@@ -305,13 +349,17 @@ pub fn run_clean(
     if cancel.is_cancelled() {
         return Finished::before(Ending::Cancelled);
     }
+    let refused = RefusedItem::list(request.scan, &planned.refused);
     if planned.plan.entries().is_empty() {
         let ending = if planned.refused.is_empty() {
             Ending::NothingToClean
         } else {
             Ending::NoneRan
         };
-        return Finished::before(ending);
+        return Finished {
+            refused,
+            ..Finished::before(ending)
+        };
     }
     let review = Review {
         plan: &planned.plan,
@@ -319,10 +367,19 @@ pub fn run_clean(
         refused: &planned.refused,
         dropped: &[],
     };
-    let Some(authorization) = consent.authorize(&review) else {
-        return Finished::before(Ending::Declined);
+    let authorization = match consent.authorize(&review, cancel) {
+        Ok(authorization) => authorization,
+        Err(ending) => {
+            return Finished {
+                refused,
+                ..Finished::before(ending)
+            };
+        }
     };
-    execute(&planned.plan, authorization, session, events, cancel)
+    Finished {
+        refused,
+        ..execute(&planned.plan, authorization, session, events, cancel)
+    }
 }
 
 /// What `apply FILE` applies: a plan file, and a fresh scan of the roots the current
@@ -373,8 +430,14 @@ pub fn run_apply(
         refused: &[],
         dropped: &replanned.dropped,
     };
-    let Some(authorization) = consent.authorize(&review) else {
-        return Finished::before(Ending::Declined);
+    let authorization = match consent.authorize(&review, cancel) {
+        Ok(authorization) => authorization,
+        Err(ending) => {
+            return Finished {
+                dropped: replanned.dropped,
+                ..Finished::before(ending)
+            };
+        }
     };
     let session = Session {
         judge: Judge {
@@ -448,17 +511,23 @@ fn execute(
         cancel,
     );
     // A record that couldn't be written fails the run even when its item ended: the
-    // stored run doesn't say so, and the next command reconciles it.
-    let ending = if journal.failed {
+    // stored run doesn't say so, and the next command reconciles it. A cancel no item
+    // noticed (it came during the last one, or killed a command an item asked) still
+    // cancels the command, unless something failed.
+    let ran = Ending::of(&receipt);
+    let ending = if journal.failed || ran == Ending::Failed {
         Ending::Failed
+    } else if cancel.is_cancelled() {
+        Ending::Cancelled
     } else {
-        Ending::of(&receipt)
+        ran
     };
     Finished {
         ending,
         run: Some(run),
         receipt,
         dropped: Vec::new(),
+        refused: Vec::new(),
     }
 }
 

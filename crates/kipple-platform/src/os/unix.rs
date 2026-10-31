@@ -7,7 +7,9 @@ use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::{
     DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
 };
+use std::os::unix::process::CommandExt as _;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 
 use kipple_core::{
@@ -256,6 +258,13 @@ pub(crate) fn create_private_file(path: &Path) -> io::Result<fs::File> {
         .create_new(true)
         .mode(0o600)
         .open(path)
+}
+
+/// Starts `command` in a process group of its own. The terminal sends Ctrl+C to its
+/// foreground group, so while kipple's interrupt handler is in place it cancels kipple
+/// and never kills the command midway.
+pub(crate) fn own_process_group(command: &mut Command) {
+    command.process_group(0);
 }
 
 /// Makes a rename inside `dir` durable.

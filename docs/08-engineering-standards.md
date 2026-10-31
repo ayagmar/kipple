@@ -120,7 +120,7 @@ Test cases come from the spec, not from the implementation. The required failure
 - Integration layouts against `FixtureTree` fixtures, one per supported upstream version (06 §7)
 - Confinement, idempotence and dedup as seeded property tests (a generated case per seed, so a failure names the seed that reproduces it), since those are the invariants that matter
 - Manifest parsing and path normalization with `cargo-fuzz` (nightly CI job, not the gate)
-- CLI end-to-end against the shared `demo-home` with every root redirected by the `test-roots` override, plus `insta` snapshots of the JSON report (`cargo xtask verify-demo`)
+- CLI end-to-end against the shared `demo-home` with every root redirected by the `test-roots` override, plus `insta` snapshots of the JSON report, then `clean --only builtin.cargo.target --yes`, which must remove exactly the Safe Cargo targets the scan found and store a run that `history` lists, and a second `clean` that finds nothing (`cargo xtask verify-demo`)
 - TUI state transitions, plus buffer snapshots at 80×24 and 160×48
 - Each platform executor and trash backend on its native OS, with disposable directories
 - The default path, not only edge cases

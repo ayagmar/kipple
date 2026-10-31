@@ -8,14 +8,14 @@ use schemars::JsonSchema;
 use serde::Serialize;
 
 use super::journal::RestoreOut;
-use super::outcome::{EstimateOut, OutcomeOut, RemovedOut};
+use super::outcome::{EstimateOut, OutcomeOut, RemovedOut, SkipOut};
 use super::{HISTORY, RECEIPT, TextOut, path_out};
 use crate::frozen::NameCodec;
+use crate::imported::{Dropped, DroppedItem};
 use crate::outcome::{Receipt, ReceiptItem, Status};
 use crate::rule::Method;
 use crate::run::{RunState, RunSummary};
-use crate::session::Ending;
-use crate::store::RunId;
+use crate::session::{Ending, Finished};
 
 /// What a run did, item by item.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
@@ -30,8 +30,85 @@ pub struct ReceiptOut {
     pub exit: u8,
     /// Every item of the plan, in plan order.
     pub items: Vec<ReceiptItemOut>,
+    /// For `apply FILE`, the file's items left out of the fresh plan, in file order;
+    /// empty for `clean`.
+    pub dropped: Vec<DroppedOut>,
+    /// For `clean`, the selected findings planning refused; empty for `apply FILE`.
+    pub refused: Vec<RefusedOut>,
     /// The totals.
     pub totals: TotalsOut,
+}
+
+/// A selected finding `clean` didn't plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct RefusedOut {
+    /// Its path, as the scan reported it.
+    pub path: TextOut,
+    /// Why it wasn't planned.
+    pub skip: SkipOut,
+}
+
+/// An item of a plan file left out of the fresh plan.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct DroppedOut {
+    /// Its place in the file, from 0.
+    pub index: u64,
+    /// Where the file says it is.
+    pub path: TextOut,
+    /// Why it was left out.
+    pub why: DroppedWhyOut,
+}
+
+/// Why an item of a plan file was left out.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(tag = "reason", rename_all = "kebab-case")]
+pub enum DroppedWhyOut {
+    /// The fresh scan doesn't find it there by its rule.
+    NotFound,
+    /// It is below another root now, or its root has another identity.
+    RootChanged,
+    /// The file removes it by a method the current config doesn't choose.
+    MethodWidened {
+        /// The file's method.
+        file: Method,
+        /// The current config's.
+        now: Method,
+    },
+    /// The file names its rule with two methods.
+    MethodsDiffer,
+    /// Planning it now refused it.
+    Refused {
+        /// Why.
+        skip: SkipOut,
+    },
+    /// Its fresh tree and the file's share no entry to remove.
+    NothingInCommon,
+    /// Another item of the file is the same item now.
+    Duplicate,
+}
+
+impl DroppedOut {
+    fn of(dropped: &DroppedItem, codec: &dyn NameCodec) -> Self {
+        let why = match &dropped.why {
+            Dropped::NotFound => DroppedWhyOut::NotFound,
+            Dropped::RootChanged => DroppedWhyOut::RootChanged,
+            Dropped::MethodWidened { file, now } => DroppedWhyOut::MethodWidened {
+                file: *file,
+                now: *now,
+            },
+            Dropped::MethodsDiffer => DroppedWhyOut::MethodsDiffer,
+            Dropped::Refused(skip) => DroppedWhyOut::Refused {
+                skip: SkipOut::of(skip, codec),
+            },
+            Dropped::NothingInCommon => DroppedWhyOut::NothingInCommon,
+            Dropped::Duplicate => DroppedWhyOut::Duplicate,
+        };
+        Self {
+            index: dropped.index as u64,
+            path: path_out(&dropped.path, codec),
+            why,
+        }
+    }
 }
 
 /// How a command ended.
@@ -126,21 +203,29 @@ pub struct RunOut {
 }
 
 impl ReceiptOut {
-    /// `receipt`, of `run` when one was stored, which ended as `ending`.
+    /// What `finished` did: its run's receipt, how it ended and what it dropped.
     #[must_use]
-    pub fn of(
-        receipt: &Receipt,
-        run: Option<&RunId>,
-        ending: &Ending,
-        codec: &dyn NameCodec,
-    ) -> Self {
+    pub fn of(finished: &Finished, codec: &dyn NameCodec) -> Self {
         Self {
             schema: RECEIPT.to_owned(),
-            run: run.map(|run| run.as_str().to_owned()),
-            ending: EndingOut::of(ending),
-            exit: ending.code(),
-            items: items(receipt, codec),
-            totals: totals(receipt),
+            run: finished.run.as_ref().map(|run| run.as_str().to_owned()),
+            ending: EndingOut::of(&finished.ending),
+            exit: finished.ending.code(),
+            items: items(&finished.receipt, codec),
+            dropped: finished
+                .dropped
+                .iter()
+                .map(|dropped| DroppedOut::of(dropped, codec))
+                .collect(),
+            refused: finished
+                .refused
+                .iter()
+                .map(|refused| RefusedOut {
+                    path: path_out(&refused.path, codec),
+                    skip: SkipOut::of(&refused.skip, codec),
+                })
+                .collect(),
+            totals: totals(&finished.receipt),
         }
     }
 }
