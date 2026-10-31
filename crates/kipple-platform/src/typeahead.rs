@@ -37,10 +37,12 @@ pub fn discard_typeahead() -> io::Result<()> {
 ///   refused. It then waits 50 ms at a time, `poll` on Linux and `select` on macOS,
 ///   whose `poll` doesn't take terminals, checking `cancel` between turns. The terminal
 ///   echoes what is typed.
-/// - Windows console: line input and Ctrl+C processing must be on. The line is read into
-///   `input`'s buffer, so the console echoes each key as it is typed, while a watcher
-///   thread stops that read with `CancelSynchronousIo` within 50 ms of `cancel`
-///   (D-070).
+/// - Windows console: line input and Ctrl+C processing must be on. It reads nothing: it
+///   looks at the console's input every 50 ms, or as soon as input arrives, until a
+///   pressed Enter (or Ctrl+Z) is there, so the read that follows doesn't block, and
+///   checks `cancel` between turns. Focus, mouse, menu and size events at the front of
+///   the input are dropped. Keys show when Enter is pressed, since the console echoes
+///   only during a read. A cancelled wait throws away what was typed (D-070).
 ///
 /// # Errors
 /// When the terminal refuses the wait or the read, or isn't reading whole lines: the
@@ -182,18 +184,21 @@ mod sys {
 #[cfg(windows)]
 mod sys {
     use std::io::{self, BufRead};
-    use std::os::windows::io::{AsHandle, AsRawHandle as _, FromRawHandle as _, OwnedHandle};
-    use std::ptr;
-    use std::sync::mpsc;
+    use std::os::windows::io::{AsHandle, AsRawHandle as _};
     use std::thread;
 
     use kipple_core::{CancelToken, Waited};
-    use windows_sys::Win32::Foundation::{DUPLICATE_SAME_ACCESS, DuplicateHandle, FALSE};
+    use windows_sys::Win32::Foundation::{HANDLE, WAIT_FAILED};
     use windows_sys::Win32::System::Console::{
         ENABLE_LINE_INPUT, ENABLE_PROCESSED_INPUT, FlushConsoleInputBuffer, GetConsoleMode,
+        GetNumberOfConsoleInputEvents, INPUT_RECORD, KEY_EVENT, PeekConsoleInputW,
+        ReadConsoleInputW,
     };
-    use windows_sys::Win32::System::IO::CancelSynchronousIo;
-    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetCurrentThread};
+    use windows_sys::Win32::System::Threading::WaitForSingleObject;
+
+    /// The characters whose key ends a line read of the console as std asks for it:
+    /// Enter, and Ctrl+Z, which std wakes on too.
+    const LINE_ENDS: [u16; 2] = [0x0D, 0x1A];
 
     /// Discards the input `console` received and nobody read. A terminal that isn't a
     /// console, such as mintty's pipe, which std also counts as a terminal, can't be
@@ -226,11 +231,14 @@ mod sys {
         (known != 0).then_some(mode)
     }
 
-    /// Reads a line into `input`'s buffer from `console`, which echoes each key as it is
-    /// typed, until it is there or `cancel` stops the read.
+    /// Waits until `console` holds a whole line for the read that follows, or `cancel`,
+    /// without reading anything: std reads the console again after a read Ctrl+C ended,
+    /// so no cancel can end a read it owns. The read that follows a ready wait finds the
+    /// line's end already there and doesn't block. Cancelled, what was typed is thrown
+    /// away, so it neither answers a later question nor reaches the shell.
     pub(super) fn wait(
         console: &impl AsHandle,
-        input: &mut dyn BufRead,
+        _: &mut dyn BufRead,
         cancel: &CancelToken,
     ) -> io::Result<Waited> {
         let Some(mode) = mode(console) else {
@@ -242,88 +250,130 @@ mod sys {
                 "the console isn't reading whole lines or taking Ctrl+C",
             ));
         }
-        if cancel.is_cancelled() {
-            return Ok(Waited::Cancelled);
-        }
-        let watcher = Watcher::start(cancel.clone())?;
-        let filled = input.fill_buf().map(|_| ());
-        watcher.stop();
-        if cancel.is_cancelled() {
-            return Ok(Waited::Cancelled);
-        }
-        filled.map(|()| Waited::Ready)
-    }
-
-    /// A thread that, once the token is cancelled, stops the console read of the thread
-    /// that started it, every turn until it is stopped: std reads again after a read
-    /// Ctrl+C ended, and a stop that comes between two reads stops neither.
-    #[derive(Debug)]
-    struct Watcher {
-        stop: mpsc::Sender<()>,
-        thread: thread::JoinHandle<()>,
-    }
-
-    impl Watcher {
-        fn start(cancel: CancelToken) -> io::Result<Self> {
-            let reader = this_thread()?;
-            let (stop, stopped) = mpsc::channel::<()>();
-            let thread = thread::Builder::new()
-                .name("kipple-answer-watcher".to_owned())
-                .spawn(move || watch(&reader, &stopped, &cancel))?;
-            Ok(Self { stop, thread })
-        }
-
-        fn stop(self) {
-            drop(self.stop);
-            self.thread.join().ok();
-        }
-    }
-
-    /// Stops `reader`'s read every turn once `cancel` is cancelled, until `stopped`.
-    fn watch(reader: &OwnedHandle, stopped: &mpsc::Receiver<()>, cancel: &CancelToken) {
-        while stopped.recv_timeout(super::TURN) == Err(mpsc::RecvTimeoutError::Timeout) {
+        let handle = console.as_handle().as_raw_handle();
+        loop {
             if cancel.is_cancelled() {
-                stop_read(reader);
+                flush(handle);
+                return Ok(Waited::Cancelled);
+            }
+            match held(handle)? {
+                Held::Line => return Ok(Waited::Ready),
+                Held::Nothing => until_input(handle)?,
+                // Input is there, so the console handle stays signalled: wait a turn.
+                Held::Part => thread::park_timeout(super::TURN),
             }
         }
     }
 
-    /// A handle to the calling thread that another thread can use.
-    #[expect(
-        unsafe_code,
-        reason = "windows-sys exposes DuplicateHandle as a raw call"
-    )]
-    fn this_thread() -> io::Result<OwnedHandle> {
-        let mut handle = ptr::null_mut();
-        // SAFETY: the pseudo-handles are always valid in the calling process, and
-        // `handle` is a live value.
-        let duplicated = unsafe {
-            DuplicateHandle(
-                GetCurrentProcess(),
-                GetCurrentThread(),
-                GetCurrentProcess(),
-                &raw mut handle,
-                0,
-                FALSE,
-                DUPLICATE_SAME_ACCESS,
-            )
-        };
-        if duplicated == 0 {
-            return Err(io::Error::last_os_error());
-        }
-        // SAFETY: DuplicateHandle made a new handle nothing else owns.
-        Ok(unsafe { OwnedHandle::from_raw_handle(handle) })
+    /// What a console's input holds.
+    enum Held {
+        Nothing,
+        /// Keys, but no line's end yet.
+        Part,
+        Line,
     }
 
-    /// Stops the read `thread` is blocked in. When it is between reads there is nothing
-    /// to stop, and the next turn tries again.
+    /// What `console`'s input holds, once the records a line read passes over (focus,
+    /// mouse, menu and size events) are dropped from its front.
+    fn held(console: HANDLE) -> io::Result<Held> {
+        let records = peek(console)?;
+        let passed = records
+            .iter()
+            .take_while(|record| u32::from(record.EventType) != KEY_EVENT)
+            .count();
+        if passed > 0 {
+            drop_front(console, passed)?;
+        }
+        let keys = records.get(passed..).unwrap_or_default();
+        Ok(if keys.iter().any(ends_line) {
+            Held::Line
+        } else if keys.is_empty() {
+            Held::Nothing
+        } else {
+            Held::Part
+        })
+    }
+
+    /// Whether `record` is a key pressed that ends a line read.
+    #[expect(unsafe_code, reason = "an input record's event is a union")]
+    fn ends_line(record: &INPUT_RECORD) -> bool {
+        if u32::from(record.EventType) != KEY_EVENT {
+            return false;
+        }
+        // SAFETY: a record of a key event holds a key event, and its character is read
+        // as the UTF-16 unit the wide calls give.
+        let (down, unit) = unsafe {
+            let key = record.Event.KeyEvent;
+            (key.bKeyDown != 0, key.uChar.UnicodeChar)
+        };
+        down && LINE_ENDS.contains(&unit)
+    }
+
+    /// The records waiting in `console`'s input, without taking them.
     #[expect(
         unsafe_code,
-        reason = "windows-sys exposes CancelSynchronousIo as a raw call"
+        reason = "windows-sys exposes the console calls as raw calls"
     )]
-    fn stop_read(thread: &OwnedHandle) {
+    fn peek(console: HANDLE) -> io::Result<Vec<INPUT_RECORD>> {
+        let mut count = 0;
+        // SAFETY: the handle is open for the call and `count` is a live value.
+        if unsafe { GetNumberOfConsoleInputEvents(console, &raw mut count) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let mut records = vec![INPUT_RECORD::default(); usize::try_from(count).unwrap_or(0)];
+        if records.is_empty() {
+            return Ok(records);
+        }
+        let mut read = 0;
+        // SAFETY: the handle is open and `records` holds `count` writable records.
+        if unsafe { PeekConsoleInputW(console, records.as_mut_ptr(), count, &raw mut read) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        records.truncate(usize::try_from(read).unwrap_or(0));
+        Ok(records)
+    }
+
+    /// Takes the first `count` records of `console`'s input. They are there, so it doesn't
+    /// block, and nothing else reads them meanwhile; what arrives goes after them.
+    #[expect(
+        unsafe_code,
+        reason = "windows-sys exposes ReadConsoleInputW as a raw call"
+    )]
+    fn drop_front(console: HANDLE, count: usize) -> io::Result<()> {
+        let mut records = vec![INPUT_RECORD::default(); count];
+        let length = u32::try_from(count).map_err(|_| io::ErrorKind::InvalidInput)?;
+        let mut read = 0;
+        // SAFETY: the handle is open and `records` holds `length` writable records.
+        if unsafe { ReadConsoleInputW(console, records.as_mut_ptr(), length, &raw mut read) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Waits at most a turn for input to arrive at `console`, whose handle is signalled
+    /// while its input holds anything.
+    #[expect(
+        unsafe_code,
+        reason = "windows-sys exposes WaitForSingleObject as a raw call"
+    )]
+    fn until_input(console: HANDLE) -> io::Result<()> {
+        let turn = u32::try_from(super::TURN.as_millis()).unwrap_or(u32::MAX);
         // SAFETY: the handle is open for the call.
-        unsafe { CancelSynchronousIo(thread.as_raw_handle()) };
+        if unsafe { WaitForSingleObject(console, turn) } == WAIT_FAILED {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Throws away what `console`'s input holds. A flush that fails leaves it, which only
+    /// the shell may then read: the wait is cancelled either way.
+    #[expect(
+        unsafe_code,
+        reason = "windows-sys exposes FlushConsoleInputBuffer as a raw call"
+    )]
+    fn flush(console: HANDLE) {
+        // SAFETY: the handle is open for the call.
+        unsafe { FlushConsoleInputBuffer(console) };
     }
 }
 

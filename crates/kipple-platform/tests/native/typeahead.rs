@@ -206,6 +206,8 @@ mod windows {
     use std::io;
     use std::os::windows::fs::OpenOptionsExt as _;
     use std::os::windows::io::{AsRawHandle as _, OwnedHandle};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -410,35 +412,54 @@ mod windows {
         assert!(used < LATER / 2, "the wait used {used:?} of the processor");
     }
 
-    /// Catches an answer that shows only once Enter is pressed (D-070): the key echoes
-    /// while the wait goes on, and the line is then ready and read whole.
+    /// Catches a wait that takes a half-typed line as ready, so the read after it blocks
+    /// where no cancel can end it, or one that misses the line once Enter is pressed:
+    /// ready only after Enter, the line then reads whole, and the console shows it.
     #[test]
-    fn a_key_echoes_as_it_is_typed_and_the_line_is_ready_and_read_whole() {
+    fn a_line_is_ready_only_once_enter_is_pressed_and_reads_whole() {
         let console = console();
         let cancel = CancelToken::new();
+        let waiting = Arc::new(AtomicBool::new(true));
+        let still = Arc::clone(&waiting);
         let typist = thread::spawn(move || {
             pause(LATER);
             console.type_text("y");
-            let started = Instant::now();
-            let mut echoed = false;
-            while !echoed && started.elapsed() < Duration::from_secs(5) {
-                pause(Duration::from_millis(10));
-                echoed = console.screen().contains('y');
-            }
+            pause(LATER);
+            let before_enter = still.load(Ordering::SeqCst);
             console.type_text("\r");
-            (echoed, console)
+            (before_enter, console)
         });
 
         let waited = wait(&cancel);
+        waiting.store(false, Ordering::SeqCst);
 
-        let (echoed, _console) = typist.join().unwrap();
+        let (before_enter, shown) = typist.join().unwrap();
         assert_eq!(waited.unwrap(), Waited::Ready);
-        assert!(echoed, "the key showed before Enter");
+        assert!(before_enter, "the wait ended before Enter");
         assert_eq!(read_line().unwrap().trim_end(), "y");
+        assert!(shown.screen().contains('y'), "the answer doesn't show");
     }
 
-    /// Catches Ctrl+C at the question waiting for Enter, as std reads again after the
-    /// read Ctrl+C ended: the console's Ctrl+C cancels the wait within 200 ms.
+    /// Catches Ctrl+C after a key waiting for Enter, or what was typed before the cancel
+    /// answering the next question: a cancel ends the wait within 200 ms, and the half
+    /// line is gone.
+    #[test]
+    fn a_cancel_ends_the_wait_within_200ms_and_throws_away_a_half_typed_line() {
+        let console = console();
+        console.type_text("y");
+        let cancel = CancelToken::new();
+        let canceller = cancel_after(&cancel, LATER);
+
+        let waited = wait(&cancel);
+
+        cancelled_promptly(waited, Instant::now(), canceller.join().unwrap());
+        console.type_text("n\r");
+        assert_eq!(wait(&CancelToken::new()).unwrap(), Waited::Ready);
+        assert_eq!(read_line().unwrap().trim_end(), "n");
+    }
+
+    /// Catches Ctrl+C at the question waiting for Enter, as std reads again after a read
+    /// Ctrl+C ended: the console's Ctrl+C cancels the wait within 200 ms.
     #[test]
     #[expect(
         unsafe_code,
