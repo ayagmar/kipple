@@ -190,8 +190,8 @@ impl Consent<'_> {
 /// How a mutating command ended, which decides its exit code.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Ending {
-    /// Every item was done or skipped, and at least one was done, or every restore asked
-    /// for restored the item. Exit 0.
+    /// Every item was done or skipped, and at least one was done, or a restore moved an
+    /// item back and none failed. Exit 0.
     Done,
     /// The plan is empty: nothing to clean. Exit 0.
     NothingToClean,
@@ -704,16 +704,14 @@ pub fn run_restore(
         items.push(Restored { item, restoring });
     }
     RestoreFinished {
-        ending: restore_ending(&items, ask),
+        ending: restore_ending(&items),
         items,
     }
 }
 
-/// How restoring `items` for `ask` ended: done when something was restored and, for
-/// items named one by one, every one was.
-fn restore_ending(items: &[Restored], ask: &RestoreAsk) -> Ending {
-    let every = ask.items.is_empty();
-    let ran = |restoring: &Restoring| matches!(restoring, Restoring::Ran(_));
+/// How restoring `items` ended: done when an item was moved back and none failed, like a
+/// clean whose other items skipped; the items with nothing to restore say so one by one.
+fn restore_ending(items: &[Restored]) -> Ending {
     let failed = items.iter().any(|item| {
         matches!(
             item.restoring,
@@ -727,8 +725,9 @@ fn restore_ending(items: &[Restored], ask: &RestoreAsk) -> Ending {
         .any(|item| item.restoring == Restoring::Cancelled)
     {
         Ending::Cancelled
-    } else if items.iter().any(|item| ran(&item.restoring))
-        && (every || items.iter().all(|item| ran(&item.restoring)))
+    } else if items
+        .iter()
+        .any(|item| item.restoring == Restoring::Ran(RestoreResult::Restored))
     {
         Ending::Done
     } else {

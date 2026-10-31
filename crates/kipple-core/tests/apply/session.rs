@@ -357,6 +357,31 @@ fn a_restore_moves_an_item_back_once() {
     assert_eq!(nothing.ending, Ending::NoneRan);
 }
 
+/// Catches a restore that moved an item back reported as "nothing ran" (exit 3) because
+/// another item it was asked for had nothing to restore: the item is back, so it is done.
+#[test]
+fn a_restore_that_moved_an_item_back_is_done_whatever_else_it_was_asked() {
+    let machine = Machine::new(Method::Trash);
+    let finished = machine.clean(
+        Consent::Ask(&mut person(Answer::Yes)),
+        &mut Events::default(),
+        &CancelToken::new(),
+    );
+    let ask = RestoreAsk {
+        run: finished.run.unwrap(),
+        items: vec![ItemId(0), ItemId(99)],
+    };
+
+    let restored = machine.restore(&ask, &mut Events::default());
+
+    assert_eq!(
+        restored.items[0].restoring,
+        Restoring::Ran(RestoreResult::Restored)
+    );
+    assert_eq!(restored.items[1].restoring, Restoring::NoSuchItem);
+    assert_eq!(restored.ending, Ending::Done);
+}
+
 /// Catches a trash move a crash interrupted that can't be restored once reconciled
 /// (docs/04 §7): reconciliation finds the item in the trash, and restore moves it back.
 #[test]
