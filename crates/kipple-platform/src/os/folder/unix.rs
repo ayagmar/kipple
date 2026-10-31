@@ -1,5 +1,6 @@
-//! Linux and macOS: kipple's own folders as open descriptors, every name opened relative
-//! to them without following a link, and `fsync` of each (`F_FULLFSYNC` on macOS).
+//! Linux and macOS: kipple's own folders as open descriptors, every name opened, renamed
+//! and removed relative to them without following a link, and `fsync` of each
+//! (`F_FULLFSYNC` on macOS).
 
 use std::ffi::{OsStr, OsString};
 use std::fs::File;
@@ -7,7 +8,7 @@ use std::io;
 use std::mem::MaybeUninit;
 use std::path::Path;
 
-use kipple_core::FileSystemClass;
+use kipple_core::{EntryKind, FileSystemClass};
 
 use crate::executor::sys::{self, Dir, Name, no_replace};
 
@@ -72,6 +73,31 @@ impl Folder {
     /// Renames `from` here to `to`, never replacing anything.
     pub(crate) fn rename(&self, from: &str, to: &str) -> io::Result<()> {
         no_replace(&self.0, &name(from)?, &self.0, &name(to)?)
+    }
+
+    /// Renames `from` here to `to`, replacing what `to` names in one step: a file, or a
+    /// link, which is replaced and never followed.
+    #[expect(unsafe_code, reason = "libc's renameat is a raw call")]
+    #[expect(clippy::disallowed_methods, reason = "kipple's own profile file")]
+    pub(crate) fn rename_replace(&self, from: &str, to: &str) -> io::Result<()> {
+        let (from, to) = (name(from)?, name(to)?);
+        let fd = self.0.fd();
+        // SAFETY: the descriptor is open and both names are NUL-terminated.
+        if unsafe { libc::renameat(fd, from.as_ptr(), fd, to.as_ptr()) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// Removes the file `name` here. A link or anything else that isn't a regular file is
+    /// refused and stays.
+    pub(crate) fn remove(&self, entry: &str) -> io::Result<()> {
+        let entry = name(entry)?;
+        match self.0.stat(&entry)?.snapshot.kind {
+            EntryKind::File => self.0.unlink(&entry, 0),
+            EntryKind::Symlink => Err(io::Error::from_raw_os_error(libc::ELOOP)),
+            EntryKind::Dir | EntryKind::Other => Err(super::not_regular()),
+        }
     }
 
     pub(crate) fn sync(&self) -> io::Result<()> {

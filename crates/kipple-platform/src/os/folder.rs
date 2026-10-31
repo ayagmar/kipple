@@ -1,6 +1,7 @@
-//! kipple's own folders under its data directory, which the run store writes (D-065):
-//! each opened as a directory handle, never through a link, and every name in it opened
-//! and renamed relative to that handle without following a link.
+//! kipple's own folders under its data directory, which the run store and the profile
+//! store write (D-065, D-070): each opened as a directory handle, never through a link, and
+//! every name in it opened, renamed and removed relative to that handle without
+//! following a link.
 
 #[cfg(unix)]
 mod unix;
