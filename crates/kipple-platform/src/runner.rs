@@ -68,7 +68,8 @@ enum Stream {
 }
 
 /// Runs `program` with `args`, no stdin and a minimal environment (`LC_ALL=C` plus what
-/// the OS needs to start a process), and waits at most `deadline`.
+/// the OS needs to start a process), out of reach of the terminal's Ctrl+C, and waits at
+/// most `deadline`.
 ///
 /// A child that misses its deadline is killed: kipple stops only processes it started
 /// itself, never anything else (`docs/04-safety-model.md` §3.8).
@@ -113,6 +114,7 @@ pub(crate) fn invoke(invocation: &Invocation<'_>, env: &Environment) -> Result<O
     for var in invocation.vars {
         command.env(var.name, var.value);
     }
+    os::own_process_group(&mut command);
     let mut child = command.spawn().map_err(|e| ToolError::Start(Arc::new(e)))?;
     let started = Instant::now();
     // `sender` lives until `wait` returns, so `outputs` never disconnects early.
@@ -216,6 +218,46 @@ mod tests {
         loop {
             thread::park();
         }
+    }
+
+    /// Not a test: the child the process group test starts. It passes when it leads a
+    /// process group of its own.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "started by a_tool_is_out_of_reach_of_the_terminals_interrupt"]
+    #[expect(unsafe_code, reason = "libc's getpgrp is a raw call")]
+    fn leads_its_own_process_group() {
+        // SAFETY: getpgrp takes nothing and can't fail.
+        let group = unsafe { libc::getpgrp() };
+        assert_eq!(u32::try_from(group).ok(), Some(std::process::id()));
+    }
+
+    /// Catches a terminal Ctrl+C killing git midway, which turns a cancel into an item
+    /// skipped for unknown git: the terminal interrupts its foreground process group,
+    /// and each tool kipple starts leads a group of its own.
+    #[cfg(unix)]
+    #[test]
+    fn a_tool_is_out_of_reach_of_the_terminals_interrupt() {
+        let this_test_binary = std::env::current_exe().unwrap();
+        let args = [
+            "--exact",
+            "runner::tests::leads_its_own_process_group",
+            "--ignored",
+        ];
+
+        let output = run(
+            &this_test_binary,
+            &args,
+            &Environment::default(),
+            Duration::from_secs(60),
+        )
+        .unwrap();
+
+        assert!(
+            output.status.success(),
+            "the tool leads its own group: {}",
+            String::from_utf8_lossy(&output.stdout)
+        );
     }
 
     #[test]

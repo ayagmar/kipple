@@ -11,7 +11,9 @@ use std::io;
 use std::os::windows::ffi::{OsStrExt as _, OsStringExt as _};
 use std::os::windows::fs::OpenOptionsExt as _;
 use std::os::windows::io::AsRawHandle as _;
+use std::os::windows::process::CommandExt as _;
 use std::path::{Component, Path, PathBuf, Prefix};
+use std::process::Command;
 use std::sync::Arc;
 
 use kipple_core::{
@@ -34,8 +36,9 @@ use windows_sys::Win32::System::RemoteDesktop::{
     WTSTypeProcessInfoLevel1,
 };
 use windows_sys::Win32::System::Threading::{
-    GetCurrentProcess, GetExitCodeProcess, OpenProcess, OpenProcessToken, PROCESS_NAME_WIN32,
-    PROCESS_QUERY_LIMITED_INFORMATION, QueryFullProcessImageNameW,
+    CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, GetCurrentProcess, GetExitCodeProcess, OpenProcess,
+    OpenProcessToken, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION,
+    QueryFullProcessImageNameW,
 };
 use windows_sys::Win32::UI::Shell::{
     FOLDERID_LocalAppData, FOLDERID_Profile, FOLDERID_RoamingAppData, SHGetKnownFolderPath,
@@ -118,6 +121,14 @@ pub(crate) fn create_private_file(path: &Path) -> io::Result<fs::File> {
         .write(true)
         .create_new(true)
         .open(path)
+}
+
+/// Starts `command` apart from kipple's console: in a new process group, where Ctrl+C is
+/// off, and with a hidden console of its own, so the Ctrl+Break the console sends to
+/// every process on it doesn't reach the command either. Either would kill it midway
+/// when the key is meant to cancel kipple.
+pub(crate) fn own_process_group(command: &mut Command) {
+    command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
 }
 
 /// Nothing to do: Windows can't sync a directory through std, and a rename replaces the
