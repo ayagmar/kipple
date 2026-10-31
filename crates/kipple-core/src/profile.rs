@@ -796,6 +796,7 @@ fn compare(
             });
         }
     }
+    checked.pending.sort();
     checked
 }
 

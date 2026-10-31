@@ -26,6 +26,13 @@ fn at(rest: &str) -> PathBuf {
     Path::new(BASE).join(rest)
 }
 
+/// `lines` with every path in the unix form, so the golden is the same on every OS: the
+/// cases' names and verdicts print the paths they carry, and Windows writes `BASE` with
+/// a drive and joins with `\\`.
+fn portable(lines: &str) -> String {
+    lines.replace(BASE, "/home/u").replace(r"\\", "/")
+}
+
 const fn id(file: u128) -> FileIdentity {
     FileIdentity { volume: 7, file }
 }
@@ -266,7 +273,7 @@ fn the_classification_matches_its_version() {
         // The path as written here, so the golden is the same on every OS.
         writeln!(lines, "holds {rest:?} {lineage:?} => {holds}").unwrap();
     }
-    let digest = Digest::of_bytes(lines.as_bytes()).to_string();
+    let digest = Digest::of_bytes(portable(&lines).as_bytes()).to_string();
     assert_eq!(
         (POLICY_VERSION, digest.as_str()),
         GOLDEN,
