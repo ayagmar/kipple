@@ -408,6 +408,7 @@ impl App {
             Msg::Resize { width, height } => {
                 self.width = width;
                 self.height = height;
+                self.clamp_clean_scroll();
                 self.settle();
             }
             Msg::Scan(event) => self.scan_event(*event),
@@ -657,6 +658,7 @@ impl App {
     fn key(&mut self, key: Key) {
         if self.cleaning.is_some() {
             self.clean_key(key);
+            self.clamp_clean_scroll();
             self.settle();
             return;
         }

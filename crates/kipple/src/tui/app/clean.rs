@@ -235,6 +235,20 @@ impl App {
         }
     }
 
+    /// The run of the clean under way, once its events said it was stored.
+    pub(crate) const fn run(&self) -> Option<&RunId> {
+        match &self.cleaning {
+            Some(Cleaning::Applying(applying)) => applying.run.as_ref(),
+            Some(
+                Cleaning::Planning(_)
+                | Cleaning::Reviewing(_)
+                | Cleaning::Typing(..)
+                | Cleaning::Ended(_),
+            )
+            | None => None,
+        }
+    }
+
     /// The notices of the apply that ended.
     fn leave_applying(&mut self) -> Vec<String> {
         match self.cleaning.take() {
@@ -259,6 +273,19 @@ impl App {
             Cleaning::Applying(applying) => Some(self.applying_key(applying, key)),
             Cleaning::Ended(ended) => self.ended_key(ended, key),
         };
+    }
+
+    /// Keeps the review's or the result's scroll within its last page, so `k` after
+    /// scrolling past the end moves the view at once.
+    pub(super) fn clamp_clean_scroll(&mut self) {
+        let end = crate::tui::ui::clean_end(self);
+        match &mut self.cleaning {
+            Some(Cleaning::Reviewing(review) | Cleaning::Typing(review, _)) => {
+                review.scroll = review.scroll.min(end);
+            }
+            Some(Cleaning::Ended(Ended::Ran { scroll, .. })) => *scroll = (*scroll).min(end),
+            Some(Cleaning::Planning(_) | Cleaning::Applying(_) | Cleaning::Ended(_)) | None => {}
+        }
     }
 
     /// While planning: `esc` stops it and goes back to the tree; quitting stops it too.
@@ -354,7 +381,7 @@ impl App {
                 self.notice = Some(review::STOPPING.to_owned());
             }
             (Key::Interrupt, Stopping::Asked) => {
-                self.effect = Some(Effect::Abort(applying.run.clone()));
+                self.effect = Some(Effect::Abort);
             }
             (_, Stopping::Asked) => self.notice = Some(review::STOPPING.to_owned()),
             (_, Stopping::No) => self.notice = Some(review::STOP_KEY.to_owned()),

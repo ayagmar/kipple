@@ -195,6 +195,9 @@ struct Ran {
 enum Step {
     /// Presses this key once the screen is idle: the scan, planning or run over.
     Press(Key),
+    /// Presses this key just as the review opens, before it is drawn: it is waiting
+    /// when the screen next looks at the keyboard, even without waiting for a key.
+    Ahead(Key),
     /// Keeps the frame drawn so far.
     Look,
     /// Does this while the screen is idle, as something else on the machine would.
@@ -239,6 +242,15 @@ struct Script {
 
 impl Keys for Script {
     fn next(&mut self, timeout: Duration) -> io::Result<Option<Input>> {
+        if timeout.is_zero() {
+            return Ok(match self.steps.front() {
+                Some(&Step::Ahead(key)) => {
+                    self.steps.pop_front();
+                    Some(Input::Key(key))
+                }
+                _ => None,
+            });
+        }
         // The loop waits a frame at most while something runs, and longer once idle.
         if timeout <= Duration::from_millis(16) {
             return Ok(None);
@@ -246,7 +258,7 @@ impl Keys for Script {
         loop {
             match self.steps.pop_front() {
                 None => return Ok(Some(Input::Key(Key::Char('q')))),
-                Some(Step::Press(key)) => return Ok(Some(Input::Key(key))),
+                Some(Step::Press(key) | Step::Ahead(key)) => return Ok(Some(Input::Key(key))),
                 Some(Step::Look) => self.looked.push(text(&self.screen.borrow())),
                 Some(Step::Meanwhile(act)) => act(),
             }
@@ -417,6 +429,25 @@ fn s_enter_y_on_a_review_finding_removes_it_and_the_result_shows_it() {
     assert!(result.contains("Done."), "{result}");
 }
 
+// Catches a key typed while the plan was made or the review drawn confirming a review
+// the person never saw (`y` also copies a path on the tree): what was typed before the
+// review showed is thrown away, as the command line throws away what was typed before
+// its question.
+#[test]
+fn a_y_typed_before_the_review_showed_doesnt_confirm_it() {
+    let demo = Demo::new();
+    let mut script = filtered_to("acme/api/target", Bucket::Safe);
+    script.extend(press(&[Key::Char('s'), Key::Enter]));
+    script.push(Step::Ahead(Key::Char('y')));
+    script.push(Step::Look);
+
+    let frames = demo.home(script);
+
+    assert!(present(&demo.at(ACME)), "a y typed ahead cleaned it");
+    let review = &frames.looked[0];
+    assert!(review.contains("Review: clean 1 item"), "{review}");
+}
+
 // Catches the review and the result wording a plan or a run other than the command
 // line does (pinned 18): the Safe bucket planned from the home screen reads as the
 // prompt of `kipple clean` reads, and its run as the receipt of `kipple clean` reads,
@@ -444,8 +475,21 @@ fn the_review_and_the_result_say_what_the_command_line_says() {
         .map(|line| line.trim().to_owned())
         .filter(|line| !line.is_empty())
         .collect();
+    // The review's head, under its title and above the plan, says what deleting means,
+    // as the prompt says it after the plan; the plan follows in the prompt's order.
     let reviewed = rows(&frames.looked[0]);
-    assert_eq!(reviewed[1..], prompt[..], "{}", asked.err);
+    let plan = reviewed
+        .iter()
+        .position(|row| *row == prompt[0])
+        .unwrap_or_else(|| panic!("the review doesn't show the plan: {reviewed:?}"));
+    let head = &reviewed[1..plan];
+    let rest: Vec<String> = prompt
+        .iter()
+        .filter(|line| !head.contains(line))
+        .cloned()
+        .collect();
+    assert_eq!(head.len(), prompt.len() - rest.len(), "{reviewed:?}");
+    assert_eq!(reviewed[plan..], rest[..], "{}", asked.err);
     let receipt: Vec<String> = homed(&cleaned.out)
         .lines()
         .skip(1)

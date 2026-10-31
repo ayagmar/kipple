@@ -110,6 +110,15 @@ impl Home {
         home
     }
 
+    /// Adds `count` more Rust projects, each with its `target`, under `projects/many`.
+    fn more_projects(&self, count: usize) {
+        let mut more = tree::FixtureTree::new();
+        for at in 0..count {
+            cargo_v1_99_0::project(&mut more, &format!("home/projects/many/p{at:02}"));
+        }
+        more.build_in(self.temp.path()).unwrap();
+    }
+
     fn write_config(&self, text: &str) {
         fs::write(&self.config, text).unwrap();
     }
@@ -515,6 +524,80 @@ fn an_empty_plan_says_why_and_y_does_nothing() {
     );
 }
 
+// Catches `y` running a plan whose permanence warning, cautions or refusals were never
+// drawn: with more items than the review has rows, they still show on its first page,
+// above the list.
+#[test]
+fn what_deleting_means_and_what_to_read_below_show_above_a_long_review() {
+    let home = Home::new("");
+    home.more_projects(30);
+    let mut app = home.app(80, 24);
+    select(&mut app, &[WEB]);
+    // Kept after it was selected: Protected when planned.
+    home.keep(ACME);
+    press(&mut app, &[Key::Char('c')]);
+    home.plan(&mut app);
+
+    let shown = text(&app, 80, 24);
+    let Some(Cleaning::Reviewing(review)) = &app.cleaning else {
+        panic!("no review: {:?}", app.cleaning);
+    };
+    let last = review.prepared.plan().entries().last().unwrap().path();
+    let last = last
+        .parent()
+        .unwrap()
+        .file_name()
+        .unwrap()
+        .to_string_lossy();
+    assert!(
+        !shown.contains(&format!("{last}/target")),
+        "the whole plan fits, so nothing is below the fold: {shown}"
+    );
+    assert!(shown.contains(receipt::DELETE_PERMANENT), "{shown}");
+    assert!(shown.contains(&review::below(1, 1).unwrap()), "{shown}");
+}
+
+// Catches the key bar's selection total (which counts what planning refused) showing
+// beside the plan's own: the person can't tell which one the run frees.
+#[test]
+fn a_clean_shows_what_its_plan_frees_and_not_the_selections_total() {
+    let home = Home::new("");
+    let app = reviewing_with_refused(&home, 80, 24);
+
+    let shown = text(&app, 80, 24);
+    assert!(shown.contains("delete 96.0 MiB in 2 items"), "{shown}");
+    assert!(!shown.contains("frees"), "{shown}");
+}
+
+/// Whether `k` once, after `j` held far past the end, moves `app`'s view at `width` by
+/// `height`.
+fn k_after_many_j_moves(app: &mut App, width: u16, height: u16) -> bool {
+    press(app, &[Key::Char('j'); 100]);
+    let bottom = text(app, width, height);
+    press(app, &[Key::Char('k')]);
+    text(app, width, height) != bottom
+}
+
+// Catches the review's and the result's scroll growing past their last page: the view
+// stops at the bottom, but `k` then does nothing visible for as many presses as `j` went
+// too far, and a person scrolling back up to recheck what goes thinks the screen stuck.
+#[test]
+fn k_moves_the_review_and_the_result_back_at_once_after_scrolling_past_the_end() {
+    let home = Home::new("");
+    home.more_projects(30);
+    let mut review = home.app(80, 24);
+    press(&mut review, &[Key::Char('c')]);
+    home.plan(&mut review);
+    assert!(k_after_many_j_moves(&mut review, 80, 24), "the review");
+
+    let mut result = reviewing(&home, 80, 12);
+    let finished = finished(&result);
+    press(&mut result, &[Key::Char('y')]);
+    result.take_effect();
+    result.update(Msg::Ran(Box::new(finished)));
+    assert!(k_after_many_j_moves(&mut result, 80, 12), "the result");
+}
+
 /// A run's events as the loop passes them on: the run stored, its first item started.
 fn started(app: &mut App, run: &RunId) {
     app.update(Msg::Applied(Box::new(ApplyEvent::RunStarted {
@@ -545,9 +628,10 @@ fn during_apply_q_says_how_to_stop_and_ctrl_c_stops_then_ends_kipple() {
 
     press(&mut app, &[Key::Interrupt]);
     press(&mut app, &[Key::Interrupt]);
+    assert_eq!(app.take_effect(), Some(Effect::Abort));
     assert_eq!(
-        app.take_effect(),
-        Some(Effect::Abort(None)),
+        app.run(),
+        None,
         "before the run is stored there is no run to name"
     );
 
@@ -563,7 +647,8 @@ fn during_apply_q_says_how_to_stop_and_ctrl_c_stops_then_ends_kipple() {
     assert_eq!(stored.take_effect(), Some(Effect::StopApply));
     assert_eq!(stored.notice.as_deref(), Some(review::STOPPING));
     press(&mut stored, &[Key::Interrupt]);
-    assert_eq!(stored.take_effect(), Some(Effect::Abort(Some(run_id()))));
+    assert_eq!(stored.take_effect(), Some(Effect::Abort));
+    assert_eq!(stored.run(), Some(&run_id()));
 }
 
 // Catches a worker's panic leaving the screen in progress forever, or a failed planner
@@ -756,6 +841,20 @@ fn the_progress_at_80_by_24_and_160_by_48() {
             text(&app, width, height)
         );
     }
+}
+
+// Catches the progress numbering the item under way apart from its line and the receipt:
+// "item 2" runs, but no line 2 ever appears, since that item ends as "1".
+#[test]
+fn the_progress_names_the_item_under_way_by_its_receipt_number() {
+    let home = Home::new("");
+    // Item 0 ended, item 1 under way.
+    let app = applying(&home, 160, 48);
+
+    let shown = text(&app, 160, 48);
+    let title = shown.lines().nth(1).unwrap();
+    assert!(title.contains("item 1:"), "{title}");
+    assert!(!title.contains("item 2"), "{title}");
 }
 
 #[test]

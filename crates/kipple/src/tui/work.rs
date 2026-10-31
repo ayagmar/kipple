@@ -106,3 +106,30 @@ pub(super) fn tell(caught: &Caught) {
         writeln!(stderr, "kipple: {message}").ok();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Catches a worker's panic escaping `guarded` and panicking again at the scope's end,
+    // or the panic hook writing it over the screen (ratatui's hook would restore the
+    // terminal under a live screen) instead of keeping it to tell afterwards.
+    #[test]
+    fn a_worker_that_panics_is_failed_and_its_message_is_kept_for_later() {
+        let previous = panic::take_hook();
+        let caught: Caught = Arc::default();
+        quiet_workers(thread::current().id(), Arc::clone(&caught));
+
+        let answer = thread::scope(|scope| {
+            scope
+                .spawn(|| guarded(|| -> u8 { panic!("the worker broke") }))
+                .join()
+        });
+
+        panic::set_hook(previous);
+        assert_eq!(answer.ok(), Some(Err(Failed)));
+        let kept = std::mem::take(&mut *caught.lock().unwrap_or_else(PoisonError::into_inner));
+        assert_eq!(kept.len(), 1, "{kept:?}");
+        assert!(kept[0].contains("the worker broke"), "{kept:?}");
+    }
+}

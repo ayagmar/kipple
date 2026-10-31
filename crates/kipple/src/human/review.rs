@@ -24,6 +24,25 @@ pub(crate) const REVIEW_AFTER_SCAN: &str = "review opens when the scan has finis
 /// What the review says while its plan is being made (pinned 4).
 pub(crate) const PLANNING: &str = "planning: freezing each item as it is now…";
 
+/// What the key bar says while the plan is made: `back` stops it.
+pub(crate) fn stop_planning(back: &str) -> String {
+    format!("{back} stops planning")
+}
+
+/// What the key bar says before the size being typed.
+pub(crate) const SIZE_PROMPT: &str = "Size: ";
+
+/// What the key bar says after the size being typed: `confirm` confirms it, `back` goes
+/// back to the review.
+pub(crate) fn size_keys(confirm: &str, back: &str) -> String {
+    format!("  {confirm} confirms, {back} goes back")
+}
+
+/// What help says last: selecting removes nothing, and `confirm` on the review cleans.
+pub(crate) fn selecting_removes_nothing(confirm: &str) -> String {
+    format!("Selecting removes nothing: only {confirm} on the review cleans.")
+}
+
 /// The review's title over a plan of `items` items.
 pub(crate) fn review_title(items: usize) -> String {
     format!("Review: clean {}", items_word(items))
@@ -34,9 +53,14 @@ pub(crate) fn config_changed(why: &str) -> String {
     format!("nothing was changed: the config no longer loads: {why}")
 }
 
-/// Progress: the item being removed, of how many (pinned 7).
-pub(crate) fn item_of(item: usize, items: usize) -> String {
-    format!("item {item} of {items}")
+/// Progress (pinned 7): the item under way, by the number its line and the receipt
+/// give it, when one is, and how many of the run's `items` have `ended`.
+pub(crate) fn cleaning(under_way: Option<u32>, ended: usize, items: usize) -> String {
+    let counted = format!("{ended} of {items} ended");
+    under_way.map_or_else(
+        || format!("Cleaning: {counted}"),
+        |item| format!("Cleaning item {item}: {counted}"),
+    )
 }
 
 /// What progress says before the run starts, while earlier runs are reconciled.
@@ -75,6 +99,21 @@ pub(crate) const PLANNING_FAILED: &str = "Planning failed, so nothing was change
 /// What the review says above what was left out when nothing selected can be cleaned.
 pub(crate) const NOTHING_TO_CLEAN: &str = "Nothing selected can be cleaned, for the reasons below.";
 
+/// What the review's head says of the list under it, when it holds anything a person
+/// should read before confirming: how many items need review, with their cautions under
+/// them, and how many selected findings weren't planned.
+pub(crate) fn below(cautioned: usize, refused: usize) -> Option<String> {
+    let mut said = Vec::new();
+    if cautioned > 0 {
+        let verb = if cautioned == 1 { "needs" } else { "need" };
+        said.push(format!("{} {verb} review", items_word(cautioned)));
+    }
+    if refused > 0 {
+        said.push(format!("{} not planned", items_word(refused)));
+    }
+    (!said.is_empty()).then(|| format!("{}: see below.", said.join(", ")))
+}
+
 /// The heading of the selected findings that are part of another item.
 pub(crate) const MERGED: &str = "Part of another item:";
 
@@ -103,9 +142,6 @@ pub(crate) fn not_run(why: &str) -> String {
 /// What the review says when the config now asks for the size to be typed (pinned 16).
 pub(crate) const TYPE_THE_SIZE: &str =
     "The config now asks for the size to be typed: type it, then press enter.";
-
-/// The progress heading while the run's items go.
-pub(crate) const CLEANING: &str = "Cleaning";
 
 /// The item being removed now, and how.
 pub(crate) fn working_on(method: Method, path: &Path) -> String {

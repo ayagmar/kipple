@@ -7,6 +7,7 @@ use ratatui::widgets::{Block, Clear, Paragraph, Wrap};
 
 use super::Look;
 use super::layout::WIDE;
+use crate::human::review;
 use crate::theme::Role;
 use crate::tui::app::App;
 use crate::tui::keymap::{Action, HelpLine, Mode};
@@ -30,7 +31,7 @@ pub(super) fn render(app: &App, look: Look<'_>, frame: &mut Frame<'_>) {
         .first(Mode::Review, Action::Confirm)
         .unwrap_or_default();
     lines.push(Text::styled(
-        format!("Selecting removes nothing: only {confirm} on the review cleans."),
+        review::selecting_removes_nothing(&confirm),
         look.style(Role::Muted),
     ));
     // Narrow, it takes the whole screen, frame and all, so nothing shows beside it.

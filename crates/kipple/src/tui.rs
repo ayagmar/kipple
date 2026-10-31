@@ -26,7 +26,7 @@ use std::time::{Duration, Instant};
 
 use kipple_core::format::base64;
 use kipple_core::{
-    ApplyEvent, CancelToken, Engine, EventChannel, EventRx, Finished, Prepared, RunId, ScanOutcome,
+    ApplyEvent, CancelToken, Engine, EventChannel, EventRx, Finished, Prepared, ScanOutcome,
     ScanReport, ScanRequest, Selection, Selector, StoreRefusal, SymbolicRoot, event_channel,
     suggest,
 };
@@ -38,7 +38,9 @@ use ratatui::backend::Backend;
 use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 pub use self::app::Key;
-use self::app::{App, Catalog, Confirmation, Effect, Generation, Msg, Saved, needs_typing};
+use self::app::{
+    App, Catalog, Cleaning, Confirmation, Effect, Generation, Msg, Saved, needs_typing,
+};
 pub use self::onboarding::{LevelTotals, due as first_run_due, level_totals};
 use self::onboarding::{Onboarding, Outcome};
 use self::settings::Found;
@@ -508,14 +510,17 @@ where
     }
 
     /// The second Ctrl+C during a run: on the real terminal, restores it, says which run
-    /// the next command reconciles, and ends kipple at once with 130 (pinned 8).
-    fn abort(&mut self, run: Option<&RunId>) {
+    /// the next command reconciles, and ends kipple at once with 130 (pinned 8). The
+    /// events the run already sent are passed on first, so a run stored just before is
+    /// named.
+    fn abort(&mut self) {
         if self.exit == Exit::Return {
             self.app.quit = true;
             return;
         }
+        self.take_events(usize::MAX);
         ratatui::restore();
-        let line = run.map_or_else(
+        let line = self.app.run().map_or_else(
             || review::INTERRUPTED_RECONCILING.to_owned(),
             |run| review::interrupted_run(run.as_str()),
         );
@@ -523,8 +528,36 @@ where
         std::process::exit(i32::from(crate::CANCELLED));
     }
 
+    /// Passes the planning worker's answer on once it has ended. A review it opens is
+    /// drawn at once, and what was typed before it showed is thrown away. Whether
+    /// anything is left to draw.
+    fn planned(&mut self, keys: &mut dyn Keys) -> io::Result<bool> {
+        if !self.answer_plan() {
+            return Ok(false);
+        }
+        if !matches!(self.app.cleaning, Some(Cleaning::Reviewing(_))) {
+            return Ok(true);
+        }
+        self.draw()?;
+        self.discard_typed_ahead(keys)
+    }
+
+    /// Throws away what was typed and not yet read, as the command line does before its
+    /// question (`docs/03-functional-spec.md` §3), so a key typed before the review
+    /// showed can't confirm it. A resize among it still applies. Whether one did.
+    fn discard_typed_ahead(&mut self, keys: &mut dyn Keys) -> io::Result<bool> {
+        let mut resized = false;
+        while let Some(input) = keys.next(Duration::ZERO)? {
+            if let Input::Resize { .. } = input {
+                self.input(input);
+                resized = true;
+            }
+        }
+        Ok(resized)
+    }
+
     /// Passes the planning worker's answer on once it has ended. Whether it had.
-    fn planned(&mut self) -> bool {
+    fn answer_plan(&mut self) -> bool {
         if !self
             .planning
             .as_ref()
@@ -552,15 +585,13 @@ where
         true
     }
 
-    /// Applies the run's events that have arrived, at most a batch of them while it
-    /// runs and all of them once it has ended, then its answer. Whether anything changed.
-    fn ran(&mut self) -> bool {
+    /// Passes on at most `most` of the events the run has sent. Whether there were any.
+    fn take_events(&mut self, most: usize) -> bool {
         let Some(running) = &self.applying else {
             return false;
         };
-        let ended = running.answer.is_finished();
         let mut changed = false;
-        for _ in 0..if ended { usize::MAX } else { BATCH } {
+        for _ in 0..most {
             match running.events.try_recv() {
                 Ok(event) => {
                     self.app.update(Msg::Applied(Box::new(event)));
@@ -569,6 +600,17 @@ where
                 Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
             }
         }
+        changed
+    }
+
+    /// Applies the run's events that have arrived, at most a batch of them while it
+    /// runs and all of them once it has ended, then its answer. Whether anything changed.
+    fn ran(&mut self) -> bool {
+        let Some(running) = &self.applying else {
+            return false;
+        };
+        let ended = running.answer.is_finished();
+        let changed = self.take_events(if ended { usize::MAX } else { BATCH });
         if !ended {
             return changed;
         }
@@ -603,7 +645,7 @@ where
                 Effect::StopPlanning => self.stop_planning(),
                 Effect::Apply(by) => self.apply(by),
                 Effect::StopApply => self.stop_apply(),
-                Effect::Abort(run) => self.abort(run.as_ref()),
+                Effect::Abort => self.abort(),
             }
         }
         Ok(())
@@ -630,7 +672,7 @@ where
             }
             stale |= self.receive();
             stale |= self.suggested();
-            stale |= self.planned();
+            stale |= self.planned(keys)?;
             stale |= self.ran();
             // At most a frame's worth of changes waits while something runs; once it
             // has ended, what it ended with is drawn before the wait for a key.
@@ -832,20 +874,34 @@ fn find_roots(settings: &Settings, markers: &[OsString], cancel: &CancelToken) -
 struct TerminalKeys;
 
 impl Keys for TerminalKeys {
+    /// An event the screen doesn't use is passed over while more are already waiting, so
+    /// `None` means nothing it uses is waiting.
     fn next(&mut self, timeout: Duration) -> io::Result<Option<Input>> {
         if !event::poll(timeout)? {
             return Ok(None);
         }
-        Ok(match event::read()? {
-            // Windows also reports releases; holding a key repeats it.
-            Event::Key(key) if key.kind != KeyEventKind::Release => key_of(key).map(Input::Key),
-            Event::Resize(width, height) => Some(Input::Resize { width, height }),
-            Event::Key(_)
-            | Event::FocusGained
-            | Event::FocusLost
-            | Event::Mouse(_)
-            | Event::Paste(_) => None,
-        })
+        loop {
+            if let Some(input) = input_of(&event::read()?) {
+                return Ok(Some(input));
+            }
+            if !event::poll(Duration::ZERO)? {
+                return Ok(None);
+            }
+        }
+    }
+}
+
+/// What the screen takes from a terminal event, if anything.
+fn input_of(event: &Event) -> Option<Input> {
+    match *event {
+        // Windows also reports releases; holding a key repeats it.
+        Event::Key(key) if key.kind != KeyEventKind::Release => key_of(key).map(Input::Key),
+        Event::Resize(width, height) => Some(Input::Resize { width, height }),
+        Event::Key(_)
+        | Event::FocusGained
+        | Event::FocusLost
+        | Event::Mouse(_)
+        | Event::Paste(_) => None,
     }
 }
 

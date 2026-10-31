@@ -1,16 +1,16 @@
 ---
 source: crates/kipple/src/tui/app/tests/clean.rs
-assertion_line: 715
 expression: "text(&app, width, height)"
 ---
 ╭ kipple ─ Balanced ─ scanned in 1.2 s ─ ~/projects ───────────────────────────╮
 │ Review: clean 2 items                                                        │
+│ Deleting is permanent: these can't be restored.                              │
+│ 1 item needs review, 1 item not planned: see below.                          │
 │                                                                              │
 │ delete 96.0 MiB in 2 items                                                   │
 │   delete    32.0 MiB  ~/projects/rust-app/target                             │
 │   delete    64.0 MiB  ~/projects/web/node_modules                            │
 │                       needs review: recent                                   │
-│ Deleting is permanent: these can't be restored.                              │
 │ Not planned:                                                                 │
 │   ~/projects/clients/acme/api/target: it is Protected now: kept              │
 │                                                                              │
@@ -22,8 +22,7 @@ expression: "text(&app, width, height)"
 │                                                                              │
 │                                                                              │
 │                                                                              │
-│                                                                              │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│ found 288.0 MiB · eligible 280.0 MiB · selected 3 · frees 112.0 MiB          │
+│                                                                              │
 │ j/k scroll  y clean  q quit  esc back                                        │
 ╰──────────────────────────────────────────────────────────────────────────────╯
