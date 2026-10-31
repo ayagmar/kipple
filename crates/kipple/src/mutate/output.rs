@@ -28,7 +28,7 @@ pub(super) struct Line {
 }
 
 impl Line {
-    const fn new(role: Role, text: String) -> Self {
+    pub(super) const fn new(role: Role, text: String) -> Self {
         Self { role, text }
     }
 }

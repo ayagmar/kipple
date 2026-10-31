@@ -2,13 +2,17 @@
 //! before the question, each change that suspends an entry, `profile list`, a profile
 //! run's summary, and why a profile can't be made, read or stored.
 
+use std::path::Path;
+
 use kipple_core::format::FormatError;
 use kipple_core::profile::{
-    EntryScope, FreezeError, HeldKind, ProfileChange, ProfileError, ProfileStoreError, RuleState,
+    EntryScope, FreezeError, FrozenRoot, HeldKind, ProfileChange, ProfileEntry, ProfileError,
+    ProfileStoreError, RuleState,
 };
 
 use super::escaped;
 use super::outcome::{error_text, unsupported};
+use super::receipt::method_word;
 
 /// A value that changed since the profile was made, which suspends its entry.
 pub(crate) const fn change(change: ProfileChange) -> &'static str {
@@ -64,6 +68,72 @@ pub(crate) fn pending(rule: &str) -> String {
 /// A rule the profile has an entry for that this kipple doesn't have.
 pub(crate) fn gone(rule: &str) -> String {
     format!("{rule}: no longer a rule, ignored")
+}
+
+/// A rule `profile review --add` includes.
+pub(crate) fn added(rule: &str) -> String {
+    format!("{rule}: added")
+}
+
+/// The heading over what `profile create` or `profile review` would save for `name`.
+pub(crate) fn entries_heading(name: &str) -> String {
+    format!("Profile {name} holds each rule as it is now:")
+}
+
+/// An entry of a profile about to be saved: its rule, whether it is included and on, its
+/// level, recent window and method.
+pub(crate) fn entry_line(entry: &ProfileEntry) -> String {
+    format!(
+        "  {}  {}, {}, {}, recent {} days, {}",
+        entry.rule().0,
+        scope(entry.scope()),
+        rule_state(entry.enabled()),
+        super::level(entry.level()),
+        entry.recent_days(),
+        method_word(entry.method())
+    )
+}
+
+/// A folder an entry looks in, under its line; one the scan didn't open authorizes
+/// nothing.
+pub(crate) fn root_line(root: &FrozenRoot) -> String {
+    let path = escaped(&root.path().display().to_string());
+    match root.identity() {
+        Some(_) => format!("      {path}"),
+        None => format!("      {path}: not opened, so nothing under it is cleaned"),
+    }
+}
+
+/// A kept or excluded path the profile holds: removing it from the config suspends it.
+pub(crate) fn held_line(kind: HeldKind, path: &Path) -> String {
+    format!("  {}: {}", held(kind), escaped(&path.display().to_string()))
+}
+
+/// The heading over what a profile about to be saved would clean today.
+pub(crate) const TODAY: &str = "Today it would clean:";
+
+/// What a profile about to be saved would clean today, when nothing.
+pub(crate) const NOTHING_TODAY: &str = "Today it would clean nothing.";
+
+/// Why `profile create` or `profile review` without a terminal saves nothing.
+pub(crate) const NEEDS_TERMINAL: &str =
+    "nothing was saved: saving a profile needs a terminal to confirm it";
+
+/// Why `clean --profile` without a terminal and without `--yes` runs nothing.
+pub(crate) const RUN_NEEDS_YES: &str = "nothing was changed: confirming needs a terminal; \
+     without one, pass --yes to clean what the profile authorizes";
+
+/// What `profile create` or `profile review` says when the person didn't say yes.
+pub(crate) const NOT_SAVED: &str = "Nothing was saved.";
+
+/// A profile removed.
+pub(crate) fn removed(name: &str) -> String {
+    format!("Removed profile {name}.")
+}
+
+/// Why the profile `name` can't be used, saved or removed.
+pub(crate) fn cant_use(name: &str, why: &str) -> String {
+    format!("profile {name}: {why}")
 }
 
 /// The heading over the changes `profile review NAME` would freeze.
