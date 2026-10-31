@@ -38,6 +38,9 @@ pub(crate) const NOT_PLANNED: &str = "Not planned:";
 /// The heading of a plan file's items left out of the fresh plan.
 pub(crate) const DROPPED: &str = "Left out of the plan file's items:";
 
+/// The last line of `clean --dry-run`.
+pub(crate) const DRY_RUN: &str = "Dry run: nothing was changed.";
+
 /// What `history` says when there are no runs.
 pub(crate) const NO_RUNS: &str = "No runs yet. `kipple clean` records each one here.";
 

@@ -1,7 +1,7 @@
-//! `kipple clean`, `plan`, `apply`, `history` and `restore` end to end on `demo-home`,
-//! every root redirected into a temp dir through the hidden test-roots override (spec
-//! M3b pinned 1, 2, 12, 17, M3c pinned 15, 16; `docs/04-safety-model.md` §10). Nothing
-//! here reaches the real home, trash or data directory.
+//! `kipple clean`, `plan`, `apply`, `history`, `restore` and `profile` end to end on
+//! `demo-home`, every root redirected into a temp dir through the hidden test-roots
+//! override (spec M3b pinned 1, 2, 12, 17, M3c pinned 13–17; `docs/04-safety-model.md`
+//! §10). Nothing here reaches the real home, trash or data directory.
 #![expect(
     clippy::unwrap_used,
     reason = "a fixture that fails to build fails the test"
@@ -35,6 +35,8 @@ mod venv_v3_14_8;
 
 #[path = "clean/confirm.rs"]
 mod confirm;
+#[path = "clean/profile.rs"]
+mod profile;
 
 use std::ffi::OsString;
 use std::fmt::Write as _;

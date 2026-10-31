@@ -1,13 +1,15 @@
-//! How a clean is confirmed, or isn't (spec M3c pinned 15, 16, D-070): Ctrl+C at the
-//! question, and the typed size above `review.confirm_by_typing_above`.
+//! How a clean is confirmed, or isn't (spec M3c pinned 15–17, D-070): Ctrl+C at the
+//! question, the typed size above `review.confirm_by_typing_above`, and `--dry-run`.
 
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use kipple::CANCELLED;
-use kipple_core::CancelToken;
+use clap::Parser as _;
+use kipple::{CANCELLED, Cli};
+use kipple_core::{CancelToken, Platform};
+use kipple_platform::PLATFORM;
 
 use super::{ACME, Asked, Demo, RUST_APP, TARGET, Terminal, json, present};
 
@@ -39,6 +41,108 @@ fn tree(root: &Path) -> BTreeMap<PathBuf, Entry> {
         }
     }
     entries
+}
+
+/// Whether a line of `out` ends with the path `relative`, as this OS writes it.
+fn shows(out: &str, relative: &str) -> bool {
+    let relative: PathBuf = relative.split('/').collect();
+    let relative = relative.display().to_string();
+    out.lines().any(|line| line.ends_with(&relative))
+}
+
+/// Catches a dry run that writes anything, with or without a terminal (pinned 17: no
+/// lock, no reconciliation, no run, no trash folder, no config): it shows the plan the
+/// same command would confirm, exits 0, and every byte under the demo's home, data
+/// folder and trash is as it was.
+#[test]
+fn a_dry_run_shows_the_plan_and_changes_nothing() {
+    let demo = Demo::new();
+    let config = demo.at("config.toml");
+    fs::write(&config, "[clean]\nmethod = \"trash\"\n").unwrap();
+    let config = config.to_str().unwrap();
+    let before = tree(demo.temp.path());
+
+    for args in [
+        vec!["clean", "--dry-run"],
+        vec!["clean", "--dry-run", "--only", TARGET, "--yes"],
+        vec!["--config", config, "clean", "--dry-run", "--only", TARGET],
+    ] {
+        let ran = demo.run(&args);
+
+        assert_eq!(ran.code, ExitCode::SUCCESS, "{args:?}: {}", ran.err);
+        assert!(
+            shows(&ran.out, ACME),
+            "{args:?} shows acme's target: {}",
+            ran.out
+        );
+        assert!(
+            ran.out.contains("Dry run: nothing was changed."),
+            "{}",
+            ran.out
+        );
+    }
+    assert_eq!(
+        tree(demo.temp.path()),
+        before,
+        "nothing under the demo changed"
+    );
+    assert!(present(&demo.at(ACME)), "acme's target stays");
+}
+
+/// Catches a dry run planning more than its command would (pinned 17): `--yes` plans as
+/// automation, so a trash method is refused there exactly as `clean --yes` refuses it,
+/// and the dry run says so instead of showing a trash move. Windows has no trash
+/// (D-062).
+#[test]
+fn a_dry_run_plans_as_its_consent_would() {
+    if PLATFORM == Platform::Windows {
+        return;
+    }
+    let demo = Demo::new();
+    let args = ["clean", "--dry-run", "--only", TARGET, "--method", "trash"];
+
+    let asked = demo.run(&args);
+    let automated = demo.run(&[&args[..], &["--yes"]].concat());
+
+    assert_eq!(asked.code, ExitCode::SUCCESS, "{}", asked.err);
+    assert!(asked.out.contains("move to the trash"), "{}", asked.out);
+    assert_eq!(automated.code, ExitCode::SUCCESS, "{}", automated.err);
+    assert!(
+        !automated.out.contains("move to the trash") && automated.out.contains("Not planned:"),
+        "{}",
+        automated.out
+    );
+}
+
+/// Catches `--dry-run --yes` naming no rule passing for automation that may clean
+/// everything (pinned 17, J6): it exits 3 like `clean --yes`.
+#[test]
+fn a_dry_run_with_yes_and_no_rule_named_exits_3() {
+    let demo = Demo::new();
+
+    let ran = demo.run(&["clean", "--dry-run", "--yes"]);
+
+    assert_eq!(ran.code, ExitCode::from(3), "{}", ran.err);
+    assert!(ran.err.contains("--only"), "{}", ran.err);
+}
+
+/// Catches flags that contradict each other being taken (pinned 13, 17): a dry run has
+/// no machine form yet, and a profile froze its rules, roots and methods, so each pair
+/// is a usage error.
+#[test]
+fn flags_a_dry_run_or_a_profile_cant_take_are_refused() {
+    for args in [
+        ["clean", "--dry-run", "--json"].as_slice(),
+        &["clean", "--dry-run", "--events", "jsonl"],
+        &["clean", "--profile", "nightly", "--only", TARGET],
+        &["clean", "--profile", "nightly", "--method", "trash"],
+        &["clean", "--profile", "nightly", "--root", "."],
+    ] {
+        let parsed = Cli::try_parse_from(std::iter::once("kipple").chain(args.iter().copied()));
+
+        let error = parsed.expect_err("a usage error");
+        assert_eq!(error.exit_code(), 2, "{args:?}");
+    }
 }
 
 /// Catches Ctrl+C at the question waiting for Enter, or a cancelled question running

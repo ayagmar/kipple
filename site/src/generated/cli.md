@@ -13,11 +13,12 @@ Commands:
   scan     Find what your tools left behind. Read-only: nothing is changed
   rules    List the integrations and rules, and which of them run on this OS
   explain  Explain a rule, or what kipple found at a path and why. A path runs a scan
-  clean    Remove Safe findings: shows the plan and asks on a terminal, or, with `--yes`, deletes the Safe findings of the rules `--only` names. Each run is recorded
+  clean    Remove Safe findings: shows the plan and asks on a terminal, or, with `--yes`, deletes the Safe findings of the rules `--only` names or cleans what a profile authorizes. Each run is recorded
   plan     Write the plan `clean` would show to a new file, for `kipple apply` to run later. Nothing else is written
   apply    Run a plan file: its items are planned again from a fresh scan under the current config, so it can only remove less
   history  List the runs kept, each item with what happened to it. Read-only
   restore  Move a run's trashed items back where they were (Linux and macOS)
+  profile  Save what `clean --profile NAME --yes` may clean unattended, review it after a change, list or remove one
   doctor   Show where kipple looks, what it can read and which tools it found. Read-only
   config   Show where the config file is, or what it says
   theme    List the themes, print one as a theme file, or show where your own themes go
@@ -176,7 +177,7 @@ Options:
 ## `kipple clean --help`
 
 ```text
-Remove Safe findings: shows the plan and asks on a terminal, or, with `--yes`, deletes the Safe findings of the rules `--only` names. Each run is recorded
+Remove Safe findings: shows the plan and asks on a terminal, or, with `--yes`, deletes the Safe findings of the rules `--only` names or cleans what a profile authorizes. Each run is recorded
 
 Usage: kipple clean [OPTIONS]
 
@@ -211,8 +212,14 @@ Options:
       --no-color
           The same as `--color never`
 
+      --profile <NAME>
+          Clean what this profile authorizes: the Safe findings of its rules that are still as they were when it was saved, by the methods it saved. Without `--yes`, asks
+
       --yes
-          Don't ask: clean the Safe findings of the rules `--only` names, by deleting them
+          Don't ask: clean the Safe findings of the rules `--only` names, by deleting them, or what `--profile` authorizes
+
+      --dry-run
+          Show the plan and what was left out of it, then stop: nothing is changed
 
       --json
           Print one `kipple.receipt/v1` envelope when it finishes
@@ -365,6 +372,42 @@ Arguments:
 
   [ITEM]...
           The items to move back, by number. Without any, every item the run moved to the trash
+
+Options:
+      --config <FILE>
+          Read the config from this file instead of `KIPPLE_CONFIG` or the default location
+
+      --theme <NAME>
+          Draw with this theme instead of the config's `ui.theme`: a built-in or one of yours (`kipple theme list`)
+
+      --color <WHEN>
+          When to use colour. `auto`: when the output is a terminal and `NO_COLOR` isn't set
+
+          Possible values:
+          - auto:   When the output is a terminal and `NO_COLOR` isn't set
+          - always: Always, even when piped or under `NO_COLOR`
+          - never:  Never
+
+      --no-color
+          The same as `--color never`
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## `kipple profile --help`
+
+```text
+Save what `clean --profile NAME --yes` may clean unattended, review it after a change, list or remove one
+
+Usage: kipple profile [OPTIONS] <COMMAND>
+
+Commands:
+  create  Save what `clean --profile NAME --yes` may clean: the Safe findings of each rule as the config and a scan judge them now. Shows it and asks first, at a terminal
+  review  Show what changed since a profile was saved, and save it again as it is now. Shows it and asks first, at a terminal
+  list    List the profiles, each with how many of its rules are active, suspended and pending. Read-only, and without a scan
+  remove  Remove a profile. Nothing else changes
+  help    Print this message or the help of the given subcommand(s)
 
 Options:
       --config <FILE>
