@@ -36,13 +36,13 @@ mod venv_v3_14_8;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs;
-use std::io::{Cursor, Write as _};
+use std::io::{self, BufRead, Cursor, Read, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, SystemTime};
 
 use clap::Parser as _;
-use kipple::{CANCELLED, Cli, Io, Person};
+use kipple::{Answers, CANCELLED, Cli, Io, Person};
 use kipple_core::{CancelToken, Platform};
 use kipple_platform::{Environment, PLATFORM};
 use serde_json::Value;
@@ -101,17 +101,18 @@ impl Demo {
 
     /// Runs `kipple <args>` as a person at a terminal who answers `answer`.
     fn answer(&self, args: &[&str], answer: &str) -> Ran {
-        self.run_with(args, Asked::Person(answer), &CancelToken::new())
+        let typed = Terminal::typed("", answer);
+        self.run_with(args, Asked::Person(typed), &CancelToken::new())
     }
 
-    fn run_with(&self, args: &[&str], asked: Asked<'_>, cancel: &CancelToken) -> Ran {
+    fn run_with(&self, args: &[&str], asked: Asked, cancel: &CancelToken) -> Ran {
         let cli = Cli::parse_from(std::iter::once("kipple").chain(args.iter().copied()));
         let (mut out, mut err) = (Vec::new(), Vec::new());
         let mut io = Io::redirected(&mut out, &mut err);
         io.cancel = cancel.clone();
-        if let Asked::Person(answer) = asked {
+        if let Asked::Person(terminal) = asked {
             io.person = Person::AtTerminal;
-            io.stdin = Box::new(Cursor::new(answer.as_bytes().to_vec()));
+            io.stdin = Box::new(terminal);
         }
         let code = kipple::run(&cli, &self.env(), io);
         Ran {
@@ -162,10 +163,52 @@ impl Demo {
 }
 
 /// Who answers a prompt.
-#[derive(Debug, Clone, Copy)]
-enum Asked<'answer> {
+#[derive(Debug)]
+enum Asked {
     Nobody,
-    Person(&'answer str),
+    Person(Terminal),
+}
+
+/// A terminal a person types at: what they typed before the question, then their
+/// answer. Reading it without discarding first reads both, in that order.
+#[derive(Debug)]
+struct Terminal {
+    typed: Cursor<Vec<u8>>,
+    /// Where the answer starts in `typed`.
+    answer_at: u64,
+}
+
+impl Terminal {
+    fn typed(early: &str, answer: &str) -> Self {
+        Self {
+            typed: Cursor::new([early, answer].concat().into_bytes()),
+            answer_at: early.len() as u64,
+        }
+    }
+}
+
+impl Read for Terminal {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.typed.read(buf)
+    }
+}
+
+impl BufRead for Terminal {
+    fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        self.typed.fill_buf()
+    }
+
+    fn consume(&mut self, amount: usize) {
+        self.typed.consume(amount);
+    }
+}
+
+impl Answers for Terminal {
+    fn discard_typeahead(&mut self) -> io::Result<()> {
+        let at = self.typed.position().max(self.answer_at);
+        self.typed.set_position(at);
+        Ok(())
+    }
 }
 
 /// What a run in this process did.
@@ -321,6 +364,25 @@ fn a_person_who_doesnt_say_yes_changes_nothing() {
         assert!(ran.err.contains("permanent"), "{}", ran.err);
         assert!(present(&demo.at(ACME)), "{answer:?}: acme's target stays");
     }
+    assert!(demo.history().is_empty(), "no run is stored");
+}
+
+/// Catches a `y` typed during the scan, before the plan was shown, answering for it
+/// (pinned 1: a person authorizes exactly the plan shown): it is thrown away, the "n"
+/// typed after the question is the answer, and nothing changes.
+#[test]
+fn a_yes_typed_before_the_question_doesnt_answer_it() {
+    let demo = Demo::new();
+    let typed = Terminal::typed("y\n", "n\n");
+
+    let ran = demo.run_with(
+        &["clean", "--only", TARGET],
+        Asked::Person(typed),
+        &CancelToken::new(),
+    );
+
+    assert_eq!(ran.code, ExitCode::from(3), "{}{}", ran.out, ran.err);
+    assert!(present(&demo.at(ACME)), "acme's target stays");
     assert!(demo.history().is_empty(), "no run is stored");
 }
 

@@ -289,12 +289,37 @@ pub fn warn_no_interrupt(stderr: &mut dyn Write, error: &io::Error) {
     say(stderr, &human::receipt::no_interrupt(&error.to_string()));
 }
 
+/// Where a person's answers are read from: a terminal, or in tests any reader.
+pub trait Answers: BufRead {
+    /// Throws away what was typed before the question, so only an answer typed after it
+    /// counts.
+    ///
+    /// # Errors
+    /// When the terminal refuses: the question then counts as answered no.
+    fn discard_typeahead(&mut self) -> io::Result<()>;
+}
+
+/// The process's stdin, which nothing reads before the question, so all that was typed
+/// early is still at the terminal.
+impl Answers for io::StdinLock<'_> {
+    fn discard_typeahead(&mut self) -> io::Result<()> {
+        kipple_platform::discard_typeahead()
+    }
+}
+
+/// Nobody to answer: nothing was typed.
+impl Answers for io::Empty {
+    fn discard_typeahead(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
 /// What a command reads and writes besides its arguments and environment.
 pub struct Io<'io> {
     /// Where stdout goes, which decides colour by default.
     pub goes_to: Stdout,
     /// Where a person's answers are read from.
-    pub stdin: Box<dyn BufRead + 'io>,
+    pub stdin: Box<dyn Answers + 'io>,
     /// Data.
     pub stdout: &'io mut dyn Write,
     /// Diagnostics, and the questions a person answers.

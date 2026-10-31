@@ -25,6 +25,7 @@ mod runs;
 #[cfg(feature = "test-roots")]
 mod test_host;
 mod trash;
+mod typeahead;
 mod walk;
 
 pub use capabilities::{ToolProbe, probe_tools};
@@ -43,6 +44,7 @@ pub use roots::{
 };
 pub use runs::FileRunStore;
 pub use trash::ConfinedTrash;
+pub use typeahead::discard_typeahead;
 pub use walk::Walker;
 
 /// The operating system kipple was built for.

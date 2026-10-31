@@ -1,19 +1,21 @@
 //! The question a person answers before anything is removed (J3, spec M3b pinned 1): the
 //! plan as it will be authorized, what it removes by each method, what deleting and a
 //! trash move mean, and what was left out. Asked on stderr; the answer is read from the
-//! input given, a terminal or, in tests, any reader.
+//! input given, a terminal or, in tests, any reader, once what was typed before the
+//! question is thrown away.
 
-use std::io::{self, BufRead, Write};
+use std::io::{self, Write};
 
 use kipple_core::{Answer, Confirm, Finding, Method, Policy, RefusedItem, Review, ScanReport};
 
 use super::output::{Shown, Told, left_out};
+use crate::Answers;
 use crate::human::receipt as words;
 use crate::theme::{Ink, Role};
 
 /// Asks on `out` and reads the answer from `input`.
 pub(super) struct Prompt<'io> {
-    pub(super) input: &'io mut dyn BufRead,
+    pub(super) input: &'io mut dyn Answers,
     pub(super) out: &'io mut dyn Write,
     pub(super) ink: &'io Ink,
     /// The scan the plan was made from, for the paths of what planning refused.
@@ -68,6 +70,8 @@ impl Prompt<'_> {
         for line in left_out(&refused, review.dropped, &shown) {
             writeln!(self.out, "{}", ink.paint(line.role, &line.text))?;
         }
+        // Only an answer typed once the plan and the question are shown authorizes it.
+        self.input.discard_typeahead()?;
         write!(self.out, "{}", words::question(entries.len()))?;
         self.told = Told::InPrompt;
         self.out.flush()?;
