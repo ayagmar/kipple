@@ -569,6 +569,35 @@ fn a_clean_shows_what_its_plan_frees_and_not_the_selections_total() {
     assert!(!shown.contains("frees"), "{shown}");
 }
 
+/// Whether `k` once, after `j` held far past the end, moves `app`'s view at `width` by
+/// `height`.
+fn k_after_many_j_moves(app: &mut App, width: u16, height: u16) -> bool {
+    press(app, &[Key::Char('j'); 100]);
+    let bottom = text(app, width, height);
+    press(app, &[Key::Char('k')]);
+    text(app, width, height) != bottom
+}
+
+// Catches the review's and the result's scroll growing past their last page: the view
+// stops at the bottom, but `k` then does nothing visible for as many presses as `j` went
+// too far, and a person scrolling back up to recheck what goes thinks the screen stuck.
+#[test]
+fn k_moves_the_review_and_the_result_back_at_once_after_scrolling_past_the_end() {
+    let home = Home::new("");
+    home.more_projects(30);
+    let mut review = home.app(80, 24);
+    press(&mut review, &[Key::Char('c')]);
+    home.plan(&mut review);
+    assert!(k_after_many_j_moves(&mut review, 80, 24), "the review");
+
+    let mut result = reviewing(&home, 80, 12);
+    let finished = finished(&result);
+    press(&mut result, &[Key::Char('y')]);
+    result.take_effect();
+    result.update(Msg::Ran(Box::new(finished)));
+    assert!(k_after_many_j_moves(&mut result, 80, 12), "the result");
+}
+
 /// A run's events as the loop passes them on: the run stored, its first item started.
 fn started(app: &mut App, run: &RunId) {
     app.update(Msg::Applied(Box::new(ApplyEvent::RunStarted {

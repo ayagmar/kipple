@@ -261,6 +261,19 @@ impl App {
         };
     }
 
+    /// Keeps the review's or the result's scroll within its last page, so `k` after
+    /// scrolling past the end moves the view at once.
+    pub(super) fn clamp_clean_scroll(&mut self) {
+        let end = crate::tui::ui::clean_end(self);
+        match &mut self.cleaning {
+            Some(Cleaning::Reviewing(review) | Cleaning::Typing(review, _)) => {
+                review.scroll = review.scroll.min(end);
+            }
+            Some(Cleaning::Ended(Ended::Ran { scroll, .. })) => *scroll = (*scroll).min(end),
+            Some(Cleaning::Planning(_) | Cleaning::Applying(_) | Cleaning::Ended(_)) | None => {}
+        }
+    }
+
     /// While planning: `esc` stops it and goes back to the tree; quitting stops it too.
     fn planning_key(&mut self, generation: Generation, key: Key) -> Option<Cleaning> {
         if key == Key::Esc {

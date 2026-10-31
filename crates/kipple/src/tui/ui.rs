@@ -32,7 +32,7 @@ pub(crate) use self::tree::{offset, slashed, tail};
 use self::wrap::{Hung, wrap};
 use super::app::{App, Cleaning, Ended, Mode, Shelf};
 use crate::human::receipt;
-use crate::theme::{Look, Role};
+use crate::theme::{Glyphs, Look, Role, Theme};
 
 impl Look<'_> {
     /// Paints the whole screen in the text role, which every other role is patched
@@ -226,6 +226,28 @@ fn hung(lines: Vec<Text<'static>>) -> Vec<Hung> {
             Hung { line, hang }
         })
         .collect()
+}
+
+/// The furthest a clean's list scrolls, at the app's size: its rows past the first page.
+pub(crate) fn clean_end(app: &App) -> usize {
+    let Some(cleaning) = &app.cleaning else {
+        return 0;
+    };
+    let areas = layout::layout(
+        Rect::new(0, 0, app.width, app.height),
+        &app.config.ui,
+        Screen::Panel,
+    );
+    // Styles don't change where a line wraps, and both glyph sets draw symbols of the
+    // same width, so any look wraps the same.
+    let look = Look {
+        theme: &Theme::default(),
+        glyphs: Glyphs::Ascii,
+    };
+    let laid = lay(page(app, cleaning, look), areas.body);
+    laid.rows
+        .len()
+        .saturating_sub(usize::from(laid.list.height))
 }
 
 /// A clean's screen in place of the tree and the detail pane: its head, then its list
