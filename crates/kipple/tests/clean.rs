@@ -746,6 +746,33 @@ fn a_restore_into_a_replaced_folder_is_refused() {
     );
 }
 
+/// Catches a typo in a run ID read as a damaged store and a failure, exit 1, or the
+/// store made just to say so: a well-formed ID no run has is a usage error, exit 2, and
+/// nothing is created. Windows has nothing to restore, and says so first (D-062).
+#[test]
+fn restoring_a_run_that_doesnt_exist_is_a_usage_error() {
+    if PLATFORM == Platform::Windows {
+        return;
+    }
+    let demo = Demo::new();
+    demo.run(&["clean", "--only", TARGET, "--yes"]);
+    let data = demo.at("home/.local/share/kipple");
+    assert!(present(&data.join("runs")), "the clean stored its run");
+
+    let ran = demo.run(&["restore", "20260101T000000Z-0000"]);
+
+    assert_eq!(ran.code, ExitCode::from(2), "{}{}", ran.out, ran.err);
+    assert!(ran.err.contains("isn't a run"), "{}", ran.err);
+
+    let empty = Demo::new();
+    let first = empty.run(&["restore", "20260101T000000Z-0000"]);
+    assert_eq!(first.code, ExitCode::from(2), "{}{}", first.out, first.err);
+    assert!(
+        !present(&empty.at("home/.local/share/kipple")),
+        "no store is made to say so"
+    );
+}
+
 #[expect(
     clippy::disallowed_methods,
     reason = "the test empties the trash and clears a name, as a person would"

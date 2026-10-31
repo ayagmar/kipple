@@ -101,6 +101,13 @@ pub(crate) fn restore(host: &Host<'_>, args: &RestoreArgs, io: &mut Io<'_>) -> E
         Err(message) => return fail(io.stderr, &message),
     };
     let machine = Machine::new(host, &settings, None);
+    // A well-formed ID no stored run has is a typo, not a damaged store: said before the
+    // lock is taken or anything is created. A store that can't be listed is left to the
+    // restore, which says why.
+    if machine.store.runs().is_ok_and(|runs| !runs.contains(&id)) {
+        say(io.stderr, &words::not_a_run(&args.run));
+        return ExitCode::from(USAGE);
+    }
     let ask = RestoreAsk {
         run: id,
         items: args.items.iter().copied().map(ItemId).collect(),
