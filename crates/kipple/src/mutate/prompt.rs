@@ -85,9 +85,9 @@ impl Prompt<'_> {
 /// Puts `question` on `out` once what was typed before it is thrown away, then waits for
 /// the answer and reads it.
 ///
-/// `None` when `cancel` was cancelled meanwhile, or the wait says so: `cancel` is then
-/// cancelled, so the command ends as cancelled with nothing written, and the person is
-/// told so.
+/// `None` when `cancel` was cancelled meanwhile, while waiting or while reading the
+/// answer, or the wait says so: `cancel` is then cancelled, so the command ends as
+/// cancelled with nothing written, and the person is told so.
 pub(super) fn answer(
     input: &mut dyn Answers,
     out: &mut dyn Write,
@@ -100,16 +100,26 @@ pub(super) fn answer(
     out.flush()?;
     let waited = input.wait(cancel)?;
     if matches!(waited, Waited::Cancelled) || cancel.is_cancelled() {
-        cancel.cancel();
         writeln!(out)?;
-        if let Some(said) = review::waited(Waited::Cancelled) {
-            writeln!(out, "{said}")?;
-        }
-        return Ok(None);
+        return cancelled(out, cancel);
     }
     let mut answer = String::new();
     input.read_line(&mut answer)?;
+    // Where the wait can't watch the input (a pipe, a terminal that isn't a console), the
+    // read blocks instead, and Ctrl+C during it still cancels whatever was typed.
+    if cancel.is_cancelled() {
+        return cancelled(out, cancel);
+    }
     Ok(Some(answer))
+}
+
+/// Ends a question as cancelled: `cancel` is cancelled and the person told so on `out`.
+fn cancelled(out: &mut dyn Write, cancel: &CancelToken) -> io::Result<Option<String>> {
+    cancel.cancel();
+    if let Some(said) = review::waited(Waited::Cancelled) {
+        writeln!(out, "{said}")?;
+    }
+    Ok(None)
 }
 
 /// The lines that show `review` before it is confirmed: what it removes by each method,

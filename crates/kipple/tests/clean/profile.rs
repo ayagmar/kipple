@@ -207,17 +207,24 @@ fn a_trash_profile_moves_items_whole_while_only_yes_still_skips_them() {
 }
 
 /// Catches a profile saved without a clear yes (pinned 13, 15): "n" saves nothing and
-/// exits 3, and Ctrl+C at the question, with "y" already typed, exits 130 and saves
-/// nothing.
+/// exits 3, and Ctrl+C at the question, with "y" already typed or typed after it while
+/// the answer is read, exits 130 and saves nothing.
 #[test]
 fn nothing_is_saved_without_a_yes() {
     let demo = Demo::new();
+    let create = ["profile", "create", "safe", "--from-safe"];
 
-    let declined = demo.answer(&["profile", "create", "safe", "--from-safe"], "n\n");
+    let declined = demo.answer(&create, "n\n");
     let interrupted = demo.run_with(
-        &["profile", "create", "safe", "--from-safe"],
+        &create,
         Asked::Person(Terminal::interrupted("y\n")),
         &CancelToken::new(),
+    );
+    let reading = CancelToken::new();
+    let while_read = demo.run_with(
+        &create,
+        Asked::Person(Terminal::interrupted_while_read("y\n", &reading)),
+        &reading,
     );
 
     assert_eq!(declined.code, ExitCode::from(3), "{}", declined.err);
@@ -226,12 +233,11 @@ fn nothing_is_saved_without_a_yes() {
         "{}",
         declined.err
     );
-    assert_eq!(
-        interrupted.code,
-        ExitCode::from(CANCELLED),
-        "{}",
-        interrupted.err
-    );
+    for ran in [&interrupted, &while_read] {
+        assert_eq!(ran.code, ExitCode::from(CANCELLED), "{}", ran.err);
+        assert!(!ran.err.contains("Saved profile"), "{}", ran.err);
+    }
+    assert_eq!(stored(&demo, "safe"), None, "no profile file");
     let list = demo.run(&["profile", "list"]);
     assert_eq!(list.code, ExitCode::SUCCESS, "{}", list.err);
     assert!(list.out.contains("No profiles yet."), "{}", list.out);

@@ -183,6 +183,9 @@ struct Terminal {
     answer_at: u64,
     /// How the wait for the answer ends: Ctrl+C at the question cancels it.
     waited: Waited,
+    /// Cancelled when the answer is read, as Ctrl+C during a read the wait didn't
+    /// watch does.
+    cancel_on_read: Option<CancelToken>,
 }
 
 impl Terminal {
@@ -191,6 +194,7 @@ impl Terminal {
             typed: Cursor::new([early, answer].concat().into_bytes()),
             answer_at: early.len() as u64,
             waited: Waited::Ready,
+            cancel_on_read: None,
         }
     }
 
@@ -201,16 +205,33 @@ impl Terminal {
             ..Self::typed("", answer)
         }
     }
+
+    /// A person who presses Ctrl+C while the answer is read, cancelling `cancel`, then
+    /// types `answer`: what a terminal the wait can't watch, such as mintty, allows.
+    fn interrupted_while_read(answer: &str, cancel: &CancelToken) -> Self {
+        Self {
+            cancel_on_read: Some(cancel.clone()),
+            ..Self::typed("", answer)
+        }
+    }
+
+    fn reading(&self) {
+        if let Some(cancel) = &self.cancel_on_read {
+            cancel.cancel();
+        }
+    }
 }
 
 impl Read for Terminal {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.reading();
         self.typed.read(buf)
     }
 }
 
 impl BufRead for Terminal {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        self.reading();
         self.typed.fill_buf()
     }
 
