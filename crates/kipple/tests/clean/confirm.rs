@@ -67,13 +67,24 @@ fn a_dry_run_shows_the_plan_and_changes_nothing() {
     assert_eq!(created.code, ExitCode::SUCCESS, "{}", created.err);
     let before = tree(demo.temp.path());
 
-    for args in [
+    let mut runs = vec![
         vec!["clean", "--dry-run"],
         vec!["clean", "--dry-run", "--only", TARGET, "--yes"],
-        vec!["--config", config, "clean", "--dry-run", "--only", TARGET],
         vec!["clean", "--profile", "bins", "--dry-run"],
         vec!["clean", "--profile", "bins", "--dry-run", "--yes"],
-    ] {
+    ];
+    // Windows has no trash (D-062), so a trash plan there plans nothing to show.
+    if PLATFORM != Platform::Windows {
+        runs.push(vec![
+            "--config",
+            config,
+            "clean",
+            "--dry-run",
+            "--only",
+            TARGET,
+        ]);
+    }
+    for args in runs {
         let ran = demo.run(&args);
 
         assert_eq!(ran.code, ExitCode::SUCCESS, "{args:?}: {}", ran.err);
