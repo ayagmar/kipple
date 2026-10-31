@@ -39,7 +39,7 @@ use std::fs;
 use std::io::{Cursor, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode, Stdio};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use clap::Parser as _;
 use kipple::{CANCELLED, Cli, Io, Person};
@@ -51,11 +51,14 @@ use tempfile::TempDir;
 const TARGET: &str = "builtin.cargo.target";
 const ACME: &str = "home/projects/clients/acme/api/target";
 const RUST_APP: &str = "home/projects/rust-app/target";
+const DAY: Duration = Duration::from_hours(24);
 
 /// `demo-home` in a temp dir, and the roots file that points every root into it.
 struct Demo {
     temp: TempDir,
     roots: PathBuf,
+    /// The time every run of it is looked at.
+    now: SystemTime,
 }
 
 impl Demo {
@@ -74,7 +77,7 @@ impl Demo {
         writeln!(file, "now = {seconds}").unwrap();
         let roots = temp.path().join("roots.txt");
         fs::write(&roots, file).unwrap();
-        Self { temp, roots }
+        Self { temp, roots, now }
     }
 
     fn at(&self, relative: &str) -> PathBuf {
@@ -322,28 +325,54 @@ fn a_person_who_doesnt_say_yes_changes_nothing() {
 }
 
 /// Catches a "yes" not running the plan shown, or the prompt's Review findings being
-/// cleaned on the command line (pinned 1): the Safe items go, the recent `node_modules`
-/// is only listed as needing the TUI.
+/// cleaned on the command line (pinned 1): the Safe items go, and a Cargo target built
+/// four days ago, recent and so Review on every OS, is only listed as needing the TUI.
+/// (demo-home's recent `node_modules` is Protected on Windows, where no process probe
+/// covers Node, so it can't stand for Review there.)
 #[test]
 fn a_person_who_says_yes_cleans_the_safe_items_shown_and_lists_the_review_ones() {
     let demo = Demo::new();
+    let fresh = "home/projects/fresh";
+    let mut tree = tree::FixtureTree::new();
+    cargo_v1_99_0::project(&mut tree, fresh);
+    tree.modified(&format!("{fresh}/target"), demo.now - 4 * DAY);
+    tree.build_in(demo.temp.path()).unwrap();
 
     let ran = demo.answer(&["clean"], "y\n");
 
     assert_eq!(ran.code, ExitCode::SUCCESS, "{}", ran.err);
-    assert!(ran.err.contains("Needs review in the TUI"), "{}", ran.err);
-    assert!(ran.err.contains("web"), "{}", ran.err);
+    let review = needs_review(&ran.err);
+    assert!(
+        review
+            .iter()
+            .any(|path| path.ends_with(format!("{fresh}/target"))),
+        "the recent target is listed as needing the TUI: {}",
+        ran.err
+    );
     assert!(
         ran.out.contains("Removed an estimated") && !ran.out.contains("to the trash"),
         "{}",
         ran.out
     );
     assert!(!present(&demo.at(ACME)), "acme's target is gone");
-    assert!(
-        present(&demo.at("home/projects/web/node_modules")),
-        "the Review node_modules stays"
-    );
+    for path in &review {
+        assert!(
+            present(path),
+            "{} needs review, so it stays",
+            path.display()
+        );
+    }
     assert_eq!(demo.history().len(), 1);
+}
+
+/// The paths the prompt on `err` lists as needing the TUI's review.
+fn needs_review(err: &str) -> Vec<PathBuf> {
+    err.lines()
+        .skip_while(|line| !line.starts_with("Needs review in the TUI"))
+        .skip(1)
+        .map_while(|line| line.strip_prefix("  "))
+        .map(|line| PathBuf::from(line.rsplit_once(": ").map_or(line, |(path, _)| path)))
+        .collect()
 }
 
 /// Catches `--yes` moving a folder to the trash whole, which needs a review (pinned 1):
