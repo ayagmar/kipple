@@ -1,7 +1,7 @@
 //! `kipple clean`, `plan`, `apply`, `history` and `restore` end to end on `demo-home`,
 //! every root redirected into a temp dir through the hidden test-roots override (spec
-//! M3b pinned 1, 2, 12, 17; `docs/04-safety-model.md` §10). Nothing here reaches the real
-//! home, trash or data directory.
+//! M3b pinned 1, 2, 12, 17, M3c pinned 15, 16; `docs/04-safety-model.md` §10). Nothing
+//! here reaches the real home, trash or data directory.
 #![expect(
     clippy::unwrap_used,
     reason = "a fixture that fails to build fails the test"
@@ -32,6 +32,9 @@ mod trash_v1_0;
 mod uv_v0_12_23;
 #[path = "../../kipple-adapters/tests/fixtures/python/venv_v3_14_8.rs"]
 mod venv_v3_14_8;
+
+#[path = "clean/confirm.rs"]
+mod confirm;
 
 use std::ffi::OsString;
 use std::fmt::Write as _;
@@ -176,6 +179,8 @@ struct Terminal {
     typed: Cursor<Vec<u8>>,
     /// Where the answer starts in `typed`.
     answer_at: u64,
+    /// How the wait for the answer ends: Ctrl+C at the question cancels it.
+    waited: Waited,
 }
 
 impl Terminal {
@@ -183,6 +188,15 @@ impl Terminal {
         Self {
             typed: Cursor::new([early, answer].concat().into_bytes()),
             answer_at: early.len() as u64,
+            waited: Waited::Ready,
+        }
+    }
+
+    /// A person who presses Ctrl+C at the question, having typed `answer` already.
+    fn interrupted(answer: &str) -> Self {
+        Self {
+            waited: Waited::Cancelled,
+            ..Self::typed("", answer)
         }
     }
 }
@@ -211,7 +225,7 @@ impl Answers for Terminal {
     }
 
     fn wait(&mut self, _: &CancelToken) -> io::Result<Waited> {
-        Ok(Waited::Ready)
+        Ok(self.waited)
     }
 }
 

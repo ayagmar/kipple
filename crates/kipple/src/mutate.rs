@@ -20,8 +20,9 @@ use std::process::ExitCode;
 use clap::{Args, ValueEnum};
 use kipple_core::format::{PLAN_LIMIT, decode_plan_file, encode_plan_file};
 use kipple_core::{
-    ApplyFile, Bucket, CleanRequest, Consent, Finding, Method, PlanMode, PlanRequest, Policy,
-    RefusedItem, RuleId, ScanOutcome, ScanReport, Selection, StoreRefusal, run_apply, run_clean,
+    ApplyFile, Bucket, CancelToken, CleanRequest, Consent, Finding, Method, PlanMode, PlanRequest,
+    Policy, RefusedItem, RuleId, ScanOutcome, ScanReport, Selection, StoreRefusal, run_apply,
+    run_clean,
 };
 use kipple_platform::{OsNames, kipple_dirs, write_new};
 
@@ -321,6 +322,7 @@ pub(crate) fn clean(host: &Host<'_>, args: &CleanArgs, io: &mut Io<'_>) -> ExitC
         cancel,
         ..
     } = io;
+    let cancel: &CancelToken = cancel;
     let finished = machine.with_session(|session| {
         let mut prompt = prompt::Prompt {
             input: &mut **stdin,
@@ -329,6 +331,8 @@ pub(crate) fn clean(host: &Host<'_>, args: &CleanArgs, io: &mut Io<'_>) -> ExitC
             scan: &scanned.report,
             review: &picked.review,
             policy: &machine.settings().policy,
+            above: machine.settings().loaded.config.confirm_by_typing_above,
+            cancel,
             told: output::Told::NotYet,
         };
         let consent = if args.yes {
@@ -449,6 +453,7 @@ pub(crate) fn apply(host: &Host<'_>, args: &ApplyArgs, io: &mut Io<'_>) -> ExitC
         cancel,
         ..
     } = io;
+    let cancel: &CancelToken = cancel;
     let finished = machine.with_session(|session| {
         let mut prompt = prompt::Prompt {
             input: &mut **stdin,
@@ -457,6 +462,8 @@ pub(crate) fn apply(host: &Host<'_>, args: &ApplyArgs, io: &mut Io<'_>) -> ExitC
             scan: &scanned.report,
             review: &[],
             policy: &machine.settings().policy,
+            above: machine.settings().loaded.config.confirm_by_typing_above,
+            cancel,
             told: output::Told::NotYet,
         };
         let consent = if args.yes {
