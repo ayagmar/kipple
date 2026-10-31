@@ -453,6 +453,152 @@ mod unix {
         assert!(present(&site.at("target/a")), "the target stays");
     }
 
+    /// The home trash's place under a fresh directory standing for `$XDG_DATA_HOME`,
+    /// with what of `Trash`, `Trash/files` and `Trash/info` is in `made`, and a backend
+    /// for it.
+    #[cfg(target_os = "linux")]
+    fn share(made: &[&str]) -> (TempDir, PathBuf, ConfinedTrash) {
+        let share = TempDir::new().unwrap();
+        for dir in made {
+            fs::create_dir_all(share.path().join(dir)).unwrap();
+        }
+        let files = share.path().join("Trash/files");
+        let trash = backend(Some(files.clone()));
+        (share, files, trash)
+    }
+
+    /// Catches the first trash item of an account that never trashed anything skipped as
+    /// unavailable, or a trash made readable by others (pinned 11): with any of the home
+    /// trash's directories missing, the item is available, nothing is made until
+    /// `prepare_home`, which makes them for the user only, and the item then moves.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_missing_home_trash_is_made_before_the_first_move() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        for made in [&[][..], &["Trash"], &["Trash/files"], &["Trash/info"]] {
+            let site = Site::new();
+            nested(&site, "target");
+            let (share, files, trash) = share(made);
+            let op = whole(&site.anchor("target"));
+
+            assert_eq!(trash.available(op.target().anchor()), Ok(()), "{made:?}");
+            let before = fs::read_dir(share.path()).unwrap().count();
+            assert_eq!(
+                before,
+                usize::from(!made.is_empty()),
+                "checking made nothing"
+            );
+            trash.prepare_home().unwrap();
+
+            let kipples = ["Trash", "Trash/files", "Trash/info"]
+                .into_iter()
+                .filter(|dir| !made.iter().any(|kept| Path::new(kept).starts_with(dir)));
+            for dir in kipples {
+                let meta = fs::metadata(share.path().join(dir)).unwrap();
+                assert_eq!(meta.permissions().mode() & 0o777, 0o700, "{made:?}: {dir}");
+            }
+            let slot = trashed(&trash, &op);
+            assert_eq!(slot.trash.path, files, "{made:?}");
+            assert!(present(&info(&slot).unwrap()), "{made:?}");
+        }
+    }
+
+    /// Catches kipple making the directory above the home trash, such as
+    /// `~/.local/share` (pinned 11): with it missing, the trash is unavailable and
+    /// `prepare_home` makes nothing.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_directory_above_the_home_trash_is_never_made() {
+        let site = Site::new();
+        nested(&site, "target");
+        let temp = TempDir::new().unwrap();
+        let share = temp.path().join("share");
+        let trash = backend(Some(share.join("Trash/files")));
+
+        assert!(
+            trash.available(&site.anchor("target")).is_err(),
+            "no trash is offered"
+        );
+        let prepared = trash.prepare_home().map_err(|error| error.code);
+        assert_eq!(prepared, Err(ErrorCode::TrashMissing));
+        assert!(!present(&share), "nothing was made");
+    }
+
+    /// Catches a macOS `~/.Trash` made by kipple: only the system makes it.
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_missing_mac_trash_is_never_made() {
+        let site = Site::new();
+        nested(&site, "target");
+        let temp = TempDir::new().unwrap();
+        let missing = temp.path().join(".Trash");
+        let trash = backend(Some(missing.clone()));
+
+        assert_eq!(trash.prepare_home(), Ok(()));
+        assert!(!present(&missing), "nothing was made");
+        assert!(
+            trash.available(&site.anchor("target")).is_err(),
+            "no trash is offered"
+        );
+    }
+
+    /// Writes the `.trashinfo` a move writes first for `slot`, naming `path`, as a crash
+    /// between it and the move leaves it.
+    #[cfg(target_os = "linux")]
+    fn record(slot: &TrashSlot, path: &Path) -> PathBuf {
+        use std::fmt::Write as _;
+        use std::os::unix::ffi::OsStrExt as _;
+
+        let mut text = String::from("[Trash Info]\nPath=");
+        for byte in path.as_os_str().as_bytes() {
+            if byte.is_ascii_alphanumeric() || b"-_.~/".contains(byte) {
+                text.push(char::from(*byte));
+            } else {
+                write!(text, "%{byte:02X}").unwrap();
+            }
+        }
+        text.push_str("\nDeletionDate=2023-11-14T22:13:20\n");
+        let at = info(slot).unwrap();
+        fs::write(&at, text).unwrap();
+        at
+    }
+
+    /// Catches a crash between a `.trashinfo` and its move leaving file managers an empty
+    /// slot, or that cleanup removing a record it didn't write (pinned 11): the record
+    /// naming the item goes, synced; one naming another path, a link in its place, or
+    /// none at all is left alone.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn only_the_record_of_a_move_that_never_happened_is_forgotten() {
+        use kipple_core::Forgotten;
+
+        let site = Site::new();
+        let home = Home::new();
+        write(&site.at("a dir/target/x"), b"x");
+        let anchor = site.anchor("a dir/target");
+        let op = whole(&anchor);
+        let slot = home.backend.destination(&op).unwrap();
+        let forget = || home.backend.forget_unmoved(&slot, &anchor);
+
+        assert_eq!(forget(), Ok(Forgotten::Absent), "no record");
+        let other = record(&slot, &site.at("a dir/other"));
+        assert_eq!(forget(), Ok(Forgotten::Absent), "another path");
+        assert!(present(&other), "a record of another path stays");
+
+        let elsewhere = TempDir::new().unwrap();
+        let real = elsewhere.path().join("real.trashinfo");
+        move_to(&record(&slot, &anchor.path()), &real);
+        link(&real, &info(&slot).unwrap());
+        assert_eq!(forget(), Ok(Forgotten::Absent), "a link");
+        assert!(present(&real), "what the link leads to stays");
+        move_to(&real, &info(&slot).unwrap());
+
+        assert_eq!(forget(), Ok(Forgotten::Removed));
+        assert!(!present(&info(&slot).unwrap()), "the record went");
+        assert!(present(&site.at("a dir/target/x")), "the item stays");
+    }
+
     /// The directory the variable `name` names, or `None` to skip where CI doesn't
     /// require it.
     fn prepared(name: &str) -> Option<PathBuf> {
@@ -613,6 +759,10 @@ fn the_recycle_bin_is_never_used() {
     let op = TrashOp::for_platform_tests(anchor, tree, marks);
     assert_eq!(
         backend.destination(&op).unwrap_err().code,
+        ErrorCode::Unsupported
+    );
+    assert_eq!(
+        backend.prepare_home().unwrap_err().code,
         ErrorCode::Unsupported
     );
     assert!(present(&site.at("target/x")), "nothing moved");

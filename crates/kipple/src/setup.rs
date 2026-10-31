@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use kipple_adapters::builtin;
 use kipple_core::{Engine, IntegrationDescriptor, IntegrationId, Lens, Pack, Ports, Rule};
-use kipple_platform::{Environment, NoFollowFs, PLATFORM, Walker, clock, processes};
+use kipple_platform::{Environment, GitQuery, NoFollowFs, PLATFORM, Walker, clock, processes};
 
 /// The built-in integrations and packs, whatever platform they support.
 #[derive(Debug)]
@@ -70,6 +70,16 @@ impl Builtin {
         self.descriptors.iter().map(|d| (d.id, d.lens)).collect()
     }
 
+    /// The rules that run on this platform: the ones an engine scans with, and that
+    /// planning and apply judge with.
+    #[must_use]
+    pub fn platform_rules(&self) -> Vec<Rule> {
+        self.rules()
+            .filter(|BuiltinRule { rule, .. }| rule.platforms.contains(&PLATFORM))
+            .map(|BuiltinRule { rule, .. }| rule.clone())
+            .collect()
+    }
+
     /// An engine over the integrations and rules that run on this platform, reading the
     /// machine `env` describes.
     ///
@@ -81,17 +91,14 @@ impl Builtin {
             .into_iter()
             .filter(|i| i.descriptor().platforms.contains(&PLATFORM))
             .collect();
-        let rules = self
-            .rules()
-            .filter(|BuiltinRule { rule, .. }| rule.platforms.contains(&PLATFORM))
-            .map(|BuiltinRule { rule, .. }| rule.clone())
-            .collect();
+        let rules = self.platform_rules();
         let walker = Walker::new().map_err(|e| format!("could not start sizing: {e}"))?;
         let ports = Ports {
             fs: Box::new(NoFollowFs),
             sizer: Box::new(walker),
             processes: processes(env),
             clock: clock(env),
+            tracked: Box::new(GitQuery::new(env)),
         };
         Engine::new(ports, integrations, rules).map_err(|e| e.to_string())
     }

@@ -2,7 +2,7 @@
 //! read-only version probe succeeded.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use kipple_core::{NativeTool, ToolError, ToolStatus, ToolVersion};
@@ -39,14 +39,23 @@ fn probe(tool: NativeTool, env: &Environment) -> ToolStatus {
     let Some(path) = find_on_path(tool.program(), env) else {
         return ToolStatus::NotFound;
     };
-    let version = runner::run(&path, &["--version"], env, VERSION_DEADLINE)
-        .and_then(|output| version_of(tool, &output));
+    let version = version(tool, &path, env);
     ToolStatus::Found { path, version }
+}
+
+/// The version `tool --version` at `path` reports.
+pub(crate) fn version(
+    tool: NativeTool,
+    path: &Path,
+    env: &Environment,
+) -> Result<ToolVersion, ToolError> {
+    runner::run(path, &["--version"], env, VERSION_DEADLINE)
+        .and_then(|output| version_of(tool, &output))
 }
 
 /// The first executable regular file named `program` in an absolute `PATH` entry.
 /// Relative entries are skipped: they would depend on the current directory.
-fn find_on_path(program: &str, env: &Environment) -> Option<PathBuf> {
+pub(crate) fn find_on_path(program: &str, env: &Environment) -> Option<PathBuf> {
     let file_name = format!("{program}{}", std::env::consts::EXE_SUFFIX);
     std::env::split_paths(env.get("PATH")?)
         .filter(|dir| dir.is_absolute())

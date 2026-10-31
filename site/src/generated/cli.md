@@ -13,6 +13,11 @@ Commands:
   scan     Find what your tools left behind. Read-only: nothing is changed
   rules    List the integrations and rules, and which of them run on this OS
   explain  Explain a rule, or what kipple found at a path and why. A path runs a scan
+  clean    Remove Safe findings: shows the plan and asks on a terminal, or, with `--yes`, deletes the Safe findings of the rules `--only` names. Each run is recorded
+  plan     Write the plan `clean` would show to a new file, for `kipple apply` to run later. Nothing else is written
+  apply    Run a plan file: its items are planned again from a fresh scan under the current config, so it can only remove less
+  history  List the runs kept, each item with what happened to it. Read-only
+  restore  Move a run's trashed items back where they were (Linux and macOS)
   doctor   Show where kipple looks, what it can read and which tools it found. Read-only
   config   Show where the config file is, or what it says
   theme    List the themes, print one as a theme file, or show where your own themes go
@@ -145,6 +150,221 @@ Usage: kipple explain [OPTIONS] <TARGET>
 Arguments:
   <TARGET>
           A rule ID such as `builtin.cargo.target`, or a path
+
+Options:
+      --config <FILE>
+          Read the config from this file instead of `KIPPLE_CONFIG` or the default location
+
+      --theme <NAME>
+          Draw with this theme instead of the config's `ui.theme`: a built-in or one of yours (`kipple theme list`)
+
+      --color <WHEN>
+          When to use colour. `auto`: when the output is a terminal and `NO_COLOR` isn't set
+
+          Possible values:
+          - auto:   When the output is a terminal and `NO_COLOR` isn't set
+          - always: Always, even when piped or under `NO_COLOR`
+          - never:  Never
+
+      --no-color
+          The same as `--color never`
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## `kipple clean --help`
+
+```text
+Remove Safe findings: shows the plan and asks on a terminal, or, with `--yes`, deletes the Safe findings of the rules `--only` names. Each run is recorded
+
+Usage: kipple clean [OPTIONS]
+
+Options:
+      --config <FILE>
+          Read the config from this file instead of `KIPPLE_CONFIG` or the default location
+
+      --only <RULE>
+          Only this rule's Safe findings. Repeat for several. Without it, every Safe finding
+
+      --method <METHOD>
+          How to remove them, over `clean.method` in the config
+
+          Possible values:
+          - delete: Remove for good
+          - trash:  Move to the trash, whole (Linux and macOS)
+
+      --theme <NAME>
+          Draw with this theme instead of the config's `ui.theme`: a built-in or one of yours (`kipple theme list`)
+
+      --color <WHEN>
+          When to use colour. `auto`: when the output is a terminal and `NO_COLOR` isn't set
+
+          Possible values:
+          - auto:   When the output is a terminal and `NO_COLOR` isn't set
+          - always: Always, even when piped or under `NO_COLOR`
+          - never:  Never
+
+      --root <PATH>
+          Scan this project root instead of the configured ones. Repeat for several
+
+      --no-color
+          The same as `--color never`
+
+      --yes
+          Don't ask: clean the Safe findings of the rules `--only` names, by deleting them
+
+      --json
+          Print one `kipple.receipt/v1` envelope when it finishes
+
+      --events <FORMAT>
+          Stream the scan's events, then the run's, one JSON object per line, then the receipt
+
+          Possible values:
+          - jsonl: One JSON object per line
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## `kipple plan --help`
+
+```text
+Write the plan `clean` would show to a new file, for `kipple apply` to run later. Nothing else is written
+
+Usage: kipple plan [OPTIONS] --output <FILE>
+
+Options:
+      --config <FILE>
+          Read the config from this file instead of `KIPPLE_CONFIG` or the default location
+
+      --only <RULE>
+          Only this rule's Safe findings. Repeat for several. Without it, every Safe finding
+
+      --method <METHOD>
+          How to remove them, over `clean.method` in the config
+
+          Possible values:
+          - delete: Remove for good
+          - trash:  Move to the trash, whole (Linux and macOS)
+
+      --theme <NAME>
+          Draw with this theme instead of the config's `ui.theme`: a built-in or one of yours (`kipple theme list`)
+
+      --color <WHEN>
+          When to use colour. `auto`: when the output is a terminal and `NO_COLOR` isn't set
+
+          Possible values:
+          - auto:   When the output is a terminal and `NO_COLOR` isn't set
+          - always: Always, even when piped or under `NO_COLOR`
+          - never:  Never
+
+      --root <PATH>
+          Scan this project root instead of the configured ones. Repeat for several
+
+      --no-color
+          The same as `--color never`
+
+  -o, --output <FILE>
+          Write the plan to this new file, or `-` for stdout
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## `kipple apply --help`
+
+```text
+Run a plan file: its items are planned again from a fresh scan under the current config, so it can only remove less
+
+Usage: kipple apply [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>
+          A plan file `kipple plan -o` wrote
+
+Options:
+      --config <FILE>
+          Read the config from this file instead of `KIPPLE_CONFIG` or the default location
+
+      --root <PATH>
+          Scan this project root instead of the configured ones, as the plan was made with
+
+      --theme <NAME>
+          Draw with this theme instead of the config's `ui.theme`: a built-in or one of yours (`kipple theme list`)
+
+      --yes
+          Don't ask: delete the plan's items that are still Safe
+
+      --color <WHEN>
+          When to use colour. `auto`: when the output is a terminal and `NO_COLOR` isn't set
+
+          Possible values:
+          - auto:   When the output is a terminal and `NO_COLOR` isn't set
+          - always: Always, even when piped or under `NO_COLOR`
+          - never:  Never
+
+      --json
+          Print one `kipple.receipt/v1` envelope when it finishes
+
+      --events <FORMAT>
+          Stream the scan's events, then the run's, one JSON object per line, then the receipt
+
+          Possible values:
+          - jsonl: One JSON object per line
+
+      --no-color
+          The same as `--color never`
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## `kipple history --help`
+
+```text
+List the runs kept, each item with what happened to it. Read-only
+
+Usage: kipple history [OPTIONS]
+
+Options:
+      --config <FILE>
+          Read the config from this file instead of `KIPPLE_CONFIG` or the default location
+
+      --json
+          Print one `kipple.history/v1` envelope
+
+      --theme <NAME>
+          Draw with this theme instead of the config's `ui.theme`: a built-in or one of yours (`kipple theme list`)
+
+      --color <WHEN>
+          When to use colour. `auto`: when the output is a terminal and `NO_COLOR` isn't set
+
+          Possible values:
+          - auto:   When the output is a terminal and `NO_COLOR` isn't set
+          - always: Always, even when piped or under `NO_COLOR`
+          - never:  Never
+
+      --no-color
+          The same as `--color never`
+
+  -h, --help
+          Print help (see a summary with '-h')
+```
+
+## `kipple restore --help`
+
+```text
+Move a run's trashed items back where they were (Linux and macOS)
+
+Usage: kipple restore [OPTIONS] <RUN> [ITEM]...
+
+Arguments:
+  <RUN>
+          The run, as `kipple history` lists it
+
+  [ITEM]...
+          The items to move back, by number. Without any, every item the run moved to the trash
 
 Options:
       --config <FILE>

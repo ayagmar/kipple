@@ -30,21 +30,29 @@ pub(crate) struct Scanned {
     pub(crate) streamed: io::Result<()>,
 }
 
+/// What a scan of the roots of `settings` covers: every integration of `lens`, or all of
+/// them, never entering a path the config excludes.
+pub(crate) fn request(settings: &Settings, lens: Option<Lens>) -> ScanRequest {
+    ScanRequest {
+        roots: settings.roots.clone(),
+        lens,
+        exclude: settings.policy.exclude.clone(),
+    }
+}
+
 /// Runs a scan of the roots of `settings` over `engine`, never entering a path the config
 /// excludes, passing each event to `on_event` as it arrives. When `on_event` fails, the
-/// scan is cancelled and its error returned with the partial report.
+/// scan is cancelled and its error returned with the partial report. `cancel` stops it
+/// early too.
 pub(crate) fn run(
     engine: &Engine,
     settings: &Settings,
     lens: Option<Lens>,
     on_event: &mut dyn FnMut(Sequenced) -> io::Result<()>,
+    cancel: &CancelToken,
 ) -> Scanned {
-    let request = ScanRequest {
-        roots: settings.roots.clone(),
-        lens,
-        exclude: settings.policy.exclude.clone(),
-    };
-    let cancel = CancelToken::new();
+    let request = request(settings, lens);
+    let cancel = cancel.clone();
     let EventChannel {
         tx: events,
         rx: mut received,

@@ -5,6 +5,8 @@
 
 #[path = "native/executor.rs"]
 mod executor;
+#[path = "native/runs.rs"]
+mod runs;
 #[path = "native/trash.rs"]
 mod trash;
 

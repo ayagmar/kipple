@@ -1,0 +1,454 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "HeaderOut",
+  "description": "The header line of a stored plan.",
+  "type": "object",
+  "properties": {
+    "digest": {
+      "description": "The digest of every byte of the line before `,\"digest\":`.",
+      "$ref": "#/$defs/Digest"
+    },
+    "items": {
+      "description": "Every item, in plan order.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/ItemOut"
+      }
+    },
+    "kipple": {
+      "description": "The kipple version that wrote it.",
+      "type": "string"
+    },
+    "plan": {
+      "description": "The plan's digest as it was written.",
+      "$ref": "#/$defs/Digest"
+    },
+    "schema": {
+      "description": "`kipple.stored-plan/v1`.",
+      "type": "string"
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "kipple",
+    "plan",
+    "items",
+    "digest"
+  ],
+  "$defs": {
+    "Caution": {
+      "type": "string",
+      "enum": [
+        "recent",
+        "recovery",
+        "loss",
+        "high-cost"
+      ]
+    },
+    "CompletenessOut": {
+      "description": "How a finding's size was measured.",
+      "oneOf": [
+        {
+          "description": "Every entry was read.",
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "complete"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ]
+        },
+        {
+          "description": "Some weren't.",
+          "type": "object",
+          "properties": {
+            "skipped_mounts": {
+              "description": "Mounts inside that weren't entered.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "state": {
+              "type": "string",
+              "const": "incomplete"
+            },
+            "unreadable": {
+              "description": "Entries that couldn't be read.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "unreadable",
+            "skipped_mounts"
+          ]
+        },
+        {
+          "description": "The measurement was cancelled.",
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "cancelled"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "state"
+          ]
+        }
+      ]
+    },
+    "Digest": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{32}$"
+    },
+    "EstimateOut": {
+      "description": "What the scan estimated removing an item frees.",
+      "type": "object",
+      "properties": {
+        "allocated_bytes": {
+          "description": "Allocated storage, where the platform reports it.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        },
+        "apparent_bytes": {
+          "description": "Total file length.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "completeness": {
+          "description": "How much was measured.",
+          "$ref": "#/$defs/CompletenessOut"
+        },
+        "unique_bytes": {
+          "description": "Allocated storage only this item holds.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "apparent_bytes",
+        "completeness"
+      ]
+    },
+    "FileIdentity": {
+      "type": "string",
+      "pattern": "^[0-9]+:[0-9]+$"
+    },
+    "ItemOut": {
+      "description": "One item's header.",
+      "type": "object",
+      "properties": {
+        "estimate": {
+          "description": "What the scan estimated removing it frees.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/EstimateOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "file_system": {
+          "description": "The file system it is on.",
+          "$ref": "#/$defs/LocalFileSystem"
+        },
+        "finding": {
+          "description": "The finding it was planned from, by its ID in that scan.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "item": {
+          "description": "Its place in the plan, from 0.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "judgement": {
+          "description": "What it was judged under.",
+          "$ref": "#/$defs/JudgementOut"
+        },
+        "method": {
+          "description": "How it is removed.",
+          "$ref": "#/$defs/Method"
+        },
+        "parent": {
+          "description": "The identity of the target's directory, for a target below its root.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FileIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "path": {
+          "description": "The finding's path, as shown.",
+          "$ref": "#/$defs/TextOut"
+        },
+        "relative": {
+          "description": "The components from the root to the target; none for the root's contents.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TextOut"
+          }
+        },
+        "root": {
+          "description": "The root it is below.",
+          "$ref": "#/$defs/SymbolicRoot"
+        },
+        "root_identity": {
+          "description": "That root's identity when the scan opened it.",
+          "$ref": "#/$defs/FileIdentity"
+        },
+        "root_path": {
+          "description": "That root's directory.",
+          "$ref": "#/$defs/TextOut"
+        },
+        "standing": {
+          "description": "The bucket and cautions it was planned with.",
+          "$ref": "#/$defs/StandingOut"
+        },
+        "tree": {
+          "description": "Where its frozen tree is.",
+          "$ref": "#/$defs/TreeOut"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "item",
+        "finding",
+        "path",
+        "root",
+        "root_path",
+        "root_identity",
+        "relative",
+        "method",
+        "standing",
+        "judgement",
+        "file_system",
+        "tree"
+      ]
+    },
+    "JudgementOut": {
+      "description": "What an item was judged under: digests compared at apply, never computed again.",
+      "type": "object",
+      "properties": {
+        "held": {
+          "description": "The kept and excluded paths.",
+          "$ref": "#/$defs/Digest"
+        },
+        "level": {
+          "description": "The effective level.",
+          "$ref": "#/$defs/Level"
+        },
+        "method": {
+          "description": "The method.",
+          "$ref": "#/$defs/Method"
+        },
+        "policy": {
+          "description": "The whole policy.",
+          "$ref": "#/$defs/Digest"
+        },
+        "recent_days": {
+          "description": "The effective recent window, in days.",
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "rule": {
+          "description": "The rule's ID.",
+          "type": "string",
+          "pattern": "^[a-z0-9-]+(\\.[a-z0-9-]+)+$"
+        },
+        "rule_digest": {
+          "description": "The rule's content.",
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "policy",
+        "rule",
+        "rule_digest",
+        "level",
+        "recent_days",
+        "method",
+        "held"
+      ]
+    },
+    "Level": {
+      "type": "string",
+      "enum": [
+        "careful",
+        "balanced",
+        "thorough"
+      ]
+    },
+    "LocalFileSystem": {
+      "type": "string",
+      "enum": [
+        "ext4",
+        "xfs",
+        "btrfs",
+        "tmpfs",
+        "f2fs",
+        "apfs",
+        "hfs+",
+        "ntfs",
+        "refs"
+      ]
+    },
+    "Method": {
+      "type": "string",
+      "enum": [
+        "delete",
+        "trash"
+      ]
+    },
+    "StandingOut": {
+      "description": "The bucket an item was planned in.",
+      "oneOf": [
+        {
+          "description": "Safe.",
+          "type": "object",
+          "properties": {
+            "bucket": {
+              "type": "string",
+              "const": "safe"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "bucket"
+          ]
+        },
+        {
+          "description": "Review, with these cautions.",
+          "type": "object",
+          "properties": {
+            "bucket": {
+              "type": "string",
+              "const": "review"
+            },
+            "cautions": {
+              "description": "The cautions it was reviewed with.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/Caution"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "bucket",
+            "cautions"
+          ]
+        }
+      ]
+    },
+    "SymbolicRoot": {
+      "type": "string",
+      "enum": [
+        "home",
+        "xdg.config",
+        "xdg.cache",
+        "xdg.data",
+        "xdg.state",
+        "known.local-app-data",
+        "known.roaming-app-data",
+        "macos.caches",
+        "config.project-roots",
+        "trash",
+        "claude.config",
+        "pacman.cache",
+        "journald.journal"
+      ]
+    },
+    "TextOut": {
+      "description": "A name or a path, exactly: its text when it is valid Unicode, else the OS's own form.",
+      "anyOf": [
+        {
+          "description": "The text.",
+          "type": "string"
+        },
+        {
+          "description": "Not valid Unicode.",
+          "type": "object",
+          "properties": {
+            "raw": {
+              "description": "Base64 of the bytes (Unix) or UTF-16LE code units (Windows).",
+              "type": "string"
+            }
+          },
+          "required": [
+            "raw"
+          ]
+        }
+      ]
+    },
+    "TreeOut": {
+      "description": "Where an item's frozen tree is stored.",
+      "type": "object",
+      "properties": {
+        "digest": {
+          "description": "The tree's own digest ([`FrozenTree::digest`]), which intents name.",
+          "$ref": "#/$defs/Digest"
+        },
+        "entries": {
+          "description": "How many entries it holds.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "length": {
+          "description": "How many bytes it takes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "offset": {
+          "description": "Where its bytes start, counted from the end of the header line.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "stored": {
+          "description": "The digest of those bytes as stored.",
+          "$ref": "#/$defs/Digest"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "offset",
+        "length",
+        "stored",
+        "digest",
+        "entries"
+      ]
+    }
+  }
+}

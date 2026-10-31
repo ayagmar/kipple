@@ -39,7 +39,7 @@ use std::time::SystemTime;
 
 use clap::Parser as _;
 use kipple::theme::{Stdout, Themes};
-use kipple::{Cli, USAGE};
+use kipple::{Cli, Io, USAGE};
 use kipple_platform::Environment;
 
 const BROKEN: &str = "version = 1\nextends = \"kipple\"\n[roles]\nsafe = { fg = \"grean\" }\n";
@@ -115,7 +115,14 @@ impl Demo {
 fn kipple(env: &Environment, stdout: Stdout, args: &[&str]) -> (ExitCode, String, String) {
     let cli = Cli::parse_from(std::iter::once("kipple").chain(args.iter().copied()));
     let (mut out, mut err) = (Vec::new(), Vec::new());
-    let code = kipple::run(&cli, env, stdout, &mut out, &mut err);
+    let code = kipple::run(
+        &cli,
+        env,
+        Io {
+            goes_to: stdout,
+            ..Io::redirected(&mut out, &mut err)
+        },
+    );
     let text = |bytes| String::from_utf8(bytes).unwrap();
     (code, text(out), text(err))
 }

@@ -1,6 +1,5 @@
 ---
 source: crates/kipple/src/tui/app/tests/settings.rs
-assertion_line: 556
 expression: "styled(&draw(&app, probe(), 160, 48))"
 ---
 «fg=border|╭» «fg=title|kipple»«fg=border| ─ »«fg=level.current|Balanced»«fg=border| ─ »«fg=muted|scanning…»«fg=border| ─ »~/projects +1 «fg=border|───────────────────────────────────────────────────────────────────────────────────────────────────────────────╮»
@@ -17,7 +16,7 @@ expression: "styled(&draw(&app, probe(), 160, 48))"
 «fg=border|│» «fg=label|Suggested roots   »~/Documents (4 projects: thesis, uni/compilers, uni/os, …)                                                                                 «fg=border|│»
 «fg=border|│» «fg=label|                  »~/notes (1 project: notes)                                                                                                                 «fg=border|│»
 «fg=border|│» «fg=label|                  »«fg=muted|stopped early: the list may be incomplete»                                                                                                  «fg=border|│»
-«fg=border|│» «fg=label|Default method    »trash«fg=muted|  stored only: nothing is removed yet»                                                                                                 «fg=border|│»
+«fg=border|│» «fg=label|Default method    »trash«fg=muted|  used by kipple clean; nothing is removed here»                                                                                       «fg=border|│»
 «fg=border|│» «fg=label|Kept              »~/projects/api/target«fg=muted|  benchmark baseline»                                                                                                  «fg=border|│»
 «fg=border|│» «fg=label|Rules turned off  »pacman package cache«fg=muted|  builtin.pacman.cache»                                                                                                 «fg=border|│»
 «fg=border|│»                                                                                                                                                              «fg=border|│»

@@ -24,7 +24,10 @@ mod macos;
 #[cfg(unix)]
 pub(crate) mod unix;
 #[cfg(windows)]
-mod windows;
+pub(crate) mod windows;
+
+#[cfg(test)]
+pub(crate) mod faults;
 
 use std::io;
 
@@ -38,7 +41,7 @@ pub use names::OsNames;
 #[cfg(unix)]
 pub(crate) use unix as sys;
 #[cfg(windows)]
-use windows as sys;
+pub(crate) use windows as sys;
 
 /// The platform's [`Freezer`] and [`Executor`]: handle-relative, no-follow, confined to a
 /// verified root and its mount.

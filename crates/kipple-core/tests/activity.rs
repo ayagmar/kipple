@@ -11,15 +11,15 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use kipple_core::{
-    Activity, ActivityEvidence, ActivityGap, Apparent, CancelToken, Capabilities, Category, Clock,
-    CommandLines, Completeness, Consequence, Cost, DirAccess, DirEntryMeta, Engine, EntryKind,
-    EntryMeta, EnvPath, EventChannel, Evidence, FileIdentity, FileSystem, FindingSink, FsProbe,
-    Integration, IntegrationDescriptor, IntegrationError, IntegrationId, Inventory, Lens,
-    Measurement, Method, MountNamespace, Observer, Operation, Platform, Ports, ProbeError, Probed,
-    ProcessOutcome, ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Recovery,
-    ResolvedRoot, RootLink, RootSource, Roots, Rule, RuleId, RuleText, ScanContext, ScanReport,
-    ScanRequest, Seen, Selector, Sizer, SpaceEstimate, SymbolicRoot, Unread, UserId, census,
-    event_channel,
+    Activity, ActivityEvidence, ActivityGap, Anchor, Apparent, CancelToken, Capabilities, Category,
+    Clock, CommandLines, Completeness, Consequence, Cost, DirAccess, DirEntryMeta, Engine,
+    EntryKind, EntryMeta, EnvPath, EventChannel, Evidence, FileIdentity, FileSystem, FindingSink,
+    FrozenTree, FsProbe, GitGap, Integration, IntegrationDescriptor, IntegrationError,
+    IntegrationId, Inventory, Lens, Measurement, Method, MountNamespace, NodeId, Observer,
+    Operation, Platform, Ports, ProbeError, Probed, ProcessOutcome, ProcessOwner, ProcessProbe,
+    ProcessRecord, ProcessSnapshot, Recovery, ResolvedRoot, RootLink, RootSource, Roots, Rule,
+    RuleId, RuleText, ScanContext, ScanReport, ScanRequest, Seen, Selector, Sizer, SpaceEstimate,
+    SymbolicRoot, TrackedQuery, Unread, UserId, census, event_channel,
 };
 
 /// `path` as the host takes it: one starting with `/` is made absolute, since Windows takes
@@ -333,6 +333,7 @@ impl Host {
                 observer: self.observer.clone(),
             })),
             clock: Box::new(Epoch),
+            tracked: Box::new(NoGit),
         };
         let artifact = Artifact {
             evidence,
@@ -1414,4 +1415,24 @@ fn where_the_os_shows_no_process_paths_an_interpreted_layout_is_never_idle() {
         matches!(windows.activity(CARGO, TARGET), Activity::Idle),
         "without process paths, a built layout is still idle"
     );
+}
+
+/// No git: these fixtures hold no repository, so it is never asked.
+#[derive(Debug)]
+struct NoGit;
+
+impl TrackedQuery for NoGit {
+    fn count(&self, _: &Path, _: &Path, _: &CancelToken) -> Result<u64, GitGap> {
+        Err(GitGap::Unsupported)
+    }
+
+    fn entries(
+        &self,
+        _: &Path,
+        _: &Anchor,
+        _: &FrozenTree,
+        _: &CancelToken,
+    ) -> Result<Vec<NodeId>, GitGap> {
+        Err(GitGap::Unsupported)
+    }
 }

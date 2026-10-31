@@ -1,5 +1,5 @@
 //! kipple's own config file (`docs/03-functional-spec.md` §6 and §7): read it, and
-//! replace it in one atomic write. It is the only file kipple writes so far.
+//! replace it in one atomic write. Also the new files `kipple plan -o` writes.
 
 use std::ffi::OsString;
 use std::fmt;
@@ -109,6 +109,19 @@ pub fn write_config<E>(
     })
     .map_err(io_error(&target))?;
     Ok(text)
+}
+
+/// Writes `bytes` to a new file at `path` and syncs it.
+///
+/// Nothing that is already there, a link included, is replaced. On Linux and macOS only
+/// its owner can read the file; on Windows it takes its folder's access rules.
+///
+/// # Errors
+/// When something is at `path` already, or the file can't be created or written.
+pub fn write_new(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    let mut file = os::create_private_file(path)?;
+    file.write_all(bytes)?;
+    file.sync_all()
 }
 
 /// Where a write to `path` goes: `path` itself, or the file a link there leads to.

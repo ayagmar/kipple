@@ -32,6 +32,32 @@ impl Digest {
     }
 }
 
+impl Digest {
+    /// The digest of `bytes`, exactly as they are stored. What a stored record's integrity
+    /// is checked with: it never depends on how kipple prints anything.
+    #[must_use]
+    pub fn of_bytes(bytes: &[u8]) -> Self {
+        let mut hasher = Hasher::new();
+        hasher.bytes(bytes);
+        hasher.finish()
+    }
+
+    /// The digest written as 32 lowercase hexadecimal digits, as [`Display`] writes it.
+    ///
+    /// [`Display`]: fmt::Display
+    #[must_use]
+    pub fn parse(text: &str) -> Option<Self> {
+        let canonical = text.len() == 32
+            && text
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte));
+        canonical
+            .then(|| u128::from_str_radix(text, 16).ok())
+            .flatten()
+            .map(Self)
+    }
+}
+
 impl fmt::Debug for Digest {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Digest({self})")

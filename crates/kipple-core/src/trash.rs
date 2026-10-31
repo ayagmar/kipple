@@ -53,6 +53,16 @@ named! {
     }
 }
 
+named! {
+    /// What [`TrashBackend::forget_unmoved`] did with the record of an empty slot.
+    Forgotten {
+        /// It removed the record.
+        Removed = "removed",
+        /// There was no record for the item there: nothing to remove.
+        Absent = "absent",
+    }
+}
+
 /// What restoring a trashed item needs: where it is, where it came from, and the
 /// identity of the directory it came from, which restore checks (pinned 10). It can't be
 /// made without that identity.
@@ -115,13 +125,45 @@ impl RestoreRequest {
 /// item is report-only for `trash`.
 ///
 /// [`ErrorCode::Unsupported`]: crate::ErrorCode::Unsupported
+///
+/// **Durable before returning.** On every path that moved something, `Ok`, `Err` or
+/// cancelled, the move is synced before the call returns: the trash record (Linux's
+/// `.trashinfo`) and its directory before the rename, and the item's old directory and
+/// the trash directory after it, each with `fsync` (`F_FULLFSYNC` on macOS). A record
+/// whose move didn't happen is removed and its directory synced; the record of an item
+/// that reached the trash stays, even when a sync after the move fails. The journal
+/// records the outcome only after that. A sync that fails makes the call fail with
+/// [`ErrorCode::Unsynced`], never succeed, and the item's outcome is `indeterminate`:
+/// never done for a move a power loss could undo. The Windows backend moves nothing
+/// (D-062).
+///
+/// [`ErrorCode::Unsynced`]: crate::ErrorCode::Unsynced
 pub trait TrashBackend: fmt::Debug + Send + Sync {
-    /// Whether an item at `anchor` could be moved to a trash. Read-only.
+    /// Whether an item at `anchor` could be moved to a trash. Read-only: a home trash
+    /// that doesn't exist yet, under the resolved [`SymbolicRoot::Trash`] whose parent
+    /// exists, is available, since apply creates it ([`prepare_home`]).
+    ///
+    /// [`SymbolicRoot::Trash`]: crate::SymbolicRoot::Trash
+    /// [`prepare_home`]: Self::prepare_home
     ///
     /// # Errors
     /// When there is no usable trash on its file system, or this backend can't move it
     /// without risking a permanent delete.
     fn available(&self, anchor: &Anchor) -> Result<(), ApplyError>;
+
+    /// Creates the home trash's directories (freedesktop `files/` and `info/`, mode
+    /// 0700) where they are missing, handle-relative from the directory holding the
+    /// resolved [`SymbolicRoot::Trash`], and syncs them. Apply calls it once, under the
+    /// lock and after the user confirmed, before the first trash intent; a dry run or a
+    /// plan written to a file never does. It never creates that parent (such as
+    /// `~/.local/share`), and never a top directory's trash or macOS `~/.Trash`.
+    ///
+    /// [`SymbolicRoot::Trash`]: crate::SymbolicRoot::Trash
+    ///
+    /// # Errors
+    /// When the parent is missing or isn't the user's own directory, or the directories
+    /// can't be created: trash items then skip as unavailable.
+    fn prepare_home(&self) -> Result<(), ApplyError>;
 
     /// The slot `op` will move to. Read-only: it touches neither the item nor the trash,
     /// so the intent naming it is journalled before anything changes.
@@ -153,11 +195,24 @@ pub trait TrashBackend: fmt::Debug + Send + Sync {
     /// When the slot can't be checked.
     fn find(&self, slot: &TrashSlot, target: &EntrySnapshot) -> Result<SlotState, ApplyError>;
 
+    /// Removes the record a move wrote for `slot` before a crash kept the item from
+    /// moving, so no file manager lists an empty slot. Reconciliation calls it only when
+    /// [`find`](Self::find) says the slot is [`SlotState::Empty`] and a fresh freeze finds
+    /// the item unchanged at `original`, and journals what it did.
+    ///
+    /// The record is removed only if it is a regular file, not followed through a link,
+    /// owned by the user, in the trash's verified record directory, naming exactly the
+    /// path of `original`. Anything else is left alone.
+    ///
+    /// # Errors
+    /// When the record couldn't be checked or removed.
+    fn forget_unmoved(&self, slot: &TrashSlot, original: &Anchor) -> Result<Forgotten, ApplyError>;
+
     /// Moves a trashed item back. Opens the original parent from its verified root
     /// without following links, checks its recorded identity, checks the trashed entry is
     /// the item, and renames it back without replacing anything (Linux
-    /// `renameat2(RENAME_NOREPLACE)`, macOS `renameatx_np(RENAME_EXCL)`, Windows
-    /// `FileRenameInfo` with `ReplaceIfExists` off, relative to the parent's handle).
+    /// `renameat2(RENAME_NOREPLACE)`, macOS `renameatx_np(RENAME_EXCL)`; Windows has no
+    /// trash backend, D-062).
     /// A missing or replaced parent, or anything at the original name, refuses: the
     /// parent is never created and nothing is overwritten.
     ///

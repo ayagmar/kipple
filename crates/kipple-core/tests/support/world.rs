@@ -1,11 +1,13 @@
 //! A machine in memory for the apply loop's tests. Include with
-//! `#[path = "support/world.rs"] mod world;`.
+//! `#[path = "support/world.rs"] mod world;` and `#[path = "support/codec.rs"] mod codec;`.
 //!
 //! Its targets are what the freezer reads, the executor deletes from and the trash moves
 //! whole, so what one port changes the next one sees, as on a real disk. Its journal keeps
 //! the durable records, which the executor and the trash check for the item's intent
-//! before changing anything. A crash is an unwind out of the journal or the executor at a
-//! chosen point, after which the state is what a disk would hold.
+//! before changing anything. It is also a run store, keeping each run's bytes as the
+//! platform's would, torn tails included. A crash is an unwind out of the journal, the
+//! store or the executor at a chosen point, after which the state is what a disk would
+//! hold.
 #![expect(
     clippy::unwrap_used,
     clippy::unwrap_in_result,
@@ -17,16 +19,22 @@
 )]
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, UNIX_EPOCH};
 
+pub(crate) use kipple_core::Record;
+use kipple_core::format::{decode_line, encode_line, encode_stored_plan};
 use kipple_core::{
-    Allocated, Anchor, ApplyError, CancelToken, Component, DeleteOp, Digest, EffectSink, EntryKind,
-    EntrySnapshot, ErrorCode, Executor, FileIdentity, FileSystemClass, Finish, Freed, Freeze,
-    Freezer, Intent, ItemId, ItemOutcome, Journal, LeftReason, LocalFileSystem, Plan, RelPath,
-    RestoreRequest, Scope, SlotState, TrashBackend, TrashDir, TrashOp, TrashSlot, Trashed,
-    TreeBuilder, Volume,
+    Activity, Allocated, Anchor, ApplyError, CancelToken, Component, DeleteOp, EffectSink,
+    EntryKind, EntrySnapshot, ErrorCode, Executor, FileIdentity, FileSystemClass, Finding, Finish,
+    Forgotten, Freed, Freeze, Freezer, FrozenTree, GitGap, Intent, ItemId, ItemOutcome, Journal,
+    LeftReason, LocalFileSystem, LockState, Locked, NodeId, Plan, RelPath, Rescan, RestoreRequest,
+    RunId, RunStore, ScanReport, Scope, SlotState, StoreRefusal, TrackedQuery, TrashBackend,
+    TrashDir, TrashOp, TrashSlot, Trashed, TreeBuilder, Volume,
 };
+
+use crate::codec::TestCodec;
 
 /// The one volume every target is on.
 pub(crate) const VOLUME: Volume = Volume {
@@ -73,14 +81,6 @@ impl Target {
     }
 }
 
-/// One durable journal record.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Record {
-    Plan(Digest),
-    Intent(Intent),
-    Outcome(ItemId, ItemOutcome),
-}
-
 /// One entry the executor removed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Removal {
@@ -98,6 +98,21 @@ pub(crate) enum Crash {
     BeforeWrite(usize),
     /// Just after this many removals.
     AfterRemovals(usize),
+    /// The store's write numbered this (from 0) lands only its first this many bytes,
+    /// then the process dies: a torn tail.
+    Torn {
+        /// The write.
+        write: usize,
+        /// How many of its bytes land.
+        bytes: usize,
+    },
+}
+
+/// One run's files in the store.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Files {
+    pub(crate) plan: Option<Vec<u8>>,
+    pub(crate) journal: Vec<u8>,
 }
 
 /// What unwinds out of a crash.
@@ -129,6 +144,18 @@ pub(crate) struct State {
     /// The run is cancelled after this many removals.
     pub(crate) cancel_after: Option<usize>,
     pub(crate) trash_unsupported: bool,
+    /// The trash records written for slots, by slot name: the `.trashinfo` a move writes
+    /// before it renames.
+    pub(crate) trash_records: BTreeSet<Component>,
+    /// Records reconciliation removed.
+    pub(crate) forgotten: Vec<Component>,
+    /// What git tracks in each target, by its path, or why it can't say. A target with
+    /// none isn't in a repository.
+    pub(crate) git: BTreeMap<PathBuf, Result<Vec<RelPath>, GitGap>>,
+    /// The store's runs.
+    pub(crate) runs: BTreeMap<RunId, Files>,
+    /// Another kipple holds the store's lock.
+    pub(crate) busy: bool,
 }
 
 /// The machine. It is every mutation port and, through [`World::journal`], the journal.
@@ -143,8 +170,8 @@ impl World {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    /// The journal, writing to this world's records.
-    pub(crate) const fn journal(&self) -> WorldJournal<'_> {
+    /// A journal writing to this world's records.
+    pub(crate) const fn recorder(&self) -> WorldJournal<'_> {
         WorldJournal(self)
     }
 
@@ -194,7 +221,7 @@ impl Freezer for World {
 }
 
 /// `target`, frozen.
-pub(crate) fn tree_of(target: &Target) -> kipple_core::FrozenTree {
+pub(crate) fn tree_of(target: &Target) -> FrozenTree {
     let top = target.entries.get(&RelPath::default()).unwrap();
     let mut builder = TreeBuilder::new(target.scope, VOLUME, top).unwrap();
     let mut slots = BTreeMap::new();
@@ -328,7 +355,7 @@ fn freed(snapshot: &EntrySnapshot) -> Freed {
 /// The world's trash directory.
 pub(crate) fn trash_dir() -> TrashDir {
     TrashDir {
-        path: PathBuf::from("/home/u/.local/share/Trash/files"),
+        path: super::home(".local/share/Trash/files"),
         identity: FileIdentity {
             volume: 7,
             file: 900,
@@ -338,10 +365,7 @@ pub(crate) fn trash_dir() -> TrashDir {
 
 impl TrashBackend for World {
     fn available(&self, _: &Anchor) -> Result<(), ApplyError> {
-        if self.state().trash_unsupported {
-            return Err(ApplyError::new(ErrorCode::Unsupported));
-        }
-        Ok(())
+        self.available_now()
     }
 
     fn destination(&self, op: &TrashOp) -> Result<TrashSlot, ApplyError> {
@@ -378,6 +402,7 @@ impl TrashBackend for World {
         if differs {
             return Err(ApplyError::new(ErrorCode::TargetChanged));
         }
+        state.trash_records.insert(slot.name.clone());
         let moved = state.targets.remove(&at).unwrap();
         state.trash.insert(slot.name.clone(), moved);
         Ok(Trashed { slot: slot.clone() })
@@ -396,8 +421,241 @@ impl TrashBackend for World {
         })
     }
 
-    fn restore(&self, _: &RestoreRequest, _: &CancelToken) -> Result<(), ApplyError> {
-        Err(ApplyError::new(ErrorCode::Unsupported))
+    fn restore(&self, request: &RestoreRequest, cancel: &CancelToken) -> Result<(), ApplyError> {
+        if cancel.is_cancelled() {
+            return Err(ApplyError::new(ErrorCode::Cancelled));
+        }
+        let mut state = self.state();
+        let name = &request.slot().name;
+        let top = state
+            .trash
+            .get(name)
+            .and_then(|moved| moved.entries.get(&RelPath::default()))
+            .ok_or_else(|| ApplyError::new(ErrorCode::TrashMissing))?;
+        if top.identity != request.target().identity {
+            return Err(ApplyError::new(ErrorCode::TrashChanged));
+        }
+        let original = request.anchor().path();
+        if state.targets.contains_key(&original) {
+            return Err(ApplyError::new(ErrorCode::DestinationExists));
+        }
+        let moved = state.trash.remove(name).unwrap();
+        state.trash_records.remove(name);
+        state.targets.insert(original, moved);
+        Ok(())
+    }
+
+    fn prepare_home(&self) -> Result<(), ApplyError> {
+        self.available_now()
+    }
+
+    fn forget_unmoved(&self, slot: &TrashSlot, _: &Anchor) -> Result<Forgotten, ApplyError> {
+        let mut state = self.state();
+        if state.trash_records.remove(&slot.name) {
+            state.forgotten.push(slot.name.clone());
+            Ok(Forgotten::Removed)
+        } else {
+            Ok(Forgotten::Absent)
+        }
+    }
+}
+
+impl World {
+    fn available_now(&self) -> Result<(), ApplyError> {
+        if self.state().trash_unsupported {
+            return Err(ApplyError::new(ErrorCode::Unsupported));
+        }
+        Ok(())
+    }
+}
+
+impl TrackedQuery for World {
+    fn count(&self, _: &Path, item: &Path, _: &CancelToken) -> Result<u64, GitGap> {
+        match self.state().git.get(item) {
+            Some(Ok(tracked)) => Ok(tracked.len() as u64),
+            Some(Err(gap)) => Err(*gap),
+            None => Err(GitGap::Unsupported),
+        }
+    }
+
+    fn entries(
+        &self,
+        _: &Path,
+        anchor: &Anchor,
+        tree: &FrozenTree,
+        _: &CancelToken,
+    ) -> Result<Vec<NodeId>, GitGap> {
+        match self.state().git.get(&anchor.path()) {
+            Some(Ok(tracked)) => Ok(tracked.iter().filter_map(|path| tree.find(path)).collect()),
+            Some(Err(gap)) => Err(*gap),
+            None => Err(GitGap::Unsupported),
+        }
+    }
+}
+
+/// The scan apply runs, with the activity it judges each item by now: the scan's own
+/// when `activity` is unset.
+#[derive(Debug, Clone)]
+pub(crate) struct Rescanned {
+    pub(crate) scan: ScanReport,
+    pub(crate) activity: Option<Activity>,
+}
+
+impl Rescan for Rescanned {
+    fn scan(&self, _: &CancelToken) -> ScanReport {
+        self.scan.clone()
+    }
+
+    fn activity(&self, _: &ScanReport, finding: &Finding) -> Activity {
+        self.activity.clone().unwrap_or_else(|| {
+            finding.facts.as_ref().map_or(
+                Activity::Unknown(kipple_core::ActivityGap::Unsupported),
+                |facts| facts.activity.clone(),
+            )
+        })
+    }
+}
+
+impl World {
+    /// Counts one store write, crashing or failing it as the state says. `Ok` with the
+    /// bytes of `line` that land.
+    fn store_write(&self, line: &[u8]) -> Result<usize, ApplyError> {
+        let mut state = self.state();
+        let attempt = state.writes;
+        state.writes += 1;
+        if state.crash == Some(Crash::BeforeWrite(attempt)) {
+            crash(state);
+        }
+        let fails = match state.journal_fails_at {
+            Some(at) if state.journal_recovers => attempt == at,
+            Some(at) => attempt >= at,
+            None => false,
+        };
+        if fails {
+            state.failed_write.get_or_insert(attempt);
+            return Err(ApplyError::new(ErrorCode::Journal));
+        }
+        Ok(match state.crash {
+            Some(Crash::Torn { write, bytes }) if write == attempt => bytes.min(line.len()),
+            _ => line.len(),
+        })
+    }
+
+    /// Ends a store write: crashes when it was torn or a crash is due after it.
+    fn store_wrote(&self, landed: usize, line: &[u8]) {
+        let state = self.state();
+        let attempt = state.writes - 1;
+        if landed < line.len() || state.crash == Some(Crash::AfterWrite(attempt)) {
+            crash(state);
+        }
+    }
+
+    /// Stores `plan` with the journal records written so far as a run, as a store would
+    /// have kept them, and returns its ID.
+    pub(crate) fn store(&self, plan: &Plan) -> RunId {
+        let mut state = self.state();
+        let journal = state
+            .records
+            .iter()
+            .flat_map(|record| encode_line(record, &TestCodec))
+            .collect();
+        let id = RunId::at(UNIX_EPOCH + Duration::from_secs(state.runs.len() as u64), 0);
+        let files = Files {
+            plan: Some(encode_stored_plan(plan, &TestCodec).unwrap()),
+            journal,
+        };
+        state.runs.insert(id.clone(), files);
+        id
+    }
+}
+
+impl RunStore for World {
+    fn lock(&self, _: &CancelToken) -> Result<Locked, StoreRefusal> {
+        if self.state().busy {
+            return Err(StoreRefusal::Busy);
+        }
+        Ok(Locked::new("world"))
+    }
+
+    fn lock_state(&self) -> Result<LockState, StoreRefusal> {
+        Ok(if self.state().busy {
+            LockState::Held
+        } else {
+            LockState::Free
+        })
+    }
+
+    fn runs(&self) -> Result<Vec<RunId>, ApplyError> {
+        Ok(self.state().runs.keys().cloned().collect())
+    }
+
+    fn header(&self, run: &RunId) -> Result<Option<Vec<u8>>, ApplyError> {
+        let plan = self.plan(run)?;
+        Ok(plan.map(|plan| {
+            let end = plan
+                .iter()
+                .position(|byte| *byte == b'\n')
+                .map_or(plan.len(), |at| at + 1);
+            plan[..end].to_vec()
+        }))
+    }
+
+    fn plan(&self, run: &RunId) -> Result<Option<Vec<u8>>, ApplyError> {
+        Ok(self
+            .state()
+            .runs
+            .get(run)
+            .and_then(|files| files.plan.clone()))
+    }
+
+    fn journal(&self, run: &RunId) -> Result<Vec<u8>, ApplyError> {
+        Ok(self
+            .state()
+            .runs
+            .get(run)
+            .map(|files| files.journal.clone())
+            .unwrap_or_default())
+    }
+
+    fn create(&self, _: &Locked, plan: &[u8], first: &[u8]) -> Result<RunId, StoreRefusal> {
+        let landed = self.store_write(first).map_err(StoreRefusal::Write)?;
+        let mut state = self.state();
+        let id = RunId::at(UNIX_EPOCH + Duration::from_secs(state.runs.len() as u64), 0);
+        let files = Files {
+            plan: Some(plan.to_vec()),
+            journal: first[..landed].to_vec(),
+        };
+        state.runs.insert(id.clone(), files);
+        if landed == first.len() {
+            let record = decode_line(&first[..first.len() - 1], &TestCodec).unwrap();
+            state.records.push(record);
+        }
+        drop(state);
+        self.store_wrote(landed, first);
+        Ok(id)
+    }
+
+    fn append(&self, _: &Locked, run: &RunId, at: u64, line: &[u8]) -> Result<u64, ApplyError> {
+        let landed = self.store_write(line)?;
+        let mut state = self.state();
+        let files = state
+            .runs
+            .get_mut(run)
+            .ok_or_else(|| ApplyError::new(ErrorCode::Journal))?;
+        let at = usize::try_from(at).unwrap();
+        if files.journal.len() < at {
+            return Err(ApplyError::new(ErrorCode::Journal));
+        }
+        files.journal.truncate(at);
+        files.journal.extend_from_slice(&line[..landed]);
+        let length = files.journal.len() as u64;
+        if landed == line.len() {
+            let record = decode_line(&line[..line.len() - 1], &TestCodec).unwrap();
+            state.records.push(record);
+        }
+        drop(state);
+        self.store_wrote(landed, line);
+        Ok(length)
     }
 }
 
@@ -432,39 +690,50 @@ impl WorldJournal<'_> {
 
 impl Journal for WorldJournal<'_> {
     fn plan(&mut self, plan: &Plan) -> Result<(), ApplyError> {
-        self.write(Record::Plan(plan.digest()))
+        self.write(Record::Plan {
+            digest: plan.digest(),
+        })
     }
 
-    fn intent(&mut self, intent: &Intent) -> Result<(), ApplyError> {
-        self.write(Record::Intent(intent.clone()))
-    }
-
-    fn outcome(&mut self, item: ItemId, outcome: &ItemOutcome) -> Result<(), ApplyError> {
-        self.write(Record::Outcome(item, outcome.clone()))
+    fn record(&mut self, record: &Record) -> Result<(), ApplyError> {
+        self.write(record.clone())
     }
 }
 
 impl State {
     /// Why the records break the journal's order, if they do: the plan first, then per
-    /// item at most one intent, and at most one outcome after it.
+    /// item at most one intent and one outcome, an outcome without an intent only for a
+    /// skip, and nothing after an item's outcome.
     pub(crate) fn order_problem(&self) -> Option<String> {
         let mut intents = BTreeSet::new();
         let mut outcomes = BTreeSet::new();
         for (index, record) in self.records.iter().enumerate() {
-            match record {
-                Record::Plan(_) if index == 0 => {}
-                Record::Plan(_) => return Some(format!("a second plan at {index}")),
-                _ if index == 0 => return Some("a record before the plan".to_owned()),
+            let problem = match record {
+                Record::Plan { .. } if index == 0 => None,
+                Record::Plan { .. } => Some(format!("a second plan at {index}")),
+                _ if index == 0 => Some("a record before the plan".to_owned()),
+                Record::Intent(intent) if outcomes.contains(&intent.item) => {
+                    Some(format!("item {} intended after it ended", intent.item.0))
+                }
                 Record::Intent(intent) if !intents.insert(intent.item) => {
-                    return Some(format!("item {} intended twice", intent.item.0));
+                    Some(format!("item {} intended twice", intent.item.0))
                 }
-                Record::Outcome(item, _) if !intents.contains(item) => {
-                    return Some(format!("item {} ended with no intent", item.0));
+                Record::Outcome { item, outcome }
+                    if !intents.contains(item) && !matches!(outcome, ItemOutcome::Skipped(_)) =>
+                {
+                    Some(format!("item {} ended with no intent", item.0))
                 }
-                Record::Outcome(item, _) if !outcomes.insert(*item) => {
-                    return Some(format!("item {} ended twice", item.0));
+                Record::Outcome { item, .. } if !outcomes.insert(*item) => {
+                    Some(format!("item {} ended twice", item.0))
                 }
-                Record::Intent(_) | Record::Outcome(..) => {}
+                Record::Intent(_)
+                | Record::Outcome { .. }
+                | Record::RestoreIntent { .. }
+                | Record::RestoreOutcome { .. }
+                | Record::TrashRecordRemoved { .. } => None,
+            };
+            if problem.is_some() {
+                return problem;
             }
         }
         None
@@ -475,16 +744,24 @@ impl State {
         let ended: BTreeSet<ItemId> = self
             .records
             .iter()
-            .filter_map(|record| match record {
-                Record::Outcome(item, _) => Some(*item),
-                Record::Plan(_) | Record::Intent(_) => None,
+            .filter_map(|record| {
+                if let Record::Outcome { item, .. } = record {
+                    Some(*item)
+                } else {
+                    None
+                }
             })
             .collect();
         self.records
             .iter()
-            .filter_map(|record| match record {
-                Record::Intent(intent) if !ended.contains(&intent.item) => Some(intent.clone()),
-                Record::Plan(_) | Record::Intent(_) | Record::Outcome(..) => None,
+            .filter_map(|record| {
+                if let Record::Intent(intent) = record
+                    && !ended.contains(&intent.item)
+                {
+                    Some(intent.clone())
+                } else {
+                    None
+                }
             })
             .collect()
     }

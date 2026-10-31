@@ -1,6 +1,8 @@
 //! The platform runner: the one place kipple starts a native command
-//! (`docs/08-engineering-standards.md` §2). So far it only runs read-only version probes.
+//! (`docs/08-engineering-standards.md` §2). It runs read-only version probes and git's
+//! tracked-file query (D-066).
 
+use std::ffi::OsStr;
 use std::io::{self, Read};
 use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
@@ -9,17 +11,39 @@ use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use kipple_core::ToolError;
+use kipple_core::{CancelToken, ToolError};
 
 use crate::environment::Environment;
+use crate::interrupt;
 use crate::os;
 
 /// How often the runner checks on a child that has closed its output but not exited.
 const POLL: Duration = Duration::from_millis(10);
 
-/// The most output kept from each stream. The rest is read and discarded, so a chatty
-/// tool can neither block on a full pipe nor grow kipple's memory.
+/// The most output a version probe keeps from each stream. The rest is read and
+/// discarded, so a chatty tool can neither block on a full pipe nor grow kipple's memory.
 const OUTPUT_LIMIT: u64 = 64 * 1024;
+
+/// A command to run: the program, its arguments, the variables it gets beyond the
+/// runner's own, how long it may take and how much of its stdout is kept.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Invocation<'command> {
+    pub(crate) program: &'command Path,
+    pub(crate) args: &'command [&'command OsStr],
+    pub(crate) vars: &'command [Var<'command>],
+    pub(crate) deadline: Duration,
+    /// The most bytes kept from stdout. Stderr keeps [`OUTPUT_LIMIT`].
+    pub(crate) limit: u64,
+    /// Stops the command when set, as missing its deadline does.
+    pub(crate) cancel: Option<&'command CancelToken>,
+}
+
+/// One environment variable a command is started with.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Var<'value> {
+    pub(crate) name: &'value str,
+    pub(crate) value: &'value OsStr,
+}
 
 /// What a finished command printed.
 #[derive(Debug)]
@@ -27,6 +51,15 @@ pub(crate) struct Output {
     pub(crate) status: ExitStatus,
     pub(crate) stdout: Vec<u8>,
     pub(crate) stderr: Vec<u8>,
+    /// Whether stdout went past the limit, so `stdout` is only its start.
+    pub(crate) truncated: bool,
+}
+
+/// One stream as read: what was kept, and whether there was more.
+#[derive(Debug, Default)]
+struct Captured {
+    kept: Vec<u8>,
+    truncated: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +69,8 @@ enum Stream {
 }
 
 /// Runs `program` with `args`, no stdin and a minimal environment (`LC_ALL=C` plus what
-/// the OS needs to start a process), and waits at most `deadline`.
+/// the OS needs to start a process), out of reach of the terminal's Ctrl+C, and waits at
+/// most `deadline`.
 ///
 /// A child that misses its deadline is killed: kipple stops only processes it started
 /// itself, never anything else (`docs/04-safety-model.md` §3.8).
@@ -46,13 +80,28 @@ pub(crate) fn run(
     env: &Environment,
     deadline: Duration,
 ) -> Result<Output, ToolError> {
+    let args: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+    let invocation = Invocation {
+        program,
+        args: &args,
+        vars: &[],
+        deadline,
+        limit: OUTPUT_LIMIT,
+        cancel: None,
+    };
+    invoke(&invocation, env)
+}
+
+/// Runs `invocation` as [`run`] does, with its own variables, output limit and cancel
+/// token. A cancelled command is stopped and fails as an interrupted wait.
+pub(crate) fn invoke(invocation: &Invocation<'_>, env: &Environment) -> Result<Output, ToolError> {
     #[expect(
         clippy::disallowed_methods,
         reason = "the platform runner is the one place that starts native commands"
     )]
-    let mut command = Command::new(program);
+    let mut command = Command::new(invocation.program);
     command
-        .args(args)
+        .args(invocation.args)
         .env_clear()
         .env("LC_ALL", "C")
         .stdin(Stdio::null())
@@ -63,52 +112,75 @@ pub(crate) fn run(
             command.env(name, value);
         }
     }
+    for var in invocation.vars {
+        command.env(var.name, var.value);
+    }
+    if interrupt::armed() {
+        os::own_process_group(&mut command);
+    }
     let mut child = command.spawn().map_err(|e| ToolError::Start(Arc::new(e)))?;
     let started = Instant::now();
     // `sender` lives until `wait` returns, so `outputs` never disconnects early.
     let (sender, outputs) = mpsc::channel();
-    read_in_background(Stream::Stdout, child.stdout.take(), &sender);
-    read_in_background(Stream::Stderr, child.stderr.take(), &sender);
-    wait(&mut child, &outputs, started, deadline)
+    read_in_background(
+        Stream::Stdout,
+        child.stdout.take(),
+        invocation.limit,
+        &sender,
+    );
+    read_in_background(Stream::Stderr, child.stderr.take(), OUTPUT_LIMIT, &sender);
+    wait(&mut child, &outputs, started, invocation)
 }
 
-type Delivered = (Stream, io::Result<Vec<u8>>);
+type Delivered = (Stream, io::Result<Captured>);
 
 fn read_in_background<R: Read + Send + 'static>(
     stream: Stream,
     pipe: Option<R>,
+    limit: u64,
     sender: &mpsc::Sender<Delivered>,
 ) {
     let sender = sender.clone();
-    thread::spawn(move || sender.send((stream, drain(pipe))));
+    thread::spawn(move || sender.send((stream, drain(pipe, limit))));
 }
 
-/// Waits for the child to exit and both streams to close, or kills it at the deadline.
+/// Waits for the child to exit and both streams to close, or kills it at the deadline or
+/// once it is cancelled.
 fn wait(
     child: &mut Child,
     outputs: &mpsc::Receiver<Delivered>,
     started: Instant,
-    deadline: Duration,
+    invocation: &Invocation<'_>,
 ) -> Result<Output, ToolError> {
     let wait_error = |e| ToolError::Wait(Arc::new(e));
-    let (mut status, mut stdout, mut stderr) = (None, None, None);
+    let deadline = invocation.deadline;
+    let (mut status, mut stdout, mut stderr): (_, Option<Captured>, Option<Captured>) =
+        (None, None, None);
     loop {
         if status.is_none() {
             status = child.try_wait().map_err(wait_error)?;
         }
         if let (Some(status), Some(stdout), Some(stderr)) = (status, &mut stdout, &mut stderr) {
+            let stdout = std::mem::take(stdout);
             return Ok(Output {
                 status,
-                stdout: std::mem::take(stdout),
-                stderr: std::mem::take(stderr),
+                stdout: stdout.kept,
+                stderr: std::mem::take(stderr).kept,
+                truncated: stdout.truncated,
             });
         }
-        let Some(left) = deadline.checked_sub(started.elapsed()) else {
+        let left = deadline.checked_sub(started.elapsed());
+        let cancelled = invocation.cancel.is_some_and(CancelToken::is_cancelled);
+        let Some(left) = left.filter(|_| !cancelled) else {
             child
                 .kill()
                 .and_then(|()| child.wait())
                 .map_err(wait_error)?;
-            return Err(ToolError::TimedOut { deadline });
+            return Err(if cancelled {
+                wait_error(io::ErrorKind::Interrupted.into())
+            } else {
+                ToolError::TimedOut { deadline }
+            });
         };
         match outputs.recv_timeout(left.min(POLL)) {
             Ok((Stream::Stdout, bytes)) => stdout = Some(bytes.map_err(wait_error)?),
@@ -118,14 +190,24 @@ fn wait(
     }
 }
 
-/// Reads a stream to its end, keeping the first [`OUTPUT_LIMIT`] bytes.
-fn drain(pipe: Option<impl Read>) -> io::Result<Vec<u8>> {
-    let mut kept = Vec::new();
+/// Reads a stream to its end, keeping its first `limit` bytes. One byte more is read to
+/// tell output exactly at the limit from output past it.
+fn drain(pipe: Option<impl Read>, limit: u64) -> io::Result<Captured> {
+    let mut captured = Captured::default();
     if let Some(mut pipe) = pipe {
-        pipe.by_ref().take(OUTPUT_LIMIT).read_to_end(&mut kept)?;
+        let read = pipe
+            .by_ref()
+            .take(limit.saturating_add(1))
+            .read_to_end(&mut captured.kept)?;
+        if u64::try_from(read).map_or(true, |read| read > limit) {
+            captured.truncated = true;
+            captured
+                .kept
+                .truncate(usize::try_from(limit).unwrap_or(usize::MAX));
+        }
         io::copy(&mut pipe, &mut io::sink())?;
     }
-    Ok(kept)
+    Ok(captured)
 }
 
 #[cfg(test)]
@@ -139,6 +221,60 @@ mod tests {
         loop {
             thread::park();
         }
+    }
+
+    /// Not a test: the child the process group tests start. It passes when it leads a
+    /// process group of its own.
+    #[cfg(unix)]
+    #[test]
+    #[ignore = "started by the process group tests"]
+    #[expect(unsafe_code, reason = "libc's getpgrp is a raw call")]
+    fn leads_its_own_process_group() {
+        // SAFETY: getpgrp takes nothing and can't fail.
+        let group = unsafe { libc::getpgrp() };
+        assert_eq!(u32::try_from(group).ok(), Some(std::process::id()));
+    }
+
+    #[cfg(unix)]
+    fn child_leads_its_own_group() -> bool {
+        let this_test_binary = std::env::current_exe().unwrap();
+        let args = [
+            "--exact",
+            "runner::tests::leads_its_own_process_group",
+            "--ignored",
+        ];
+        run(
+            &this_test_binary,
+            &args,
+            &Environment::default(),
+            Duration::from_secs(60),
+        )
+        .unwrap()
+        .status
+        .success()
+    }
+
+    /// Catches a terminal Ctrl+C killing git midway, which turns a cancel into an item
+    /// skipped for unknown git: the terminal interrupts its foreground process group,
+    /// and each tool kipple starts leads a group of its own.
+    #[cfg(unix)]
+    #[test]
+    fn a_tool_is_out_of_reach_of_the_terminals_interrupt() {
+        crate::cancel_on_interrupt(&CancelToken::new()).unwrap();
+
+        assert!(child_leads_its_own_group(), "the tool leads its own group");
+    }
+
+    /// Catches a read-only command leaving a hung probe running after Ctrl+C ends kipple:
+    /// with no interrupt handler, each tool stays in kipple's group, where the terminal's
+    /// interrupt reaches it too.
+    #[cfg(unix)]
+    #[test]
+    fn without_a_handler_a_tool_shares_the_terminals_interrupt() {
+        assert!(
+            !child_leads_its_own_group(),
+            "the tool is in kipple's group"
+        );
     }
 
     #[test]
@@ -157,6 +293,36 @@ mod tests {
         assert!(
             started.elapsed() < Duration::from_secs(5),
             "the hung tool is stopped well before 5 seconds"
+        );
+    }
+
+    /// Catches a cancelled scan or apply left waiting on a native command: the command is
+    /// stopped, and fails rather than answer.
+    #[test]
+    fn a_cancelled_tool_is_stopped() {
+        let this_test_binary = std::env::current_exe().unwrap();
+        let args = ["--exact", "runner::tests::hanging_child", "--ignored"].map(OsStr::new);
+        let cancel = CancelToken::new();
+        cancel.cancel();
+        let invocation = Invocation {
+            program: &this_test_binary,
+            args: &args,
+            vars: &[],
+            deadline: Duration::from_secs(60),
+            limit: OUTPUT_LIMIT,
+            cancel: Some(&cancel),
+        };
+        let started = Instant::now();
+
+        let result = invoke(&invocation, &Environment::default());
+
+        assert!(
+            matches!(&result, Err(ToolError::Wait(error)) if error.kind() == io::ErrorKind::Interrupted),
+            "a cancelled tool fails as interrupted: {result:?}"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the cancelled tool is stopped well before its deadline"
         );
     }
 }

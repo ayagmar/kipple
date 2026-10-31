@@ -20,13 +20,15 @@ pub(crate) use judging::{Judged, Scene};
 
 use crate::cancel::CancelToken;
 use crate::engine::{FindingId, ScanReport};
-use crate::frozen::FrozenTree;
+use crate::frozen::{FrozenTree, Mark, NodeId};
 use crate::mutation::{Executor, FileSystemClass, Freezer, LocalFileSystem};
 use crate::outcome::{ApplyError, ErrorCode, Skip, Stop};
 use crate::plan::{ItemId, MethodChoice, Plan, PlanEntry, Selection, Standing};
-use crate::policy::{Policy, Verdict};
+use crate::policy::{Hold, Policy, Tracked, Verdict};
+use crate::probe::EntryKind;
 use crate::protect::Protections;
 use crate::rule::{Method, Rule, RuleId};
+use crate::tracked::{GitGap, TrackedQuery, holds_repository};
 use crate::trash::TrashBackend;
 
 /// What decides how a finding is judged and removed now.
@@ -72,8 +74,11 @@ impl Methods {
 named! {
     /// Who a plan is for.
     PlanMode {
-        /// A person, who reviews it: Safe and Review items.
+        /// A person, who reviews it item by item in the TUI: Safe and Review items.
         Review = "review",
+        /// A person at the command line, who reviews the summary: Safe items by any
+        /// method. Review items need the TUI's per-item review (pinned 1).
+        Safe = "safe",
         /// Automation (`--only`, a profile, with `--yes`): Safe items removed by a
         /// delete, nothing else (pinned 1).
         SafeOnly = "safe-only",
@@ -89,6 +94,8 @@ pub struct MutationPorts<'ports> {
     pub executor: &'ports dyn Executor,
     /// Moves items whole to the trash and back.
     pub trash: &'ports dyn TrashBackend,
+    /// Asks git which entries of a frozen tree it tracks.
+    pub tracked: &'ports dyn TrackedQuery,
 }
 
 /// What to plan.
@@ -240,9 +247,15 @@ fn suited<'scan>(
 /// Why an item of `judged`'s standing and method can't be planned for `mode`, if it can't.
 fn unsuited(judged: &Judged<'_>, mode: PlanMode) -> Option<Skip> {
     match (mode, &judged.verdict, judged.method()) {
-        (PlanMode::Review, _, _) | (PlanMode::SafeOnly, Verdict::Safe, Method::Delete) => None,
-        (PlanMode::SafeOnly, Verdict::Review(cautions), _) => Some(Skip::Riskier(cautions.clone())),
-        (PlanMode::SafeOnly, Verdict::Protected(holds), _) => Some(Skip::Protected(holds.clone())),
+        (PlanMode::Review, _, _)
+        | (PlanMode::Safe, Verdict::Safe, _)
+        | (PlanMode::SafeOnly, Verdict::Safe, Method::Delete) => None,
+        (PlanMode::Safe | PlanMode::SafeOnly, Verdict::Review(cautions), _) => {
+            Some(Skip::Riskier(cautions.clone()))
+        }
+        (PlanMode::Safe | PlanMode::SafeOnly, Verdict::Protected(holds), _) => {
+            Some(Skip::Protected(holds.clone()))
+        }
         (PlanMode::SafeOnly, Verdict::Safe, Method::Trash) => Some(Skip::WholeNotReviewed),
     }
 }
@@ -438,7 +451,70 @@ fn freeze(
     if let Some(code) = changed {
         return Err(Skip::Freeze(ApplyError::new(code)));
     }
-    Ok(entry(judged, file_system, Arc::new(freeze.tree)))
+    let tracked = untracked(judged, &freeze.tree, ports, cancel)?;
+    let mut entry = entry(judged, file_system, Arc::new(freeze.tree));
+    leave_out(&mut entry, &tracked);
+    Ok(entry)
+}
+
+/// Leaves `ids` and everything below them out of `entry`'s tree and its estimate: what
+/// git tracks, or what an imported plan didn't authorize. Only takes authority away.
+pub(crate) fn leave_out(entry: &mut PlanEntry, ids: &[NodeId]) {
+    if ids.is_empty() {
+        return;
+    }
+    let tree = Arc::make_mut(&mut entry.tree);
+    let mut left_out = 0;
+    for id in ids {
+        left_out += excluded_bytes(tree, *id);
+        tree.exclude(*id);
+    }
+    if let Some(estimate) = &mut entry.estimate {
+        estimate.apparent.0 = estimate.apparent.0.saturating_sub(left_out);
+        for allocated in [&mut estimate.allocated, &mut estimate.unique_reclaim]
+            .into_iter()
+            .flatten()
+        {
+            allocated.0 = allocated.0.saturating_sub(left_out);
+        }
+    }
+}
+
+/// The entries of `tree` git tracks, which the item leaves out: none when no repository
+/// holds it. A `.git` inside the item, or an answer git couldn't give in full, refuses it
+/// (D-066).
+pub(crate) fn untracked(
+    judged: &Judged<'_>,
+    tree: &FrozenTree,
+    ports: &MutationPorts<'_>,
+    cancel: &CancelToken,
+) -> Result<Vec<NodeId>, Skip> {
+    if holds_repository(tree) {
+        return Err(Skip::Git(GitGap::NestedRepository));
+    }
+    match &judged.facts.tracked {
+        Tracked::Asked { work_tree, .. } => ports
+            .tracked
+            .entries(work_tree, &judged.anchor, tree, cancel)
+            .map_err(Skip::Git),
+        Tracked::NoRepository => Ok(Vec::new()),
+        // Planning never gets this far with these: each holds the item.
+        Tracked::InsideRepository { gap, .. } => Err(Skip::Git(*gap)),
+        Tracked::Unchecked(_) | Tracked::HoldsRepository { .. } | Tracked::Unwalked(_) => {
+            Err(Skip::Protected(vec![Hold::UnknownGit]))
+        }
+    }
+}
+
+/// The bytes of the files at and below `id`, which leaving it out keeps on disk.
+fn excluded_bytes(tree: &FrozenTree, id: NodeId) -> u64 {
+    tree.subtree(id)
+        .into_iter()
+        .filter(|id| tree.mark(*id) == Mark::Remove)
+        .filter_map(|id| tree.entry(id)?.snapshot())
+        .filter(|entry| entry.kind == EntryKind::File && entry.links <= 1)
+        .map(|entry| entry.fingerprint.size)
+        .fold(0, u64::saturating_add)
 }
 
 /// The plan entry for `judged`, with its frozen `tree`. Its item is numbered by the plan.

@@ -73,7 +73,7 @@ pub type Catalog = BTreeSet<RuleId>;
 pub struct Config {
     /// `care.level`.
     pub level: Option<Level>,
-    /// `clean.method`: stored only, until methods run (M3).
+    /// `clean.method`: how `clean` and `plan` remove, unless `--method` says otherwise.
     pub method: Option<Method>,
     /// `scan.project_roots`.
     pub project_roots: Option<Vec<String>>,
@@ -405,6 +405,16 @@ fn held_path(path: &str, roots: &Roots, note: Option<String>) -> HeldPath {
             ..HeldPath::default()
         };
     };
+    HeldPath {
+        note,
+        ..held_at(&expanded, roots)
+    }
+}
+
+/// `path` held in every form a finding may take: as given, and below the directory a
+/// linked root leads to, with the identities of what is there and above it.
+pub(crate) fn held_at(path: &Path, roots: &Roots) -> HeldPath {
+    let expanded = path.to_owned();
     let mut forms = vec![expanded.clone()];
     for Resolution { resolved, .. } in roots.iter() {
         let Ok(resolved) = resolved else { continue };
@@ -417,7 +427,7 @@ fn held_path(path: &str, roots: &Roots, note: Option<String>) -> HeldPath {
     HeldPath {
         forms,
         lineage,
-        note,
+        note: None,
     }
 }
 
@@ -507,9 +517,7 @@ pub fn write_show(
         show_line(out, "", "not present, the defaults apply")?;
     }
     let level = config.level.unwrap_or(Level::Balanced);
-    let method = config
-        .method
-        .map_or("delete (default; stored only)", |m| m.name());
+    let method = config.method.map_or("delete (default)", |m| m.name());
     show_line(out, "care.level", level)?;
     show_line(out, "clean.method", method)?;
     let roots = config.project_roots.as_ref().map_or_else(

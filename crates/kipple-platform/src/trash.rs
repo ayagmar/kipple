@@ -28,8 +28,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use kipple_core::{
-    Anchor, ApplyError, CancelToken, Clock, EntrySnapshot, RestoreRequest, SlotState, TrashBackend,
-    TrashOp, TrashSlot, Trashed,
+    Anchor, ApplyError, CancelToken, Clock, EntrySnapshot, Forgotten, RestoreRequest, SlotState,
+    TrashBackend, TrashOp, TrashSlot, Trashed,
 };
 
 /// The platform's [`TrashBackend`]: whole-item moves by handle-relative, no-replace
@@ -87,6 +87,14 @@ impl TrashBackend for ConfinedTrash {
     fn restore(&self, request: &RestoreRequest, cancel: &CancelToken) -> Result<(), ApplyError> {
         unix::restore(self, request, cancel)
     }
+
+    fn prepare_home(&self) -> Result<(), ApplyError> {
+        unix::prepare_home(self)
+    }
+
+    fn forget_unmoved(&self, slot: &TrashSlot, original: &Anchor) -> Result<Forgotten, ApplyError> {
+        unix::forget_unmoved(self, slot, original)
+    }
 }
 
 /// Every operation is refused: nothing on Windows moves an item to the Recycle Bin
@@ -115,6 +123,14 @@ impl TrashBackend for ConfinedTrash {
     }
 
     fn restore(&self, _: &RestoreRequest, _: &CancelToken) -> Result<(), ApplyError> {
+        Err(unsupported())
+    }
+
+    fn prepare_home(&self) -> Result<(), ApplyError> {
+        Err(unsupported())
+    }
+
+    fn forget_unmoved(&self, _: &TrashSlot, _: &Anchor) -> Result<Forgotten, ApplyError> {
         Err(unsupported())
     }
 }

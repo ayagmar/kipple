@@ -6,7 +6,7 @@
 use std::path::{MAIN_SEPARATOR, Path};
 
 use kipple_core::{
-    Activity, ActivityGap, Bucket, Caution, Cost, Facts, Finding, Hold, Lens, Level, Loss,
+    Activity, ActivityGap, Bucket, Caution, Cost, Facts, Finding, Hold, Lens, Level, Loss, Method,
     Modified, Policy, Proposal, Recovery, ScanOutcome, Seen, Tracked, Verdict, WalkGap,
 };
 
@@ -273,6 +273,17 @@ pub(crate) const fn level_about(level: Level) -> &'static str {
     }
 }
 
+/// What choosing `method` as the default means.
+pub(crate) const fn method_about(method: Method) -> &'static str {
+    match method {
+        Method::Delete => "frees the space at once",
+        Method::Trash => "can be put back, but frees nothing until the Trash is emptied",
+    }
+}
+
+/// Where the default method is used, while the home screen removes nothing.
+pub(crate) const METHOD_USED_BY: &str = "used by kipple clean; nothing is removed here";
+
 /// Why a finding is Protected, as a row shows it: never colour alone. At most 22
 /// columns, so it fits the state column with ` +N`.
 pub(crate) const fn hold(hold: Hold) -> &'static str {
@@ -492,9 +503,15 @@ fn tracked(tracked: &Tracked) -> String {
             "{}, so a git checkout inside can't be ruled out",
             walk_gap(*gap)
         ),
-        Tracked::InsideRepository { work_tree } => format!(
-            "inside the repository at {}; whether git tracks files in it isn't checked yet",
-            escaped(&work_tree.display().to_string())
+        Tracked::Asked { work_tree, tracked } => format!(
+            "inside the repository at {}; git tracks {tracked} {} in it, which stay",
+            escaped(&work_tree.display().to_string()),
+            if *tracked == 1 { "file" } else { "files" }
+        ),
+        Tracked::InsideRepository { work_tree, gap } => format!(
+            "inside the repository at {}; git couldn't say which files in it it tracks: {}",
+            escaped(&work_tree.display().to_string()),
+            outcome::git_gap(*gap)
         ),
         Tracked::Unchecked(error) => format!(
             "couldn't check for a repository: {}",
@@ -611,5 +628,7 @@ fn idle_except(unchecked: usize, by_command_line: usize) -> String {
         .join("; ")
 }
 
+pub(crate) mod outcome;
+pub(crate) mod receipt;
 #[cfg(test)]
 mod tests;

@@ -195,6 +195,10 @@ fn a_secret_in_a_process_title_never_reaches_json_or_the_detail_lines() {
             sizer: Box::new(Sized),
             processes: Box::new(Titled(title)),
             clock: Box::new(Epoch),
+            // No `PATH`, so git is never found; the fixture holds no repository anyway.
+            tracked: Box::new(kipple_platform::GitQuery::new(
+                &kipple_platform::Environment::default(),
+            )),
         };
         let engine = Engine::new(ports, vec![Box::new(Venv(venv.clone()))], vec![rule()]).unwrap();
         let mut roots = Roots::default();
@@ -268,4 +272,30 @@ fn a_size_written_short_keeps_its_unit_its_rounding_and_its_lower_bound() {
     };
     assert_eq!(super::size(Some(&partial)), ">= 8.0 MiB");
     assert_eq!(super::size_short(Some(&partial)), ">=8.0M");
+}
+
+/// Catches two error codes, statuses, left reasons, stops, git gaps or run states worded
+/// alike, which leaves a person unable to tell what happened to an item.
+#[test]
+fn each_apply_value_has_its_own_words() {
+    use kipple_core::{ErrorCode, GitGap, LeftReason, RunState, Status, Stop};
+
+    use super::outcome;
+
+    fn distinct<T: Copy + std::fmt::Debug>(all: &[T], word: fn(T) -> &'static str) {
+        let mut seen = std::collections::BTreeMap::new();
+        for value in all {
+            let words = word(*value);
+            assert!(!words.is_empty(), "{value:?} has words");
+            if let Some(other) = seen.insert(words, *value) {
+                panic!("{value:?} and {other:?} are both worded {words:?}");
+            }
+        }
+    }
+    distinct(ErrorCode::ALL, outcome::error_code);
+    distinct(Status::ALL, outcome::status);
+    distinct(LeftReason::ALL, outcome::left_reason);
+    distinct(Stop::ALL, outcome::stop);
+    distinct(GitGap::ALL, outcome::git_gap);
+    distinct(RunState::ALL, outcome::run_state);
 }

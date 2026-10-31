@@ -1,6 +1,9 @@
 //! How a stored frozen tree keeps names: exactly as the OS holds them.
 
 use std::ffi::{OsStr, OsString};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 
 use kipple_core::NameCodec;
 
@@ -21,6 +24,23 @@ impl NameCodec for OsNames {
     fn decode(&self, bytes: &[u8]) -> Option<OsString> {
         use std::os::unix::ffi::OsStrExt as _;
         Some(OsStr::from_bytes(bytes).to_owned())
+    }
+
+    #[cfg(unix)]
+    fn decode_path(&self, bytes: &[u8]) -> Option<PathBuf> {
+        use std::os::unix::ffi::OsStrExt as _;
+        Some(Path::new(OsStr::from_bytes(bytes)).to_owned())
+    }
+
+    #[cfg(windows)]
+    fn decode_path(&self, bytes: &[u8]) -> Option<PathBuf> {
+        use std::os::windows::ffi::OsStringExt as _;
+        let (units, rest) = bytes.as_chunks::<2>();
+        if !rest.is_empty() {
+            return None;
+        }
+        let wide: Vec<u16> = units.iter().map(|unit| u16::from_le_bytes(*unit)).collect();
+        Some(PathBuf::from(OsString::from_wide(&wide)))
     }
 
     #[cfg(windows)]

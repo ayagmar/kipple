@@ -12,15 +12,15 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use kipple_core::{
-    Activity, ActivityGap, Allocated, Apparent, CancelToken, Category, Clock, Completeness,
+    Activity, ActivityGap, Allocated, Anchor, Apparent, CancelToken, Category, Clock, Completeness,
     Consequence, Cost, DirEntryMeta, Engine, EngineError, EntryKind, EntryMeta, EventChannel,
-    EventRx, Evidence, Facts, FileIdentity, FindingSink, FsProbe, Hold, Integration,
-    IntegrationDescriptor, IntegrationError, IntegrationId, Inventory, Lens, Level, Measurement,
-    Method, Modified, Name, Observer, Omission, OpenedRoot, Operation, Platform, Policy, Ports,
-    ProbeError, ProcessOutcome, ProcessProbe, ProcessRecord, ProcessSnapshot, Recovery,
-    ResolvedRoot, RootLink, RootSource, Roots, Rule, RuleId, RuleText, ScanContext, ScanEvent,
-    ScanOutcome, ScanReport, ScanRequest, Selector, Sizer, SpaceEstimate, SymbolicRoot, Tracked,
-    UnresolvedRoot, Verdict, WalkGap, event_channel,
+    EventRx, Evidence, Facts, FileIdentity, FindingSink, FrozenTree, FsProbe, GitGap, Hold,
+    Integration, IntegrationDescriptor, IntegrationError, IntegrationId, Inventory, Lens, Level,
+    Measurement, Method, Modified, Name, NodeId, Observer, Omission, OpenedRoot, Operation,
+    Platform, Policy, Ports, ProbeError, ProcessOutcome, ProcessProbe, ProcessRecord,
+    ProcessSnapshot, Recovery, ResolvedRoot, RootLink, RootSource, Roots, Rule, RuleId, RuleText,
+    ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Selector, Sizer, SpaceEstimate,
+    SymbolicRoot, Tracked, TrackedQuery, UnresolvedRoot, Verdict, WalkGap, event_channel,
 };
 
 /// Ten times the 100 ms cancellation budget: long enough not to flake on a loaded CI
@@ -202,6 +202,27 @@ fn ports(fs: FakeFs, sizer: FakeSizer) -> Ports {
         sizer: Box::new(sizer),
         processes: Box::new(no_processes()),
         clock: Box::new(FixedClock),
+        tracked: Box::new(FakeGit(Err(GitGap::Unsupported))),
+    }
+}
+
+/// git, answering every count with this.
+#[derive(Debug)]
+struct FakeGit(Result<u64, GitGap>);
+
+impl TrackedQuery for FakeGit {
+    fn count(&self, _: &Path, _: &Path, _: &CancelToken) -> Result<u64, GitGap> {
+        self.0
+    }
+
+    fn entries(
+        &self,
+        _: &Path,
+        _: &Anchor,
+        _: &FrozenTree,
+        _: &CancelToken,
+    ) -> Result<Vec<NodeId>, GitGap> {
+        self.0.map(|_| Vec::new())
     }
 }
 
@@ -1050,9 +1071,10 @@ fn facts(ports: Ports, proposer: Proposer) -> BTreeMap<PathBuf, Facts> {
         .collect()
 }
 
-#[test]
-fn a_git_directory_in_or_above_a_finding_leaves_what_it_tracks_unknown() {
-    let fs = FakeFs {
+/// A git fixture: a repository above one finding, one finding that is a work tree, one
+/// whose `.git` can't be read and one with none.
+fn git_fs() -> FakeFs {
+    FakeFs {
         no_git: true,
         entries: BTreeMap::from([
             (PathBuf::from("/found/repo/.git"), Ok(EntryKind::File)),
@@ -1063,32 +1085,40 @@ fn a_git_directory_in_or_above_a_finding_leaves_what_it_tracks_unknown() {
             ),
         ]),
         ..FakeFs::default()
-    };
-    let proposer = Proposer {
-        paths: &[
-            "/found/repo/target",
-            "/found/self",
-            "/found/locked/target",
-            "/found/plain/target",
-        ],
-    };
+    }
+}
 
-    let facts = facts(ports(fs, FakeSizer::default()), proposer);
+const GIT_FINDINGS: Proposer = Proposer {
+    paths: &[
+        "/found/repo/target",
+        "/found/self",
+        "/found/locked/target",
+        "/found/plain/target",
+    ],
+};
 
-    let tracked = |path: &str| &facts[Path::new(path)].tracked;
+/// Catches a finding inside a repository judged without git's answer, or a work tree, an
+/// unreadable `.git` or a failed query taken as untracked (D-066; spec M3b pinned 13, 16).
+#[test]
+fn git_answers_for_a_finding_inside_a_repository_and_nothing_else_is_asked() {
+    let answered = Ports {
+        tracked: Box::new(FakeGit(Ok(3))),
+        ..ports(git_fs(), FakeSizer::default())
+    };
+    let found = facts(answered, GIT_FINDINGS);
+    let tracked = |path: &str| &found[Path::new(path)].tracked;
     assert!(
         matches!(
             tracked("/found/repo/target"),
-            Tracked::InsideRepository { work_tree } if work_tree == Path::new("/found/repo")
+            Tracked::Asked { work_tree, tracked: 3 } if work_tree == Path::new("/found/repo")
         ),
-        "a target inside a repository is tracked by its work tree"
+        "a target inside a repository carries git's answer, got {:?}",
+        tracked("/found/repo/target")
     );
     assert!(
-        matches!(
-            tracked("/found/self"),
-            Tracked::InsideRepository { work_tree } if work_tree == Path::new("/found/self")
-        ),
-        "a repository found as itself is tracked by its own work tree"
+        matches!(tracked("/found/self"), Tracked::HoldsRepository { work_tree } if work_tree == Path::new("/found/self")),
+        "a finding that is a work tree holds a repository, got {:?}",
+        tracked("/found/self")
     );
     assert!(
         matches!(
@@ -1100,6 +1130,18 @@ fn a_git_directory_in_or_above_a_finding_leaves_what_it_tracks_unknown() {
     assert!(
         matches!(tracked("/found/plain/target"), Tracked::NoRepository),
         "a target with no git directory has no repository"
+    );
+
+    let failed = facts(ports(git_fs(), FakeSizer::default()), GIT_FINDINGS);
+    assert!(
+        matches!(
+            &failed[Path::new("/found/repo/target")].tracked,
+            Tracked::InsideRepository {
+                gap: GitGap::Unsupported,
+                ..
+            }
+        ),
+        "a query git couldn't answer leaves the repository's files unknown"
     );
 }
 

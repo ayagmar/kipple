@@ -119,7 +119,7 @@ fn settings_head(app: &App, look: Look<'_>, panel: &mut PanelLines<'_>) {
     let method = vec![
         Span::raw(settings::method(app).name()),
         Span::styled(
-            "  stored only: nothing is removed yet",
+            format!("  {}", human::METHOD_USED_BY),
             look.style(Role::Muted),
         ),
     ];

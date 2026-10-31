@@ -20,6 +20,7 @@ use std::path::PathBuf;
 use std::thread::{self, Scope, ScopedJoinHandle};
 use std::time::{Duration, Instant};
 
+use kipple_core::format::base64;
 use kipple_core::{
     CancelToken, Engine, EventChannel, EventRx, ScanOutcome, ScanReport, ScanRequest, Selector,
     SymbolicRoot, event_channel, suggest,
@@ -489,27 +490,6 @@ where
 fn osc52(out: &mut impl io::Write, text: &str) -> io::Result<()> {
     write!(out, "\x1b]52;c;{}\x07", base64(text.as_bytes()))?;
     out.flush()
-}
-
-/// `bytes` in standard base64, padded.
-fn base64(bytes: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut encoded = String::with_capacity(bytes.len().div_ceil(3) * 4);
-    for chunk in bytes.chunks(3) {
-        let [a, b, c] = [0, 1, 2].map(|i| chunk.get(i).copied().unwrap_or(0));
-        let group = u32::from_be_bytes([0, a, b, c]);
-        for (index, shift) in [18, 12, 6, 0].into_iter().enumerate() {
-            let symbol = if index <= chunk.len() {
-                ALPHABET
-                    .get(usize::try_from((group >> shift) & 0x3f).unwrap_or(0))
-                    .map_or('=', |&symbol| char::from(symbol))
-            } else {
-                '='
-            };
-            encoded.push(symbol);
-        }
-    }
-    encoded
 }
 
 /// The file names that mark a project for the root search: the markers of every

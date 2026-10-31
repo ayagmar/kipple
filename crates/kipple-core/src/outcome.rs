@@ -18,6 +18,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::frozen::{FrozenTree, Mark, Marks, NodeId, RelPath, Unauthorized};
+use crate::journal::RestoreResult;
 use crate::mutation::{EffectSink, Finish, Unsupported};
 use crate::plan::{ItemId, JudgementField};
 use crate::planner::{Conflict, Unjudged};
@@ -25,6 +26,7 @@ use crate::policy::{Caution, Hold};
 use crate::protect::Protection;
 use crate::rule::Method;
 use crate::size::{Allocated, Apparent, SpaceEstimate};
+use crate::tracked::GitGap;
 use crate::trash::TrashSlot;
 
 /// How many paths a receipt keeps for each reason an entry was left: the first in the
@@ -217,6 +219,9 @@ pub enum Skip {
     Conflict(Conflict),
     /// Its method is trash, and no trash can take it without risking a permanent delete.
     TrashUnavailable(ApplyError),
+    /// It is inside a git repository, and git couldn't say in full which of its entries
+    /// it tracks, or a `.git` lives inside it (D-066).
+    Git(GitGap),
 }
 
 named! {
@@ -226,6 +231,9 @@ named! {
         Cancelled = "cancelled",
         /// The journal couldn't record an intent or outcome, so nothing more runs.
         JournalFailed = "journal-failed",
+        /// Nothing was recorded for it: the run ended, by a crash or a failed write, before
+        /// it reached the item. Only a run read back says this.
+        Interrupted = "interrupted",
     }
 }
 
@@ -251,6 +259,13 @@ pub enum Found {
     Trashed(Trashed),
     /// It couldn't be checked.
     Unreadable(ApplyError),
+    /// The run changed it but couldn't make the change durable ([`ErrorCode::Unsynced`]),
+    /// so what a power loss leaves can't be told.
+    Unsynced(ApplyError),
+    /// Not looked at yet: its intent is recorded and its outcome isn't, because its run
+    /// is still going or a crash interrupted it and the next mutating command reconciles
+    /// it. Only a run read back says this.
+    Pending,
 }
 
 named! {
@@ -367,6 +382,9 @@ named! {
         Unauthorized = "unauthorized",
         /// The journal couldn't record it.
         Journal = "journal",
+        /// The change was made but couldn't be synced to disk, so a power loss could undo
+        /// it.
+        Unsynced = "unsynced",
         /// The operation was cancelled before it changed anything.
         Cancelled = "cancelled",
         /// Another OS error.
@@ -707,7 +725,8 @@ impl<'run> Tally<'run> {
     /// The item's outcome once the executor returned `run`.
     ///
     /// A report about an entry the run wasn't authorized to touch makes it failed, with
-    /// that fault, whatever the run returned. Otherwise an error before any report makes
+    /// that fault, whatever the run returned. A change the executor couldn't sync makes
+    /// it indeterminate ([`Found::Unsynced`]). Otherwise an error before any report makes
     /// it skipped ([`Skip::Refused`]): the executor reports each removal as it makes it,
     /// so nothing was touched. [`ErrorCode::Stranded`], or a later error, makes it failed and cancellation cancelled,
     /// with what was removed until then. A run that ended is done
@@ -720,6 +739,9 @@ impl<'run> Tally<'run> {
         let refused = |error: &ApplyError| untouched && error.code != ErrorCode::Stranded;
         let effect = self.effect();
         match fault.map_or(run, Err) {
+            Err(error) if error.code == ErrorCode::Unsynced => {
+                ItemOutcome::Indeterminate(Found::Unsynced(error))
+            }
             Err(error) if refused(&error) => ItemOutcome::Skipped(Skip::Refused(error)),
             Err(error) => ItemOutcome::Failed { error, effect },
             Ok(Finish::Cancelled) => ItemOutcome::Cancelled(effect),
@@ -775,6 +797,8 @@ pub struct ReceiptItem {
     pub estimate: Option<SpaceEstimate>,
     /// What happened.
     pub outcome: ItemOutcome,
+    /// How the last restore of it ended, for an item moved to the trash and restored.
+    pub restored: Option<RestoreResult>,
 }
 
 /// What applying a plan did, item by item, in plan order.

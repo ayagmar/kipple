@@ -8,9 +8,9 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use kipple_core::{
-    Activity, ActivityGap, Bucket, Caution, Consequence, Cost, Facts, FileIdentity, HeldPath, Hold,
-    Level, Lineage, Loss, Method, Modified, Policy, ProbeError, Proposal, Recovery, RuleId,
-    RuleSettings, Seen, Tracked, Verdict, WalkGap,
+    Activity, ActivityGap, Bucket, Caution, Consequence, Cost, Facts, FileIdentity, GitGap,
+    HeldPath, Hold, Level, Lineage, Loss, Method, Modified, Policy, ProbeError, Proposal, Recovery,
+    RuleId, RuleSettings, Seen, Tracked, Verdict, WalkGap,
 };
 
 const DAY: Duration = Duration::from_hours(24);
@@ -210,12 +210,27 @@ fn a_protected_finding_shows_every_reason_it_is_held_not_only_the_first() {
     );
 }
 
+/// Catches git's full answer still holding a finding inside a repository: the files it
+/// tracks are left out of the plan, so the rest is judged as anywhere else (D-066).
+#[test]
+fn a_finding_inside_a_repository_git_answered_for_is_not_held() {
+    let facts = Facts {
+        tracked: Tracked::Asked {
+            work_tree: PathBuf::from("/p"),
+            tracked: 2,
+        },
+        ..build_output()
+    };
+    assert_eq!(balanced(&facts), balanced(&build_output()));
+}
+
 #[test]
 fn a_repository_around_or_inside_a_finding_or_one_not_ruled_out_holds_it_in_protected() {
     let cases = [
         (
             Tracked::InsideRepository {
                 work_tree: PathBuf::from("/p"),
+                gap: GitGap::Failed,
             },
             Hold::UnknownGit,
         ),
