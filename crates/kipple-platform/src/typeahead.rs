@@ -41,20 +41,29 @@ mod sys {
     use std::io;
     use std::os::windows::io::{AsHandle, AsRawHandle as _};
 
-    use windows_sys::Win32::System::Console::FlushConsoleInputBuffer;
+    use windows_sys::Win32::System::Console::{FlushConsoleInputBuffer, GetConsoleMode};
 
-    /// Discards the input `console` received and nobody read.
+    /// Discards the input `console` received and nobody read. A terminal that isn't a
+    /// console, such as mintty's pipe, which std also counts as a terminal, can't be
+    /// flushed this way and is left as it is.
     #[expect(
         unsafe_code,
-        reason = "windows-sys exposes FlushConsoleInputBuffer as a raw call"
+        reason = "windows-sys exposes the console calls as raw calls"
     )]
     pub(super) fn discard(console: &impl AsHandle) -> io::Result<()> {
-        // SAFETY: the handle is borrowed, so it stays open for the call.
-        if unsafe { FlushConsoleInputBuffer(console.as_handle().as_raw_handle()) } == 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
+        let handle = console.as_handle().as_raw_handle();
+        let mut mode = 0;
+        // SAFETY: the handle is borrowed, so it stays open for both calls, and `mode` is
+        // a live value.
+        unsafe {
+            if GetConsoleMode(handle, &raw mut mode) == 0 {
+                return Ok(());
+            }
+            if FlushConsoleInputBuffer(handle) == 0 {
+                return Err(io::Error::last_os_error());
+            }
         }
+        Ok(())
     }
 }
 
