@@ -24,6 +24,7 @@ kipple scan --root ~/code --json     # with ~/code as the only project root, as 
 kipple explain builtin.cargo.target  # what a rule selects, why, and what is lost
 kipple doctor                        # where kipple looks and what it can read
 kipple config show                   # the settings in effect
+kipple history                       # every run of clean, with what happened to each item
 ```
 
 These change things, and ask first on a terminal:
@@ -32,7 +33,6 @@ These change things, and ask first on a terminal:
 kipple clean                                  # show the Safe findings, ask, then remove them
 kipple clean --only builtin.cargo.target --yes  # no question: delete only the Safe Cargo targets
 kipple clean --method trash                   # move them to the trash instead (Linux, macOS)
-kipple history                                # every run, with what happened to each item
 ```
 
 ## Development

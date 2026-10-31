@@ -111,8 +111,10 @@ pub fn write_config<E>(
     Ok(text)
 }
 
-/// Writes `bytes` to a new file at `path`, readable by its owner only, and syncs it.
-/// Nothing that is already there, a link included, is replaced.
+/// Writes `bytes` to a new file at `path` and syncs it.
+///
+/// Nothing that is already there, a link included, is replaced. On Linux and macOS only
+/// its owner can read the file; on Windows it takes its folder's access rules.
 ///
 /// # Errors
 /// When something is at `path` already, or the file can't be created or written.
