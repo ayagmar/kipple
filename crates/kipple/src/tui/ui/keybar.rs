@@ -13,7 +13,8 @@ use super::tree::tail;
 use super::{Look, cols};
 use crate::human::{bytes, escaped, review};
 use crate::theme::Role;
-use crate::tui::app::{App, Cleaning, Mode};
+use crate::tui::app::{App, Cleaning, Key, Mode};
+use crate::tui::keymap::shown;
 
 /// What the hints that show however narrow the bar is say: how to get help and how to
 /// leave. Their keys can be rebound, so they are known by their words.
@@ -104,11 +105,11 @@ enum Left {
 }
 
 fn left(app: &App, look: Look<'_>) -> Left {
-    let typing = |prompt: String, text: &str, hint: &'static str| {
+    let typing = |prompt: String, text: &str, hint: &str| {
         Left::Text(Text::from(vec![
             Span::raw(format!("{prompt}{}", escaped(text))),
             Span::styled("_", Style::new().add_modifier(Modifier::SLOW_BLINK)),
-            Span::styled(hint, look.style(Role::Muted)),
+            Span::styled(hint.to_owned(), look.style(Role::Muted)),
         ]))
     };
     if let Some(cleaning) = &app.cleaning {
@@ -147,22 +148,20 @@ fn clean_left(
     app: &App,
     cleaning: &Cleaning,
     look: Look<'_>,
-    typing: impl Fn(String, &str, &'static str) -> Left,
+    typing: impl Fn(String, &str, &str) -> Left,
 ) -> Left {
+    let (enter, esc) = (shown(Key::Enter), shown(Key::Esc));
     // The question is the screen's title, so what is typed always fits beside it.
     if let Cleaning::Typing(_, typed) = cleaning {
-        return typing(
-            "Size: ".to_owned(),
-            typed,
-            "  enter confirms, esc goes back",
-        );
+        let keys = review::size_keys(&enter, &esc);
+        return typing(review::SIZE_PROMPT.to_owned(), typed, &keys);
     }
     if let Some(notice) = &app.notice {
         return Left::Text(Text::styled(notice.clone(), look.style(Role::Accent)));
     }
     let muted = |text: &str| Left::Text(Text::styled(text.to_owned(), look.style(Role::Muted)));
     match cleaning {
-        Cleaning::Planning(_) => muted("esc stops planning"),
+        Cleaning::Planning(_) => muted(&review::stop_planning(&esc)),
         Cleaning::Reviewing(_) | Cleaning::Typing(..) => {
             Left::Hints(look.glyphs.keys(&app.keymap().review_bar()))
         }

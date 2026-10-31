@@ -24,6 +24,25 @@ pub(crate) const REVIEW_AFTER_SCAN: &str = "review opens when the scan has finis
 /// What the review says while its plan is being made (pinned 4).
 pub(crate) const PLANNING: &str = "planning: freezing each item as it is now…";
 
+/// What the key bar says while the plan is made: `back` stops it.
+pub(crate) fn stop_planning(back: &str) -> String {
+    format!("{back} stops planning")
+}
+
+/// What the key bar says before the size being typed.
+pub(crate) const SIZE_PROMPT: &str = "Size: ";
+
+/// What the key bar says after the size being typed: `confirm` confirms it, `back` goes
+/// back to the review.
+pub(crate) fn size_keys(confirm: &str, back: &str) -> String {
+    format!("  {confirm} confirms, {back} goes back")
+}
+
+/// What help says last: selecting removes nothing, and `confirm` on the review cleans.
+pub(crate) fn selecting_removes_nothing(confirm: &str) -> String {
+    format!("Selecting removes nothing: only {confirm} on the review cleans.")
+}
+
 /// The review's title over a plan of `items` items.
 pub(crate) fn review_title(items: usize) -> String {
     format!("Review: clean {}", items_word(items))
