@@ -113,6 +113,39 @@ fn a_replacement_is_a_new_file_renamed_over_the_old_one() {
     assert_eq!(names(&temp.path().join("profiles")), ["daily.json"]);
 }
 
+/// Catches a temporary file left under this process's PID (a crash, or a process with
+/// the same PID in another PID namespace sharing the data directory) blocking every later
+/// save of that profile, or being removed or renamed into place by it.
+#[test]
+fn a_temporary_name_this_pid_left_taken_doesnt_block_a_save_and_stays() {
+    let temp = TempDir::new().unwrap();
+    let store = store(temp.path());
+    let profiles = temp.path().join("profiles");
+    fs::create_dir(&profiles).unwrap();
+    let pid = std::process::id();
+    // The name an earlier release wrote to, then the ones this one tries first.
+    let mut left = vec![format!("daily.json.{pid}.partial")];
+    left.extend((0..3).map(|n| format!("daily.json.{pid}.{n}.partial")));
+    for name in &left {
+        fs::write(profiles.join(name), b"{\"torn").unwrap();
+    }
+
+    store.create_new(&name("daily"), b"{}").unwrap();
+    store.replace(&name("daily"), b"{\"second\":2}").unwrap();
+
+    assert_eq!(
+        store.read(&name("daily")),
+        Ok(Some(b"{\"second\":2}".to_vec()))
+    );
+    left.push("daily.json".to_owned());
+    left.sort();
+    assert_eq!(
+        names(&profiles),
+        left,
+        "a taken name was removed or renamed"
+    );
+}
+
 /// Catches what a crash leaves read or listed as a profile (pinned 11): a temporary file
 /// written part-way before the rename, or a name that isn't a profile's, never is, and
 /// they don't stop the next replacement or removal.

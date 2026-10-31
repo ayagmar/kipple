@@ -6,11 +6,13 @@
 //! refuses (D-065), network and user-space ones included, is refused, for writing as for
 //! reading. The store moves bytes; the core decides what they say.
 //!
-//! A profile is written to a temporary name in `profiles/` that only this process uses,
+//! A profile is written to a temporary name in `profiles/` that no other write is using,
 //! synced, renamed to its name (over the old one when it is replaced) and `profiles/`
 //! synced, before the call returns. A crash leaves the old profile or the new one, never
-//! a mix, and at worst a temporary file that [`ProfileStore::list`] leaves out.
+//! a mix, and at worst a temporary file that [`ProfileStore::list`] leaves out and a
+//! later write passes over.
 
+use std::fs::File;
 use std::io::{self, Read as _, Write as _};
 use std::path::Path;
 use std::path::PathBuf;
@@ -29,6 +31,9 @@ const SUFFIX: &str = ".json";
 
 /// What a temporary file's name ends with.
 const PARTIAL: &str = ".partial";
+
+/// How many temporary names a write tries before it gives up.
+const TEMP_NAMES: u32 = 64;
 
 /// The platform's [`ProfileStore`]: files under kipple's data directory.
 #[derive(Debug, Clone)]
@@ -167,7 +172,7 @@ fn file_name(name: &ProfileName) -> String {
 }
 
 /// Writes `bytes` as the profile `name` in `profiles`, placed as `placing` says: to a
-/// temporary file this process alone names, synced, renamed into place, and `profiles`
+/// temporary file no other write is using, synced, renamed into place, and `profiles`
 /// synced. A write that fails leaves the old profile, if any, and no temporary file.
 fn write(
     profiles: &Folder,
@@ -176,11 +181,8 @@ fn write(
     placing: Placing,
 ) -> Result<(), ProfileStoreError> {
     let as_: Failure = ProfileStoreError::Write;
-    let (to, temp) = (
-        file_name(name),
-        format!("{name}{SUFFIX}.{}{PARTIAL}", std::process::id()),
-    );
-    let mut file = profiles.create(&temp).map_err(|error| as_(failed(error)))?;
+    let to = file_name(name);
+    let (temp, mut file) = create_temp(profiles, &to).map_err(|error| as_(failed(error)))?;
     let written = file.write_all(bytes).and_then(|()| file.sync_all());
     drop(file);
     let placed = written.and_then(|()| match placing {
@@ -195,6 +197,24 @@ fn write(
         });
     }
     profiles.sync().map_err(|error| as_(unsynced(error)))
+}
+
+/// A new temporary file in `profiles` for the profile file `to`, and its name:
+/// `<to>.<pid>.<n>.partial`, with the first `n` whose name is free. A name that is taken
+/// is passed over, never removed: a crash may have left it, but in PID namespaces that
+/// share a data directory another process with this PID may be writing it now.
+fn create_temp(profiles: &Folder, to: &str) -> io::Result<(String, File)> {
+    let pid = std::process::id();
+    let mut taken = None;
+    for n in 0..TEMP_NAMES {
+        let temp = format!("{to}.{pid}.{n}{PARTIAL}");
+        match profiles.create(&temp) {
+            Ok(file) => return Ok((temp, file)),
+            Err(error) if error.kind() == io::ErrorKind::AlreadyExists => taken = Some(error),
+            Err(error) => return Err(error),
+        }
+    }
+    Err(taken.unwrap_or_else(|| io::ErrorKind::AlreadyExists.into()))
 }
 
 /// Refuses a file system outside the executor's allowlist, or one that can't be told.
