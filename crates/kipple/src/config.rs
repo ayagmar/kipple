@@ -73,7 +73,7 @@ pub type Catalog = BTreeSet<RuleId>;
 pub struct Config {
     /// `care.level`.
     pub level: Option<Level>,
-    /// `clean.method`: stored only, until methods run (M3).
+    /// `clean.method`: how `clean` and `plan` remove, unless `--method` says otherwise.
     pub method: Option<Method>,
     /// `scan.project_roots`.
     pub project_roots: Option<Vec<String>>,
@@ -517,9 +517,7 @@ pub fn write_show(
         show_line(out, "", "not present, the defaults apply")?;
     }
     let level = config.level.unwrap_or(Level::Balanced);
-    let method = config
-        .method
-        .map_or("delete (default; stored only)", |m| m.name());
+    let method = config.method.map_or("delete (default)", |m| m.name());
     show_line(out, "care.level", level)?;
     show_line(out, "clean.method", method)?;
     let roots = config.project_roots.as_ref().map_or_else(
