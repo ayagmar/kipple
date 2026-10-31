@@ -3,11 +3,15 @@
 //! one ends the process at once, which the next command reconciles like a crash.
 
 use std::sync::OnceLock;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use kipple_core::CancelToken;
 
 /// The token the first interrupt cancels.
 static TOKEN: OnceLock<CancelToken> = OnceLock::new();
+
+/// Whether the handler is in place.
+static ARMED: AtomicBool = AtomicBool::new(false);
 
 /// Makes the first interrupt (Ctrl+C: `SIGINT` on Linux and macOS, a console control event
 /// on Windows) cancel `token` instead of ending the process. Only the first call in a
@@ -20,7 +24,16 @@ pub fn cancel_on_interrupt(token: &CancelToken) -> std::io::Result<()> {
     if TOKEN.set(token.clone()).is_err() {
         return Ok(());
     }
-    sys::install()
+    sys::install()?;
+    ARMED.store(true, Ordering::Release);
+    Ok(())
+}
+
+/// Whether the first interrupt cancels instead of ending the process. Only then do the
+/// tools kipple starts need keeping out of the terminal's reach: without the handler,
+/// Ctrl+C ends kipple, and it should end them too rather than leave them running.
+pub(crate) fn armed() -> bool {
+    ARMED.load(Ordering::Acquire)
 }
 
 /// Cancels the token; called from the handler, so it only loads and stores atomics.

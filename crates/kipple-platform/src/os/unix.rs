@@ -261,7 +261,8 @@ pub(crate) fn create_private_file(path: &Path) -> io::Result<fs::File> {
 }
 
 /// Starts `command` in a process group of its own. The terminal sends Ctrl+C to its
-/// foreground group, so it cancels kipple and never kills the command midway.
+/// foreground group, so while kipple's interrupt handler is in place it cancels kipple
+/// and never kills the command midway.
 pub(crate) fn own_process_group(command: &mut Command) {
     command.process_group(0);
 }

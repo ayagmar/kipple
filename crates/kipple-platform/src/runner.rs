@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 use kipple_core::{CancelToken, ToolError};
 
 use crate::environment::Environment;
+use crate::interrupt;
 use crate::os;
 
 /// How often the runner checks on a child that has closed its output but not exited.
@@ -114,7 +115,9 @@ pub(crate) fn invoke(invocation: &Invocation<'_>, env: &Environment) -> Result<O
     for var in invocation.vars {
         command.env(var.name, var.value);
     }
-    os::own_process_group(&mut command);
+    if interrupt::armed() {
+        os::own_process_group(&mut command);
+    }
     let mut child = command.spawn().map_err(|e| ToolError::Start(Arc::new(e)))?;
     let started = Instant::now();
     // `sender` lives until `wait` returns, so `outputs` never disconnects early.
@@ -220,16 +223,35 @@ mod tests {
         }
     }
 
-    /// Not a test: the child the process group test starts. It passes when it leads a
+    /// Not a test: the child the process group tests start. It passes when it leads a
     /// process group of its own.
     #[cfg(unix)]
     #[test]
-    #[ignore = "started by a_tool_is_out_of_reach_of_the_terminals_interrupt"]
+    #[ignore = "started by the process group tests"]
     #[expect(unsafe_code, reason = "libc's getpgrp is a raw call")]
     fn leads_its_own_process_group() {
         // SAFETY: getpgrp takes nothing and can't fail.
         let group = unsafe { libc::getpgrp() };
         assert_eq!(u32::try_from(group).ok(), Some(std::process::id()));
+    }
+
+    #[cfg(unix)]
+    fn child_leads_its_own_group() -> bool {
+        let this_test_binary = std::env::current_exe().unwrap();
+        let args = [
+            "--exact",
+            "runner::tests::leads_its_own_process_group",
+            "--ignored",
+        ];
+        run(
+            &this_test_binary,
+            &args,
+            &Environment::default(),
+            Duration::from_secs(60),
+        )
+        .unwrap()
+        .status
+        .success()
     }
 
     /// Catches a terminal Ctrl+C killing git midway, which turns a cancel into an item
@@ -238,25 +260,20 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_tool_is_out_of_reach_of_the_terminals_interrupt() {
-        let this_test_binary = std::env::current_exe().unwrap();
-        let args = [
-            "--exact",
-            "runner::tests::leads_its_own_process_group",
-            "--ignored",
-        ];
+        crate::cancel_on_interrupt(&CancelToken::new()).unwrap();
 
-        let output = run(
-            &this_test_binary,
-            &args,
-            &Environment::default(),
-            Duration::from_secs(60),
-        )
-        .unwrap();
+        assert!(child_leads_its_own_group(), "the tool leads its own group");
+    }
 
+    /// Catches a read-only command leaving a hung probe running after Ctrl+C ends kipple:
+    /// with no interrupt handler, each tool stays in kipple's group, where the terminal's
+    /// interrupt reaches it too.
+    #[cfg(unix)]
+    #[test]
+    fn without_a_handler_a_tool_shares_the_terminals_interrupt() {
         assert!(
-            output.status.success(),
-            "the tool leads its own group: {}",
-            String::from_utf8_lossy(&output.stdout)
+            !child_leads_its_own_group(),
+            "the tool is in kipple's group"
         );
     }
 
