@@ -76,11 +76,12 @@ named! {
     PlanMode {
         /// A person, who reviews it item by item in the TUI: Safe and Review items.
         Review = "review",
-        /// A person at the command line, who reviews the summary: Safe items by any
-        /// method. Review items need the TUI's per-item review (pinned 1).
+        /// A person at the command line, who reviews the summary, or a profile, which
+        /// recorded that review when it was made: Safe items by any method. Review
+        /// items need the TUI's per-item review (pinned 1).
         Safe = "safe",
-        /// Automation (`--only`, a profile, with `--yes`): Safe items removed by a
-        /// delete, nothing else (pinned 1).
+        /// Automation without a profile (`clean` or `apply` with `--yes`): Safe items
+        /// removed by a delete, nothing else (pinned 1).
         SafeOnly = "safe-only",
     }
 }
