@@ -482,7 +482,11 @@ fn the_review_and_the_result_say_what_the_command_line_says() {
 
     let prompt: Vec<String> = homed(&asked.err)
         .lines()
-        .take_while(|line| !line.starts_with("Needs review in the TUI"))
+        // The plan ends where the prompt names what waits for the TUI, or, where nothing
+        // does (Windows protects demo-home's Review finding, D-050), at its question.
+        .take_while(|line| {
+            !line.starts_with("Needs review in the TUI") && !line.trim_end().ends_with("[y/N]")
+        })
         .map(|line| line.trim().to_owned())
         .filter(|line| !line.is_empty())
         .collect();
