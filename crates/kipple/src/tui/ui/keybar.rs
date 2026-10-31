@@ -58,8 +58,13 @@ pub(super) fn render(app: &App, look: Look<'_>, area: Rect, totals: Totals, fram
 
 /// What the selection is and what it frees, after the found and eligible totals when
 /// `totals` puts them on the key bar, in at most `room` columns if it can be: the
-/// selection's size goes first, so what it frees always shows.
+/// selection's size goes first, so what it frees always shows. Nothing while a clean is
+/// on screen: its plan says what it frees, and the selection may count what the plan
+/// left out.
 fn selection(app: &App, look: Look<'_>, totals: Totals, room: usize) -> Text<'static> {
+    if app.cleaning.is_some() {
+        return Text::default();
+    }
     let full = selection_with(app, look, totals, SelectedSize::Shown);
     if full.width() <= room {
         return full;

@@ -246,7 +246,9 @@ fn busy(width: u16, height: u16) -> App {
         &[Key::Tab, Key::Tab, Key::Char('o'), Key::Char('/')],
     );
     typed(&mut app, "target");
-    press(&mut app, &[Key::Enter, Key::Char('c')]);
+    // `c` selects the Safe bucket and plans it; `esc` goes back to the tree with it
+    // selected.
+    press(&mut app, &[Key::Enter, Key::Char('c'), Key::Esc]);
     app
 }
 

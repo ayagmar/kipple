@@ -557,6 +557,18 @@ fn what_deleting_means_and_what_to_read_below_show_above_a_long_review() {
     assert!(shown.contains(&review::below(1, 1).unwrap()), "{shown}");
 }
 
+// Catches the key bar's selection total (which counts what planning refused) showing
+// beside the plan's own: the person can't tell which one the run frees.
+#[test]
+fn a_clean_shows_what_its_plan_frees_and_not_the_selections_total() {
+    let home = Home::new("");
+    let app = reviewing_with_refused(&home, 80, 24);
+
+    let shown = text(&app, 80, 24);
+    assert!(shown.contains("delete 96.0 MiB in 2 items"), "{shown}");
+    assert!(!shown.contains("frees"), "{shown}");
+}
+
 /// A run's events as the loop passes them on: the run stored, its first item started.
 fn started(app: &mut App, run: &RunId) {
     app.update(Msg::Applied(Box::new(ApplyEvent::RunStarted {
