@@ -25,10 +25,17 @@
 //! }
 //! ```
 //!
-//! ```compile_fail,E0599
+//! ```compile_fail,E0277
 //! // A draft can't be checked: it was never stored or confirmed.
 //! fn forge(draft: kipple_core::profile::DraftProfile) -> kipple_core::profile::Profile {
-//!     draft.into_profile()
+//!     kipple_core::profile::Profile::from(draft)
+//! }
+//! ```
+//!
+//! ```compile_fail,E0277
+//! // Nor by a conversion that may refuse it.
+//! fn forge(draft: kipple_core::profile::DraftProfile) -> kipple_core::profile::Profile {
+//!     kipple_core::profile::Profile::try_from(draft).unwrap()
 //! }
 //! ```
 //!
