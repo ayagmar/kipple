@@ -46,6 +46,8 @@ jobs:
 
   native:
     name: native (${{ matrix.os }})
+    # A hang ends the job instead of holding a runner for hours.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:

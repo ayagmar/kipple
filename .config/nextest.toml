@@ -7,3 +7,7 @@ default-filter = "not binary(native)"
 
 [profile.native]
 default-filter = "binary(native)"
+# A native test that hangs (a wait no cancel ends) fails after five minutes instead of
+# holding the CI job until it is cancelled. The slowest native test takes about 160 s on
+# Windows runners.
+slow-timeout = { period = "60s", terminate-after = 5 }
