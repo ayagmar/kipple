@@ -1,5 +1,6 @@
 //! Cooperative cancellation shared by the engine, its workers and the frontend.
 
+use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -26,5 +27,15 @@ impl CancelToken {
     #[must_use]
     pub fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Acquire)
+    }
+}
+
+named! {
+    /// How a wait for a person's answer ended.
+    Waited {
+        /// A line, or the end of input, is there to read.
+        Ready = "ready",
+        /// The token was cancelled first: the command stops, and nothing is read.
+        Cancelled = "cancelled",
     }
 }

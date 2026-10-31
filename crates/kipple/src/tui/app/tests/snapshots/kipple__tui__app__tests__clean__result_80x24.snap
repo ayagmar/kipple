@@ -1,0 +1,28 @@
+---
+source: crates/kipple/src/tui/app/tests/clean.rs
+expression: "text(&app, width, height)"
+---
+╭ kipple ─ Balanced ─ scanned in 1.2 s ─ ~/projects ───────────────────────────╮
+│ Run 20261026T073320Z-0000                                                    │
+│                                                                              │
+│     0  done         delete  ~/projects/rust-app/target                       │
+│     1  partly done  delete  ~/projects/web/node_modules: 1 in use            │
+│     2  skipped      delete  ~/projects/rust-app/target: the level changed    │
+│     since review                                                             │
+│ Removed an estimated 16.0 MiB of allocated storage (18 names). 1 item partly │
+│ done, 1 item skipped.                                                        │
+│ Done.                                                                        │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ j/k scroll  enter home  q quit                                               │
+╰──────────────────────────────────────────────────────────────────────────────╯

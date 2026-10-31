@@ -26,7 +26,7 @@ pub const DOCTOR: &str = "kipple.doctor/v1";
 /// The schema of the generated support matrix.
 pub const SUPPORT_MATRIX: &str = "kipple.support-matrix/v1";
 /// The formats of runs and plans, which the core writes and reads.
-pub use kipple_core::format::{APPLY_EVENT, HISTORY, JOURNAL, PLAN, RECEIPT, STORED_PLAN};
+pub use kipple_core::format::{APPLY_EVENT, HISTORY, JOURNAL, PLAN, PROFILE, RECEIPT, STORED_PLAN};
 
 /// kipple's version, in every envelope.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

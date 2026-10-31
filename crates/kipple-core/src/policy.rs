@@ -448,6 +448,15 @@ pub(crate) fn starts_with(path: &Path, base: &Path) -> bool {
         .all(|part| path.next() == Some(part))
 }
 
+/// The version of the classification [`Policy::verdict`] makes from facts and config.
+///
+/// A profile records it, and a profile made under another version is suspended whole
+/// (D-068). `kipple-core/tests/policy_version.rs` keeps, for each version, a digest of
+/// every verdict over every kind of fact and config hold, and fails unless the current
+/// pair is its newest row: a changed verdict passes only with this bumped and a row
+/// appended.
+pub const POLICY_VERSION: u32 = 1;
+
 /// Everything the user configured that decides buckets (`docs/03-functional-spec.md` §6).
 ///
 /// The level, each rule's settings, and the paths kept and excluded. Every frontend gets
@@ -492,12 +501,27 @@ impl Policy {
     /// of its level's, its rule's and the config's (`docs/04-safety-model.md` §2a).
     #[must_use]
     pub fn recent_window_days(&self, rule: &RuleId, facts: &Facts) -> u16 {
-        let settings = self.settings(rule);
+        let configured = self.configured_window(rule);
+        facts
+            .recent_days
+            .map_or(configured, |days| days.max(configured))
+    }
+
+    /// The recent window the config gives `rule`, in days: its level's, or its own
+    /// `rules.<id>.recent_days` when that is longer. A rule's own recent window, which
+    /// its finding's facts carry, can only lengthen it further.
+    #[must_use]
+    pub fn configured_window(&self, rule: &RuleId) -> u16 {
         let level = self.level_of(rule).recent_days();
-        [facts.recent_days, settings.recent_days]
-            .into_iter()
-            .flatten()
-            .fold(level, u16::max)
+        self.settings(rule)
+            .recent_days
+            .map_or(level, |days| days.max(level))
+    }
+
+    /// Whether the config turns `rule` off (`exclude.rules` or `rules.<id>.enabled`).
+    #[must_use]
+    pub fn disabled(&self, rule: &RuleId) -> bool {
+        self.settings(rule).disabled
     }
 
     /// The kept path holding a finding at `path` with `lineage`, if any.

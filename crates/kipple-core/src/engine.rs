@@ -20,6 +20,7 @@ use crate::cancel::CancelToken;
 use crate::discovery::{WalkPlan, Walks};
 use crate::event::{EventTx, ScanEvent, Stopped};
 use crate::facts::{Above, Repositories};
+use crate::format::{IntegrationDigests, integration_digest};
 use crate::integration::{
     ActivityEvidence, Advice, Evidence, FindingSink, Integration, IntegrationDescriptor,
     IntegrationError, IntegrationId, ScanContext,
@@ -202,6 +203,20 @@ pub struct ScanReport {
     pub by_command_line: usize,
 }
 
+impl ScanReport {
+    /// The root `finding` is anchored below: the deepest root its integration opened that
+    /// holds it. What a plan item's anchor is, so what a profile's grant is checked
+    /// against.
+    pub(crate) fn anchor_root(&self, finding: &Finding) -> Option<&OpenedRoot> {
+        self.integrations
+            .iter()
+            .filter(|report| report.id == finding.integration)
+            .flat_map(|report| &report.opened)
+            .filter(|opened| finding.path.starts_with(&opened.path))
+            .max_by_key(|opened| opened.path.components().count())
+    }
+}
+
 /// What to scan with.
 #[derive(Debug, Clone, Default)]
 pub struct ScanRequest {
@@ -318,6 +333,21 @@ impl Engine {
             integrations: registered,
             plan,
         })
+    }
+
+    /// The digest of each registered integration, as a profile freezes it and checks it
+    /// against (D-068).
+    #[must_use]
+    pub fn integration_digests(&self) -> IntegrationDigests {
+        IntegrationDigests(
+            self.integrations
+                .iter()
+                .map(|registered| {
+                    let digest = integration_digest(&registered.descriptor, registered.evidence);
+                    (registered.descriptor.id, digest)
+                })
+                .collect(),
+        )
     }
 
     /// Runs every integration concurrently, then sizes what each one found. Blocks until

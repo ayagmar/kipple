@@ -1,6 +1,6 @@
 ---
 source: crates/kipple/src/tui/app/tests.rs
-assertion_line: 885
+assertion_line: 900
 expression: "styled(&draw(&app, colour(), 160, 48))"
 ---
 «fg=DarkGray|╭» «bold|kipple»«fg=DarkGray| ─ »«fg=Cyan,bold|Balanced»«fg=DarkGray| ─ scanned in 1.2 s ─ »~/projects «fg=DarkGray|───────┬────────────────────────────┬──────────────────────────────────────────────────────────────────────╮»
@@ -32,11 +32,11 @@ expression: "styled(&draw(&app, colour(), 160, 48))"
 «fg=DarkGray|│»                                           «fg=DarkGray|│»«bold|J K        »scroll the detail pane                                     «fg=DarkGray|│»                                           «fg=DarkGray|│»
 «fg=DarkGray|│»                                           «fg=DarkGray|│»«bold|y          »send the path to the terminal clipboard                    «fg=DarkGray|│»                                           «fg=DarkGray|│»
 «fg=DarkGray|│»                                           «fg=DarkGray|│»«bold|,          »settings: level, project roots, method, what is kept       «fg=DarkGray|│»                                           «fg=DarkGray|│»
-«fg=DarkGray|│»                                           «fg=DarkGray|│»«bold|enter      »show what is selected                                      «fg=DarkGray|│»                                           «fg=DarkGray|│»
+«fg=DarkGray|│»                                           «fg=DarkGray|│»«bold|enter      »review what is selected, then clean it                     «fg=DarkGray|│»                                           «fg=DarkGray|│»
 «fg=DarkGray|│»                                           «fg=DarkGray|│»«bold|?          »this help                                                  «fg=DarkGray|│»                                           «fg=DarkGray|│»
 «fg=DarkGray|│»                                           «fg=DarkGray|│»«bold|q          »quit                                                       «fg=DarkGray|│»                                           «fg=DarkGray|│»
 «fg=DarkGray|│»                                           «fg=DarkGray|│»                                                                      «fg=DarkGray|│»                                           «fg=DarkGray|│»
-«fg=DarkGray|│»                                           «fg=DarkGray|│This version only finds and explains: selecting removes nothing.»      «fg=DarkGray|│»                                           «fg=DarkGray|│»
+«fg=DarkGray|│»                                           «fg=DarkGray|│Selecting removes nothing: only y on the review cleans.»               «fg=DarkGray|│»                                           «fg=DarkGray|│»
 «fg=DarkGray|│»                                           «fg=DarkGray|╰──────────────────────────────────────────────────────────────────────╯»                                           «fg=DarkGray|│»
 «fg=DarkGray|│»                                                                                       «fg=DarkGray|│»                                                                      «fg=DarkGray|│»
 «fg=DarkGray|│»                                                                                       «fg=DarkGray|│»                                                                      «fg=DarkGray|│»

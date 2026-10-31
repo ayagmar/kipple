@@ -2,20 +2,27 @@
 //! one message at a time, and nothing else changes the state, so every transition is
 //! testable without a terminal. Selecting only marks findings: nothing here removes,
 //! moves or runs anything. Changing a setting asks the loop for an [`Effect`], a config
-//! write, and the screen changes only once the loop says it was written.
+//! write, and the screen changes only once the loop says it was written. A clean asks the
+//! loop to plan, then to run the plan the person confirmed (`clean`); the loop's workers
+//! do both.
 
+mod clean;
 mod keep;
 mod tree;
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use kipple_core::{
-    Advice, Bucket, Caution, Finding, FindingId, IntegrationId, Lens, Policy, RuleId, RuleText,
-    ScanEvent, ScanOutcome, ScanReport, SymbolicRoot, Verdict,
+    Advice, ApplyEvent, Bucket, Caution, Finding, FindingId, Finished, IntegrationId, Lens, Policy,
+    Prepared, RuleId, RuleText, ScanEvent, ScanOutcome, ScanReport, SymbolicRoot, Verdict,
 };
 
+pub(crate) use self::clean::{
+    Applying, Cleaning, Confirmation, Ended, Generation, ItemEnded, Review, needs_typing,
+};
 pub(crate) use self::keep::{Effect, Saved};
 use self::tree::{Group, Spot};
 pub(crate) use self::tree::{Order, ProjectId};
@@ -71,7 +78,7 @@ pub(crate) enum Msg {
     Scan(Box<ScanEvent>),
     /// The scan returned its report, this long after it started.
     Finished {
-        report: Box<ScanReport>,
+        report: Arc<ScanReport>,
         elapsed: Duration,
     },
     /// The config was written; this is what it says now.
@@ -80,6 +87,27 @@ pub(crate) enum Msg {
     NotSaved(String),
     /// The search for projects outside the roots ended with these suggestions.
     Suggested(Box<Found>),
+    /// Request `generation` was planned as `prepared`, under a config that asks for the
+    /// size to be typed above `threshold`.
+    Planned {
+        generation: Generation,
+        prepared: Box<Prepared>,
+        threshold: Option<u64>,
+    },
+    /// Request `generation` couldn't be planned, for this reason. Nothing changed.
+    NotPlanned { generation: Generation, why: String },
+    /// The worker planning request `generation` failed. Nothing changed.
+    PlanFailed { generation: Generation },
+    /// Confirming refused before anything ran, for this reason.
+    NotApplied(String),
+    /// The config now asks for the size to be typed before the plan runs.
+    MustType,
+    /// The run of the confirmed plan reported this.
+    Applied(Box<ApplyEvent>),
+    /// The run of the confirmed plan finished.
+    Ran(Box<Finished>),
+    /// The worker running the confirmed plan failed.
+    ApplyFailed,
 }
 
 /// Where a finding stands: its bucket, or still being measured, after every bucket.
@@ -303,6 +331,13 @@ pub(crate) struct App {
     pub(crate) search: Search,
     /// What the loop is asked to do next.
     effect: Option<Effect>,
+    /// The finished scan's report, which every plan is made from: finding IDs only hold
+    /// within one scan.
+    report: Option<Arc<ScanReport>>,
+    /// The latest request for a plan.
+    generation: Generation,
+    /// The clean under way, from planning to its result.
+    pub(crate) cleaning: Option<Cleaning>,
     /// What to say once the config write asked for has succeeded.
     pending: Option<String>,
     cursor: Option<Node>,
@@ -351,6 +386,9 @@ impl App {
             themes: Picker::default(),
             search: Search::default(),
             effect: None,
+            report: None,
+            generation: Generation(0),
+            cleaning: None,
             pending: None,
             cursor: None,
             hint: 0,
@@ -370,16 +408,48 @@ impl App {
             Msg::Resize { width, height } => {
                 self.width = width;
                 self.height = height;
+                self.clamp_clean_scroll();
                 self.settle();
             }
             Msg::Scan(event) => self.scan_event(*event),
-            Msg::Finished { report, elapsed } => self.finished(*report, elapsed),
+            Msg::Finished { report, elapsed } => self.finished(report, elapsed),
             Msg::Saved(saved) => {
                 self.saved(*saved);
                 self.settle();
             }
             Msg::NotSaved(error) => self.not_saved(&error),
             Msg::Suggested(found) => self.suggested(*found),
+            Msg::Planned {
+                generation,
+                prepared,
+                threshold,
+            } => self.planned(generation, *prepared, threshold),
+            Msg::NotPlanned { generation, why } => self.not_planned(generation, why),
+            Msg::PlanFailed { generation } => self.plan_failed(generation),
+            Msg::NotApplied(why) => self.not_applied(why),
+            Msg::MustType => self.must_type(),
+            Msg::Applied(event) => self.applied(*event),
+            Msg::Ran(finished) => self.ran(*finished),
+            Msg::ApplyFailed => self.apply_failed(),
+        }
+    }
+
+    /// The finished scan's report.
+    pub(crate) const fn report(&self) -> Option<&Arc<ScanReport>> {
+        self.report.as_ref()
+    }
+
+    /// The plan the person is reviewing or confirmed, to run.
+    pub(crate) const fn confirmed(&self) -> Option<&Arc<Prepared>> {
+        match &self.cleaning {
+            Some(Cleaning::Applying(applying)) => Some(&applying.review.prepared),
+            Some(
+                Cleaning::Planning(_)
+                | Cleaning::Reviewing(_)
+                | Cleaning::Typing(..)
+                | Cleaning::Ended(_),
+            )
+            | None => None,
         }
     }
 
@@ -570,21 +640,28 @@ impl App {
         });
     }
 
-    fn finished(&mut self, report: ScanReport, elapsed: Duration) {
+    fn finished(&mut self, report: Arc<ScanReport>, elapsed: Duration) {
         self.notices = notices(&report);
         self.advice = report
             .integrations
-            .into_iter()
+            .iter()
             .filter(|integration| !integration.advice.is_empty())
-            .map(|integration| (integration.id, integration.advice))
+            .map(|integration| (integration.id, integration.advice.clone()))
             .collect();
         self.progress = Progress::Done {
             outcome: report.outcome,
             elapsed,
         };
+        self.report = Some(report);
     }
 
     fn key(&mut self, key: Key) {
+        if self.cleaning.is_some() {
+            self.clean_key(key);
+            self.clamp_clean_scroll();
+            self.settle();
+            return;
+        }
         if key == Key::Interrupt {
             self.quit = true;
             return;
@@ -693,7 +770,8 @@ impl App {
             | Action::Choose
             | Action::Remove
             | Action::Check
-            | Action::Skip => {}
+            | Action::Skip
+            | Action::Confirm => {}
         }
     }
 
@@ -847,21 +925,6 @@ impl App {
             }
         }
         added
-    }
-
-    /// Review and cleaning are not built yet (M3): say what is selected and that
-    /// nothing changed.
-    fn review(&mut self) {
-        let totals = self.totals();
-        self.notice = Some(if totals.selected_count == 0 {
-            "Nothing selected: s selects a finding, c the Safe bucket.".to_owned()
-        } else {
-            format!(
-                "{} selected ({}). Review and cleaning come in a later version: nothing was changed.",
-                totals.selected_count,
-                crate::human::bytes(totals.selected)
-            )
-        });
     }
 
     /// `J`/`K`: the detail pane down or up a line, within what it holds.

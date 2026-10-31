@@ -1,7 +1,7 @@
-//! `kipple clean`, `plan`, `apply`, `history` and `restore` end to end on `demo-home`,
-//! every root redirected into a temp dir through the hidden test-roots override (spec
-//! M3b pinned 1, 2, 12, 17; `docs/04-safety-model.md` §10). Nothing here reaches the real
-//! home, trash or data directory.
+//! `kipple clean`, `plan`, `apply`, `history`, `restore` and `profile` end to end on
+//! `demo-home`, every root redirected into a temp dir through the hidden test-roots
+//! override (spec M3b pinned 1, 2, 12, 17, M3c pinned 13–17; `docs/04-safety-model.md`
+//! §10). Nothing here reaches the real home, trash or data directory.
 #![expect(
     clippy::unwrap_used,
     reason = "a fixture that fails to build fails the test"
@@ -33,6 +33,11 @@ mod uv_v0_12_23;
 #[path = "../../kipple-adapters/tests/fixtures/python/venv_v3_14_8.rs"]
 mod venv_v3_14_8;
 
+#[path = "clean/confirm.rs"]
+mod confirm;
+#[path = "clean/profile.rs"]
+mod profile;
+
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs;
@@ -43,7 +48,7 @@ use std::time::{Duration, SystemTime};
 
 use clap::Parser as _;
 use kipple::{Answers, CANCELLED, Cli, Io, Person};
-use kipple_core::{CancelToken, Platform};
+use kipple_core::{CancelToken, Platform, Waited};
 use kipple_platform::{Environment, PLATFORM};
 use serde_json::Value;
 use tempfile::TempDir;
@@ -106,9 +111,25 @@ impl Demo {
     }
 
     fn run_with(&self, args: &[&str], asked: Asked, cancel: &CancelToken) -> Ran {
+        let mut out = Vec::new();
+        let ran = self.run_on(args, asked, cancel, &mut out);
+        Ran {
+            out: String::from_utf8(out).unwrap(),
+            ..ran
+        }
+    }
+
+    /// [`Demo::run_with`], writing stdout to `stdout`, so the result's `out` is empty.
+    fn run_on(
+        &self,
+        args: &[&str],
+        asked: Asked,
+        cancel: &CancelToken,
+        stdout: &mut dyn io::Write,
+    ) -> Ran {
         let cli = Cli::parse_from(std::iter::once("kipple").chain(args.iter().copied()));
-        let (mut out, mut err) = (Vec::new(), Vec::new());
-        let mut io = Io::redirected(&mut out, &mut err);
+        let mut err = Vec::new();
+        let mut io = Io::redirected(stdout, &mut err);
         io.cancel = cancel.clone();
         if let Asked::Person(terminal) = asked {
             io.person = Person::AtTerminal;
@@ -117,7 +138,7 @@ impl Demo {
         let code = kipple::run(&cli, &self.env(), io);
         Ran {
             code,
-            out: String::from_utf8(out).unwrap(),
+            out: String::new(),
             err: String::from_utf8(err).unwrap(),
         }
     }
@@ -176,6 +197,11 @@ struct Terminal {
     typed: Cursor<Vec<u8>>,
     /// Where the answer starts in `typed`.
     answer_at: u64,
+    /// How the wait for the answer ends: Ctrl+C at the question cancels it.
+    waited: Waited,
+    /// Cancelled when the answer is read, as Ctrl+C during a read the wait didn't
+    /// watch does.
+    cancel_on_read: Option<CancelToken>,
 }
 
 impl Terminal {
@@ -183,18 +209,45 @@ impl Terminal {
         Self {
             typed: Cursor::new([early, answer].concat().into_bytes()),
             answer_at: early.len() as u64,
+            waited: Waited::Ready,
+            cancel_on_read: None,
+        }
+    }
+
+    /// A person who presses Ctrl+C at the question, having typed `answer` already.
+    fn interrupted(answer: &str) -> Self {
+        Self {
+            waited: Waited::Cancelled,
+            ..Self::typed("", answer)
+        }
+    }
+
+    /// A person who presses Ctrl+C while the answer is read, cancelling `cancel`, then
+    /// types `answer`: what a terminal the wait can't watch, such as mintty, allows.
+    fn interrupted_while_read(answer: &str, cancel: &CancelToken) -> Self {
+        Self {
+            cancel_on_read: Some(cancel.clone()),
+            ..Self::typed("", answer)
+        }
+    }
+
+    fn reading(&self) {
+        if let Some(cancel) = &self.cancel_on_read {
+            cancel.cancel();
         }
     }
 }
 
 impl Read for Terminal {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        self.reading();
         self.typed.read(buf)
     }
 }
 
 impl BufRead for Terminal {
     fn fill_buf(&mut self) -> io::Result<&[u8]> {
+        self.reading();
         self.typed.fill_buf()
     }
 
@@ -208,6 +261,10 @@ impl Answers for Terminal {
         let at = self.typed.position().max(self.answer_at);
         self.typed.set_position(at);
         Ok(())
+    }
+
+    fn wait(&mut self, _: &CancelToken) -> io::Result<Waited> {
+        Ok(self.waited)
     }
 }
 

@@ -3,6 +3,8 @@
 //! events built here, so no file system or clock is read. Keeping and settings, which
 //! write a config file in a temp dir, are in `settings`; the first run is in `onboarding`.
 
+#[cfg(feature = "test-roots")]
+mod clean;
 mod dashboard;
 mod detail;
 mod keys;
@@ -13,7 +15,7 @@ mod themes;
 mod tree;
 
 use std::path::{MAIN_SEPARATOR, Path, PathBuf};
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use kipple_core::{
@@ -316,8 +318,12 @@ fn c_selects_the_safe_bucket_as_it_stands_at_the_keypress_and_nothing_else() {
     measured(&mut app, 6, 64, safe());
 
     assert_eq!(selected(&app), [1, 4]);
-    let notice = app.notice.as_deref().unwrap();
-    assert!(notice.contains("nothing was changed"), "{notice}");
+    // The scan still runs, so the review waits for it.
+    assert_eq!(
+        app.notice.as_deref(),
+        Some(crate::human::review::REVIEW_AFTER_SCAN)
+    );
+    assert!(app.cleaning.is_none(), "a plan was asked for mid-scan");
 }
 
 #[test]
@@ -578,7 +584,7 @@ fn processes_left_out_of_the_activity_check_are_a_notice_not_a_gap() {
     let ended = |unchecked_system, by_command_line| {
         let mut app = App::new(catalog(), 160, 48);
         app.update(Msg::Finished {
-            report: Box::new(ScanReport {
+            report: Arc::new(ScanReport {
                 outcome: ScanOutcome::Completed,
                 integrations: Vec::new(),
                 findings: Vec::new(),
@@ -787,7 +793,7 @@ fn finished(app: &mut App) {
         by_command_line: 0,
     };
     app.update(Msg::Finished {
-        report: Box::new(report),
+        report: Arc::new(report),
         elapsed: Duration::from_millis(1_240),
     });
 }

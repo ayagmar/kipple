@@ -13,7 +13,8 @@ use super::{HISTORY, RECEIPT, TextOut, path_out};
 use crate::frozen::NameCodec;
 use crate::imported::{Dropped, DroppedItem};
 use crate::outcome::{Receipt, ReceiptItem, Status};
-use crate::rule::Method;
+use crate::profile::ProfileRun;
+use crate::rule::{Method, RuleId};
 use crate::run::{RunState, RunSummary};
 use crate::session::{Ending, Finished};
 
@@ -37,6 +38,34 @@ pub struct ReceiptOut {
     pub refused: Vec<RefusedOut>,
     /// The totals.
     pub totals: TotalsOut,
+    /// For `clean --profile`, the profile run and what of it was left out. Absent
+    /// otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile: Option<ProfileRunOut>,
+}
+
+/// The profile a `clean` ran, and the entries it didn't run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct ProfileRunOut {
+    /// The profile's name.
+    pub name: String,
+    /// The rules of its suspended entries, sorted: their values changed since it was
+    /// made.
+    pub suspended: Vec<String>,
+    /// The rules proposing removal that it has no entry for, sorted: they wait for
+    /// `profile review`.
+    pub pending: Vec<String>,
+}
+
+impl ProfileRunOut {
+    fn of(run: &ProfileRun) -> Self {
+        let ids = |rules: &[RuleId]| rules.iter().map(|rule| rule.0.clone()).collect();
+        Self {
+            name: run.name.as_str().to_owned(),
+            suspended: ids(&run.suspended),
+            pending: ids(&run.pending),
+        }
+    }
 }
 
 /// A selected finding `clean` didn't plan.
@@ -226,6 +255,7 @@ impl ReceiptOut {
                 })
                 .collect(),
             totals: totals(&finished.receipt),
+            profile: finished.profile.as_ref().map(ProfileRunOut::of),
         }
     }
 }

@@ -11,6 +11,7 @@ pub mod doctor;
 mod explain;
 mod human;
 pub mod json;
+pub mod machine;
 mod mutate;
 pub mod rules;
 mod scan;
@@ -26,13 +27,13 @@ use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use kipple_core::{CancelToken, Engine, Lens, ScanOutcome};
+use kipple_core::{CancelToken, Engine, Lens, ScanOutcome, Waited};
 use kipple_platform::Environment;
 
 use crate::config::{ConfigError, Settings};
 use crate::json::{EventBody, ScanOut};
 pub use crate::mutate::{
-    ApplyArgs, Choice, CleanArgs, HistoryArgs, MethodArg, PlanArgs, RestoreArgs,
+    ApplyArgs, Choice, CleanArgs, HistoryArgs, MethodArg, PlanArgs, ProfileAction, RestoreArgs,
 };
 use crate::setup::{Builtin, BuiltinRule};
 use crate::theme::{ColorChoice, Colours, Glyphs, Ink, Stdout, Theme, Themes};
@@ -125,7 +126,8 @@ pub enum Command {
         target: String,
     },
     /// Remove Safe findings: shows the plan and asks on a terminal, or, with `--yes`,
-    /// deletes the Safe findings of the rules `--only` names. Each run is recorded.
+    /// deletes the Safe findings of the rules `--only` names or cleans what a profile
+    /// authorizes. Each run is recorded.
     Clean(CleanArgs),
     /// Write the plan `clean` would show to a new file, for `kipple apply` to run later.
     /// Nothing else is written.
@@ -137,6 +139,13 @@ pub enum Command {
     History(HistoryArgs),
     /// Move a run's trashed items back where they were (Linux and macOS).
     Restore(RestoreArgs),
+    /// Save what `clean --profile NAME --yes` may clean unattended, review it after a
+    /// change, list or remove one.
+    Profile {
+        /// What to do.
+        #[command(subcommand)]
+        action: ProfileAction,
+    },
     /// Show where kipple looks, what it can read and which tools it found. Read-only.
     Doctor {
         /// Print one JSON envelope.
@@ -236,13 +245,20 @@ pub const CANCELLED: u8 = 130;
 pub const USAGE: u8 = 2;
 
 impl Cli {
-    /// Whether its command can change the disk, so Ctrl+C should stop it between items
-    /// rather than end it at once.
+    /// Whether its command can change the disk or asks before it writes, so Ctrl+C should
+    /// stop it between items, or at the question, rather than end it at once.
     #[must_use]
     pub const fn mutates(&self) -> bool {
         matches!(
             self.command,
-            Some(Command::Clean(_) | Command::Apply(_) | Command::Restore(_))
+            Some(
+                Command::Clean(_)
+                    | Command::Apply(_)
+                    | Command::Restore(_)
+                    | Command::Profile {
+                        action: ProfileAction::Create(_) | ProfileAction::Review(_)
+                    }
+            )
         )
     }
 }
@@ -297,6 +313,14 @@ pub trait Answers: BufRead {
     /// # Errors
     /// When the terminal refuses: the question then counts as answered no.
     fn discard_typeahead(&mut self) -> io::Result<()>;
+
+    /// Waits, after the question, until an answer is there to read or `cancel` is
+    /// cancelled, so Ctrl+C at the question stops the command at once (spec M3c pinned
+    /// 15).
+    ///
+    /// # Errors
+    /// When the terminal refuses the wait: the question then counts as answered no.
+    fn wait(&mut self, cancel: &CancelToken) -> io::Result<Waited>;
 }
 
 /// The process's stdin, which nothing reads before the question, so all that was typed
@@ -305,12 +329,21 @@ impl Answers for io::StdinLock<'_> {
     fn discard_typeahead(&mut self) -> io::Result<()> {
         kipple_platform::discard_typeahead()
     }
+
+    fn wait(&mut self, cancel: &CancelToken) -> io::Result<Waited> {
+        kipple_platform::wait_for_line(self, cancel)
+    }
 }
 
 /// Nobody to answer: nothing was typed.
 impl Answers for io::Empty {
     fn discard_typeahead(&mut self) -> io::Result<()> {
         Ok(())
+    }
+
+    /// The end of input is there at once: the read that follows answers no.
+    fn wait(&mut self, _: &CancelToken) -> io::Result<Waited> {
+        Ok(Waited::Ready)
     }
 }
 
@@ -384,6 +417,7 @@ pub fn run(cli: &Cli, env: &Environment, mut io: Io<'_>) -> ExitCode {
         Some(Command::Apply(args)) => mutate::apply(&host, args, &mut io),
         Some(Command::History(args)) => mutate::history(&host, args, &mut io),
         Some(Command::Restore(args)) => mutate::restore(&host, args, &mut io),
+        Some(Command::Profile { action }) => mutate::profile(&host, action, &mut io),
         Some(Command::Rules { json }) => {
             let rules = rules::RulesOut::new(&builtin);
             let written = if *json {

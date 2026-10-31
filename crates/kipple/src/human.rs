@@ -629,6 +629,8 @@ fn idle_except(unchecked: usize, by_command_line: usize) -> String {
 }
 
 pub(crate) mod outcome;
+pub(crate) mod profile;
 pub(crate) mod receipt;
+pub(crate) mod review;
 #[cfg(test)]
 mod tests;

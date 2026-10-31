@@ -28,22 +28,44 @@ use crate::mutation::{FileSystemClass, Freeze};
 use crate::outcome::{LeftReason, Skip, Tally};
 use crate::plan::{Anchor, ItemId, Judgement, Plan, PlanEntry, Standing};
 use crate::policy::{Proposal, Verdict};
+use crate::profile::ProfileGrant;
 use crate::rule::Method;
 
 /// What the user authorized.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Authorization {
     /// The user selected these items and saw this plan, frozen, in review. Items may be
-    /// Safe or Review; each keeps the cautions it was reviewed with.
-    Reviewed {
-        /// The digest of the plan shown ([`Plan::digest`]). A plan with another digest
-        /// isn't authorized.
-        plan: Digest,
-    },
-    /// Automation (`--only`, a profile, an imported plan, each with `--yes`): Safe items
-    /// only, never Review, at planning and again at apply, and deletes only: a trash move
-    /// takes a directory whole, which needs a review automation doesn't have yet (M3b).
+    /// Safe or Review; each keeps the cautions it was reviewed with. A plan with another
+    /// digest isn't authorized.
+    Reviewed(ReviewedPlan),
+    /// Automation (`--only`, an imported plan, each with `--yes`): Safe items only, never
+    /// Review, at planning and again at apply, and deletes only: a trash move takes a
+    /// directory whole, which needs a review automation doesn't have.
     SafeOnly,
+    /// A profile with `--yes` (D-068): Safe items only, by delete or trash, of the rules
+    /// the profile's check found unchanged, by the method and below the roots it froze.
+    /// Anything else is not reviewed.
+    Profile(ProfileGrant),
+}
+
+/// The plan a person saw: its digest ([`Plan::digest`]), which no frontend can name.
+///
+/// ```compile_fail,E0423
+/// // A frontend can't authorize a plan by naming a digest.
+/// fn forge(digest: kipple_core::Digest) -> kipple_core::ReviewedPlan {
+///     kipple_core::ReviewedPlan(digest)
+/// }
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReviewedPlan(Digest);
+
+impl ReviewedPlan {
+    /// `plan`, as shown. Only for driving [`apply`](crate::apply) directly: `clean`
+    /// makes it from the plan it prepared ([`Confirmed::Person`](crate::Confirmed)).
+    #[must_use]
+    pub const fn of(plan: &Plan) -> Self {
+        Self(plan.digest())
+    }
 }
 
 /// What an operation may change: an item's reviewed tree with what revalidation left of
@@ -203,7 +225,8 @@ pub(crate) struct Recheck<'facts> {
 /// only if every check passes, and its tree only with what the fresh freeze confirms.
 ///
 /// In order: the item must be in the plan and the authorization for this plan, and
-/// Safe-only only for a Safe item removed by a delete; the item must be judged under the
+/// Safe-only only for a Safe item removed by a delete, a profile only for a Safe item
+/// its grant admits; the item must be judged under the
 /// same policy, rule, level, recent window, method and kept and excluded paths; it must
 /// not be Protected now; its bucket must still be one it was authorized in (a Safe item
 /// stays Safe, a Review item gains no caution, and under Safe-only it is Safe); its rule
@@ -213,7 +236,7 @@ pub(crate) struct Recheck<'facts> {
 pub(crate) fn admit(
     plan: &Plan,
     item: ItemId,
-    authorization: Authorization,
+    authorization: &Authorization,
     recheck: Recheck<'_>,
 ) -> Result<AuthorizedOp, Skip> {
     let entry = plan.entry(item).ok_or(Skip::NotReviewed)?;
@@ -273,20 +296,27 @@ fn marks_whole(marks: &Marks, tree: &FrozenTree) -> bool {
 fn authorized_for(
     plan: &Plan,
     entry: &PlanEntry,
-    authorization: Authorization,
+    authorization: &Authorization,
 ) -> Result<(), Skip> {
     match authorization {
-        Authorization::Reviewed { plan: shown } if shown != plan.digest() => Err(Skip::NotReviewed),
+        Authorization::Reviewed(shown) if *shown != ReviewedPlan::of(plan) => {
+            Err(Skip::NotReviewed)
+        }
+        Authorization::Reviewed(_) => Ok(()),
         Authorization::SafeOnly => match (&entry.standing, entry.method) {
             (Standing::Review(cautions), _) => {
                 Err(Skip::Riskier(cautions.iter().copied().collect()))
             }
             // A trash move takes the directory whole, with whatever is in it then (04
-            // §3.5): automation has no review of that until a profile records one (M3b).
+            // §3.5): automation has no review of that; a profile records one.
             (Standing::Safe, Method::Trash) => Err(Skip::WholeNotReviewed),
             (Standing::Safe, Method::Delete) => Ok(()),
         },
-        Authorization::Reviewed { .. } => Ok(()),
+        Authorization::Profile(grant) => match &entry.standing {
+            Standing::Review(cautions) => Err(Skip::Riskier(cautions.iter().copied().collect())),
+            Standing::Safe if grant.admits(entry) => Ok(()),
+            Standing::Safe => Err(Skip::NotReviewed),
+        },
     }
 }
 
@@ -294,7 +324,7 @@ fn authorized_for(
 fn still_allowed(
     standing: &Standing,
     verdict: &Verdict,
-    authorization: Authorization,
+    authorization: &Authorization,
 ) -> Result<(), Skip> {
     let cautions = match verdict {
         Verdict::Protected(holds) => return Err(Skip::Protected(holds.clone())),
@@ -302,8 +332,9 @@ fn still_allowed(
         Verdict::Review(cautions) => cautions,
     };
     let reviewed = match (standing, authorization) {
-        (Standing::Review(reviewed), Authorization::Reviewed { .. }) => reviewed,
-        (Standing::Safe, _) | (Standing::Review(_), Authorization::SafeOnly) => {
+        (Standing::Review(reviewed), Authorization::Reviewed(_)) => reviewed,
+        (Standing::Safe, _)
+        | (Standing::Review(_), Authorization::SafeOnly | Authorization::Profile(_)) => {
             return Err(Skip::Riskier(cautions.clone()));
         }
     };

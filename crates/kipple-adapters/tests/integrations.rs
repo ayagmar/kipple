@@ -13,6 +13,8 @@ mod cargo_v1_99_0;
 mod claude_settings;
 #[path = "fixtures/demo_home.rs"]
 mod demo_home;
+#[path = "fixtures/scan.rs"]
+mod harness;
 #[path = "fixtures/journald/v262.rs"]
 mod journald_v262;
 #[path = "fixtures/node/npm_v11_19_0.rs"]
@@ -28,188 +30,19 @@ mod uv_v0_12_23;
 #[path = "fixtures/python/venv_v3_14_8.rs"]
 mod venv_v3_14_8;
 
-use std::fs;
-use std::io::{self, Read as _};
 use std::path::Path;
-use std::time::SystemTime;
 
+use harness::{Scanned, scan};
 use kipple_adapters::builtin;
-use kipple_core::{
-    Advice, Anchor, Apparent, CancelToken, Clock, Completeness, DirEntryMeta, Engine, EntryKind,
-    EntryMeta, EventChannel, Evidence, FrozenTree, FsProbe, GitGap, Inventory, Measurement, NodeId,
-    Observer, Ports, ProbeError, ProcessProbe, ProcessSnapshot, ResolvedRoot, RootSource, Roots,
-    ScanReport, ScanRequest, Sizer, SpaceEstimate, SymbolicRoot, TrackedQuery, event_channel,
-};
+use kipple_core::{Advice, Evidence, ScanReport, SymbolicRoot};
 use tree::FixtureTree;
 
-/// The real file system, read without following links: enough to run the integrations
-/// over a fixture in a temp dir.
-#[derive(Debug)]
-struct TempFs;
-
-fn kind(file_type: fs::FileType) -> EntryKind {
-    if file_type.is_symlink() {
-        EntryKind::Symlink
-    } else if file_type.is_dir() {
-        EntryKind::Dir
-    } else if file_type.is_file() {
-        EntryKind::File
-    } else {
-        EntryKind::Other
-    }
-}
-
-impl FsProbe for TempFs {
-    fn metadata(&self, path: &Path) -> Result<EntryMeta, ProbeError> {
-        let meta = fs::symlink_metadata(path).map_err(|e| ProbeError::io(path, e))?;
-        Ok(EntryMeta {
-            kind: kind(meta.file_type()),
-            identity: None,
-        })
-    }
-
-    fn read_dir(&self, dir: &Path) -> Result<Vec<DirEntryMeta>, ProbeError> {
-        let read = || -> io::Result<Vec<DirEntryMeta>> {
-            fs::read_dir(dir)?
-                .map(|entry| {
-                    let entry = entry?;
-                    Ok(DirEntryMeta {
-                        name: entry.file_name(),
-                        kind: kind(entry.file_type()?),
-                    })
-                })
-                .collect()
-        };
-        read().map_err(|e| ProbeError::io(dir, e))
-    }
-
-    fn open_dir(&self, dir: &Path) -> Result<(), ProbeError> {
-        fs::read_dir(dir)
-            .map(drop)
-            .map_err(|e| ProbeError::io(dir, e))
-    }
-
-    fn read_file(&self, path: &Path, limit: u64) -> Result<Vec<u8>, ProbeError> {
-        let mut bytes = Vec::new();
-        fs::File::open(path)
-            .and_then(|file| file.take(limit).read_to_end(&mut bytes))
-            .map_err(|e| ProbeError::io(path, e))?;
-        Ok(bytes)
-    }
-}
-
-/// Sizes nothing: these tests are about what is found, not how big it is or when it
-/// changed.
-#[derive(Debug)]
-struct NoSizer;
-
-impl Sizer for NoSizer {
-    fn size(&self, _: &Path, _: &CancelToken) -> Result<Measurement, ProbeError> {
-        let size = SpaceEstimate {
-            apparent: Apparent(0),
-            allocated: None,
-            unique_reclaim: None,
-            completeness: Completeness::Complete,
-        };
-        Ok(Measurement {
-            size,
-            modified: None,
-            repository: None,
-        })
-    }
-}
-
-/// A host that runs nothing.
-#[derive(Debug)]
-struct NoProcesses;
-
-/// No git: the fixtures hold no repository, so it is never asked.
-#[derive(Debug)]
-struct NoGit;
-
-impl TrackedQuery for NoGit {
-    fn count(&self, _: &Path, _: &Path, _: &CancelToken) -> Result<u64, GitGap> {
-        Err(GitGap::Unsupported)
-    }
-
-    fn entries(
-        &self,
-        _: &Path,
-        _: &Anchor,
-        _: &FrozenTree,
-        _: &CancelToken,
-    ) -> Result<Vec<NodeId>, GitGap> {
-        Err(GitGap::Unsupported)
-    }
-}
-
-impl ProcessProbe for NoProcesses {
-    fn snapshot(&self) -> Result<ProcessSnapshot, ProbeError> {
-        Ok(ProcessSnapshot {
-            processes: Vec::new(),
-            inventory: Inventory::Complete,
-            observer: Observer::PLAIN,
-        })
-    }
-}
-
-/// A clock that never moves.
-#[derive(Debug)]
-struct Epoch;
-
-impl Clock for Epoch {
-    fn now(&self) -> SystemTime {
-        SystemTime::UNIX_EPOCH
-    }
-}
-
-/// Builds `tree` in a temp dir and scans it with every built-in integration and rule,
-/// each root of `demo_home::ROOTS` placed inside it.
-#[expect(
-    clippy::unwrap_used,
-    reason = "a fixture that fails to build fails the test"
-)]
-fn scan(tree: &FixtureTree) -> (tempfile::TempDir, ScanReport) {
-    let temp = tempfile::tempdir().unwrap();
-    tree.build_in(temp.path()).unwrap();
-    scan_built(temp)
-}
-
-/// Scans the tree already built in `temp`, like [`scan`].
-#[expect(
-    clippy::unwrap_used,
-    reason = "a fixture that fails to build fails the test"
-)]
-fn scan_built(temp: tempfile::TempDir) -> (tempfile::TempDir, ScanReport) {
-    let mut roots = Roots::default();
-    for (name, relative) in demo_home::ROOTS {
-        let root = SymbolicRoot::from_name(name).unwrap();
-        let resolved = ResolvedRoot::new(root, temp.path().join(relative), RootSource::Fixed);
-        roots.insert(root, Ok(resolved));
-    }
-    let packs = builtin::packs(&semver::Version::new(0, 0, 0)).unwrap();
-    let rules = packs.into_iter().flat_map(|pack| pack.rules).collect();
-    let ports = Ports {
-        fs: Box::new(TempFs),
-        sizer: Box::new(NoSizer),
-        processes: Box::new(NoProcesses),
-        clock: Box::new(Epoch),
-        tracked: Box::new(NoGit),
-    };
-    let engine = Engine::new(ports, builtin::integrations(), rules).unwrap();
-    let cancel = CancelToken::new();
-    let EventChannel { tx: events, rx } = event_channel(4096, &cancel);
-    let report = engine.scan(
-        &ScanRequest {
-            roots,
-            lens: None,
-            exclude: Vec::new(),
-        },
-        &events,
-        &cancel,
-    );
-    drop(rx);
-    (temp, report)
+fn advice<'r>(report: &'r ScanReport, integration: &str) -> &'r [Advice] {
+    report
+        .integrations
+        .iter()
+        .find(|i| i.id.0 == integration)
+        .map_or(&[], |i| i.advice.as_slice())
 }
 
 /// Each finding as its rule, its path relative to `base` with `/` separators, and its
@@ -230,14 +63,6 @@ fn found(base: &Path, report: &ScanReport) -> Vec<(String, String, Vec<Evidence>
         .collect()
 }
 
-fn advice<'r>(report: &'r ScanReport, integration: &str) -> &'r [Advice] {
-    report
-        .integrations
-        .iter()
-        .find(|i| i.id.0 == integration)
-        .map_or(&[], |i| i.advice.as_slice())
-}
-
 fn marker(name: &str) -> Evidence {
     Evidence::Marker(name.to_owned())
 }
@@ -248,7 +73,7 @@ fn signature(name: &str) -> Evidence {
 
 #[test]
 fn every_supported_layout_in_the_demo_home_is_found_with_its_evidence_and_nothing_inside_one() {
-    let (temp, report) = scan(&demo_home::tree(demo_home::looked_at()));
+    let Scanned { temp, report } = scan(&demo_home::tree(demo_home::looked_at()));
 
     let mut found = found(temp.path(), &report);
     found.sort();
@@ -333,7 +158,7 @@ fn a_target_without_cargos_tag_or_with_a_forged_one_has_an_unknown_layout() {
             b"Signature: not the one",
         );
 
-    let (temp, report) = scan(&tree);
+    let Scanned { temp, report } = scan(&tree);
 
     let no_layout = vec![marker("Cargo.toml"), Evidence::NoSignature];
     assert_eq!(
@@ -363,7 +188,7 @@ fn a_pycache_with_anything_but_bytecode_or_inside_any_virtual_environment_is_not
     // Nor is one by another name: `pyvenv.cfg` makes it an environment.
     venv_v3_14_8::environment(&mut tree, "home/projects/env");
 
-    let (temp, report) = scan(&tree);
+    let Scanned { temp, report } = scan(&tree);
 
     assert_eq!(found(temp.path(), &report), []);
 }
@@ -371,7 +196,10 @@ fn a_pycache_with_anything_but_bytecode_or_inside_any_virtual_environment_is_not
 #[test]
 #[cfg(unix)]
 fn a_pycache_that_cant_be_listed_is_reported_without_layout_evidence_rather_than_dropped() {
+    use std::fs;
     use std::os::unix::fs::PermissionsExt as _;
+
+    use harness::scan_built;
 
     let mut tree = FixtureTree::new();
     tree.file("home/projects/p/pkg/__pycache__/mod.cpython-314.pyc", b"");
@@ -384,7 +212,7 @@ fn a_pycache_that_cant_be_listed_is_reported_without_layout_evidence_rather_than
         return;
     }
 
-    let (temp, report) = scan_built(temp);
+    let Scanned { temp, report } = scan_built(temp);
     fs::set_permissions(&cache, fs::Permissions::from_mode(0o755)).unwrap();
 
     let path = "home/projects/p/pkg/__pycache__".to_owned();
@@ -401,7 +229,7 @@ fn system_locations_are_advised_on_when_present_and_reported_only_when_not_empty
         .dir("home/.local/share/Trash/files")
         .dir("home/.local/share/Trash/info");
 
-    let (temp, report) = scan(&tree);
+    let Scanned { temp, report } = scan(&tree);
 
     assert_eq!(found(temp.path(), &report), []);
     let pacman = advice(&report, "pacman");
@@ -413,7 +241,7 @@ fn system_locations_are_advised_on_when_present_and_reported_only_when_not_empty
     );
     assert_eq!(advice(&report, "journald").len(), 1);
 
-    let (_, absent) = scan(&FixtureTree::new());
+    let Scanned { report: absent, .. } = scan(&FixtureTree::new());
     assert_eq!(advice(&absent, "pacman"), []);
     assert_eq!(advice(&absent, "claude-code"), []);
 }
@@ -421,7 +249,7 @@ fn system_locations_are_advised_on_when_present_and_reported_only_when_not_empty
 #[test]
 fn claude_code_advice_shows_the_retention_its_settings_resolve_to() {
     let text = |tree: &FixtureTree| {
-        let (_, report) = scan(tree);
+        let Scanned { report, .. } = scan(tree);
         let [advice] = advice(&report, "claude-code") else {
             panic!("expected one piece of advice");
         };

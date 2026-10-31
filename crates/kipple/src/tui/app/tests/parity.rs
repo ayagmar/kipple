@@ -3,6 +3,7 @@
 //! show the same bucket names, totals, sizes and reasons for the same findings.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use kipple_core::{
@@ -156,7 +157,7 @@ fn home(report: &ScanReport) -> String {
         })));
     }
     app.update(Msg::Finished {
-        report: Box::new(report.clone()),
+        report: Arc::new(report.clone()),
         elapsed: Duration::from_millis(900),
     });
     screen(&app, look(Paint::Mono, Glyphs::Ascii), WIDTH, HEIGHT)

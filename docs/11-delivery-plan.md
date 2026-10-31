@@ -90,7 +90,7 @@ Verify:
 
 ## M3: Safe mutation (two sessions)
 
-Status (2026-10-31): in progress. Built: spikes S1 and S4, the confined executor and the trash backend (D-061, D-062); the core's planner, revalidation, apply loop and reconciliation with the frozen-tree budget (D-063, D-064) (M3a); the stored runs with their journal and lock (D-065), the git query apply asks again before each item (D-066), plan files that are planned again from a fresh scan (D-067), and `clean`, `plan -o`, `apply`, `history` and `restore` with their receipts and exit codes (M3b). Left: profiles, the TUI's review and result screens, and a prompt that Ctrl+C interrupts at once (M3c).
+Status (2026-10-31): complete. Built: spikes S1 and S4, the confined executor and the trash backend (D-061, D-062); the core's planner, revalidation, apply loop and reconciliation with the frozen-tree budget (D-063, D-064) (M3a); the stored runs with their journal and lock (D-065), the git query apply asks again before each item (D-066), plan files that are planned again from a fresh scan (D-067), and `clean`, `plan -o`, `apply`, `history` and `restore` with their receipts and exit codes (M3b). Then profiles and their check (D-068), the TUI's review, progress and result screens (D-069), and a prompt that Ctrl+C interrupts, the typed size and `--dry-run` (D-070) (M3c). Deferred past M3: a profile run noticing a grant whose rule was removed from the config, and changed retention advice, which profiles don't hold.
 
 Build:
 - spike S1, then the platform executor and runner

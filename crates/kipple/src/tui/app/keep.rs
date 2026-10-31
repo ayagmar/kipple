@@ -7,9 +7,9 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use kipple_core::{FindingId, Lineage, Policy, SymbolicRoot};
+use kipple_core::{FindingId, Lineage, Policy, Selection, SymbolicRoot};
 
-use super::{App, Found, Key, Mode, Node, Progress, Row, Search, Shelf};
+use super::{App, Confirmation, Found, Generation, Key, Mode, Node, Progress, Row, Search, Shelf};
 use crate::config::{self, Config, Edit, Settings};
 use crate::human::{escaped, findings, homed};
 use crate::tui::settings;
@@ -28,6 +28,24 @@ pub(crate) enum Effect {
     /// Send this path to the terminal's clipboard with an OSC 52 escape, through the
     /// one writer the terminal has. No program is run.
     Clipboard(String),
+    /// Plan `selection` from the finished scan on a worker, under the config as it is
+    /// now, then answer with [`Msg::Planned`](super::Msg::Planned) for `generation`.
+    Plan {
+        generation: Generation,
+        selection: Selection,
+    },
+    /// Stop the planning under way: its answer is no longer wanted.
+    StopPlanning,
+    /// Run the plan the person confirmed this way ([`App::confirmed`]) on a worker,
+    /// under the config as it is now, reporting each event with
+    /// [`Msg::Applied`](super::Msg::Applied).
+    Apply(Confirmation),
+    /// Stop the run after the item under way (the first Ctrl+C).
+    StopApply,
+    /// End kipple now, leaving the run, if it was stored, for the next command to
+    /// reconcile (the second Ctrl+C). The loop names the run once it has passed on the
+    /// events already sent, so a run stored just before is named.
+    Abort,
 }
 
 /// What the config file says, with the policy and project roots it gives.
@@ -260,6 +278,24 @@ impl App {
     /// one scan, so the selection goes too.
     fn rescan(&mut self, done: &str) {
         let cleared = self.selected.len();
+        self.forget_scan();
+        self.effect = Some(Effect::Rescan);
+        let mut notice = format!("{done} Scanning again");
+        if cleared > 0 {
+            write!(
+                notice,
+                ", so the selection ({}) was cleared",
+                findings(cleared)
+            )
+            .ok();
+        }
+        notice.push('.');
+        self.notice = Some(notice);
+    }
+
+    /// Forgets this scan: its findings, its report and the selection, for a new scan.
+    pub(super) fn forget_scan(&mut self) {
+        self.report = None;
         self.rows.clear();
         self.by_id.clear();
         self.gaps.clear();
@@ -274,18 +310,6 @@ impl App {
         self.scroll = 0;
         // A finding's number only holds within one scan, so the line scrolled on is gone.
         self.detail_scroll = None;
-        self.effect = Some(Effect::Rescan);
-        let mut notice = format!("{done} Scanning again");
-        if cleared > 0 {
-            write!(
-                notice,
-                ", so the selection ({}) was cleared",
-                findings(cleared)
-            )
-            .ok();
-        }
-        notice.push('.');
-        self.notice = Some(notice);
     }
 
     /// Takes the findings `which` matches out of the selection. How many it took.

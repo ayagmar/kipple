@@ -347,9 +347,7 @@ fn plan_some(scan: &ScanReport, ids: &[u64], config: &Config, world: &World) -> 
 }
 
 const fn reviewed(plan: &Plan) -> Authorization {
-    Authorization::Reviewed {
-        plan: plan.digest(),
-    }
+    Authorization::Reviewed(kipple_core::ReviewedPlan::of(plan))
 }
 
 fn run(plan: &Plan, rescan: &ScanReport, config: &Config, world: &World) -> Receipt {
@@ -661,7 +659,7 @@ fn an_item_that_became_riskier_or_unknown_is_skipped() {
         ] {
             let receipt = apply_as(
                 &planned.plan,
-                authorization,
+                authorization.clone(),
                 &rescanned(rescan),
                 &config,
                 &world,
@@ -1903,6 +1901,8 @@ fn check_reconciled(seed: u64, world: &World, case: &Case) {
     assert_eq!(state.order_problem(), None, "seed {seed}");
 }
 
+#[path = "apply/profile.rs"]
+mod profile;
 #[path = "apply/replan.rs"]
 mod replan;
 #[path = "apply/runs.rs"]

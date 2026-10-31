@@ -95,6 +95,7 @@ mod planner;
 mod policy;
 mod probe;
 mod process;
+pub mod profile;
 mod protect;
 mod root;
 mod rule;
@@ -110,8 +111,8 @@ pub use activity::{ProcessCensus, census};
 pub use apply::{
     ApplyPorts, ApplyRequest, ItemEvent, ItemSink, Reconciled, Recorders, apply, reconcile,
 };
-pub use authorize::{Authorization, Authorized, AuthorizedOp, DeleteOp, TrashOp};
-pub use cancel::CancelToken;
+pub use authorize::{Authorization, Authorized, AuthorizedOp, DeleteOp, ReviewedPlan, TrashOp};
+pub use cancel::{CancelToken, Waited};
 pub use capability::{NativeTool, ToolError, ToolStatus, ToolVersion};
 pub use digest::Digest;
 pub use discovery::WalkStop;
@@ -141,7 +142,7 @@ pub use outcome::{
 };
 pub use plan::{
     Anchor, ItemId, Judgement, JudgementField, MethodChoice, MethodRefusal, Plan, PlanEntry,
-    Selection, Standing, VerifiedRoot,
+    Selection, Standing, Total, VerifiedRoot,
 };
 pub use planner::{
     Conflict, ConflictKind, Judge, Merged, Methods, MutationPorts, PlanMode, PlanRequest, Planned,
@@ -149,8 +150,8 @@ pub use planner::{
 };
 pub use policy::{
     Activity, ActivityGap, Bucket, Caution, Consequence, Cost, Facts, HeldPath, Hold, Level,
-    Lineage, Loss, Modified, Policy, Proposal, Recovery, RuleSettings, Seen, Tracked, Verdict,
-    WalkGap,
+    Lineage, Loss, Modified, POLICY_VERSION, Policy, Proposal, Recovery, RuleSettings, Seen,
+    Tracked, Verdict, WalkGap,
 };
 pub use probe::{
     Clock, DirAccess, DirEntryMeta, EntryKind, EntryMeta, FileIdentity, FileSystem, FsProbe,
@@ -175,9 +176,9 @@ pub use run::{
     StoredRun, Unreadable, history, read_run,
 };
 pub use session::{
-    Answer, ApplyEvent, ApplyFile, CleanRequest, Confirm, Consent, Ending, EventSink, Finished,
-    RefusedItem, RestoreAsk, RestoreFinished, Restored, Restoring, Review, Session, run_apply,
-    run_clean, run_reconcile, run_restore,
+    Answer, ApplyEvent, ApplyFile, CleanRequest, Confirm, Confirmed, Consent, Ending, EventSink,
+    Finished, Prepared, RefusedItem, RestoreAsk, RestoreFinished, Restored, Restoring, Review,
+    Session, prepare_clean, run_apply, run_clean, run_prepared, run_reconcile, run_restore,
 };
 pub use size::{Allocated, Apparent, Completeness, Measurement, SpaceEstimate};
 pub use store::{

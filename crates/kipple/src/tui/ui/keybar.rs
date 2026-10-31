@@ -11,13 +11,14 @@ use ratatui::widgets::Paragraph;
 use super::layout::Totals;
 use super::tree::tail;
 use super::{Look, cols};
-use crate::human::{bytes, escaped};
+use crate::human::{bytes, escaped, review};
 use crate::theme::Role;
-use crate::tui::app::{App, Mode};
+use crate::tui::app::{App, Cleaning, Key, Mode};
+use crate::tui::keymap::shown;
 
 /// What the hints that show however narrow the bar is say: how to get help and how to
 /// leave. Their keys can be rebound, so they are known by their words.
-const ALWAYS: [&str; 3] = [" help", " quit", " back"];
+const ALWAYS: [&str; 4] = [" help", " quit", " back", " home"];
 
 /// Draws the key bar in `area`: one line, or two with the found and eligible totals
 /// first when `totals` puts them on the key bar.
@@ -57,8 +58,13 @@ pub(super) fn render(app: &App, look: Look<'_>, area: Rect, totals: Totals, fram
 
 /// What the selection is and what it frees, after the found and eligible totals when
 /// `totals` puts them on the key bar, in at most `room` columns if it can be: the
-/// selection's size goes first, so what it frees always shows.
+/// selection's size goes first, so what it frees always shows. Nothing while a clean is
+/// on screen: its plan says what it frees, and the selection may count what the plan
+/// left out.
 fn selection(app: &App, look: Look<'_>, totals: Totals, room: usize) -> Text<'static> {
+    if app.cleaning.is_some() {
+        return Text::default();
+    }
     let full = selection_with(app, look, totals, SelectedSize::Shown);
     if full.width() <= room {
         return full;
@@ -104,13 +110,16 @@ enum Left {
 }
 
 fn left(app: &App, look: Look<'_>) -> Left {
-    let typing = |prompt: String, text: &str, hint: &'static str| {
+    let typing = |prompt: String, text: &str, hint: &str| {
         Left::Text(Text::from(vec![
             Span::raw(format!("{prompt}{}", escaped(text))),
             Span::styled("_", Style::new().add_modifier(Modifier::SLOW_BLINK)),
-            Span::styled(hint, look.style(Role::Muted)),
+            Span::styled(hint.to_owned(), look.style(Role::Muted)),
         ]))
     };
+    if let Some(cleaning) = &app.cleaning {
+        return clean_left(app, cleaning, look, typing);
+    }
     match (app.mode, &app.notice, &app.panel.typing) {
         (Mode::Filter, _, _) => typing(
             "/".to_owned(),
@@ -135,6 +144,34 @@ fn left(app: &App, look: Look<'_>) -> Left {
         (_, Some(notice), _) => Left::Text(Text::styled(notice.clone(), look.style(Role::Accent))),
         (Mode::Settings, None, None) => Left::Hints(look.glyphs.keys(&app.keymap().settings_bar())),
         (_, None, _) => Left::Hints(look.glyphs.keys(&app.keymap().browse_bar())),
+    }
+}
+
+/// The left of the bar while a clean is under way: the size being typed, the answer to
+/// the last key, or the keys of the review or the result.
+fn clean_left(
+    app: &App,
+    cleaning: &Cleaning,
+    look: Look<'_>,
+    typing: impl Fn(String, &str, &str) -> Left,
+) -> Left {
+    let (enter, esc) = (shown(Key::Enter), shown(Key::Esc));
+    // The question is the screen's title, so what is typed always fits beside it.
+    if let Cleaning::Typing(_, typed) = cleaning {
+        let keys = review::size_keys(&enter, &esc);
+        return typing(review::SIZE_PROMPT.to_owned(), typed, &keys);
+    }
+    if let Some(notice) = &app.notice {
+        return Left::Text(Text::styled(notice.clone(), look.style(Role::Accent)));
+    }
+    let muted = |text: &str| Left::Text(Text::styled(text.to_owned(), look.style(Role::Muted)));
+    match cleaning {
+        Cleaning::Planning(_) => muted(&review::stop_planning(&esc)),
+        Cleaning::Reviewing(_) | Cleaning::Typing(..) => {
+            Left::Hints(look.glyphs.keys(&app.keymap().review_bar()))
+        }
+        Cleaning::Applying(_) => muted(review::STOP_KEY),
+        Cleaning::Ended(_) => Left::Hints(look.glyphs.keys(&app.keymap().result_bar())),
     }
 }
 

@@ -1,6 +1,7 @@
 //! Everything that differs by operating system. `#[cfg(target_os)]` appears only in this
 //! crate, and outside this module only to pick a test that needs one OS.
 
+pub(crate) mod folder;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "macos")]

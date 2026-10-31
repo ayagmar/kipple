@@ -564,6 +564,9 @@ const STRUCTURED: &[&str] = &[
     "slot",
     "unsupported",
     "unjudged",
+    "scope",
+    "integration_digest",
+    "enabled",
 ];
 
 /// Every key in `value` whose value is, or holds, a string.
@@ -586,9 +589,10 @@ fn string_keys(value: &serde_json::Value, key: &str, keys: &mut BTreeSet<String>
     }
 }
 
-/// Catches a stored record holding free text: an OS message, stderr or a command line
-/// (pinned 19; 04 §8a). Every record kind is decoded back and every string in it is
-/// under a key that holds a code, digest, name or path.
+/// Catches a stored record holding free text: an OS message, stderr, a command line or a
+/// kept path's note (pinned 19; M3c pinned 19; 04 §8a). Every record kind and a profile
+/// is decoded back and every string in it is under a key that holds a code, digest, name
+/// or path.
 #[test]
 fn stored_records_hold_no_free_text() {
     let (item, target) = project(0, 100, &["a"]);
@@ -596,7 +600,7 @@ fn stored_records_hold_no_free_text() {
     let planned = super::plan_all(&scan_of(&[item]), &Config::new(), &world, PlanMode::Review);
     let header = encode_stored_plan(&planned.plan, &TestCodec).unwrap();
     let header = &header[..=header.iter().position(|byte| *byte == b'\n').unwrap()];
-    let mut lines = vec![header.to_vec()];
+    let mut lines = vec![header.to_vec(), super::profile::stored_with_a_note()];
     for record in every_record() {
         let line = encode_line(&record, &TestCodec);
         assert_eq!(

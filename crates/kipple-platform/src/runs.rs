@@ -12,11 +12,6 @@
 //! name is synced (`fsync`, `F_FULLFSYNC` on macOS). Windows writes files through
 //! (`FILE_WRITE_THROUGH`) and flushes each directory as the executor does.
 
-#[cfg(unix)]
-mod unix;
-#[cfg(windows)]
-mod windows;
-
 #[cfg(test)]
 mod tests;
 
@@ -32,12 +27,7 @@ use kipple_core::{
     LOCK_WAIT, LockState, Locked, OsError, RunId, RunStore, StoreRefusal,
 };
 
-#[cfg(unix)]
-use unix::{Folder, file_system_at, is_link};
-#[cfg(windows)]
-use windows::{Folder, file_system_at, is_link};
-
-use crate::os;
+use crate::os::folder::{Folder, create_synced, failed, made_on, regular};
 
 /// The directory under the data directory that holds the runs.
 const RUNS: &str = "runs";
@@ -266,16 +256,6 @@ impl RunStore for FileRunStore {
     }
 }
 
-/// The file system `<data>/runs` is made on: that of `data`, or of the nearest directory
-/// above it when it is missing, reached through links as making them reaches it.
-fn made_on(data: &Path) -> io::Result<FileSystemClass> {
-    let existing = data
-        .ancestors()
-        .find(|dir| dir.exists())
-        .ok_or(io::ErrorKind::NotFound)?;
-    file_system_at(existing)
-}
-
 /// Refuses a file system outside the executor's allowlist, or one that can't be told.
 fn supported(class: io::Result<FileSystemClass>) -> Result<(), StoreRefusal> {
     match class {
@@ -293,13 +273,7 @@ fn make_runs(data: &Path) -> io::Result<Folder> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {}
         opened => return opened,
     }
-    let missing: Vec<&Path> = runs.ancestors().take_while(|dir| !dir.exists()).collect();
-    os::create_private_dir(&runs)?;
-    for dir in missing {
-        if let Some(parent) = dir.parent() {
-            os::sync_dir(parent)?;
-        }
-    }
+    create_synced(&runs)?;
     Folder::open(&runs)
 }
 
@@ -377,29 +351,6 @@ fn append_at(log: &mut impl Log, at: u64, line: &[u8]) -> Result<u64, ApplyError
         return Err(journal(error));
     }
     Ok(at + line.len() as u64)
-}
-
-/// `file`, if it is a regular file: never a directory, device or pipe.
-fn regular(file: File) -> io::Result<File> {
-    if file.metadata()?.is_file() {
-        Ok(file)
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            "not a regular file",
-        ))
-    }
-}
-
-/// A read or write that failed: through a link where the store never follows one, or
-/// another I/O error.
-fn failed(error: io::Error) -> ApplyError {
-    let code = if is_link(&error) {
-        ErrorCode::ThroughLink
-    } else {
-        ErrorCode::Io
-    };
-    ApplyError::io(code, error)
 }
 
 /// Creating or writing a run failed at `step`.

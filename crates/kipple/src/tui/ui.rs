@@ -9,21 +9,30 @@ mod help;
 mod keybar;
 mod layout;
 pub(crate) mod onboarding;
+mod progress;
+mod result;
+mod review;
 pub(crate) mod settings;
 mod summary;
 mod tree;
 mod wrap;
 
+use std::path::{Path, PathBuf};
+
 use kipple_core::Bucket;
 use ratatui::Frame;
+use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::text::{Line as Text, Span};
+use ratatui::widgets::Paragraph;
 
 pub(crate) use self::detail::detail_end;
 use self::layout::Screen;
 pub(crate) use self::layout::list_rows;
 pub(crate) use self::tree::{offset, slashed, tail};
-use super::app::{App, Mode, Shelf};
-use crate::theme::{Look, Role};
+use self::wrap::{Hung, wrap};
+use super::app::{App, Cleaning, Ended, Mode, Shelf};
+use crate::human::receipt;
+use crate::theme::{Glyphs, Look, Role, Theme};
 
 impl Look<'_> {
     /// Paints the whole screen in the text role, which every other role is patched
@@ -92,11 +101,21 @@ pub(crate) fn render(app: &App, look: Look<'_>, frame: &mut Frame<'_>) {
     } else {
         Screen::Home
     };
+    let screen = if app.cleaning.is_some() {
+        Screen::Panel
+    } else {
+        screen
+    };
     let areas = layout::layout(frame.area(), &app.config.ui, screen);
     frame::outline(look, areas.outer, &areas.rules, frame);
     keybar::render(app, look, areas.keybar, areas.totals, frame);
     let width = areas.outer.width.saturating_sub(4);
     let title = frame::header(app, look, width);
+    if let Some(cleaning) = &app.cleaning {
+        clean(app, cleaning, look, areas.body, frame);
+        frame::title(look, title, areas.outer, frame);
+        return;
+    }
     if screen == Screen::Panel {
         settings::render(app, look, areas.body, frame);
         frame::title(look, title, areas.outer, frame);
@@ -122,6 +141,141 @@ pub(crate) fn render(app: &App, look: Look<'_>, frame: &mut Frame<'_>) {
     if app.mode == Mode::Help {
         help::render(app, look, frame);
     }
+}
+
+/// What a clean's screen shows: the head that stays above its list, and the list from
+/// `scroll` on.
+struct Page {
+    head: Vec<Text<'static>>,
+    lines: Vec<Text<'static>>,
+    scroll: usize,
+}
+
+/// The page of `cleaning`.
+fn page(app: &App, cleaning: &Cleaning, look: Look<'_>) -> Page {
+    let titled = |title: String| vec![Text::styled(title, look.style(Role::Title))];
+    match cleaning {
+        Cleaning::Planning(_) => Page {
+            head: titled(crate::human::review::PLANNING.to_owned()),
+            lines: Vec::new(),
+            scroll: 0,
+        },
+        Cleaning::Reviewing(shown) => Page {
+            head: review::head(review::title(shown), shown, look),
+            lines: review::lines(app, shown, look),
+            scroll: shown.scroll,
+        },
+        // The question the typed size answers, above the plan it runs.
+        Cleaning::Typing(shown, _) => {
+            let items = shown.prepared.plan().entries().len();
+            let question = receipt::typed_question(items, &shown.total);
+            Page {
+                head: review::head(question.trim_end().to_owned(), shown, look),
+                lines: review::lines(app, shown, look),
+                scroll: shown.scroll,
+            }
+        }
+        Cleaning::Applying(applying) => Page {
+            head: titled(progress::title(applying)),
+            lines: progress::lines(applying, app.home.as_deref(), look),
+            scroll: 0,
+        },
+        Cleaning::Ended(ended) => Page {
+            head: titled(result::title(ended)),
+            lines: result::lines(ended, app.home.as_deref(), look),
+            scroll: match ended {
+                Ended::Ran { scroll, .. } => *scroll,
+                Ended::Failed { .. } => 0,
+            },
+        },
+    }
+}
+
+/// A page's rows laid out in a clean's `area`: the head's, a blank row, then the list's
+/// in the rest. Each line too wide for the terminal breaks into rows that start where it
+/// does.
+struct Laid {
+    head: Vec<Text<'static>>,
+    head_area: Rect,
+    rows: Vec<Text<'static>>,
+    list: Rect,
+}
+
+fn lay(page: Page, area: Rect) -> Laid {
+    let area = area.inner(Margin::new(1, 0));
+    let head = wrap(hung(page.head), area.width);
+    let height = u16::try_from(head.len() + 1).unwrap_or(u16::MAX);
+    let [head_area, list] =
+        Layout::vertical([Constraint::Length(height), Constraint::Fill(1)]).areas(area);
+    Laid {
+        head,
+        head_area,
+        rows: wrap(hung(page.lines), list.width),
+        list,
+    }
+}
+
+/// `lines`, each hung where its text starts.
+fn hung(lines: Vec<Text<'static>>) -> Vec<Hung> {
+    lines
+        .into_iter()
+        .map(|line| {
+            let hang = line.spans.first().map_or(0, |span| {
+                span.content.len() - span.content.trim_start().len()
+            });
+            Hung { line, hang }
+        })
+        .collect()
+}
+
+/// The furthest a clean's list scrolls, at the app's size: its rows past the first page.
+pub(crate) fn clean_end(app: &App) -> usize {
+    let Some(cleaning) = &app.cleaning else {
+        return 0;
+    };
+    let areas = layout::layout(
+        Rect::new(0, 0, app.width, app.height),
+        &app.config.ui,
+        Screen::Panel,
+    );
+    // Styles don't change where a line wraps, and both glyph sets draw symbols of the
+    // same width, so any look wraps the same.
+    let look = Look {
+        theme: &Theme::default(),
+        glyphs: Glyphs::Ascii,
+    };
+    let laid = lay(page(app, cleaning, look), areas.body);
+    laid.rows
+        .len()
+        .saturating_sub(usize::from(laid.list.height))
+}
+
+/// A clean's screen in place of the tree and the detail pane: its head, then its list
+/// from where it was scrolled.
+fn clean(app: &App, cleaning: &Cleaning, look: Look<'_>, area: Rect, frame: &mut Frame<'_>) {
+    let page = page(app, cleaning, look);
+    let scroll = page.scroll;
+    let laid = lay(page, area);
+    frame.render_widget(Paragraph::new(laid.head), laid.head_area);
+    let rows = usize::from(laid.list.height);
+    // Running, the newest rows show; otherwise from where it was scrolled, never past
+    // the last page.
+    let bottom = laid.rows.len().saturating_sub(rows);
+    let first = match cleaning {
+        Cleaning::Applying(_) => bottom,
+        Cleaning::Planning(_)
+        | Cleaning::Reviewing(_)
+        | Cleaning::Typing(..)
+        | Cleaning::Ended(_) => scroll.min(bottom),
+    };
+    let shown: Vec<Text<'static>> = laid.rows.into_iter().skip(first).collect();
+    frame.render_widget(Paragraph::new(shown), laid.list);
+}
+
+/// `path` as the home screen shows it in a clean's lines: below the home directory,
+/// from `~` (`docs/03-functional-spec.md` §5 Paths).
+fn homed(path: &Path, home: Option<&Path>) -> PathBuf {
+    PathBuf::from(crate::human::homed(path, home))
 }
 
 /// How many columns `text` takes.

@@ -9,7 +9,7 @@ use toml_edit::{Document, Item, Key, TableLike, Value};
 use super::{Catalog, Config, Kept, Position, RuleConfig, is_config_path};
 
 /// Keys `docs/03-functional-spec.md` §6 lists that kipple doesn't read yet.
-const LATER: &[&str] = &["review", "retention"];
+const LATER: &[&str] = &["retention"];
 
 /// What is wrong with the file, and where.
 #[derive(Debug)]
@@ -54,7 +54,7 @@ impl Reader<'_> {
     fn config(&self, root: &dyn TableLike) -> Result<Config, ParseError> {
         let mut config = Config::default();
         let known = [
-            "care", "clean", "scan", "exclude", "keep", "rules", "ui", "keys",
+            "care", "clean", "scan", "exclude", "keep", "rules", "review", "ui", "keys",
         ];
         for Entry { name, key, item } in entries(root) {
             if !known.contains(&name) && !LATER.contains(&name) {
@@ -68,6 +68,7 @@ impl Reader<'_> {
                 "exclude" => self.exclude(table, &mut config)?,
                 "keep" => self.keep(table, &mut config)?,
                 "rules" => self.rules(table, &mut config)?,
+                "review" => self.review(table, &mut config)?,
                 "ui" => config.ui = self.ui(table)?,
                 "keys" => config.keys = self.keys(table)?,
                 _ => return Err(self.unknown(name, key)),
@@ -92,6 +93,23 @@ impl Reader<'_> {
         self.only("scan", scan, &["project_roots"])?;
         if let Some((_, roots)) = scan.get_key_value("project_roots") {
             config.project_roots = Some(self.paths("scan.project_roots", roots)?);
+        }
+        Ok(())
+    }
+
+    fn review(&self, review: &dyn TableLike, config: &mut Config) -> Result<(), ParseError> {
+        self.only("review", review, &["confirm_by_typing_above"])?;
+        if let Some((_, item)) = review.get_key_value("confirm_by_typing_above") {
+            let bytes = match item.as_value() {
+                Some(Value::Integer(count)) => u64::try_from(*count.value()).ok(),
+                Some(Value::String(text)) => size(text.value()),
+                _ => None,
+            };
+            let wanted = "a size: a whole number of bytes, or a number with B, KB, MB, GB, \
+                          TB, KiB, MiB, GiB or TiB";
+            let key = "review.confirm_by_typing_above";
+            config.confirm_by_typing_above =
+                Some(bytes.ok_or_else(|| self.bad(item, key, wanted))?);
         }
         Ok(())
     }
@@ -322,6 +340,45 @@ impl Reader<'_> {
     pub(super) fn bad(&self, item: &Item, key: &str, wanted: &str) -> ParseError {
         (self.at)(item.span(), format!("{key}: expected {wanted}"))
     }
+}
+
+/// The bytes `text` names: a number, whole or with a fraction, then a unit, decimal (`B`,
+/// `KB`…`TB`) or binary (`KiB`…`TiB`), with spaces around them allowed. `None` when it is
+/// anything else, or more than a `u64` holds.
+fn size(text: &str) -> Option<u64> {
+    const UNITS: [(&str, u128); 9] = [
+        ("B", 1),
+        ("KB", 1_000),
+        ("MB", 1_000_000),
+        ("GB", 1_000_000_000),
+        ("TB", 1_000_000_000_000),
+        ("KiB", 1 << 10),
+        ("MiB", 1 << 20),
+        ("GiB", 1 << 30),
+        ("TiB", 1 << 40),
+    ];
+    let text = text.trim();
+    let split = text
+        .find(|c: char| !c.is_ascii_digit() && c != '.')
+        .unwrap_or(text.len());
+    let (number, unit) = text.split_at(split);
+    let (_, scale) = UNITS.iter().find(|(name, _)| *name == unit.trim_start())?;
+    let (whole, fraction) = number.split_once('.').unwrap_or((number, ""));
+    let digits = |part: &str| part.bytes().all(|b| b.is_ascii_digit());
+    if whole.is_empty() || !digits(whole) || !digits(fraction) || number.ends_with('.') {
+        return None;
+    }
+    let whole: u128 = whole.parse().ok()?;
+    let denominator = 10_u128.checked_pow(u32::try_from(fraction.len()).ok()?)?;
+    let fraction: u128 = if fraction.is_empty() {
+        0
+    } else {
+        fraction.parse().ok()?
+    };
+    let bytes = whole
+        .checked_mul(*scale)?
+        .checked_add(fraction.checked_mul(*scale)? / denominator)?;
+    u64::try_from(bytes).ok()
 }
 
 /// An entry of a table: its name, its key and its value.

@@ -3,10 +3,11 @@
 
 use kipple_core::format::{decode_plan_file, encode_plan_file};
 use kipple_core::{
-    Activity, ActivityGap, Answer, ApplyEvent, ApplyPorts, CancelToken, CleanRequest, Confirm,
-    Consent, Depth, Digest, Ending, EventSink, Finished, GitGap, Hold, ItemEvent, ItemId,
+    Activity, ActivityGap, Answer, ApplyEvent, ApplyPorts, CancelToken, CleanRequest, Completeness,
+    Confirm, Consent, Depth, Digest, Ending, EventSink, Finished, GitGap, Hold, ItemEvent, ItemId,
     ItemOutcome, Method, Reconciled, RestoreAsk, RestoreResult, Restoring, Review, RunRead,
-    ScanReport, Session, Skip, Status, StoreRefusal, Tracked, read_run, run_clean, run_restore,
+    ScanReport, Session, Skip, Status, StoreRefusal, Total, Tracked, read_run, run_clean,
+    run_restore,
 };
 use kipple_core::{ApplyFile, Dropped, ImportedPlan, PlanMode, run_apply};
 
@@ -502,6 +503,33 @@ fn a_cancel_at_the_prompt_exits_130_whatever_the_answer() {
         assert!(machine.world.state().runs.is_empty(), "{answer:?}: no run");
         assert_eq!(machine.world.state().ran, Vec::new(), "{answer:?}");
     }
+}
+
+/// Catches the typed-size question comparing only the bytes measured (spec M3c pinned
+/// 16): a plan whose size is a lower bound may be above the threshold, so it is confirmed
+/// by typing its size, not by a bare `y`, however little was measured.
+#[test]
+fn a_total_that_is_a_lower_bound_exceeds_a_threshold_above_it() {
+    let threshold = 1_000_000;
+    let incomplete = Completeness::Incomplete {
+        unreadable: 1,
+        skipped_mounts: 0,
+    };
+    for complete in [incomplete, Completeness::Cancelled] {
+        let total = Total {
+            known: 10,
+            complete,
+        };
+        assert!(total.exceeds(threshold), "{complete:?} exceeds it");
+    }
+    let measured = Total {
+        known: 10,
+        complete: Completeness::Complete,
+    };
+    assert!(
+        !measured.exceeds(threshold),
+        "a measured total below it doesn't"
+    );
 }
 
 /// Cancels the token as the run's last item ends, as Ctrl+C during its last moments

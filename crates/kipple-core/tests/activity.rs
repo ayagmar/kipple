@@ -237,6 +237,8 @@ impl Integration for Artifact {
             artifacts: &[],
             owner_files: &[],
             verified: &[],
+            consequences: &[],
+            revision: 1,
         }
     }
 

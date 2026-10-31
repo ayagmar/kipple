@@ -4,6 +4,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use kipple_core::{
     Advice, IntegrationReport, Level, Method, ResolvedRoot, RootSource, Roots, ScanOutcome,
@@ -454,7 +455,7 @@ fn steps_2_to_4_at_80_by_24() {
         PathBuf::from("/home/ada/code"),
     ];
     app.update(Msg::Finished {
-        report: Box::new(report_with_advice()),
+        report: Arc::new(report_with_advice()),
         elapsed: std::time::Duration::from_secs(1),
     });
     let mut first = Onboarding::new(&app);
@@ -479,7 +480,7 @@ fn step_4_shows_each_line_of_a_snippet_on_its_own_line() {
         advice.snippets = vec!["[Journal]\nSystemMaxUse=200M".to_owned()];
     }
     app.update(Msg::Finished {
-        report: Box::new(report),
+        report: Arc::new(report),
         elapsed: std::time::Duration::from_secs(1),
     });
     let mut first = Onboarding::new(&app);
@@ -510,7 +511,7 @@ fn steps_1_to_4_at_160_by_48_in_colour() {
     let mut app = home();
     app.roots = vec![PathBuf::from("/home/ada/projects")];
     app.update(Msg::Finished {
-        report: Box::new(report_with_advice()),
+        report: Arc::new(report_with_advice()),
         elapsed: std::time::Duration::from_secs(1),
     });
     let mut first = Onboarding::new(&app);
@@ -534,7 +535,7 @@ fn steps_1_to_4_at_160_by_48_in_colour() {
 fn step_4_says_when_no_tip_is_known() {
     let mut app = home();
     app.update(Msg::Finished {
-        report: Box::new(ScanReport {
+        report: Arc::new(ScanReport {
             integrations: Vec::new(),
             ..report_with_advice()
         }),

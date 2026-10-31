@@ -237,6 +237,8 @@ const fn descriptor(id: &'static str) -> IntegrationDescriptor {
         artifacts: &[],
         owner_files: &[],
         verified: &[],
+        consequences: &[],
+        revision: 1,
     }
 }
 

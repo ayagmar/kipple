@@ -5,7 +5,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use super::{Authorization, AuthorizedOp, Recheck, admit};
+use super::{Authorization, AuthorizedOp, Recheck, ReviewedPlan, admit};
 use crate::digest::Digest;
 use crate::engine::FindingId;
 use crate::frozen::{
@@ -152,16 +152,15 @@ fn admit_item(
     now: Now,
 ) -> Result<AuthorizedOp, Skip> {
     let plan = Plan::new(vec![entry.clone()]);
-    let authorization = authorization.unwrap_or_else(|| Authorization::Reviewed {
-        plan: plan.digest(),
-    });
+    let authorization =
+        authorization.unwrap_or_else(|| Authorization::Reviewed(ReviewedPlan::of(&plan)));
     let recheck = Recheck {
         verdict: &now.verdict,
         proposal: &now.proposal,
         judgement: &now.judgement,
         freeze: now.freeze,
     };
-    admit(&plan, item, authorization, recheck)
+    admit(&plan, item, &authorization, recheck)
 }
 
 fn review(cautions: &[Caution]) -> Standing {
@@ -180,7 +179,7 @@ fn an_unchanged_reviewed_item_is_authorized_whole() {
 #[test]
 fn a_review_of_another_plan_authorizes_nothing() {
     let entry = entry(Method::Delete, Standing::Safe, tree(1));
-    let other = Authorization::Reviewed { plan: Digest(9) };
+    let other = Authorization::Reviewed(ReviewedPlan(Digest(9)));
     let skip = admit_now(&entry, Some(other), Now::same_as(&entry)).unwrap_err();
     assert_eq!(skip, Skip::NotReviewed);
 }
