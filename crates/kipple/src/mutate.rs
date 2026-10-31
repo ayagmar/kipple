@@ -23,7 +23,7 @@ use kipple_core::format::{PLAN_LIMIT, decode_plan_file, encode_plan_file};
 use kipple_core::{
     ApplyFile, ApplyPorts, Bucket, CleanRequest, Consent, Engine, Finding, Judge, Method, Methods,
     MutationPorts, PlanMode, PlanRequest, Policy, Protections, RefusedItem, Rule, RuleId,
-    ScanOutcome, ScanReport, Selection, Session, SymbolicRoot, run_apply, run_clean,
+    ScanOutcome, ScanReport, Selection, Session, StoreRefusal, SymbolicRoot, run_apply, run_clean,
 };
 use kipple_platform::{
     ConfinedFs, ConfinedTrash, FileRunStore, GitQuery, OsNames, clock, kipple_dirs, write_new,
@@ -32,7 +32,7 @@ use kipple_platform::{
 pub use self::runs::{HistoryArgs, RestoreArgs};
 pub(crate) use self::runs::{history, restore};
 use crate::config::{Settings, held_at};
-use crate::human::{escaped, receipt as words};
+use crate::human::{escaped, outcome, receipt as words};
 use crate::json::EventBody;
 use crate::{CANCELLED, EventsFormat, Host, Io, Person, USAGE, absolute, fail, say, scan};
 
@@ -196,6 +196,18 @@ impl Machine {
             trash: &self.trash,
             tracked: &self.git,
         }
+    }
+}
+
+/// Refuses a run whose store can't exist: with kipple's data folder unknown, the host's
+/// protections hold every item, which would read as items the system protects.
+fn store_known(settings: &Settings, stderr: &mut dyn Write) -> Result<(), ExitCode> {
+    match kipple_dirs(&settings.roots).data.path {
+        Ok(_) => Ok(()),
+        Err(_) => Err(fail(
+            stderr,
+            &outcome::store_refusal(&StoreRefusal::NoDataDir),
+        )),
     }
 }
 
@@ -369,6 +381,9 @@ pub(crate) fn clean(host: &Host<'_>, args: &CleanArgs, io: &mut Io<'_>) -> ExitC
     };
     let picked = pick(&scanned.report, &scanned.settings.policy, only.as_ref());
     let method = args.choice.method.map(Method::from);
+    if let Err(code) = store_known(&scanned.settings, io.stderr) {
+        return code;
+    }
     let machine = Machine::new(host, &scanned.settings, method);
     let ink = host.ink(io.stderr);
     let request = CleanRequest {
@@ -498,6 +513,9 @@ pub(crate) fn apply(host: &Host<'_>, args: &ApplyArgs, io: &mut Io<'_>) -> ExitC
         Ok(scanned) => scanned,
         Err(code) => return code,
     };
+    if let Err(code) = store_known(&scanned.settings, io.stderr) {
+        return code;
+    }
     let machine = Machine::new(host, &scanned.settings, None);
     let ink = host.ink(io.stderr);
     let mut events = output::Events::new(format, scanned.next_seq, io.cancel.clone(), ink.clone())

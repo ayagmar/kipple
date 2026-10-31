@@ -336,6 +336,31 @@ fn yes_without_only_changes_nothing_and_says_what_to_name() {
     assert!(demo.history().is_empty(), "no run is stored");
 }
 
+/// Catches a store kipple can't use reported as items "your system protects" and exit 3:
+/// with kipple's data folder unknown, `clean` says so, exits 1 and changes nothing.
+#[test]
+fn an_unknown_data_folder_refuses_and_says_why() {
+    let demo = Demo::new();
+    let roots = fs::read_to_string(&demo.roots).unwrap();
+    let kept = roots
+        .lines()
+        .filter(|line| {
+            !line.starts_with("xdg.data ") && !line.starts_with("known.roaming-app-data ")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&demo.roots, kept).unwrap();
+    let config = demo.at("config.toml");
+    fs::write(&config, "").unwrap();
+    let config = config.to_str().unwrap();
+
+    let ran = demo.run(&["--config", config, "clean", "--only", TARGET, "--yes"]);
+
+    assert_eq!(ran.code, ExitCode::FAILURE, "{}", ran.err);
+    assert!(ran.err.contains("data folder isn't known"), "{}", ran.err);
+    assert!(present(&demo.at(ACME)), "acme's target stays");
+}
+
 /// Catches a clean with nobody to confirm it, and no `--yes`, running anyway (pinned 1):
 /// a script or a pipe gets exit 3 and nothing changes.
 #[test]
