@@ -1,8 +1,9 @@
 //! Which key does what (D-056). Every key the home screen, settings and the first run
 //! act on maps to an [`Action`] in a [`Mode`]; `[keys]` in the config rebinds an action
 //! by its name. Help and the key bars are written from the keymap, so they can't
-//! disagree with it. Typed text (the filter, a note, a root) is never rebound, Ctrl-C
-//! always quits, and esc always goes back or closes.
+//! disagree with it. Typed text (the filter, a note, a root, a size) is never rebound,
+//! Ctrl-C always quits (during a clean's apply it stops it, spec M3c pinned 8), and esc
+//! always goes back or closes.
 
 use super::app::Key;
 
@@ -17,6 +18,10 @@ pub(crate) enum Mode {
     Onboarding,
     /// The filter being typed: only the keys that type nothing move the cursor.
     FilterNav,
+    /// The review of a clean, before it runs.
+    Review,
+    /// A clean's result.
+    Result,
 }
 
 impl Mode {
@@ -26,6 +31,8 @@ impl Mode {
             Self::Settings => "settings",
             Self::Onboarding => "the first run",
             Self::FilterNav => "the filter",
+            Self::Review => "the review",
+            Self::Result => "the result",
         }
     }
 
@@ -44,10 +51,20 @@ const MOVE: &[Mode] = &[
     Mode::Settings,
     Mode::Onboarding,
     Mode::FilterNav,
+    Mode::Review,
+    Mode::Result,
 ];
 const BROWSE: &[Mode] = &[Mode::Browse];
+const BROWSE_RESULT: &[Mode] = &[Mode::Browse, Mode::Result];
 const BROWSE_SETTINGS: &[Mode] = &[Mode::Browse, Mode::Settings];
-const EVERY_SCREEN: &[Mode] = &[Mode::Browse, Mode::Settings, Mode::Onboarding];
+const EVERY_SCREEN: &[Mode] = &[
+    Mode::Browse,
+    Mode::Settings,
+    Mode::Onboarding,
+    Mode::Review,
+    Mode::Result,
+];
+const REVIEW: &[Mode] = &[Mode::Review];
 const SETTINGS: &[Mode] = &[Mode::Settings];
 const SETTINGS_ONBOARDING: &[Mode] = &[Mode::Settings, Mode::Onboarding];
 const ONBOARDING: &[Mode] = &[Mode::Onboarding];
@@ -89,10 +106,12 @@ pub(crate) enum Action {
     Check,
     /// The first run: skip the step.
     Skip,
+    /// The review: clean what it shows.
+    Confirm,
 }
 
 impl Action {
-    pub(crate) const ALL: [Self; 29] = [
+    pub(crate) const ALL: [Self; 30] = [
         Self::MoveDown,
         Self::MoveUp,
         Self::PageDown,
@@ -122,6 +141,7 @@ impl Action {
         Self::Remove,
         Self::Check,
         Self::Skip,
+        Self::Confirm,
     ];
 
     /// Its name in `[keys]`.
@@ -156,6 +176,7 @@ impl Action {
             Self::Remove => "remove",
             Self::Check => "check",
             Self::Skip => "skip",
+            Self::Confirm => "confirm",
         }
     }
 
@@ -173,6 +194,8 @@ impl Action {
             Self::ChangeBack | Self::Change | Self::Remove => SETTINGS,
             Self::Choose => SETTINGS_ONBOARDING,
             Self::Check | Self::Skip => ONBOARDING,
+            Self::Review => BROWSE_RESULT,
+            Self::Confirm => REVIEW,
             Self::PageDown
             | Self::PageUp
             | Self::Fold
@@ -188,7 +211,6 @@ impl Action {
             | Self::DetailDown
             | Self::DetailUp
             | Self::Copy
-            | Self::Review
             | Self::Help => BROWSE,
         }
     }
@@ -214,7 +236,7 @@ impl Action {
             Self::Sort => &[Key::Char('o')],
             Self::DetailDown => &[Key::Char('J')],
             Self::DetailUp => &[Key::Char('K')],
-            Self::Copy => &[Key::Char('y')],
+            Self::Copy | Self::Confirm => &[Key::Char('y')],
             Self::Settings => &[Key::Char(',')],
             Self::Review | Self::Choose => &[Key::Enter],
             Self::Help => &[Key::Char('?')],
@@ -240,6 +262,7 @@ impl Action {
                 | Self::Change
                 | Self::Choose
                 | Self::Remove
+                | Self::Confirm
         )
     }
 }
@@ -473,6 +496,18 @@ impl Keymap {
         hints.join("  ")
     }
 
+    /// The review's key bar, before `esc back`.
+    pub(crate) fn review_bar(&self) -> String {
+        let mut hints = self.bar(Mode::Review, REVIEW_BAR);
+        hints.push("esc back".to_owned());
+        hints.join("  ")
+    }
+
+    /// The result's key bar.
+    pub(crate) fn result_bar(&self) -> String {
+        self.bar(Mode::Result, RESULT_BAR).join("  ")
+    }
+
     fn bar(&self, mode: Mode, hints: &[(&[Action], &str)]) -> Vec<String> {
         hints
             .iter()
@@ -528,6 +563,20 @@ const SETTINGS_BAR: &[(&[Action], &str)] = &[
     (&[Action::Remove], "remove"),
 ];
 
+/// The review's key bar, before `esc back`.
+const REVIEW_BAR: &[(&[Action], &str)] = &[
+    (&[Action::MoveDown, Action::MoveUp], "scroll"),
+    (&[Action::Confirm], "clean"),
+    (&[Action::Quit], "quit"),
+];
+
+/// The result's key bar, before `esc home`.
+const RESULT_BAR: &[(&[Action], &str)] = &[
+    (&[Action::MoveDown, Action::MoveUp], "scroll"),
+    (&[Action::Review], "home"),
+    (&[Action::Quit], "quit"),
+];
+
 /// Help, line by line.
 const HELP: &[(&[Action], &str)] = &[
     (&[Action::MoveDown, Action::MoveUp], "move"),
@@ -568,7 +617,7 @@ const HELP: &[(&[Action], &str)] = &[
         &[Action::Settings],
         "settings: level, project roots, method, what is kept",
     ),
-    (&[Action::Review], "show what is selected"),
+    (&[Action::Review], "review what is selected, then clean it"),
     (&[Action::Help], "this help"),
     (&[Action::Quit], "quit"),
 ];

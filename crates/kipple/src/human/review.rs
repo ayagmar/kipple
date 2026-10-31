@@ -3,11 +3,15 @@
 //! when a question is cancelled. The review's plan and the result's items and totals are
 //! worded by [`super::receipt`], as the command line words them.
 
-use kipple_core::Waited;
+use std::path::Path;
 
-use super::receipt::items_word;
+use kipple_core::{ApplyEvent, Method, Reconciled, Standing, Waited};
+
+use super::receipt::{self, items_word};
+use super::{caution, escaped, outcome};
 
 /// What a wait for the person's answer ended in, when it says anything.
+#[expect(dead_code, reason = "the M3c prompt says it")]
 pub(crate) const fn waited(waited: Waited) -> Option<&'static str> {
     match waited {
         Waited::Ready => None,
@@ -63,5 +67,82 @@ pub(crate) fn restore_hint(run: &str) -> String {
     format!("`kipple restore {run}` moves its trashed items back.")
 }
 
-/// What `enter` or `esc` on the result does.
-pub(crate) const BACK_HOME: &str = "enter or esc: back home, and scan again";
+/// What `esc` while the plan is made says.
+pub(crate) const PLANNING_STOPPED: &str = "Planning stopped, so nothing was changed.";
+
+/// What a planning worker that failed leaves on the tree.
+pub(crate) const PLANNING_FAILED: &str = "Planning failed, so nothing was changed.";
+
+/// What the review says above what was left out when nothing selected can be cleaned.
+pub(crate) const NOTHING_TO_CLEAN: &str = "Nothing selected can be cleaned, for the reasons below.";
+
+/// The heading of the selected findings that are part of another item.
+pub(crate) const MERGED: &str = "Part of another item:";
+
+/// Why a selected finding is part of another item: the item's path.
+pub(crate) fn merged(into: &Path) -> String {
+    format!("part of {}", escaped(&into.display().to_string()))
+}
+
+/// What a Review item needs reviewed, under its line in the review: its cautions.
+pub(crate) fn cautions(standing: &Standing) -> Option<String> {
+    match standing {
+        Standing::Safe => None,
+        Standing::Review(cautions) => {
+            let words: Vec<&str> = cautions.iter().map(|&c| caution(c)).collect();
+            Some(format!("{:22}needs review: {}", "", words.join(", ")))
+        }
+    }
+}
+
+/// Why confirming refused: the run store can't exist, or the machine can't be made,
+/// worded by `why` (pinned 6).
+pub(crate) fn not_run(why: &str) -> String {
+    format!("nothing was changed: {why}")
+}
+
+/// What the review says when the config now asks for the size to be typed (pinned 16).
+pub(crate) const TYPE_THE_SIZE: &str =
+    "The config now asks for the size to be typed: type it, then press enter.";
+
+/// The progress heading while the run's items go.
+pub(crate) const CLEANING: &str = "Cleaning";
+
+/// The item being removed now, and how.
+pub(crate) fn working_on(method: Method, path: &Path) -> String {
+    let path = escaped(&path.display().to_string());
+    match method {
+        Method::Delete => format!("deleting {path}"),
+        Method::Trash => format!("moving {path} to the trash"),
+    }
+}
+
+/// The result's heading when no run was stored.
+pub(crate) const RESULT: &str = "Result";
+
+/// What an event of a running clean leaves to say once it is over: an earlier run
+/// reconciled, or one that can't be read.
+pub(crate) fn notice(event: &ApplyEvent) -> Option<String> {
+    match event {
+        ApplyEvent::Reconciled {
+            run,
+            reconciled: Reconciled::Item { item, outcome },
+        } => Some(receipt::reconciled(run.as_str(), item.0, outcome)),
+        ApplyEvent::Reconciled {
+            run,
+            reconciled: Reconciled::Restore { item, result },
+        } => Some(receipt::reconciled_restore(
+            run.as_str(),
+            item.0,
+            &outcome::restore_result(result),
+        )),
+        ApplyEvent::Unreadable { run, why } => Some(receipt::unreadable_run(
+            run.as_str(),
+            outcome::unreadable(why),
+        )),
+        ApplyEvent::RunStarted { .. }
+        | ApplyEvent::Item { .. }
+        | ApplyEvent::RestoreStarted { .. }
+        | ApplyEvent::RestoreEnded { .. } => None,
+    }
+}

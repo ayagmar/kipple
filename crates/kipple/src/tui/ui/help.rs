@@ -9,7 +9,7 @@ use super::Look;
 use super::layout::WIDE;
 use crate::theme::Role;
 use crate::tui::app::App;
-use crate::tui::keymap::HelpLine;
+use crate::tui::keymap::{Action, HelpLine, Mode};
 
 pub(super) fn render(app: &App, look: Look<'_>, frame: &mut Frame<'_>) {
     let mut lines: Vec<Text<'static>> = app
@@ -25,8 +25,12 @@ pub(super) fn render(app: &App, look: Look<'_>, frame: &mut Frame<'_>) {
         })
         .collect();
     lines.push(Text::from(""));
+    let confirm = app
+        .keymap()
+        .first(Mode::Review, Action::Confirm)
+        .unwrap_or_default();
     lines.push(Text::styled(
-        "This version only finds and explains: selecting removes nothing.",
+        format!("Selecting removes nothing: only {confirm} on the review cleans."),
         look.style(Role::Muted),
     ));
     // Narrow, it takes the whole screen, frame and all, so nothing shows beside it.

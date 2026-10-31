@@ -16,8 +16,9 @@ then System, then every finding again.
 / starts a filter. The user types "venv" and presses enter: only the findings whose rule
 or path match stay, and the header shows "filter: venv". esc clears the filter.
 
-c selects the whole Safe bucket. enter says how much is selected, and that review and
-cleaning come in a later version: nothing was changed.
+c selects the whole Safe bucket and opens its review: what each item frees and how it
+goes, and that deleting is permanent. esc goes back to the list without cleaning
+anything.
 
 , opens the settings screen: the config file, the level, the project roots, the default
 method and what is kept. esc goes back. ? opens the help, which lists every key, and

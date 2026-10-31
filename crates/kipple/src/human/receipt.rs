@@ -59,10 +59,6 @@ pub(crate) fn is_yes(answer: &str) -> bool {
 /// The size a person types to confirm removing `total`, above
 /// `review.confirm_by_typing_above` (spec M3c pinned 16): as [`bytes`] writes it, and
 /// "at least" before it when part of it wasn't measured.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the M3c prompt and TUI review ask for it")
-)]
 pub(crate) fn typed_size(total: &Total) -> String {
     match total.complete {
         Completeness::Complete => bytes(total.known),
@@ -74,10 +70,6 @@ pub(crate) fn typed_size(total: &Total) -> String {
 
 /// Whether `typed`, a line a person typed, is `total`'s [`typed_size`], with case and
 /// spaces ignored.
-#[cfg_attr(
-    not(test),
-    expect(dead_code, reason = "the M3c prompt and TUI review ask for it")
-)]
 pub(crate) fn is_typed_size(typed: &str, total: &Total) -> bool {
     let squeezed = |text: &str| -> String {
         text.chars()
@@ -90,7 +82,6 @@ pub(crate) fn is_typed_size(typed: &str, total: &Total) -> bool {
 
 /// The question a person answers to run `items` items freeing `total`, above the
 /// threshold: the size, typed.
-#[expect(dead_code, reason = "the M3c prompt and TUI review ask for it")]
 pub(crate) fn typed_question(items: usize, total: &Total) -> String {
     format!(
         "Clean {}? Type {} to confirm, anything else declines: ",
@@ -100,7 +91,6 @@ pub(crate) fn typed_question(items: usize, total: &Total) -> String {
 }
 
 /// What a typed size that isn't the one asked for means.
-#[expect(dead_code, reason = "the M3c prompt and TUI review ask for it")]
 pub(crate) const NOT_THE_SIZE: &str = "That isn't the size shown, so nothing was changed.";
 
 /// `review.confirm_by_typing_above`, as `kipple config show` shows it.

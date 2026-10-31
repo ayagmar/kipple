@@ -2,6 +2,7 @@
 //! Keys, D-054).
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use kipple_core::{Advice, FindingId, IntegrationReport, ScanOutcome, ScanReport};
 
@@ -320,7 +321,7 @@ fn the_detail_pane_shows_each_line_of_an_advice_snippet_on_its_own_line() {
         by_command_line: 0,
     };
     app.update(Msg::Finished {
-        report: Box::new(report),
+        report: Arc::new(report),
         elapsed: std::time::Duration::from_secs(1),
     });
     to(&mut app, 5);

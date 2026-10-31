@@ -1,6 +1,6 @@
 ---
 source: crates/kipple/src/tui/app/tests.rs
-assertion_line: 877
+assertion_line: 892
 expression: "format!(\"{home}\\n{help}\")"
 ---
 «fg=border|╭» «fg=title|kipple»«fg=border| ─ »«fg=level.current|Balanced»«fg=border| ─ »«fg=muted|scanned in 1.2 s»«fg=border| ─ »~/projects «fg=border|───────┬────────────────────────────┬──────────────────────────────────────────────────────────────────────╮»
@@ -81,11 +81,11 @@ expression: "format!(\"{home}\\n{help}\")"
 «fg=border|│»                                           «fg=border|│»«fg=key|J K        »scroll the detail pane                                     «fg=border|│»                                           «fg=border|│»
 «fg=border|│»                                           «fg=border|│»«fg=key|y          »send the path to the terminal clipboard                    «fg=border|│»                                           «fg=border|│»
 «fg=border|│»                                           «fg=border|│»«fg=key|,          »settings: level, project roots, method, what is kept       «fg=border|│»                                           «fg=border|│»
-«fg=border|│»                                           «fg=border|│»«fg=key|enter      »show what is selected                                      «fg=border|│»                                           «fg=border|│»
+«fg=border|│»                                           «fg=border|│»«fg=key|enter      »review what is selected, then clean it                     «fg=border|│»                                           «fg=border|│»
 «fg=border|│»                                           «fg=border|│»«fg=key|?          »this help                                                  «fg=border|│»                                           «fg=border|│»
 «fg=border|│»                                           «fg=border|│»«fg=key|q          »quit                                                       «fg=border|│»                                           «fg=border|│»
 «fg=border|│»                                           «fg=border|│»                                                                      «fg=border|│»                                           «fg=border|│»
-«fg=border|│»                                           «fg=border|│»«fg=muted|This version only finds and explains: selecting removes nothing.»      «fg=border|│»                                           «fg=border|│»
+«fg=border|│»                                           «fg=border|│»«fg=muted|Selecting removes nothing: only y on the review cleans.»               «fg=border|│»                                           «fg=border|│»
 «fg=border|│»                                           «fg=border|╰──────────────────────────────────────────────────────────────────────╯»                                           «fg=border|│»
 «fg=border|│»                                                                                       «fg=border|│»                                                                      «fg=border|│»
 «fg=border|│»                                                                                       «fg=border|│»                                                                      «fg=border|│»

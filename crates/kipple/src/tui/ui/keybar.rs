@@ -11,13 +11,13 @@ use ratatui::widgets::Paragraph;
 use super::layout::Totals;
 use super::tree::tail;
 use super::{Look, cols};
-use crate::human::{bytes, escaped};
+use crate::human::{bytes, escaped, review};
 use crate::theme::Role;
-use crate::tui::app::{App, Mode};
+use crate::tui::app::{App, Cleaning, Mode};
 
 /// What the hints that show however narrow the bar is say: how to get help and how to
 /// leave. Their keys can be rebound, so they are known by their words.
-const ALWAYS: [&str; 3] = [" help", " quit", " back"];
+const ALWAYS: [&str; 4] = [" help", " quit", " back", " home"];
 
 /// Draws the key bar in `area`: one line, or two with the found and eligible totals
 /// first when `totals` puts them on the key bar.
@@ -111,6 +111,9 @@ fn left(app: &App, look: Look<'_>) -> Left {
             Span::styled(hint, look.style(Role::Muted)),
         ]))
     };
+    if let Some(cleaning) = &app.cleaning {
+        return clean_left(app, cleaning, look, typing);
+    }
     match (app.mode, &app.notice, &app.panel.typing) {
         (Mode::Filter, _, _) => typing(
             "/".to_owned(),
@@ -135,6 +138,36 @@ fn left(app: &App, look: Look<'_>) -> Left {
         (_, Some(notice), _) => Left::Text(Text::styled(notice.clone(), look.style(Role::Accent))),
         (Mode::Settings, None, None) => Left::Hints(look.glyphs.keys(&app.keymap().settings_bar())),
         (_, None, _) => Left::Hints(look.glyphs.keys(&app.keymap().browse_bar())),
+    }
+}
+
+/// The left of the bar while a clean is under way: the size being typed, the answer to
+/// the last key, or the keys of the review or the result.
+fn clean_left(
+    app: &App,
+    cleaning: &Cleaning,
+    look: Look<'_>,
+    typing: impl Fn(String, &str, &'static str) -> Left,
+) -> Left {
+    // The question is the screen's title, so what is typed always fits beside it.
+    if let Cleaning::Typing(_, typed) = cleaning {
+        return typing(
+            "Size: ".to_owned(),
+            typed,
+            "  enter confirms, esc goes back",
+        );
+    }
+    if let Some(notice) = &app.notice {
+        return Left::Text(Text::styled(notice.clone(), look.style(Role::Accent)));
+    }
+    let muted = |text: &str| Left::Text(Text::styled(text.to_owned(), look.style(Role::Muted)));
+    match cleaning {
+        Cleaning::Planning(_) => muted("esc stops planning"),
+        Cleaning::Reviewing(_) | Cleaning::Typing(..) => {
+            Left::Hints(look.glyphs.keys(&app.keymap().review_bar()))
+        }
+        Cleaning::Applying(_) => muted(review::STOP_KEY),
+        Cleaning::Ended(_) => Left::Hints(look.glyphs.keys(&app.keymap().result_bar())),
     }
 }
 
