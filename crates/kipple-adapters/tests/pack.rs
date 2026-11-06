@@ -4,8 +4,9 @@
 
 use kipple_adapters::pack::{Catalog, ErrorCode, Origin, PackError, validate};
 use kipple_core::{
-    Bounds, IntegrationDescriptor, IntegrationId, IntegrationSelector, Lens, Operation, Pack,
-    Platform, Selector, SymbolicRoot, Test,
+    Bounds, FactKind, FactSpec, GroupKey, IntegrationDescriptor, IntegrationId,
+    IntegrationSelector, Lens, Method, NativeKind, OPERATIONS, Operation, Pack, Platform,
+    Predicate, Retention, Selector, SymbolicRoot, Test,
 };
 
 /// A third-party pack that uses every part of the schema it may use.
@@ -49,6 +50,14 @@ default = "unselected"
 recent_days = 14
 "#;
 
+/// `VALID`'s predicates.
+const ELIGIBILITY: &str = "[rule.eligibility]
+modified_age = { min = \"30d\" }
+size = { min = \"100MB\", max = \"10GiB\" }
+git.tracked_files_in_item = \"absent\"
+activity = [\"idle\"]
+";
+
 const PYTHON: IntegrationDescriptor = IntegrationDescriptor {
     id: IntegrationId("python"),
     lens: Lens::Dev,
@@ -74,9 +83,54 @@ const CARGO: IntegrationDescriptor = IntegrationDescriptor {
     ..PYTHON
 };
 
+/// An integration with facts and the selectors the validator pairs with one operation.
+const GIT: IntegrationDescriptor = IntegrationDescriptor {
+    id: IntegrationId("git"),
+    selectors: &[
+        IntegrationSelector {
+            name: "registered-linked-worktrees",
+            meaning: "test selector",
+        },
+        IntegrationSelector {
+            name: "worktree-registrations",
+            meaning: "test selector",
+        },
+    ],
+    facts: &[
+        FactSpec {
+            name: "worktree.locked",
+            kind: FactKind::Bool,
+            selector: None,
+            meaning: "test fact",
+        },
+        FactSpec {
+            name: "registration_state",
+            kind: FactKind::Enum(&["registered-present", "registered-missing"]),
+            selector: Some("worktree-registrations"),
+            meaning: "test fact",
+        },
+    ],
+    ..PYTHON
+};
+
+const CODEX: IntegrationDescriptor = IntegrationDescriptor {
+    id: IntegrationId("codex"),
+    selectors: &[IntegrationSelector {
+        name: "verified-release-directories",
+        meaning: "test selector",
+    }],
+    facts: &[FactSpec {
+        name: "layout",
+        kind: FactKind::Enum(&["supported", "unknown"]),
+        selector: None,
+        meaning: "test fact",
+    }],
+    ..PYTHON
+};
+
 fn check(text: &str, origin: Origin) -> Result<Pack, Vec<PackError>> {
     let engine = semver::Version::new(0, 4, 0);
-    let integrations = [PYTHON, CARGO];
+    let integrations = [PYTHON, CARGO, GIT, CODEX];
     let catalog = Catalog {
         engine: &engine,
         integrations: &integrations,
@@ -250,10 +304,13 @@ fn unknown_keys_are_refused_at_every_level() {
                 "[rule.selection]",
                 "[rule.retention]\nkeep_additional = 1\n\n[rule.selection]",
             )]),
-            with(&[(
-                "kind = \"remove-files\"\nmethods = [\"delete\", \"trash\"]",
-                "kind = \"report\"\nmethods = [\"delete\"]",
-            )]),
+            with(&[
+                (ELIGIBILITY, ""),
+                (
+                    "kind = \"remove-files\"\nmethods = [\"delete\", \"trash\"]",
+                    "kind = \"report\"\nmethods = [\"delete\"]",
+                ),
+            ]),
         ],
     );
 }
@@ -516,10 +573,7 @@ fn capabilities_this_engine_does_not_publish_are_refused() {
             )]),
             with(&[("activity = [\"idle\"]", "colour = \"blue\"")]),
             with(&[("activity = [\"idle\"]", "marker.present = true")]),
-            with(&[(
-                "kind = \"remove-files\"\nmethods = [\"delete\", \"trash\"]",
-                "kind = \"remove-verified-release\"",
-            )]),
+            with(&[("kind = \"remove-files\"", "kind = \"remove-everything\"")]),
         ],
     );
     let builtin = |edits: &[(&str, &str)]| {
@@ -531,7 +585,7 @@ fn capabilities_this_engine_does_not_publish_are_refused() {
         with(&all)
     };
     for text in [
-        builtin(&[("integration = \"generic\"", "integration = \"codex\"")]),
+        builtin(&[("integration = \"generic\"", "integration = \"cursor\"")]),
         builtin(&[
             ("integration = \"generic\"", "integration = \"cargo\""),
             (
@@ -559,6 +613,20 @@ fn third_party_packs_may_not_use_first_party_capabilities() {
                 "selection = \"dirs-matching\"\npattern = \".bun/install/cache\"",
                 "selection = \"bytecode-caches\"",
             )]),
+            with(&[(
+                "kind = \"remove-files\"\nmethods = [\"delete\", \"trash\"]",
+                "kind = \"remove-verified-release\"\nmethods = [\"delete\"]",
+            )]),
+            with(&[(
+                "kind = \"remove-files\"\nmethods = [\"delete\", \"trash\"]",
+                "kind = \"git-worktree-remove\"",
+            )]),
+            with(&[(
+                "kind = \"remove-files\"\nmethods = [\"delete\", \"trash\"]",
+                "kind = \"native.npm-cache-clean\"",
+            )]),
+            with(&[("activity = [\"idle\"]", "worktree.locked = false")]),
+            with(&[("activity = [\"idle\"]", "layout = \"supported\"")]),
         ],
     );
 }
@@ -581,5 +649,347 @@ fn a_builtin_pack_may_use_its_integrations_selectors() {
     assert_eq!(
         pack.rules[0].selector,
         Selector::Integration("bytecode-caches")
+    );
+}
+
+/// `VALID` as a built-in rule of `integration`, selecting with `selector` under
+/// `config.project-roots`, with its predicates gone and `operation` in place of its own.
+fn builtin_rule(integration: &str, selector: &str, operation: &str) -> String {
+    with(&[
+        ("dev.example.tools", "builtin.example"),
+        ("dev.example.tools", "builtin.example"),
+        (
+            "integration = \"generic\"",
+            &format!("integration = \"{integration}\""),
+        ),
+        ("root = \"home\"", "root = \"config.project-roots\""),
+        (
+            "selection = \"dirs-matching\"\npattern = \".bun/install/cache\"",
+            &format!("selection = \"{selector}\""),
+        ),
+        (ELIGIBILITY, ""),
+        (
+            "kind = \"remove-files\"\nmethods = [\"delete\", \"trash\"]",
+            operation,
+        ),
+    ])
+}
+
+const RETENTION: &str = "[rule.retention]
+group_by = [\"component\", \"target\"]
+keep_active = true
+keep_previous = true
+keep_running = true
+keep_pending_install = true
+unparsable_version = \"keep\"
+";
+
+/// A built-in `remove-verified-release` rule whose retention is `retention`.
+fn release_rule(retention: &str) -> String {
+    let operation = format!(
+        "kind = \"remove-verified-release\"\nmethods = [\"delete\", \"trash\"]\n\n{retention}"
+    );
+    builtin_rule("codex", "verified-release-directories", &operation)
+}
+
+/// Asserts that each document is refused from a built-in pack with exactly `code`.
+fn refused_builtin(code: ErrorCode, documents: &[String]) {
+    for text in documents {
+        assert_eq!(codes(text, Origin::Builtin), [code], "\n{text}");
+    }
+}
+
+/// Catches an `OPERATIONS` row the validator has no arm for: a rule naming it would be
+/// dropped with no error, so a built-in pack would fail to load saying nothing.
+#[test]
+fn every_published_operation_can_be_named_by_a_builtin_pack() {
+    for spec in OPERATIONS {
+        let methods = if spec.methods.is_empty() {
+            String::new()
+        } else {
+            "methods = [\"delete\"]\n\n".to_owned()
+        };
+        let retention = if spec.retention { RETENTION } else { "" };
+        let operation = format!("kind = \"{}\"\n{methods}{retention}", spec.name);
+        let text = builtin_rule("python", "bytecode-caches", &operation);
+
+        let pack = check(&text, Origin::Builtin).unwrap();
+
+        assert_eq!(pack.rules[0].operation.name(), spec.name);
+    }
+}
+
+/// Catches a release rule losing its grouping on the way in: `format/digests.rs` covers it,
+/// so a profile would freeze the wrong keep set.
+#[test]
+fn a_release_rule_comes_through_with_its_retention() {
+    let pack = check(&release_rule(RETENTION), Origin::Builtin).unwrap();
+
+    assert_eq!(
+        pack.rules[0].operation,
+        Operation::RemoveVerifiedRelease {
+            methods: vec![Method::Delete, Method::Trash],
+            retention: Retention {
+                group_by: vec![GroupKey::Component, GroupKey::Target],
+            },
+        }
+    );
+}
+
+/// Catches a release rule with no retention table reaching the planner with nothing saying
+/// how to group what it may remove.
+#[test]
+fn retention_is_required_by_an_operation_that_declares_it() {
+    let missing = |key: &str| {
+        let line = RETENTION.lines().find(|line| line.starts_with(key));
+        release_rule(&RETENTION.replace(&format!("{}\n", line.unwrap()), ""))
+    };
+    refused_builtin(
+        ErrorCode::MissingKey,
+        &[
+            release_rule(""),
+            missing("group_by"),
+            missing("keep_active"),
+            missing("keep_previous"),
+            missing("keep_running"),
+            missing("keep_pending_install"),
+            missing("unparsable_version"),
+        ],
+    );
+}
+
+/// Catches a rule keeping less than upstream's prune does: the keep set is the host's, and
+/// a pack may only state it.
+#[test]
+fn retention_can_keep_nothing_less() {
+    let edit = |from: &str, to: &str| {
+        assert!(RETENTION.contains(from), "{from:?} is not in the table");
+        release_rule(&RETENTION.replacen(from, to, 1))
+    };
+    refused_builtin(
+        ErrorCode::InvalidRange,
+        &[
+            edit("keep_active = true", "keep_active = false"),
+            edit("keep_previous = true", "keep_previous = false"),
+            edit("keep_running = true", "keep_running = false"),
+            edit(
+                "keep_pending_install = true",
+                "keep_pending_install = false",
+            ),
+            edit("keep_active = true", "keep_active = 1"),
+            edit("\"keep\"", "\"remove\""),
+            edit("[\"component\", \"target\"]", "[]"),
+        ],
+    );
+    refused_builtin(ErrorCode::WrongType, &[edit("\"target\"", "\"channel\"")]);
+    refused_builtin(
+        ErrorCode::UnknownKey,
+        &[edit("keep_active", "keep_additional = 1\nkeep_active")],
+    );
+}
+
+/// Catches `retention` passing on an operation that keeps nothing, where it would read as a
+/// promise the operation doesn't make.
+#[test]
+fn retention_on_any_other_operation_is_an_unknown_key() {
+    let methods = "kind = \"remove-files\"\nmethods = [\"delete\"]";
+    refused_builtin(
+        ErrorCode::UnknownKey,
+        &[
+            builtin_rule(
+                "python",
+                "bytecode-caches",
+                &format!("{methods}\n\n{RETENTION}"),
+            ),
+            builtin_rule(
+                "python",
+                "bytecode-caches",
+                &format!("kind = \"report\"\n\n{RETENTION}"),
+            ),
+        ],
+    );
+}
+
+/// Catches a native operation accepting `methods`: it runs a tool's command, and a pack
+/// could read as choosing how.
+#[test]
+fn a_native_operation_takes_no_methods() {
+    let operation = "kind = \"git-worktree-remove\"\nmethods = [\"delete\"]";
+    refused_builtin(
+        ErrorCode::UnknownKey,
+        &[builtin_rule(
+            "git",
+            "registered-linked-worktrees",
+            operation,
+        )],
+    );
+}
+
+/// Catches `native` becoming a method a pack could offer, which would make a native item
+/// without its spec representable.
+#[test]
+fn clean_method_native_is_refused() {
+    refused(
+        ErrorCode::WrongType,
+        &[with(&[(
+            "methods = [\"delete\", \"trash\"]",
+            "methods = [\"native\"]",
+        )])],
+    );
+}
+
+/// Catches a predicate on a report rule, which `fact_holds` never reads: the rule would
+/// look guarded by a check that decides nothing.
+#[test]
+fn report_rule_with_a_predicate_is_refused() {
+    let report = |predicates: &str| {
+        builtin_rule(
+            "git",
+            "worktree-registrations",
+            &format!("kind = \"report\"\n\n{predicates}"),
+        )
+    };
+    let documents = [
+        report("[rule.requirements]\nregistration_state = \"registered-missing\"\n"),
+        report("[rule.eligibility]\nworktree.locked = false\n"),
+        report("[rule.eligibility]\n"),
+    ];
+    refused_builtin(ErrorCode::UnknownKey, &documents);
+    let third_party = with(&[(
+        "kind = \"remove-files\"\nmethods = [\"delete\", \"trash\"]",
+        "kind = \"report\"",
+    )]);
+    refused(ErrorCode::UnknownKey, &[third_party]);
+}
+
+/// Catches a registered worktree reaching a file removal, or `npm cache clean`: only
+/// `git-worktree-remove` runs the checks a checkout needs.
+#[test]
+fn worktree_selector_refuses_any_other_removal() {
+    let selector = "registered-linked-worktrees";
+    refused_builtin(
+        ErrorCode::UnknownCapability,
+        &[
+            builtin_rule(
+                "git",
+                selector,
+                "kind = \"remove-files\"\nmethods = [\"delete\"]",
+            ),
+            builtin_rule("git", selector, "kind = \"native.npm-cache-clean\""),
+            builtin_rule(
+                "git",
+                selector,
+                &format!(
+                    "kind = \"remove-verified-release\"\nmethods = [\"delete\"]\n\n{RETENTION}"
+                ),
+            ),
+        ],
+    );
+    for operation in ["kind = \"git-worktree-remove\"", "kind = \"report\""] {
+        let text = builtin_rule("git", selector, operation);
+        check(&text, Origin::Builtin).unwrap();
+    }
+}
+
+/// Catches a release directory reaching a plain file removal, which settles nothing and
+/// would skip the keep set.
+#[test]
+fn release_selector_refuses_any_other_removal() {
+    let selector = "verified-release-directories";
+    refused_builtin(
+        ErrorCode::UnknownCapability,
+        &[
+            builtin_rule(
+                "codex",
+                selector,
+                "kind = \"remove-files\"\nmethods = [\"delete\"]",
+            ),
+            builtin_rule("codex", selector, "kind = \"git-worktree-remove\""),
+        ],
+    );
+    check(&release_rule(RETENTION), Origin::Builtin).unwrap();
+    let report = builtin_rule("codex", selector, "kind = \"report\"");
+    check(&report, Origin::Builtin).unwrap();
+}
+
+/// A built-in rule of `integration` removing files, with `predicate` as its eligibility.
+fn fact_rule(integration: &str, selector: &str, predicate: &str) -> String {
+    let operation = format!(
+        "kind = \"remove-files\"\nmethods = [\"delete\"]\n\n[rule.eligibility]\n{predicate}\n"
+    );
+    builtin_rule(integration, selector, &operation)
+}
+
+/// Catches a rule testing an integration's fact being refused, unquoted dotted names
+/// included: TOML reads those as a nested table, and only `GENERIC_FACTS` were flattened.
+#[test]
+fn a_rule_may_test_its_own_integrations_facts() {
+    let text = fact_rule("git", "worktree-registrations", "worktree.locked = false");
+
+    let pack = check(&text, Origin::Builtin).unwrap();
+
+    assert_eq!(
+        pack.rules[0].eligibility,
+        [Predicate {
+            fact: "worktree.locked",
+            test: Test::Is(false),
+        }]
+    );
+}
+
+/// Catches a generic name lost to an integration's own list, and a value of the wrong type
+/// for an integration fact passing unchecked.
+#[test]
+fn an_integration_fact_is_checked_like_a_generic_one() {
+    let rule = fact_rule("git", "worktree-registrations", "size = { min = \"1MB\" }");
+    check(&rule, Origin::Builtin).unwrap();
+    refused_builtin(
+        ErrorCode::WrongType,
+        &[
+            fact_rule("git", "worktree-registrations", "worktree.locked = \"no\""),
+            fact_rule(
+                "git",
+                "worktree-registrations",
+                "registration_state = \"lost\"",
+            ),
+        ],
+    );
+}
+
+/// Catches a rule testing a fact its integration never supplies, which would hold every
+/// finding as unknown, and a fact scoped to a selector the rule doesn't use.
+#[test]
+fn a_fact_of_another_integration_or_selector_is_an_unknown_capability() {
+    refused_builtin(
+        ErrorCode::UnknownCapability,
+        &[
+            fact_rule("python", "bytecode-caches", "worktree.locked = false"),
+            fact_rule("git", "worktree-registrations", "layout = \"supported\""),
+            fact_rule("git", "worktree-registrations", "nothing.published = false"),
+            builtin_rule(
+                "git",
+                "registered-linked-worktrees",
+                "kind = \"git-worktree-remove\"\n\n\
+                 [rule.eligibility]\nregistration_state = \"registered-present\"\n",
+            ),
+        ],
+    );
+}
+
+/// Catches `git-worktree-remove` coming through as anything else: the planner keys the
+/// tracked-file exception on it.
+#[test]
+fn a_native_rule_comes_through_with_its_kind() {
+    let text = builtin_rule(
+        "git",
+        "registered-linked-worktrees",
+        "kind = \"git-worktree-remove\"",
+    );
+
+    let pack = check(&text, Origin::Builtin).unwrap();
+
+    assert_eq!(
+        pack.rules[0].operation,
+        Operation::Native(NativeKind::GitWorktreeRemove)
     );
 }
