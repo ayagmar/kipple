@@ -5,8 +5,9 @@
 use std::io::{self, Write};
 
 use kipple_core::{
-    FactKind, GENERIC_FACTS, GENERIC_SELECTORS, IntegrationDescriptor, Lens, OPERATIONS, Pack,
-    Rule, Selector, SymbolicRoot,
+    Area, FactKind, FactSpec, GENERIC_FACTS, GENERIC_SELECTORS, IntegrationDescriptor, Lens,
+    OPERATIONS, OpenArea, OperationSpec, Pack, ProtectedEntry, Rule, Selector, StateDeclaration,
+    SymbolicRoot,
 };
 use kipple_platform::PLATFORM;
 use schemars::JsonSchema;
@@ -49,6 +50,65 @@ pub struct IntegrationInfo {
     pub roots: Vec<&'static str>,
     /// The upstream versions its layouts were verified against.
     pub verified: Vec<&'static str>,
+    /// The facts its findings can supply, which only its own rules may test.
+    pub facts: Vec<FactInfo>,
+    /// Its tool's state roots: closed, whether or not it runs here, except for `open`.
+    pub protected: Vec<ProtectedRoot>,
+    /// What its state roots open, and to whom.
+    pub open: Vec<OpenInfo>,
+}
+
+/// A state root and what stays closed even inside what it opens.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ProtectedRoot {
+    /// The root.
+    pub root: &'static str,
+    /// Paths below it that nothing opens.
+    pub entries: Vec<ProtectedPath>,
+    /// Roots of the same integration that answer for what is inside them.
+    pub delegates: Vec<&'static str>,
+}
+
+/// A path below a state root that stays closed.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct ProtectedPath {
+    /// The path, `/`-separated.
+    pub path: &'static str,
+    /// What it covers.
+    pub matches: PathMatch,
+}
+
+/// What a protected path covers.
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum PathMatch {
+    /// That path.
+    Exact,
+    /// Every path whose last component starts as this one's does.
+    Prefix,
+}
+
+/// A part of a state root some integrations may reach.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct OpenInfo {
+    /// The root.
+    pub root: &'static str,
+    /// Where it is, `/`-separated.
+    pub path: &'static str,
+    /// What it covers.
+    pub reaches: AreaReach,
+    /// Whose findings may be there.
+    pub integrations: Vec<&'static str>,
+}
+
+/// What an open area covers.
+#[derive(Debug, Clone, Copy, Serialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum AreaReach {
+    /// Exactly that path.
+    Exact,
+    /// Whatever is strictly inside it.
+    Inside,
 }
 
 /// A rule.
@@ -118,7 +178,22 @@ pub struct Capabilities {
     /// Facts rules may test.
     pub facts: Vec<FactInfo>,
     /// Operations.
-    pub operations: Vec<&'static str>,
+    pub operations: Vec<OperationInfo>,
+}
+
+/// An operation rules may name.
+#[derive(Debug, Serialize, JsonSchema)]
+pub struct OperationInfo {
+    /// The name rules use for it.
+    pub name: &'static str,
+    /// Whether only built-in packs may name it.
+    pub first_party: bool,
+    /// Whether a rule using it must carry a `[rule.retention]` table.
+    pub retention: bool,
+    /// The methods a rule using it may offer, none for one that chooses no method.
+    pub methods: Vec<&'static str>,
+    /// What it does.
+    pub meaning: &'static str,
 }
 
 /// A selector rules may use.
@@ -175,7 +250,8 @@ fn names<T: Copy>(items: &[T], name: fn(T) -> &'static str) -> Vec<&'static str>
     items.iter().map(|&item| name(item)).collect()
 }
 
-fn integration(descriptor: &IntegrationDescriptor) -> IntegrationInfo {
+/// What `descriptor` publishes, for every output that shows an integration.
+pub(crate) fn integration(descriptor: &IntegrationDescriptor) -> IntegrationInfo {
     IntegrationInfo {
         id: descriptor.id.0,
         lens: descriptor.lens.into(),
@@ -183,6 +259,75 @@ fn integration(descriptor: &IntegrationDescriptor) -> IntegrationInfo {
         supported: descriptor.platforms.contains(&PLATFORM),
         roots: names(descriptor.roots, SymbolicRoot::name),
         verified: descriptor.verified.to_vec(),
+        facts: descriptor.facts.iter().map(fact).collect(),
+        protected: descriptor.state.iter().map(protected_root).collect(),
+        open: descriptor.state.iter().flat_map(open_areas).collect(),
+    }
+}
+
+fn protected_root(state: &StateDeclaration) -> ProtectedRoot {
+    ProtectedRoot {
+        root: state.root.name(),
+        entries: state.protected.iter().map(protected_path).collect(),
+        delegates: names(state.delegates, SymbolicRoot::name),
+    }
+}
+
+const fn protected_path(entry: &ProtectedEntry) -> ProtectedPath {
+    match *entry {
+        ProtectedEntry::Exact(path) => ProtectedPath {
+            path,
+            matches: PathMatch::Exact,
+        },
+        ProtectedEntry::Prefix(path) => ProtectedPath {
+            path,
+            matches: PathMatch::Prefix,
+        },
+    }
+}
+
+fn open_areas(state: &StateDeclaration) -> impl Iterator<Item = OpenInfo> {
+    let root = state.root.name();
+    state.open.iter().map(move |area| open_area(root, area))
+}
+
+fn open_area(root: &'static str, area: &OpenArea) -> OpenInfo {
+    let (path, reaches) = match area.at {
+        Area::Exact(path) => (path, AreaReach::Exact),
+        Area::Inside(path) => (path, AreaReach::Inside),
+    };
+    OpenInfo {
+        root,
+        path,
+        reaches,
+        integrations: area.integrations.iter().map(|id| id.0).collect(),
+    }
+}
+
+fn operation(spec: &OperationSpec) -> OperationInfo {
+    OperationInfo {
+        name: spec.name,
+        first_party: spec.first_party,
+        retention: spec.retention,
+        methods: names(spec.methods, kipple_core::Method::name),
+        meaning: spec.meaning,
+    }
+}
+
+fn fact(fact: &FactSpec) -> FactInfo {
+    let (kind, values) = match fact.kind {
+        FactKind::Enum(values) => ("enum", Some(values.to_vec())),
+        FactKind::Bool => ("bool", None),
+        FactKind::Duration => ("duration", None),
+        FactKind::Bytes => ("bytes", None),
+        FactKind::Count => ("count", None),
+    };
+    FactInfo {
+        name: fact.name,
+        kind,
+        values,
+        selector: fact.selector,
+        meaning: fact.meaning,
     }
 }
 
@@ -258,34 +403,11 @@ fn capabilities(descriptors: &[IntegrationDescriptor]) -> Capabilities {
             meaning: Some(s.meaning),
         })
     });
-    let facts = GENERIC_FACTS
-        .iter()
-        .map(|fact| {
-            let (kind, values) = match fact.kind {
-                FactKind::Enum(values) => ("enum", Some(values.to_vec())),
-                FactKind::Bool => ("bool", None),
-                FactKind::Duration => ("duration", None),
-                FactKind::Bytes => ("bytes", None),
-                FactKind::Count => ("count", None),
-            };
-            FactInfo {
-                name: fact.name,
-                kind,
-                values,
-                selector: fact.selector,
-                meaning: fact.meaning,
-            }
-        })
-        .collect();
     Capabilities {
         roots: names(SymbolicRoot::ALL, SymbolicRoot::name),
         selectors: generic.chain(published).collect(),
-        facts,
-        operations: OPERATIONS
-            .iter()
-            .filter(|operation| !operation.first_party)
-            .map(|operation| operation.name)
-            .collect(),
+        facts: GENERIC_FACTS.iter().map(fact).collect(),
+        operations: OPERATIONS.iter().map(operation).collect(),
     }
 }
 
@@ -310,7 +432,7 @@ pub fn write_human(out: &mut dyn Write, rules: &RulesOut, ink: &Ink) -> io::Resu
         );
         writeln!(out, "  {}", line.trim_end())?;
     }
-    let heading = ink.paint(Role::Title, "Rules (all report only in this version)");
+    let heading = ink.paint(Role::Title, "Rules");
     writeln!(out, "\n{heading}")?;
     for r in &rules.rules {
         let here = if r.supported {

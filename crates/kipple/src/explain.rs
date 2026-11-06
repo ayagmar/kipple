@@ -5,11 +5,14 @@
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
-use kipple_core::{Operation, Pack, Policy, Rule, ScanOutcome, ScanReport, Selector};
+use kipple_core::{
+    IntegrationDescriptor, Operation, Pack, Policy, Rule, ScanOutcome, ScanReport, Selector,
+};
 use kipple_platform::PLATFORM;
 
 use crate::human::{self, bytes, escaped, size};
 use crate::json::{EvidenceOut, FindingOut};
+use crate::rules;
 use crate::setup::{Builtin, BuiltinRule};
 use crate::theme::{Ink, Role};
 
@@ -36,7 +39,7 @@ pub(crate) fn write_rule(
     } else {
         "not on this OS"
     };
-    let rows = [
+    let mut rows = vec![
         (
             "Integration",
             format!(
@@ -52,6 +55,11 @@ pub(crate) fn write_rule(
         ("What you lose", rule.text.loss.clone()),
         ("Operation", operation(&rule.operation)),
     ];
+    let descriptor = builtin
+        .descriptors
+        .iter()
+        .find(|d| d.id == rule.integration);
+    rows.extend(descriptor.into_iter().flat_map(published_rows));
     let title = escaped(&format!("{}: {}", rule.id, rule.text.title));
     writeln!(out, "{}", ink.paint(Role::Title, &title))?;
     if !rule.text.description.is_empty() {
@@ -66,6 +74,42 @@ pub(crate) fn write_rule(
     Ok(())
 }
 
+/// What the rule's integration publishes, from the same catalog as `kipple rules --json`:
+/// the facts it can supply, what its tool keeps closed and what that opens.
+fn published_rows(descriptor: &IntegrationDescriptor) -> Vec<(&'static str, String)> {
+    let info = rules::integration(descriptor);
+    let facts: Vec<&str> = info.facts.iter().map(|fact| fact.name).collect();
+    let closed: Vec<String> = info.protected.iter().map(closed_root).collect();
+    let open: Vec<String> = info.open.iter().map(open_area).collect();
+    [
+        ("Facts", facts.join(", ")),
+        ("Keeps closed", closed.join(", ")),
+        ("Opens", open.join(", ")),
+    ]
+    .into_iter()
+    .filter(|(_, value)| !value.is_empty())
+    .collect()
+}
+
+/// A state root, with what stays closed even where it opens.
+fn closed_root(root: &rules::ProtectedRoot) -> String {
+    if root.entries.is_empty() {
+        return root.root.to_owned();
+    }
+    let entries: Vec<&str> = root.entries.iter().map(|entry| entry.path).collect();
+    format!("{} (always {})", root.root, entries.join(", "))
+}
+
+/// An open area, with whose findings may be there.
+fn open_area(area: &rules::OpenInfo) -> String {
+    format!(
+        "{} in {}, to {}",
+        area.path,
+        area.root,
+        area.integrations.join(" and ")
+    )
+}
+
 /// `name` padded to the label column, in the label role.
 fn label(ink: &Ink, name: &str) -> String {
     ink.paint(Role::Label, &format!("{name:<15}"))
@@ -77,8 +121,7 @@ fn operation(operation: &Operation) -> String {
         Operation::RemoveFiles(methods) => {
             let names: Vec<&str> = methods.iter().map(|m| m.name()).collect();
             format!(
-                "remove its files ({}) once you select and confirm it; this version only \
-                 finds and explains",
+                "remove its files ({}) once you select and confirm it",
                 names.join(" or ")
             )
         }
@@ -178,6 +221,11 @@ pub(crate) fn write_path(
     for evidence in &shown.evidence {
         let line = escaped(&evidence_line(evidence));
         writeln!(out, "  {} {line}", label(ink, "Evidence"))?;
+        if let EvidenceOut::Worktree { agent } = evidence
+            && let Some(sweep) = human::worktree::sweep(*agent)
+        {
+            writeln!(out, "  {} {}", label(ink, "Its own sweep"), escaped(sweep))?;
+        }
     }
     if let Some(verdict) = finding.verdict(policy) {
         let reasons = human::reasons_in_full(&verdict);

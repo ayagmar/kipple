@@ -445,6 +445,30 @@ expression: "serde_json::to_string_pretty(&report)?"
     },
     {
       "advice": [],
+      "id": "codex",
+      "lens": "agents",
+      "omissions": []
+    },
+    {
+      "advice": [],
+      "id": "cursor",
+      "lens": "agents",
+      "omissions": []
+    },
+    {
+      "advice": [],
+      "id": "git",
+      "lens": "agents",
+      "omissions": []
+    },
+    {
+      "advice": [],
+      "id": "pi",
+      "lens": "agents",
+      "omissions": []
+    },
+    {
+      "advice": [],
       "id": "cargo",
       "lens": "dev",
       "omissions": []
@@ -452,6 +476,12 @@ expression: "serde_json::to_string_pretty(&report)?"
     {
       "advice": [],
       "id": "node",
+      "lens": "dev",
+      "omissions": []
+    },
+    {
+      "advice": [],
+      "id": "npm",
       "lens": "dev",
       "omissions": []
     },

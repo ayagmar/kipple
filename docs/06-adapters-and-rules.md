@@ -17,7 +17,7 @@ Each kipple release publishes, in docs and through `kipple rules --json`, the ca
 | --- | --- |
 | Symbolic roots | `home`, `xdg.cache`, `xdg.data`, `xdg.state`, `known.local-app-data`, `macos.caches`, `config.project-roots`, integration roots such as `codex.release-store` |
 | Generic selectors | `dirs-matching` (bounded relative glob, depth limit), `files-matching`, `project-artifact` (marker file plus artifact dir name) |
-| Integration selectors | `verified-release-directories`, `registered-linked-worktrees`, `worktree-registrations` (every registration and every known agent worktree location) |
+| Integration selectors | `verified-release-directories`, `registered-linked-worktrees`, `worktree-registrations` (registrations that are missing, unregistered or invalid) |
 | Facts | `modified_age`, `size`, `git.tracked_changes`, `git.untracked_files`, `activity` (idle, busy, unknown), `layout` (supported, unknown), `marker.present`, `release.active`, `release.running` |
 | Operations | `report` and `remove-files` (frozen leaf set) for everyone. **First-party only:** `remove-verified-release`, `git-worktree-remove`, and the `native.*` closed set. The first-party-only status comes from the capability table, not from an ID prefix. |
 
@@ -56,11 +56,11 @@ Unknown keys anywhere are an error. Every error carries the file, line and colum
 | `scope.root` | enum | yes | | a published symbolic root. `home` is allowed only with a `pattern` of at least one literal leading component (see below). |
 | `scope.selection` | enum | yes | | a published selector |
 | selector parameters | per selector | per selector | | see the selector table |
-| `requirements.*` | fact → required value | no | `{}` | facts the integration must report as known *and* equal to the value |
-| `eligibility.*` | fact → predicate | no | `{}` | see predicates |
-| `retention.*` | per operation | no | | only for operations that declare retention |
+| `requirements.*` | fact → required value | no | `{}` | facts the integration must report as known *and* equal to the value. Not on a `report` rule. |
+| `eligibility.*` | fact → predicate | no | `{}` | see predicates. Not on a `report` rule. |
+| `retention.*` | per operation | for an operation that declares retention | | see below |
 | `operation.kind` | enum | yes | | a published operation. Third-party packs: `report` or `remove-files` only. |
-| `operation.methods` | array of `delete` / `trash` | for `remove-files` | | non-empty. The host may offer fewer. |
+| `operation.methods` | array of `delete` / `trash` | for `remove-files` and `remove-verified-release` | | non-empty. The host may offer fewer. |
 | `selection.default` | `unselected` | no | `unselected` | the only allowed value in v1 |
 | `selection.recent_days` | integer 0–365 | no | the carefulness level's window (04 §2a) | can only lengthen the level's window, never shorten it |
 
@@ -133,7 +133,7 @@ Every error has one of these stable codes plus the file, line, column and a mess
 | `unknown-capability` | a root, selector, fact or operation this engine doesn't publish (the message names the engine version) |
 | `not-permitted` | a third-party pack using an integration selector or fact, a first-party-only operation, or the `builtin.` prefix |
 
-How the codes apply to the cases the table leaves open: a value outside a fixed set (a category, platform, method, enum fact value, `selection.default`) and a reference that isn't an HTTPS URL are `wrong-type`. Too many references or markers, an empty `platforms`, `methods` or enum list, and a duration over 100 years are `invalid-range`. A malformed duration or byte size is `wrong-type`. `retention` is `unknown-key` until an operation that keeps items exists, and first-party-only operations are `unknown-capability` until the integrations that carry them out ship (M4), so this engine publishes only `report` and `remove-files`. A pack with no `[[rule]]` is `missing-key`. Errors in the `[pack]` table and in the rules are reported together whenever the pack's ID and platforms are valid.
+How the codes apply to the cases the table leaves open: a value outside a fixed set (a category, platform, method, enum fact value, `selection.default`) and a reference that isn't an HTTPS URL are `wrong-type`. Too many references or markers, an empty `platforms`, `methods` or enum list, and a duration over 100 years are `invalid-range`. A malformed duration or byte size is `wrong-type`. An operation that declares retention requires `[rule.retention]` (`missing-key`), and on any other operation the key is `unknown-key`. `group_by` names `component`, `target` or both; `keep_active`, `keep_previous`, `keep_running` and `keep_pending_install` must be `true` and `unparsable_version` must be `keep`, because the host fixes what a group keeps, so anything else is `invalid-range`. A third-party pack naming a first-party operation or an integration fact is `not-permitted`. A rule tests the generic facts and its own integration's: a fact of another integration, or one scoped to another selector, is `unknown-capability`. So is `registered-linked-worktrees` under anything but `git-worktree-remove` or `report`, and `verified-release-directories` under anything but `remove-verified-release` or `report`. `requirements` and `eligibility` on a `report` rule are `unknown-key`, built-in packs included: a report rule selects by its selector alone, so a predicate there would decide nothing. A pack with no `[[rule]]` is `missing-key`. Errors in the `[pack]` table and in the rules are reported together whenever the pack's ID and platforms are valid.
 
 ## 4. Hard cases
 
@@ -160,12 +160,11 @@ installer_activity = "idle"
 process_observation = "complete"
 
 [rule.retention]
-group_by = ["component", "channel"]
+group_by = ["component", "target"]
 keep_active = true
+keep_previous = true
 keep_running = true
 keep_pending_install = true
-keep_additional = 1
-additional_order = "version-descending"
 unparsable_version = "keep"
 
 [rule.operation]
@@ -215,14 +214,6 @@ loss = "Nothing. Report only."
 root = "config.project-roots"
 selection = "worktree-registrations"
 
-[rule.requirements]
-git_inventory = "complete"
-repository_identity = "verified"
-storage_availability = "known"
-
-[rule.eligibility]
-registration_state = ["registered-missing", "present-unregistered"]
-
 [rule.operation]
 kind = "report"
 ```
@@ -250,7 +241,7 @@ Every integration descriptor declares its **protected subresources** (04 §3.9),
 
 ### 5a. Built today
 
-The Cargo, Node and Python rules propose `remove-files` with `delete` or `trash`; the trash, pacman and journald rules only report. Nothing is removed yet: kipple finds, sizes and classifies each finding into its bucket (D-047), and the executor arrives in M3. Each integration lists the upstream versions its fixtures were built from, and `kipple rules` and the generated support matrix show them. The consequence column is what the integration verified for a finding whose layout it recognised (04 §2a); an unrecognised layout and a report-only finding have none.
+The Cargo, Node and Python rules propose `remove-files` with `delete` or `trash`; the trash, pacman and journald rules only report. kipple finds, sizes and classifies each finding into its bucket (D-047), and `kipple clean` and the home screen remove only what a reviewed plan holds, through the executor. Each integration lists the upstream versions its fixtures were built from, and `kipple rules` and the generated support matrix show them. The consequence column is what the integration verified for a finding whose layout it recognised (04 §2a); an unrecognised layout and a report-only finding have none.
 
 | Integration | Lens | Finds | Evidence | Consequence | Verified against |
 | --- | --- | --- | --- | --- | --- |
@@ -261,6 +252,7 @@ The Cargo, Node and Python rules propose `remove-files` with `delete` or `trash`
 | Pacman | system | the package cache, when not empty (Linux) | the root | — (report only, advice) | pacman 7.1.0 |
 | journald | system | the persistent journal, when not empty (Linux) | the root | — (report only, advice) | systemd 262 |
 | Claude Code | agents | nothing yet; advice only | — | — | Claude Code settings docs, checked 2026-10-11 |
+| Codex, Git worktrees, npm, Pi, Cursor | agents, except npm (dev) | nothing yet: each has its descriptor, its closed roots and its rules as `report` | — | — | nothing yet |
 
 A `target`, `node_modules` or `.venv` with no recognised signature is still reported, with `no-signature` evidence, so an unknown layout is visible but can never become eligible. A candidate that can't be listed, including a `__pycache__`, is reported with no layout evidence at all. Generic `dirs-matching` and `files-matching` rules from third-party packs are validated but not evaluated before M5.
 

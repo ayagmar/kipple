@@ -7,6 +7,7 @@
 mod doc;
 mod grammar;
 mod predicate;
+mod retention;
 mod rule;
 
 use std::fmt;

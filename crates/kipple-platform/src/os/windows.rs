@@ -41,12 +41,13 @@ use windows_sys::Win32::System::Threading::{
     QueryFullProcessImageNameW,
 };
 use windows_sys::Win32::UI::Shell::{
-    FOLDERID_LocalAppData, FOLDERID_Profile, FOLDERID_RoamingAppData, SHGetKnownFolderPath,
+    FOLDERID_LocalAppData, FOLDERID_Profile, FOLDERID_ProgramData, FOLDERID_RoamingAppData,
+    SHGetKnownFolderPath,
 };
 use windows_sys::core::{GUID, PWSTR};
 
 use crate::environment::Environment;
-use crate::os::HardLink;
+use crate::os::{ConfigFile, HardLink};
 use crate::process::Context;
 
 pub(crate) const PLATFORM: Platform = Platform::Windows;
@@ -157,6 +158,33 @@ pub(crate) fn resolve_roots(_: &Environment) -> Roots {
         roots.insert(root, resolved);
     }
     roots
+}
+
+/// Where Codex keeps its system-wide config files: below the `ProgramData` folder, which
+/// can be moved, so a folder the OS can't name is unknown and never `C:\ProgramData`.
+pub(crate) fn codex_system_config(_: &Environment) -> Result<Vec<ConfigFile>, UnresolvedRoot> {
+    let folder = "FOLDERID_ProgramData";
+    let data = known_folder(&FOLDERID_ProgramData).map_err(|error| UnresolvedRoot::Os {
+        folder,
+        source: Arc::new(error),
+    })?;
+    Ok(codex_config_in(&data))
+}
+
+/// Codex's two system files below `program_data`. There is no `managed_config.toml` here:
+/// upstream reads that one on Unix only.
+fn codex_config_in(program_data: &Path) -> Vec<ConfigFile> {
+    let dir = program_data.join("OpenAI").join("Codex");
+    let file = |(name, file)| ConfigFile {
+        name,
+        path: dir.join(file),
+    };
+    [
+        (r"OpenAI\Codex\config.toml", "config.toml"),
+        (r"OpenAI\Codex\requirements.toml", "requirements.toml"),
+    ]
+    .map(file)
+    .to_vec()
 }
 
 #[expect(
@@ -540,4 +568,29 @@ fn os_error(error: &io::Error) -> Option<u32> {
 /// `K32EnumProcesses` lists every process to every user.
 pub(crate) const fn inventory() -> Inventory {
     Inventory::Complete
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::codex_config_in;
+
+    /// Catches a misspelt system directory: nothing would be found there, and a
+    /// `sqlite_home` an administrator set would read as unset.
+    #[test]
+    fn codex_system_config_is_below_program_data() {
+        let paths: Vec<PathBuf> = codex_config_in(Path::new(r"D:\Data"))
+            .into_iter()
+            .map(|file| file.path)
+            .collect();
+
+        assert_eq!(
+            paths,
+            [
+                PathBuf::from(r"D:\Data\OpenAI\Codex\config.toml"),
+                PathBuf::from(r"D:\Data\OpenAI\Codex\requirements.toml"),
+            ]
+        );
+    }
 }

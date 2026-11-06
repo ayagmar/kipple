@@ -4,12 +4,13 @@ use std::collections::HashSet;
 use std::ops::Range;
 
 use kipple_core::{
-    Category, GENERIC_SELECTORS, IntegrationId, Method, OPERATIONS, Operation, PackId, Platform,
-    Rule, RuleId, RuleText, Selector, SymbolicRoot,
+    Category, GENERIC_SELECTORS, IntegrationId, Method, NativeKind, OPERATIONS, Operation,
+    OperationSpec, PackId, Platform, Rule, RuleId, RuleText, Selector, SymbolicRoot,
 };
 
 use super::doc::{Checker, Table, Value};
-use super::{Catalog, ErrorCode, MAX_RULES, Origin, grammar, predicate};
+use super::predicate::FactScope;
+use super::{Catalog, ErrorCode, MAX_RULES, Origin, grammar, predicate, retention};
 
 const RULE_KEYS: &[&str] = &[
     "id",
@@ -39,6 +40,16 @@ const MAX_DEPTH: (i64, Range<i64>) = (6, 1..13);
 const MARKERS: Range<usize> = 1..9;
 /// The range of `selection.recent_days`.
 const RECENT_DAYS: Range<i64> = 0..366;
+
+/// Integration selectors whose findings one operation alone may remove, each with that
+/// operation. Anything else they pair with has to be `report`.
+const REMOVED_ONLY_BY: &[(&str, &str)] = &[
+    (
+        "registered-linked-worktrees",
+        NativeKind::GitWorktreeRemove.name(),
+    ),
+    ("verified-release-directories", "remove-verified-release"),
+];
 
 /// What every rule of one pack is checked against.
 #[derive(Debug, Clone, Copy)]
@@ -89,10 +100,6 @@ impl RuleCx<'_> {
         let table = c.table(value)?;
         let at = value.span();
         c.known_keys(table, RULE_KEYS);
-        if let Some(retention) = table.get("retention") {
-            let message = "unknown key `retention`: no operation this engine publishes keeps items";
-            c.error(ErrorCode::UnknownKey, retention.span(), message);
-        }
         let id = self.id(c, table, at.clone(), seen);
         let integration = self.integration(c, table, at.clone());
         let text = text(c, table, at.clone());
@@ -103,9 +110,17 @@ impl RuleCx<'_> {
         let scope =
             integration.and_then(|integration| self.scope(c, table, at.clone(), integration));
         let selector_name = scope.as_ref().map_or("", |(_, selector)| selector.name());
-        let predicates =
-            predicate::rule_predicates(c, table, at.clone(), selector_name, self.catalog);
-        let operation = self.operation(c, table, at);
+        let facts = FactScope {
+            selector: selector_name,
+            integration,
+            origin: self.origin,
+            catalog: self.catalog,
+        };
+        let predicates = predicate::rule_predicates(c, table, at.clone(), facts);
+        let operation = self.operation(c, table, at.clone());
+        if let Some(operation) = &operation {
+            fits_operation(c, table, at, selector_name, operation);
+        }
         let recent_days = selection(c, table);
         if c.error_count() != before {
             return None;
@@ -271,36 +286,108 @@ impl RuleCx<'_> {
         Some(Selector::Integration(published.name))
     }
 
-    /// `[rule.operation]`.
+    /// `[rule.operation]`, with the `[rule.retention]` it declares.
     fn operation(
         &self,
         c: &mut Checker<'_>,
         table: &Table<'_>,
         at: Range<usize>,
     ) -> Option<Operation> {
-        let value = c.required(table, at, "operation")?;
+        let value = c.required(table, at.clone(), "operation")?;
         let operation = c.table(value)?;
         let kind = c.required(operation, value.span(), "kind")?;
-        match c.string(kind, usize::MAX)? {
-            "report" => {
-                c.known_keys(operation, &["kind"]);
-                Some(Operation::Report)
-            }
-            "remove-files" => {
-                c.known_keys(operation, &["kind", "methods"]);
-                let methods = c.required(operation, value.span(), "methods")?;
-                methods_of(c, methods).map(Operation::RemoveFiles)
-            }
+        let spec = self.published(c, kind)?;
+        let methods = operation_methods(c, operation, value.span(), spec);
+        if spec.retention {
+            let retention = retention::of_rule(c, table, at)?;
+            return methods.map(|methods| Operation::RemoveVerifiedRelease { methods, retention });
+        }
+        retention::refuse(c, table, spec);
+        if let Some(native) = NativeKind::from_name(spec.name) {
+            return Some(Operation::Native(native));
+        }
+        match spec.name {
+            "report" => Some(Operation::Report),
+            "remove-files" => methods.map(Operation::RemoveFiles),
             other => {
-                let message = format!(
-                    "kipple {} publishes no operation {other:?}; it publishes {}",
-                    self.catalog.engine,
-                    published_operations().join(" and ")
-                );
+                let message = format!("kipple can't read a rule using {other:?}");
                 c.error(ErrorCode::UnknownCapability, kind.span(), message);
                 None
             }
         }
+    }
+
+    /// The operation `kind` names, if this pack may use it.
+    fn published(&self, c: &mut Checker<'_>, kind: &Value<'_>) -> Option<&'static OperationSpec> {
+        let name = c.string(kind, usize::MAX)?;
+        let Some(spec) = OPERATIONS.iter().find(|spec| spec.name == name) else {
+            let message = format!(
+                "kipple {} publishes no operation {name:?}; it publishes {}",
+                self.catalog.engine,
+                self.published_operations().join(", ")
+            );
+            c.error(ErrorCode::UnknownCapability, kind.span(), message);
+            return None;
+        };
+        if spec.first_party && self.origin == Origin::ThirdParty {
+            let message = format!("{name:?} is first-party: third-party rules may not use it");
+            c.error(ErrorCode::NotPermitted, kind.span(), message);
+            return None;
+        }
+        Some(spec)
+    }
+
+    /// The operations this pack can name.
+    fn published_operations(&self) -> Vec<&'static str> {
+        OPERATIONS
+            .iter()
+            .filter(|spec| !spec.first_party || self.origin == Origin::Builtin)
+            .map(|spec| spec.name)
+            .collect()
+    }
+}
+
+/// The methods of an operation that chooses one, none for any other.
+fn operation_methods(
+    c: &mut Checker<'_>,
+    operation: &Table<'_>,
+    at: Range<usize>,
+    spec: &OperationSpec,
+) -> Option<Vec<Method>> {
+    if spec.methods.is_empty() {
+        c.known_keys(operation, &["kind"]);
+        return Some(Vec::new());
+    }
+    c.known_keys(operation, &["kind", "methods"]);
+    let methods = c.required(operation, at, "methods")?;
+    methods_of(c, methods, spec.methods)
+}
+
+/// Refuses what `operation` can't carry out: predicates on a report rule, which would
+/// decide nothing, and a removal of what its selector's findings aren't.
+fn fits_operation(
+    c: &mut Checker<'_>,
+    table: &Table<'_>,
+    at: Range<usize>,
+    selector: &str,
+    operation: &Operation,
+) {
+    if *operation == Operation::Report {
+        for key in ["requirements", "eligibility"] {
+            if let Some(value) = table.get(key) {
+                let message = format!("unknown key `{key}`: a report rule decides nothing");
+                c.error(ErrorCode::UnknownKey, value.span(), message);
+            }
+        }
+        return;
+    }
+    let only = REMOVED_ONLY_BY.iter().find(|(name, _)| *name == selector);
+    if let Some((_, only)) = only.filter(|(_, only)| *only != operation.name()) {
+        let message = format!(
+            "{selector:?} pairs only with {only:?} or `report`, not {:?}",
+            operation.name()
+        );
+        c.error(ErrorCode::UnknownCapability, at, message);
     }
 }
 
@@ -428,7 +515,7 @@ fn optional_integer(
     u32::try_from(n).ok()
 }
 
-fn methods_of(c: &mut Checker<'_>, value: &Value<'_>) -> Option<Vec<Method>> {
+fn methods_of(c: &mut Checker<'_>, value: &Value<'_>, offered: &[Method]) -> Option<Vec<Method>> {
     let items = c.array(value)?;
     if items.is_empty() {
         c.error(
@@ -440,7 +527,8 @@ fn methods_of(c: &mut Checker<'_>, value: &Value<'_>) -> Option<Vec<Method>> {
     }
     let mut methods = Vec::new();
     for item in items {
-        let method = c.one_of(item, Method::from_name, "a method: delete or trash")?;
+        let from_name = |name: &str| Method::from_name(name).filter(|m| offered.contains(m));
+        let method = c.one_of(item, from_name, "a method: delete or trash")?;
         if !methods.contains(&method) {
             methods.push(method);
         }
@@ -480,13 +568,4 @@ fn home_scope_is_bounded(selector: &Selector) -> bool {
         .0
         .first()
         .is_some_and(|first| grammar::is_literal(first) && !first.chars().all(|c| c == '.'))
-}
-
-/// The operations a pack can name today.
-fn published_operations() -> Vec<&'static str> {
-    OPERATIONS
-        .iter()
-        .filter(|operation| !operation.first_party)
-        .map(|operation| operation.name)
-        .collect()
 }

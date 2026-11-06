@@ -1,20 +1,26 @@
 //! Symbolic roots, resolved upstream-first with their sources (`docs/05-architecture.md`
 //! §1), and kipple's own directories (`docs/03-functional-spec.md` §6, D-037).
 
+mod agent_config;
+mod tool_path;
+
 use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::fs;
 use std::io::{self, ErrorKind};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use kipple_core::{
-    LinkProblem, Resolution, ResolvedRoot, RootLink, RootSource, Roots, SymbolicRoot,
-    UnresolvedRoot,
+    LinkProblem, Resolution, ResolvedRoot, RootLink, RootSource, Roots, SettingProblem,
+    SymbolicRoot, UnresolvedRoot,
 };
 
+use self::agent_config::ConfigKey;
+use self::tool_path::{Tool, folded};
 use crate::environment::Environment;
 use crate::fs_probe::exact;
-use crate::os;
+use crate::os::{self, ConfigFile};
 
 /// The config file's name inside kipple's config directory.
 pub const CONFIG_FILE: &str = "config.toml";
@@ -33,6 +39,126 @@ const PROJECT_ROOTS: [&str; 10] = [
     "Developer",
     "source/repos",
 ];
+
+/// A root at a fixed place below another root of this OS.
+#[derive(Debug, Clone, Copy)]
+struct Placed {
+    root: SymbolicRoot,
+    base: SymbolicRoot,
+    relative: &'static str,
+}
+
+/// Agents' stores that only their tool's default path places. One whose `base` this OS
+/// doesn't have is absent here, as XDG roots are on Windows.
+const AGENT_ROOTS: [Placed; 11] = [
+    Placed {
+        root: SymbolicRoot::ClaudeHome,
+        base: SymbolicRoot::Home,
+        relative: ".claude",
+    },
+    // With `$CLAUDE_CONFIG_DIR` set the live file is inside `claude.config`, which is closed
+    // too, so this is the one path no other root covers.
+    Placed {
+        root: SymbolicRoot::ClaudeConfigFile,
+        base: SymbolicRoot::Home,
+        relative: ".claude.json",
+    },
+    Placed {
+        root: SymbolicRoot::ClaudeVersions,
+        base: SymbolicRoot::XdgData,
+        relative: "claude",
+    },
+    Placed {
+        root: SymbolicRoot::ClaudeInstallState,
+        base: SymbolicRoot::XdgState,
+        relative: "claude",
+    },
+    Placed {
+        root: SymbolicRoot::CodexDefaultHome,
+        base: SymbolicRoot::Home,
+        relative: ".codex",
+    },
+    Placed {
+        root: SymbolicRoot::PiHome,
+        base: SymbolicRoot::Home,
+        relative: ".pi",
+    },
+    Placed {
+        root: SymbolicRoot::CursorConfig,
+        base: SymbolicRoot::Home,
+        relative: ".cursor",
+    },
+    Placed {
+        root: SymbolicRoot::CursorServer,
+        base: SymbolicRoot::Home,
+        relative: ".cursor-server",
+    },
+    if cfg!(windows) {
+        Placed {
+            root: SymbolicRoot::NpmDefaultCache,
+            base: SymbolicRoot::LocalAppData,
+            relative: "npm-cache",
+        }
+    } else {
+        Placed {
+            root: SymbolicRoot::NpmDefaultCache,
+            base: SymbolicRoot::Home,
+            relative: ".npm",
+        }
+    },
+    if cfg!(windows) {
+        Placed {
+            root: SymbolicRoot::CursorAppData,
+            base: SymbolicRoot::RoamingAppData,
+            relative: "Cursor",
+        }
+    } else if cfg!(target_os = "macos") {
+        Placed {
+            root: SymbolicRoot::CursorAppData,
+            base: SymbolicRoot::Home,
+            relative: "Library/Application Support/Cursor",
+        }
+    } else {
+        Placed {
+            root: SymbolicRoot::CursorAppData,
+            base: SymbolicRoot::Home,
+            relative: ".config/Cursor",
+        }
+    },
+    if cfg!(windows) {
+        Placed {
+            root: SymbolicRoot::CursorCli,
+            base: SymbolicRoot::LocalAppData,
+            relative: "cursor-agent",
+        }
+    } else {
+        Placed {
+            root: SymbolicRoot::CursorCli,
+            base: SymbolicRoot::Home,
+            relative: ".local/share/cursor-agent",
+        }
+    },
+];
+
+/// Where agents keep git worktrees outside any repository. Claude Code's and Gemini CLI's
+/// are inside one, so project roots reach them. Each is `git.agent-locations` only where it
+/// exists.
+const AGENT_LOCATIONS: [(SymbolicRoot, &str); 5] = [
+    (SymbolicRoot::CodexHome, "worktrees"),
+    (SymbolicRoot::Home, ".cursor/worktrees"),
+    (SymbolicRoot::Home, "conductor/workspaces"),
+    (SymbolicRoot::Home, ".herdr/worktrees"),
+    (SymbolicRoot::XdgData, "opencode/worktree"),
+];
+
+/// Codex's config files that can set `sqlite_home`, in its home.
+const CODEX_HOME_CONFIG: [&str; 3] = ["config.toml", "managed_config.toml", "requirements.toml"];
+
+/// How a Codex profile's file name ends: `work.config.toml` is the profile `work`.
+const CODEX_PROFILE_SUFFIX: &str = ".config.toml";
+
+/// What people call those files, shown when one can't be read.
+const CODEX_PROFILES: &str = "*.config.toml";
 
 /// Resolves every root this OS has. `project_roots`, when given (`--root`), replace the
 /// default project roots; none given means the defaults.
@@ -155,25 +281,411 @@ fn upstream_roots(env: &Environment) -> Roots {
         return crate::test_host::roots(file);
     }
     let mut roots = os::resolve_roots(env);
-    let claude = match absolute(env, "CLAUDE_CONFIG_DIR") {
-        Ok(Some(path)) => Ok(ResolvedRoot::new(
-            SymbolicRoot::ClaudeConfig,
-            path,
-            RootSource::Env("CLAUDE_CONFIG_DIR"),
-        )),
-        Ok(None) => under(
-            &roots,
-            SymbolicRoot::Home,
-            SymbolicRoot::ClaudeConfig,
-            ".claude",
-        ),
-        Err(unusable) => Err(unusable),
-    };
-    roots.insert(SymbolicRoot::ClaudeConfig, claude);
+    let root = SymbolicRoot::ClaudeConfig;
+    let var = "CLAUDE_CONFIG_DIR";
+    match absolute(env, var) {
+        Ok(Some(path)) => {
+            for resolved in closed_dirs(root, path, RootSource::Env(var)) {
+                roots.add(root, resolved);
+            }
+        }
+        Ok(None) => {
+            let default = under(&roots, SymbolicRoot::Home, root, ".claude");
+            roots.insert(root, default);
+        }
+        Err(unusable) => roots.insert(root, Err(unusable)),
+    }
+    agent_roots(env, &mut roots);
     for resolved in default_project_roots(&roots) {
         roots.add(SymbolicRoot::ProjectRoots, resolved);
     }
     roots
+}
+
+/// Adds every agent's stores and the places agents keep worktrees.
+fn agent_roots(env: &Environment, roots: &mut Roots) {
+    for Placed {
+        root,
+        base,
+        relative,
+    } in AGENT_ROOTS
+    {
+        if roots.get(base).is_some() {
+            let resolved = under(roots, base, root, relative);
+            roots.insert(root, resolved);
+        }
+    }
+    let home = codex_home(env, roots);
+    roots.insert(SymbolicRoot::CodexHome, home);
+    let store = under(
+        roots,
+        SymbolicRoot::CodexHome,
+        SymbolicRoot::CodexReleaseStore,
+        "packages",
+    );
+    roots.insert(SymbolicRoot::CodexReleaseStore, store);
+    for resolved in codex_sqlite_homes(env, roots) {
+        roots.add(SymbolicRoot::CodexSqliteHome, resolved);
+    }
+    for resolved in pi_agent(env, roots) {
+        roots.add(SymbolicRoot::PiAgent, resolved);
+    }
+    for resolved in pi_session_dirs(env, roots) {
+        roots.add(SymbolicRoot::PiSessionDir, resolved);
+    }
+    cursor_roots(env, roots);
+    for resolved in agent_locations(roots) {
+        roots.add(SymbolicRoot::GitAgentLocations, resolved);
+    }
+}
+
+/// Where Cursor's config may also be, past the default paths: `$CURSOR_CONFIG_DIR`, and its
+/// XDG forms on Linux. Which one the CLI and the editor use isn't verified, and these roots
+/// only protect, so each is closed.
+fn cursor_roots(env: &Environment, roots: &mut Roots) {
+    let root = SymbolicRoot::CursorConfig;
+    let var = "CURSOR_CONFIG_DIR";
+    match absolute(env, var) {
+        Ok(Some(path)) => {
+            for resolved in closed_dirs(root, path, RootSource::Env(var)) {
+                roots.add(root, resolved);
+            }
+        }
+        Ok(None) => {}
+        Err(unusable) => roots.add(root, Err(unusable)),
+    }
+    if cfg!(target_os = "linux") {
+        let base = SymbolicRoot::XdgConfig;
+        let config = under(roots, base, root, "cursor");
+        roots.add(root, config);
+        let app_data = SymbolicRoot::CursorAppData;
+        let moved = under(roots, base, app_data, "Cursor");
+        roots.add(app_data, moved);
+    }
+}
+
+/// `$CODEX_HOME`, which must be a directory because upstream refuses anything else, then
+/// `~/.codex`. Below a link, roots are never followed, so what is derived from this root
+/// needs it resolved now.
+fn codex_home(env: &Environment, roots: &Roots) -> Result<ResolvedRoot, UnresolvedRoot> {
+    let root = SymbolicRoot::CodexHome;
+    let var = "CODEX_HOME";
+    let Some(path) = absolute(env, var)? else {
+        return under(roots, SymbolicRoot::Home, root, ".codex").and_then(follow_link);
+    };
+    let unresolvable = |source: io::Error| UnresolvedRoot::Unresolvable {
+        path: path.clone(),
+        source: Arc::new(source),
+    };
+    let meta = fs::metadata(exact(&path)).map_err(unresolvable)?;
+    if !meta.is_dir() {
+        return Err(unresolvable(ErrorKind::NotADirectory.into()));
+    }
+    let physical = in_physical_parent(&path).map_err(unresolvable)?;
+    follow_link(ResolvedRoot::new(root, physical, RootSource::Env(var)))
+}
+
+/// Where Codex keeps its databases, past its home: each place one of its settings names.
+/// Which of them wins needs no modelling, since each is only kept closed.
+fn codex_sqlite_homes(
+    env: &Environment,
+    roots: &Roots,
+) -> Vec<Result<ResolvedRoot, UnresolvedRoot>> {
+    let root = SymbolicRoot::CodexSqliteHome;
+    let var = "CODEX_SQLITE_HOME";
+    let mut found = Vec::new();
+    if let Some(value) = trimmed(env, var) {
+        // Upstream reads a relative value from its working directory, which kipple can't know.
+        found.extend(variable_dirs(value, var, Tool::Codex, root, roots));
+    }
+    for file in codex_config_files(env, roots) {
+        let ConfigFile { name, path } = match file {
+            Ok(file) => file,
+            Err(unusable) => {
+                found.push(Err(unusable));
+                continue;
+            }
+        };
+        let key = ConfigKey {
+            file: name,
+            key: "sqlite_home",
+            tool: Tool::Codex,
+        };
+        found.extend(setting_dirs(key, &path, root, roots));
+    }
+    found
+}
+
+/// Every Codex config layer kipple can reach: its home's, each profile's, and the system's.
+/// A layer it can't list stays in the answer as unknown. Which of them Codex reads depends
+/// on how it was started, so each counts.
+fn codex_config_files(env: &Environment, roots: &Roots) -> Vec<Result<ConfigFile, UnresolvedRoot>> {
+    let mut files = Vec::new();
+    if let Some(Ok(home)) = roots.get(SymbolicRoot::CodexHome) {
+        let in_home = CODEX_HOME_CONFIG.map(|name| ConfigFile {
+            name,
+            path: home.path.join(name),
+        });
+        files.extend(in_home.map(Ok));
+        match codex_profiles(&home.path) {
+            Ok(profiles) => files.extend(profiles.into_iter().map(Ok)),
+            Err(unusable) => files.push(Err(unusable)),
+        }
+    }
+    match os::codex_system_config(env) {
+        Ok(system) => files.extend(system.into_iter().map(Ok)),
+        Err(unusable) => files.push(Err(unusable)),
+    }
+    files
+}
+
+/// The profile files in Codex's `home`, in name order.
+fn codex_profiles(home: &Path) -> Result<Vec<ConfigFile>, UnresolvedRoot> {
+    let unusable = |source: io::Error| UnresolvedRoot::Setting {
+        file: CODEX_PROFILES,
+        problem: SettingProblem::Unreadable(Arc::new(source)),
+    };
+    let entries = match fs::read_dir(exact(home)) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(unusable(error)),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(unusable)?;
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .ends_with(CODEX_PROFILE_SUFFIX)
+        {
+            paths.push(entry.path());
+        }
+    }
+    paths.sort();
+    let profile = |path| ConfigFile {
+        name: CODEX_PROFILES,
+        path,
+    };
+    Ok(paths.into_iter().map(profile).collect())
+}
+
+/// `$PI_CODING_AGENT_DIR` as upstream reads it, then `~/.pi/agent`.
+fn pi_agent(env: &Environment, roots: &Roots) -> Vec<Result<ResolvedRoot, UnresolvedRoot>> {
+    let root = SymbolicRoot::PiAgent;
+    let var = "PI_CODING_AGENT_DIR";
+    env.get(var).map_or_else(
+        || vec![under(roots, SymbolicRoot::Home, root, ".pi/agent")],
+        |value| variable_dirs(value, var, Tool::Pi, root, roots),
+    )
+}
+
+/// Pi's session directories, past its agent directory: the variable's and the global
+/// setting's. A project's setting and `--session-dir` can't be known.
+fn pi_session_dirs(env: &Environment, roots: &Roots) -> Vec<Result<ResolvedRoot, UnresolvedRoot>> {
+    let root = SymbolicRoot::PiSessionDir;
+    let var = "PI_CODING_AGENT_SESSION_DIR";
+    let mut found = Vec::new();
+    if let Some(value) = env.get(var) {
+        found.extend(variable_dirs(value, var, Tool::Pi, root, roots));
+    }
+    for agent in roots.all(SymbolicRoot::PiAgent).iter().flatten() {
+        let key = ConfigKey {
+            file: "settings.json",
+            key: "sessionDir",
+            tool: Tool::Pi,
+        };
+        found.extend(setting_dirs(key, &agent.path.join(key.file), root, roots));
+    }
+    found
+}
+
+/// The directories `key` names in the file at `path`, each as `root`.
+fn setting_dirs(
+    key: ConfigKey,
+    path: &Path,
+    root: SymbolicRoot,
+    roots: &Roots,
+) -> Vec<Result<ResolvedRoot, UnresolvedRoot>> {
+    let values = match key.values(path) {
+        Ok(values) => values,
+        Err(unusable) => return vec![Err(unusable)],
+    };
+    let source = RootSource::Setting {
+        file: key.file,
+        key: key.key,
+    };
+    // Codex reads a relative value from the file's directory. Pi reads it from its working
+    // directory, which kipple can't know, so there it stays refused.
+    let bases = match key.tool {
+        Tool::Codex => names_of_directory(path, roots),
+        Tool::Pi => Vec::new(),
+    };
+    let mut found = Vec::new();
+    for value in &values {
+        match setting_paths(value.as_os_str(), key, &bases, roots) {
+            Ok(paths) => {
+                let dirs = paths.into_iter();
+                found.extend(dirs.flat_map(|dir| closed_dirs(root, dir, source)));
+            }
+            Err(unusable) => found.push(Err(unusable)),
+        }
+    }
+    found
+}
+
+/// Every absolute path `value` can mean, one for each of the `bases` it is read from.
+fn setting_paths(
+    value: &OsStr,
+    key: ConfigKey,
+    bases: &[PathBuf],
+    roots: &Roots,
+) -> Result<Vec<PathBuf>, UnresolvedRoot> {
+    let decoded = decoded(value, key.tool, roots)?;
+    if bases.is_empty() {
+        return Ok(vec![in_full(decoded, value, key.key)?]);
+    }
+    let in_base = |base: &PathBuf| in_full(base.join(&decoded), value, key.key);
+    bases.iter().map(in_base).collect()
+}
+
+/// What the directory of Codex's config file at `path` is called. Codex doesn't resolve
+/// `~/.codex` and does canonicalize `$CODEX_HOME`, so a home that is a link goes by the
+/// name it was configured with and by the one it leads to, and `..` from each can differ.
+fn names_of_directory(path: &Path, roots: &Roots) -> Vec<PathBuf> {
+    let Some(dir) = path.parent() else {
+        return Vec::new();
+    };
+    let configured = match roots.get(SymbolicRoot::CodexHome) {
+        Some(Ok(home)) if home.path == dir => home.link.as_ref(),
+        Some(Ok(_) | Err(_)) | None => None,
+    };
+    let configured = configured.map(|link| link.configured.clone());
+    std::iter::once(dir.to_owned()).chain(configured).collect()
+}
+
+/// The value of `var` with the white space around it gone, `None` when nothing is left.
+fn trimmed<'env>(env: &'env Environment, var: &str) -> Option<&'env OsStr> {
+    let value = env.get(var)?;
+    let value = value.to_str().map_or(value, |text| OsStr::new(text.trim()));
+    (!value.is_empty()).then_some(value)
+}
+
+/// The directories the variable `var` names with `value`, each as `root`.
+fn variable_dirs(
+    value: &OsStr,
+    var: &'static str,
+    tool: Tool,
+    root: SymbolicRoot,
+    roots: &Roots,
+) -> Vec<Result<ResolvedRoot, UnresolvedRoot>> {
+    match expanded(value, var, tool, roots) {
+        Ok(path) => closed_dirs(root, path, RootSource::Env(var)),
+        Err(unusable) => vec![Err(unusable)],
+    }
+}
+
+/// The directories an accepted `path` can mean, each as `root`. The tools fold `.` and `..`
+/// by text, so that is where the store is. The OS goes through a link before a `..` and
+/// can answer differently, so what is really there as written is closed too.
+fn closed_dirs(
+    root: SymbolicRoot,
+    path: PathBuf,
+    source: RootSource,
+) -> Vec<Result<ResolvedRoot, UnresolvedRoot>> {
+    let text = folded(&path);
+    let written = (text != path && may_exist(&path)).then_some(path);
+    std::iter::once(text)
+        .chain(written)
+        .map(|dir| configured_dir(root, dir, source))
+        .collect()
+}
+
+/// `value` as an absolute path, read the way `tool` reads it.
+fn expanded(
+    value: &OsStr,
+    var: &'static str,
+    tool: Tool,
+    roots: &Roots,
+) -> Result<PathBuf, UnresolvedRoot> {
+    in_full(decoded(value, tool, roots)?, value, var)
+}
+
+/// What `tool` means by `value`, which may still be relative.
+fn decoded(value: &OsStr, tool: Tool, roots: &Roots) -> Result<PathBuf, UnresolvedRoot> {
+    let Some(text) = value.to_str() else {
+        return Ok(PathBuf::from(value));
+    };
+    let Some(rest) = tool.below_home(text, os::PLATFORM) else {
+        return Ok(tool.plain(text, os::PLATFORM));
+    };
+    let Some(Ok(home)) = roots.get(SymbolicRoot::Home) else {
+        let base = SymbolicRoot::Home;
+        return Err(UnresolvedRoot::BaseUnresolved { base });
+    };
+    Ok(home.path.join(rest))
+}
+
+/// `path` when it is absolute. `value` and `var` say what gave it, for the error.
+fn in_full(path: PathBuf, value: &OsStr, var: &'static str) -> Result<PathBuf, UnresolvedRoot> {
+    if path.is_absolute() {
+        return Ok(path);
+    }
+    Err(UnresolvedRoot::NotAbsolute {
+        var,
+        value: value.to_string_lossy().into_owned(),
+    })
+}
+
+/// A directory a person configured, below the directory its parent names. One that doesn't
+/// exist yet is an absent root, because its tool makes it on first run; something else
+/// there is an error, since the tool couldn't use it either.
+fn configured_dir(
+    root: SymbolicRoot,
+    path: PathBuf,
+    source: RootSource,
+) -> Result<ResolvedRoot, UnresolvedRoot> {
+    let unresolvable = |error: io::Error| UnresolvedRoot::Unresolvable {
+        path: path.clone(),
+        source: Arc::new(error),
+    };
+    match fs::symlink_metadata(exact(&path)) {
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            Ok(ResolvedRoot::new(root, path, source))
+        }
+        Err(error) if error.kind() == ErrorKind::NotADirectory => Err(unresolvable(error)),
+        Ok(meta) if !meta.is_dir() && !meta.file_type().is_symlink() => {
+            Err(unresolvable(ErrorKind::NotADirectory.into()))
+        }
+        // A link is resolved, and anything unreadable reported, later.
+        Ok(_) | Err(_) => {
+            let physical = in_physical_parent(&path).map_err(unresolvable)?;
+            Ok(ResolvedRoot::new(root, physical, source))
+        }
+    }
+}
+
+/// The places agents keep worktrees that exist here. One whose base is unknown stays in
+/// the list as unknown: a location kipple can't place must not read as an empty one.
+fn agent_locations(roots: &Roots) -> Vec<Result<ResolvedRoot, UnresolvedRoot>> {
+    let root = SymbolicRoot::GitAgentLocations;
+    AGENT_LOCATIONS
+        .into_iter()
+        .filter(|(base, _)| roots.get(*base).is_some())
+        .map(|(base, relative)| under(roots, base, root, relative))
+        .filter(|location| {
+            location
+                .as_ref()
+                .map_or(true, |found| may_exist(&found.path))
+        })
+        .collect()
+}
+
+/// Whether a directory, or a link to one, may be at `path`: reading it says why not.
+fn may_exist(path: &Path) -> bool {
+    match fs::symlink_metadata(exact(path)) {
+        Ok(meta) => meta.is_dir() || meta.file_type().is_symlink(),
+        Err(e) => !matches!(e.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory),
+    }
 }
 
 /// The default project roots that exist, each directory once even where the file system
@@ -255,14 +767,44 @@ pub(crate) fn absolute(
 ///
 /// The identity of the directory the link leads to is recorded so a scan can re-check
 /// it. Links below a root are never followed. A link that can't be followed, or doesn't
-/// lead to a directory, leaves its root unresolved.
+/// lead to a directory, leaves its root unresolved, except that `claude.config-file` is a
+/// file: a link to a file gives that root two paths, the link and the file.
 #[must_use]
 pub fn follow_root_links(roots: &Roots) -> Roots {
     let mut followed = Roots::default();
     for Resolution { root, resolved } in roots.iter() {
+        if let (SymbolicRoot::ClaudeConfigFile, Ok(configured)) = (root, resolved)
+            && let Some(target) = file_behind(configured)
+        {
+            followed.add(root, Ok(configured.clone()));
+            followed.add(root, Ok(target));
+            continue;
+        }
         followed.add(root, resolved.clone().and_then(follow_link));
     }
     followed
+}
+
+/// Where `resolved` leads when it is a link to a regular file, for a root that is a file.
+/// The link and the file are both what must stay closed, and neither is ever opened as a
+/// directory, so no identity is kept. A link that leads anywhere else is [`follow_link`]'s.
+fn file_behind(resolved: &ResolvedRoot) -> Option<ResolvedRoot> {
+    let configured = exact(&resolved.path);
+    if !fs::symlink_metadata(&configured)
+        .ok()?
+        .file_type()
+        .is_symlink()
+    {
+        return None;
+    }
+    let target = os::physical(&configured).ok()?;
+    fs::symlink_metadata(&target)
+        .ok()?
+        .is_file()
+        .then(|| ResolvedRoot {
+            path: target,
+            ..resolved.clone()
+        })
 }
 
 fn follow_link(resolved: ResolvedRoot) -> Result<ResolvedRoot, UnresolvedRoot> {

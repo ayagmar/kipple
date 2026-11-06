@@ -247,6 +247,11 @@ fn every_config_kipple_cant_use_exits_2_with_the_reason_and_where_it_is() {
             "[clean]\nmethod = \"shred\"",
             "clean.method: expected delete or trash",
         ),
+        // `native` is how an item runs, never a method a person chooses.
+        (
+            "[clean]\nmethod = \"native\"",
+            "clean.method: expected delete or trash",
+        ),
         (
             "[rules.\"builtin.cargo.target\"]\nrecent_days = 0",
             "recent_days: expected a whole number of days from 1 to 365",

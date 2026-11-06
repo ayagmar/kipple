@@ -1,0 +1,43 @@
+schema_version = 1
+
+[pack]
+id = "builtin.pi"
+version = "1.0.0"
+publisher = "kipple"
+description = "The Pi coding agent's logs and store"
+license = "MIT"
+kipple = ">=0.0.0"
+platforms = ["linux", "macos", "windows"]
+
+[[rule]]
+id = "builtin.pi.closed-logs"
+integration = "pi"
+title = "Pi's diagnostic logs"
+description = "The debug and crash logs Pi writes in its agent directory, and the rotated MCP log."
+why = "Pi writes these when you run /debug, when its TUI crashes, and when it rotates its MCP log."
+loss = "A saved diagnostic snapshot, which may include conversation text."
+category = "log"
+platforms = ["linux"]
+
+[rule.scope]
+root = "pi.agent"
+selection = "pi-closed-logs"
+
+[rule.operation]
+kind = "report"
+
+[[rule]]
+id = "builtin.pi.store-inventory"
+integration = "pi"
+title = "Pi's store, reported only"
+description = "Logs, inactive releases, staging and helper binaries in the agent directory."
+why = "Pi keeps these in its agent directory."
+loss = "Nothing. Report only."
+category = "cache"
+
+[rule.scope]
+root = "pi.agent"
+selection = "pi-store-entries"
+
+[rule.operation]
+kind = "report"

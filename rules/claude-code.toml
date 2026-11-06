@@ -1,0 +1,63 @@
+schema_version = 1
+
+[pack]
+id = "builtin.claude-code"
+version = "1.0.0"
+publisher = "kipple"
+description = "Claude Code's debug logs, versions and store"
+license = "MIT"
+kipple = ">=0.0.0"
+platforms = ["linux", "macos", "windows"]
+
+[[rule]]
+id = "builtin.claude-code.closed-debug-logs"
+integration = "claude-code"
+title = "Claude Code debug logs of closed sessions"
+description = "One log per session in `debug/`, for sessions no longer open."
+why = "Claude Code writes a debug log per session and sweeps them by age."
+loss = "The session's diagnostics."
+references = ["https://code.claude.com/docs/en/claude-directory#cleaned-up-automatically"]
+category = "log"
+platforms = ["linux"]
+
+[rule.scope]
+root = "claude.config"
+selection = "claude-debug-logs"
+
+[rule.operation]
+kind = "report"
+
+[[rule]]
+id = "builtin.claude-code.versions"
+integration = "claude-code"
+title = "Claude Code versions"
+description = "The versions a native install keeps. Claude Code prunes them itself."
+why = "The native installer keeps recent versions and prunes older ones."
+loss = "Nothing. Report only."
+references = ["https://code.claude.com/docs/en/setup"]
+category = "release-install"
+platforms = ["linux", "macos"]
+
+[rule.scope]
+root = "claude.versions"
+selection = "claude-versions"
+
+[rule.operation]
+kind = "report"
+
+[[rule]]
+id = "builtin.claude-code.store-inventory"
+integration = "claude-code"
+title = "Claude Code's store, reported only"
+description = "Shell snapshots, session environments, plans, caches and old directories."
+why = "Claude Code keeps these in its configuration directory."
+loss = "Nothing. Report only."
+references = ["https://code.claude.com/docs/en/claude-directory"]
+category = "cache"
+
+[rule.scope]
+root = "claude.config"
+selection = "claude-store-entries"
+
+[rule.operation]
+kind = "report"

@@ -8,6 +8,9 @@
       "verified": [
         "Cargo 1.99.0"
       ],
+      "facts": [],
+      "protected": [],
+      "open": [],
       "rules": [
         "builtin.cargo.target"
       ],
@@ -16,19 +19,19 @@
           "platform": "linux",
           "discover": true,
           "report": true,
-          "mutate": false
+          "mutate": true
         },
         {
           "platform": "macos",
           "discover": true,
           "report": true,
-          "mutate": false
+          "mutate": true
         },
         {
           "platform": "windows",
           "discover": true,
           "report": true,
-          "mutate": false
+          "mutate": true
         }
       ]
     },
@@ -36,7 +39,42 @@
       "id": "claude-code",
       "lens": "agents",
       "verified": [],
-      "rules": [],
+      "facts": [],
+      "protected": [
+        {
+          "root": "claude.config",
+          "entries": [],
+          "delegates": []
+        },
+        {
+          "root": "claude.home",
+          "entries": [],
+          "delegates": [
+            "claude.config"
+          ]
+        },
+        {
+          "root": "claude.config-file",
+          "entries": [],
+          "delegates": []
+        },
+        {
+          "root": "claude.versions",
+          "entries": [],
+          "delegates": []
+        },
+        {
+          "root": "claude.install-state",
+          "entries": [],
+          "delegates": []
+        }
+      ],
+      "open": [],
+      "rules": [
+        "builtin.claude-code.closed-debug-logs",
+        "builtin.claude-code.versions",
+        "builtin.claude-code.store-inventory"
+      ],
       "platforms": [
         {
           "platform": "linux",
@@ -54,6 +92,144 @@
           "platform": "windows",
           "discover": false,
           "report": true,
+          "mutate": false
+        }
+      ]
+    },
+    {
+      "id": "codex",
+      "lens": "agents",
+      "verified": [],
+      "facts": [],
+      "protected": [
+        {
+          "root": "codex.home",
+          "entries": [],
+          "delegates": []
+        },
+        {
+          "root": "codex.default-home",
+          "entries": [],
+          "delegates": [
+            "codex.home"
+          ]
+        },
+        {
+          "root": "codex.sqlite-home",
+          "entries": [],
+          "delegates": []
+        }
+      ],
+      "open": [],
+      "rules": [
+        "builtin.codex.stale-releases",
+        "builtin.codex.release-inventory",
+        "builtin.codex.legacy-tui-log",
+        "builtin.codex.plugin-catalog-cache",
+        "builtin.codex.store-inventory"
+      ],
+      "platforms": [
+        {
+          "platform": "linux",
+          "discover": false,
+          "report": false,
+          "mutate": false
+        },
+        {
+          "platform": "macos",
+          "discover": false,
+          "report": false,
+          "mutate": false
+        },
+        {
+          "platform": "windows",
+          "discover": false,
+          "report": false,
+          "mutate": false
+        }
+      ]
+    },
+    {
+      "id": "cursor",
+      "lens": "agents",
+      "verified": [],
+      "facts": [],
+      "protected": [
+        {
+          "root": "cursor.config",
+          "entries": [],
+          "delegates": []
+        },
+        {
+          "root": "cursor.app-data",
+          "entries": [],
+          "delegates": []
+        },
+        {
+          "root": "cursor.cli",
+          "entries": [],
+          "delegates": []
+        },
+        {
+          "root": "cursor.server",
+          "entries": [],
+          "delegates": []
+        }
+      ],
+      "open": [],
+      "rules": [
+        "builtin.cursor.app-data-size"
+      ],
+      "platforms": [
+        {
+          "platform": "linux",
+          "discover": false,
+          "report": false,
+          "mutate": false
+        },
+        {
+          "platform": "macos",
+          "discover": false,
+          "report": false,
+          "mutate": false
+        },
+        {
+          "platform": "windows",
+          "discover": false,
+          "report": false,
+          "mutate": false
+        }
+      ]
+    },
+    {
+      "id": "git",
+      "lens": "agents",
+      "verified": [],
+      "facts": [],
+      "protected": [],
+      "open": [],
+      "rules": [
+        "builtin.git.worktree-remove",
+        "builtin.git.worktree-inventory",
+        "builtin.git.worktree-anomalies"
+      ],
+      "platforms": [
+        {
+          "platform": "linux",
+          "discover": false,
+          "report": false,
+          "mutate": false
+        },
+        {
+          "platform": "macos",
+          "discover": false,
+          "report": false,
+          "mutate": false
+        },
+        {
+          "platform": "windows",
+          "discover": false,
+          "report": false,
           "mutate": false
         }
       ]
@@ -64,6 +240,9 @@
       "verified": [
         "systemd 262"
       ],
+      "facts": [],
+      "protected": [],
+      "open": [],
       "rules": [
         "builtin.journald.journal"
       ],
@@ -96,6 +275,9 @@
         "pnpm 12.9.1",
         "Bun 1.4.2"
       ],
+      "facts": [],
+      "protected": [],
+      "open": [],
       "rules": [
         "builtin.node.node-modules"
       ],
@@ -104,18 +286,63 @@
           "platform": "linux",
           "discover": true,
           "report": true,
-          "mutate": false
+          "mutate": true
         },
         {
           "platform": "macos",
           "discover": true,
           "report": true,
-          "mutate": false
+          "mutate": true
         },
         {
           "platform": "windows",
           "discover": true,
           "report": true,
+          "mutate": true
+        }
+      ]
+    },
+    {
+      "id": "npm",
+      "lens": "dev",
+      "verified": [],
+      "facts": [],
+      "protected": [
+        {
+          "root": "npm.cache",
+          "entries": [],
+          "delegates": []
+        },
+        {
+          "root": "npm.default-cache",
+          "entries": [],
+          "delegates": [
+            "npm.cache"
+          ]
+        }
+      ],
+      "open": [],
+      "rules": [
+        "builtin.npm.cache",
+        "builtin.npm.inventory"
+      ],
+      "platforms": [
+        {
+          "platform": "linux",
+          "discover": false,
+          "report": false,
+          "mutate": false
+        },
+        {
+          "platform": "macos",
+          "discover": false,
+          "report": false,
+          "mutate": false
+        },
+        {
+          "platform": "windows",
+          "discover": false,
+          "report": false,
           "mutate": false
         }
       ]
@@ -126,6 +353,9 @@
       "verified": [
         "pacman 7.1.0"
       ],
+      "facts": [],
+      "protected": [],
+      "open": [],
       "rules": [
         "builtin.pacman.cache"
       ],
@@ -151,12 +381,65 @@
       ]
     },
     {
+      "id": "pi",
+      "lens": "agents",
+      "verified": [],
+      "facts": [],
+      "protected": [
+        {
+          "root": "pi.agent",
+          "entries": [],
+          "delegates": []
+        },
+        {
+          "root": "pi.home",
+          "entries": [],
+          "delegates": [
+            "pi.agent"
+          ]
+        },
+        {
+          "root": "pi.session-dir",
+          "entries": [],
+          "delegates": []
+        }
+      ],
+      "open": [],
+      "rules": [
+        "builtin.pi.closed-logs",
+        "builtin.pi.store-inventory"
+      ],
+      "platforms": [
+        {
+          "platform": "linux",
+          "discover": false,
+          "report": false,
+          "mutate": false
+        },
+        {
+          "platform": "macos",
+          "discover": false,
+          "report": false,
+          "mutate": false
+        },
+        {
+          "platform": "windows",
+          "discover": false,
+          "report": false,
+          "mutate": false
+        }
+      ]
+    },
+    {
       "id": "python",
       "lens": "dev",
       "verified": [
         "Python 3.14.8 venv",
         "uv 0.12.23"
       ],
+      "facts": [],
+      "protected": [],
+      "open": [],
       "rules": [
         "builtin.python.venv",
         "builtin.python.bytecode"
@@ -166,19 +449,19 @@
           "platform": "linux",
           "discover": true,
           "report": true,
-          "mutate": false
+          "mutate": true
         },
         {
           "platform": "macos",
           "discover": true,
           "report": true,
-          "mutate": false
+          "mutate": true
         },
         {
           "platform": "windows",
           "discover": true,
           "report": true,
-          "mutate": false
+          "mutate": true
         }
       ]
     },
@@ -188,6 +471,9 @@
       "verified": [
         "freedesktop.org Trash specification 1.0"
       ],
+      "facts": [],
+      "protected": [],
+      "open": [],
       "rules": [
         "builtin.trash.contents"
       ],
