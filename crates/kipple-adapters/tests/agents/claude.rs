@@ -6,7 +6,7 @@ use kipple_core::{
 };
 
 use super::claude_v2_1_318::{self as fixture, CLOSED_SESSION, OPEN_SESSION, VERSION, marker};
-use super::host::{DAY, Generated, GitBelowFile, Host, Names, Scan, running, sealed};
+use super::host::{DAY, Generated, Host, Names, Scan, running, sealed};
 use super::tree::{FixtureTree, Holds};
 
 const LOGS: &str = "builtin.claude-code.closed-debug-logs";
@@ -91,19 +91,6 @@ fn closed_debug_log_removed_open_one_kept() {
 
     assert_eq!(scan.fact(&open, "session_closed"), OPEN);
     assert_eq!(scan.holds(&open), [Hold::FactUnmet]);
-}
-
-/// Pins a host defect this card can't fix, so it can't go unnoticed: on Linux and macOS the
-/// probe of `<file>/.git` is `ENOTDIR`, which `kipple-core/src/facts.rs` reads as a `.git` it
-/// couldn't check, so a closed log stays `unknown-git`. That fails closed, and it also means
-/// no file finding is removable there. When this fails, the host is fixed: delete this test
-/// and `GitBelowFile`.
-#[test]
-fn a_file_finding_is_held_by_the_git_probe() {
-    let mut host = Host::new(installed());
-    host.git_below_file = GitBelowFile::NotADirectory;
-
-    assert_eq!(host.scan().holds(&closed_log()), [Hold::UnknownGit]);
 }
 
 /// Catches a session with no marker here being taken for closed: one started with

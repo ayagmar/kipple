@@ -93,19 +93,6 @@ fn kind(file_type: fs::FileType) -> EntryKind {
 /// The files `read_file` was asked for, in order.
 type Reads = Arc<Mutex<Vec<PathBuf>>>;
 
-/// What the probe answers for `.git` below a file, which is what the host asks of every file
-/// finding (`Repositories::above` starts at the item).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum GitBelowFile {
-    /// `ENOTDIR`, as Linux and macOS answer. The host takes that for a `.git` it couldn't
-    /// check, so it holds every file finding as `unknown-git`.
-    NotADirectory,
-    /// Nothing there, as Windows answers and as the host should read `ENOTDIR`. A stand-in
-    /// until `kipple-core/src/facts.rs` does: without it no rule here could reach its verdict.
-    /// Remove this once it does; `a_file_finding_is_held_by_the_git_probe` then fails to say so.
-    Absent,
-}
-
 /// How the disk treats a name's case.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Names {
@@ -124,24 +111,11 @@ type Denied = Vec<PathBuf>;
 #[derive(Debug)]
 struct TempFs {
     reads: Reads,
-    git_below_file: GitBelowFile,
     names: Names,
     denied: Denied,
 }
 
 impl TempFs {
-    /// The answer for `path` when it is `.git` below a file, on any OS.
-    fn git_below_file(&self, path: &Path) -> Option<io::ErrorKind> {
-        let parent = path.parent().filter(|_| path.ends_with(".git"))?;
-        fs::symlink_metadata(parent)
-            .ok()
-            .filter(fs::Metadata::is_file)?;
-        Some(match self.git_below_file {
-            GitBelowFile::NotADirectory => io::ErrorKind::NotADirectory,
-            GitBelowFile::Absent => io::ErrorKind::NotFound,
-        })
-    }
-
     /// The entry a lookup of `path` lands on.
     fn found(&self, path: &Path) -> PathBuf {
         let folded = || {
@@ -172,9 +146,6 @@ impl FsProbe for TempFs {
         if self.denied.iter().any(|denied| path.starts_with(denied)) {
             let denied = io::ErrorKind::PermissionDenied.into();
             return Err(ProbeError::io(path, denied));
-        }
-        if let Some(kind) = self.git_below_file(path) {
-            return Err(ProbeError::io(path, kind.into()));
         }
         let meta = fs::symlink_metadata(self.found(path)).map_err(|e| ProbeError::io(path, e))?;
         Ok(EntryMeta {
@@ -391,7 +362,6 @@ pub(crate) struct Host {
     pub(crate) processes: Processes,
     /// Which OS's rules run.
     pub(crate) platform: Platform,
-    pub(crate) git_below_file: GitBelowFile,
     pub(crate) names: Names,
     /// Paths below the tree the OS refuses, `/`-separated.
     pub(crate) denied: Vec<String>,
@@ -422,7 +392,6 @@ impl Host {
                 inventory: Inventory::Complete,
             },
             platform: Platform::Linux,
-            git_below_file: GitBelowFile::Absent,
             names: Names::AsTheDiskDoes,
             denied: Vec::new(),
             roots,
@@ -472,7 +441,6 @@ impl Host {
         let shown = Arc::new(Mutex::new(self.processes));
         let fs = TempFs {
             reads: Arc::clone(&reads),
-            git_below_file: self.git_below_file,
             names: self.names,
             denied: self
                 .denied
