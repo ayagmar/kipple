@@ -413,8 +413,12 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
 
     /// Reports each checkout no repository lists, now that all have been asked.
     fn finish(mut self) -> Result<(), IntegrationError> {
+        // A repository that moved still lists its checkouts, whose links now lead nowhere:
+        // those have their registration's finding.
         for dir in std::mem::take(&mut self.broken) {
-            self.unregistered(&dir, Unregistered::TargetGone)?;
+            if !self.listed.contains(&dir) {
+                self.unregistered(&dir, Unregistered::TargetGone)?;
+            }
         }
         for dir in std::mem::take(&mut self.unconfirmed) {
             if !self.listed.contains(&dir) && !self.listed_elsewhere(&dir) {
