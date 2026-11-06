@@ -723,6 +723,30 @@ fn a_bare_main_lists_its_worktrees() {
     );
 }
 
+/// Catches a `--separate-git-dir` repository never being listed: its `.git` file names no
+/// `worktrees` directory, so a worktree of it that is gone had no finding and no omission.
+#[test]
+fn a_separate_git_dir_repository_is_listed() {
+    let repo = Repo::bare_bones(Refs::Files);
+    let split = repo.temp.path().join("projects/split");
+    fs::create_dir(&split).unwrap();
+    let git_dir = repo.temp.path().join("split.git").display().to_string();
+    repo.git_in(
+        &split,
+        &["init", "-q", "-b", "main", "--separate-git-dir", &git_dir],
+    );
+    repo.git_in(&split, &["commit", "-q", "--allow-empty", "-m", "first"]);
+    repo.git_in(&split, &["worktree", "add", "-q", "-b", "wt", "../gone"]);
+    remove_dir(&repo.temp.path().join("projects/gone"));
+
+    let scan = repo.scan();
+
+    assert_eq!(
+        scan.fact_at("gone", "registration_state"),
+        FactValue::Enum(RegistrationState::RegisteredMissing.name())
+    );
+}
+
 /// Catches a `.git` pointing at another worktree's admin entry read as this one: every
 /// fact would describe the other checkout.
 #[test]

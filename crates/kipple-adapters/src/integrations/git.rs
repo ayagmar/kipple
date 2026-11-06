@@ -198,9 +198,11 @@ impl Integration for Git {
 enum GitFile {
     /// A linked worktree, as far as its files show, with its repository's common directory.
     Linked { common: PathBuf },
+    /// The main worktree of a repository whose git directory is elsewhere, there.
+    Separate { git_dir: PathBuf },
     /// Its target has the shape of an admin directory and isn't there.
     Broken,
-    /// A submodule's, a `--separate-git-dir` repository's, or none git would read.
+    /// A submodule's, or none git would read.
     Other,
 }
 
@@ -280,6 +282,7 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
                     }
                     Ok(())
                 }
+                GitFile::Separate { git_dir } => self.list(&dir, &git_dir),
                 GitFile::Broken => {
                     self.broken.push(dir);
                     Ok(())
@@ -493,7 +496,11 @@ fn git_file(cx: &ScanContext<'_>, dir: &Path) -> GitFile {
         Target::None => return GitFile::Other,
     };
     let Some(worktrees) = admin.parent().filter(|at| at.ends_with("worktrees")) else {
-        return GitFile::Other;
+        return if names_a_repository(cx, &admin) {
+            GitFile::Separate { git_dir: admin }
+        } else {
+            GitFile::Other
+        };
     };
     let common = worktrees.parent().unwrap_or(worktrees).to_owned();
     match cx.metadata(&admin) {
@@ -505,6 +512,19 @@ fn git_file(cx: &ScanContext<'_>, dir: &Path) -> GitFile {
         Err(error) if is_absent(&error) => GitFile::Broken,
         Err(_) => GitFile::Linked { common },
     }
+}
+
+/// Whether `git_dir`, which a `.git` file names, is a repository of its own: not a submodule's,
+/// which lives in `.git/modules`, and not somewhere with no `HEAD`.
+fn names_a_repository(cx: &ScanContext<'_>, git_dir: &Path) -> bool {
+    let names = git_dir.components().map(Component::as_os_str);
+    let submodule = names
+        .skip_while(|name| *name != ".git")
+        .any(|name| name == "modules");
+    let no_head = cx
+        .metadata(&git_dir.join("HEAD"))
+        .is_err_and(|error| is_absent(&error));
+    !submodule && !no_head
 }
 
 /// What a `.git` file says.
