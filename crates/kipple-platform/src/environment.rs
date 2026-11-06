@@ -41,10 +41,6 @@ impl Environment {
     }
 
     /// Where the system's fixed, absolute `path` is.
-    #[cfg_attr(
-        not(target_os = "linux"),
-        expect(dead_code, reason = "only Linux roots live at fixed system paths")
-    )]
     pub(crate) fn system_path(&self, path: &Path) -> PathBuf {
         let relative = path
             .components()

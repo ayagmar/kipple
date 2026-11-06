@@ -3,13 +3,21 @@
 //! roots are covered by the native profile instead. A root whose own path is a link is
 //! resolved once (D-041), here in a temp dir.
 #![cfg(unix)]
+#![expect(
+    clippy::unwrap_used,
+    reason = "a temp dir or path that can't be made fails the test"
+)]
 
 use std::ffi::OsString;
 use std::fs;
 use std::os::unix::fs::{PermissionsExt as _, symlink};
 use std::path::{Path, PathBuf};
 
-use kipple_core::{FsProbe as _, LinkProblem, RootSource, Roots, SymbolicRoot, UnresolvedRoot};
+use kipple_core::{
+    FsProbe as _, HeldPath, IntegrationDescriptor, IntegrationId, Lens, Lineage, LinkProblem,
+    Owners, Platform, Protections, RootSource, Roots, StateDeclaration, SymbolicRoot, Unresolved,
+    UnresolvedRoot,
+};
 use kipple_platform::{Environment, NoFollowFs, kipple_dirs, resolve_roots};
 
 fn roots(vars: &[(&str, &str)]) -> Roots {
@@ -451,4 +459,300 @@ fn the_linux_trash_is_where_the_freedesktop_home_trash_keeps_the_trashed_files()
             }
         ))
     );
+}
+
+/// A real home directory in a temp dir, as `HOME`.
+fn home() -> tempfile::TempDir {
+    tempfile::tempdir().unwrap()
+}
+
+fn text(path: &Path) -> &str {
+    path.to_str().unwrap()
+}
+
+fn locations(roots: &Roots) -> Vec<PathBuf> {
+    let all = roots.all(SymbolicRoot::GitAgentLocations);
+    all.iter()
+        .map(|location| location.as_ref().unwrap().path.clone())
+        .collect()
+}
+
+/// Catches an absent location opened as a root, which reads as a scanned one, and a present
+/// one left out, so its worktrees are never seen.
+#[test]
+fn agent_locations_are_opened_only_when_present() {
+    let dir = home();
+    let home = dir.path();
+    let vars = [("HOME", text(home))];
+    assert_eq!(locations(&roots(&vars)), Vec::<PathBuf>::new());
+
+    fs::create_dir_all(home.join(".cursor/worktrees")).unwrap();
+    fs::create_dir_all(home.join(".codex/worktrees")).unwrap();
+    fs::create_dir_all(home.join("conductor")).unwrap();
+    fs::write(home.join(".herdr"), b"a file, not a directory").unwrap();
+
+    assert_eq!(
+        locations(&roots(&vars)),
+        [
+            home.join(".codex/worktrees"),
+            home.join(".cursor/worktrees")
+        ]
+    );
+}
+
+/// Catches a location that can't be placed reading as an empty one: with `$CODEX_HOME`
+/// unusable, the worktrees below it must show as a gap.
+#[test]
+fn an_agent_location_with_no_base_is_unknown() {
+    let dir = home();
+    let vars = [("HOME", text(dir.path())), ("CODEX_HOME", "relative/home")];
+
+    let roots = roots(&vars);
+
+    let all = roots.all(SymbolicRoot::GitAgentLocations);
+    assert!(
+        matches!(all, [Err(UnresolvedRoot::BaseUnresolved { .. })]),
+        "expected one unknown location, found {all:?}"
+    );
+}
+
+/// Catches a setup Pi accepts holding every finding of the scan: `pi.agent` is `HoldAll`, so
+/// a tilde read as a relative path, or an unmade directory read as an error, would close
+/// everything.
+#[test]
+fn pi_dir_expands_tilde_and_an_absent_one_holds_nothing() {
+    let dir = home();
+    let home = dir.path();
+    for (value, expected) in [
+        ("~", home.to_owned()),
+        ("~/pi/agent", home.join("pi/agent")),
+        ("", home.join(".pi/agent")),
+    ] {
+        let roots = roots(&[("HOME", text(home)), ("PI_CODING_AGENT_DIR", value)]);
+        let (path, _) = path(&roots, SymbolicRoot::PiAgent).unwrap();
+        assert_eq!(path, expected, "{value:?}");
+    }
+    let absent = home.join("not/made/yet");
+    let vars = [("HOME", text(home)), ("PI_CODING_AGENT_DIR", text(&absent))];
+    let roots = roots(&vars);
+    assert_eq!(path(&roots, SymbolicRoot::PiAgent).unwrap().0, absent);
+
+    let declared = IntegrationDescriptor {
+        id: IntegrationId("pi"),
+        lens: Lens::Agents,
+        platforms: Platform::ALL,
+        roots: &[],
+        selectors: &[],
+        artifacts: &[],
+        owner_files: &[],
+        verified: &[],
+        consequences: &[],
+        facts: &[],
+        state: &[StateDeclaration {
+            root: SymbolicRoot::PiAgent,
+            protected: &[],
+            open: &[],
+            delegates: &[],
+            unresolved: Unresolved::HoldAll,
+        }],
+        evidences: &[],
+        revision: 1,
+    };
+    let held = |path: &Path| HeldPath {
+        forms: vec![path.to_owned()],
+        lineage: lineage(path),
+        note: None,
+    };
+    let protections = Protections::of_host(&roots, Some(&home.join("data")), &[declared], &held);
+    let finding = home.join("projects/app/node_modules");
+    fs::create_dir_all(&finding).unwrap();
+
+    let answer = protections.check(
+        &finding,
+        &lineage(&finding),
+        IntegrationId("node"),
+        &Owners::default(),
+    );
+
+    assert_eq!(answer, None);
+}
+
+fn lineage(path: &Path) -> Lineage {
+    let identity = |at: &Path| NoFollowFs.metadata(at).ok().and_then(|m| m.identity);
+    Lineage(path.ancestors().map(identity).collect())
+}
+
+/// Catches a value upstream refuses being treated as a place, or as unset: either would
+/// let a finding through a store kipple can't locate.
+#[test]
+fn an_unusable_agent_home_is_unresolved_and_never_the_default() {
+    let dir = home();
+    let home = dir.path();
+    let file = home.join("a-file");
+    fs::write(&file, b"").unwrap();
+    let missing = home.join("missing");
+    let unusable = [
+        ("CODEX_HOME", SymbolicRoot::CodexHome, "relative/home"),
+        ("CODEX_HOME", SymbolicRoot::CodexHome, "   "),
+        ("CODEX_HOME", SymbolicRoot::CodexHome, text(&missing)),
+        ("CODEX_HOME", SymbolicRoot::CodexHome, text(&file)),
+        (
+            "PI_CODING_AGENT_DIR",
+            SymbolicRoot::PiAgent,
+            "relative/agent",
+        ),
+        ("PI_CODING_AGENT_DIR", SymbolicRoot::PiAgent, text(&file)),
+    ];
+    for (var, root, value) in unusable {
+        let roots = roots(&[("HOME", text(home)), (var, value)]);
+        assert!(
+            matches!(roots.get(root), Some(Err(_))),
+            "{var}={value:?} gave {:?}",
+            roots.get(root)
+        );
+    }
+}
+
+/// Catches the release store derived through a link it can't re-check: `$CODEX_HOME` is
+/// canonicalized, and what is below it hangs off the directory it leads to.
+#[test]
+fn codex_home_is_canonicalized_and_its_store_is_below_it() {
+    let dir = home();
+    let home = dir.path().canonicalize().unwrap();
+    let real = home.join("real-codex");
+    fs::create_dir(&real).unwrap();
+    symlink(&real, home.join("linked")).unwrap();
+    let linked = home.join("linked");
+
+    let roots = roots(&[("HOME", text(&home)), ("CODEX_HOME", text(&linked))]);
+
+    assert_eq!(path(&roots, SymbolicRoot::CodexHome).unwrap().0, real);
+    let (store, _) = path(&roots, SymbolicRoot::CodexReleaseStore).unwrap();
+    assert_eq!(store, real.join("packages"));
+    let (default, _) = path(&roots, SymbolicRoot::CodexDefaultHome).unwrap();
+    assert_eq!(default, home.join(".codex"));
+}
+
+/// Catches a store a config file moves staying open: `codex.sqlite-home` and
+/// `pi.session-dir` exist only because of these two keys.
+#[test]
+fn settings_that_move_a_store_are_read() {
+    let dir = home();
+    let home = dir.path();
+    let codex = home.join(".codex");
+    let agent = home.join(".pi/agent");
+    fs::create_dir_all(&codex).unwrap();
+    fs::create_dir_all(&agent).unwrap();
+    fs::write(
+        codex.join("config.toml"),
+        "model = \"x\"\nsqlite_home = \"/data/codex\" # moved\n\n[history]\nmax_bytes = 1\n",
+    )
+    .unwrap();
+    fs::write(
+        agent.join("settings.json"),
+        "{\n  \"theme\": \"sessionDir\",\n  \"sessionDir\": \"~/pi-sessions\"\n}\n",
+    )
+    .unwrap();
+
+    let roots = roots(&[("HOME", text(home))]);
+
+    let (sqlite, source) = path(&roots, SymbolicRoot::CodexSqliteHome).unwrap();
+    assert_eq!(sqlite, Path::new("/data/codex"));
+    assert_eq!(
+        source,
+        RootSource::Setting {
+            file: "config.toml",
+            key: "sqlite_home",
+        }
+    );
+    let (sessions, _) = path(&roots, SymbolicRoot::PiSessionDir).unwrap();
+    assert_eq!(sessions, home.join("pi-sessions"));
+}
+
+/// Catches a store with no setting being invented, which would show a path nothing uses.
+#[test]
+fn a_store_no_setting_moves_is_absent() {
+    let dir = home();
+
+    let roots = roots(&[("HOME", text(dir.path()))]);
+
+    assert!(
+        roots.all(SymbolicRoot::CodexSqliteHome).is_empty(),
+        "no setting moves the Codex store"
+    );
+    assert!(
+        roots.all(SymbolicRoot::PiSessionDir).is_empty(),
+        "no setting moves the Pi sessions"
+    );
+}
+
+/// Catches a config kipple can't read being treated as one that sets nothing, and the value
+/// of another key reaching the message: these files can hold tokens.
+#[test]
+fn an_unreadable_setting_is_unknown_and_shows_no_other_value() {
+    let dir = home();
+    let home = dir.path();
+    let codex = home.join(".codex");
+    fs::create_dir_all(&codex).unwrap();
+    fs::write(
+        codex.join("config.toml"),
+        "token = \"s3cret\"\nsqlite_home = 12\n",
+    )
+    .unwrap();
+
+    let roots = roots(&[("HOME", text(home))]);
+
+    let found = roots.all(SymbolicRoot::CodexSqliteHome);
+    assert_eq!(found.len(), 1, "one root, found {found:?}");
+    let shown = found[0].as_ref().unwrap_err().to_string();
+    assert!(shown.contains("sqlite_home"), "says which key: {shown}");
+    assert!(!shown.contains("s3cret"), "shows no other value: {shown}");
+}
+
+/// Catches the key readers panicking on what a person left in a file: they slice text, and
+/// any input must end in a value, an unknown or nothing.
+#[test]
+fn the_setting_readers_survive_generated_input() {
+    const PIECES: [&str; 14] = [
+        "sqlite_home",
+        "\"sessionDir\"",
+        " = ",
+        ": ",
+        "\"",
+        "'",
+        "\\",
+        "\\\\",
+        "\n",
+        "é",
+        "/a/b",
+        "~/x",
+        "[t]",
+        "{",
+    ];
+    let dir = home();
+    let home = dir.path();
+    let codex = home.join(".codex");
+    let agent = home.join(".pi/agent");
+    fs::create_dir_all(&codex).unwrap();
+    fs::create_dir_all(&agent).unwrap();
+    let mut state = 0x2545_f491_4f6c_dd1d_u64;
+    for _ in 0..300 {
+        let mut document = String::new();
+        for _ in 0..12 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            let at = usize::try_from(state >> 33).unwrap() % PIECES.len();
+            document.push_str(PIECES[at]);
+        }
+        fs::write(codex.join("config.toml"), &document).unwrap();
+        fs::write(agent.join("settings.json"), &document).unwrap();
+
+        let roots = roots(&[("HOME", text(home))]);
+
+        assert!(
+            roots.get(SymbolicRoot::Home).is_some(),
+            "resolved for {document:?}"
+        );
+    }
 }
