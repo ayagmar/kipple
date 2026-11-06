@@ -6,8 +6,9 @@
 use std::path::{MAIN_SEPARATOR, Path};
 
 use kipple_core::{
-    Activity, ActivityGap, Bucket, Caution, Cost, Facts, Finding, Hold, Lens, Level, Loss, Method,
-    Modified, Policy, Proposal, Recovery, ScanOutcome, Seen, Tracked, Verdict, WalkGap,
+    Activity, ActivityGap, Bucket, Caution, Clause, Cost, FactState, Facts, Finding, Hold, Lens,
+    Level, Loss, Method, Modified, Policy, Proposal, Recovery, ScanOutcome, Seen, Tracked, Unmet,
+    Verdict, WalkGap,
 };
 
 use crate::json::{CompletenessOut, SizeOut};
@@ -473,11 +474,25 @@ pub(crate) fn facts(finding: &Finding, policy: &Policy) -> Vec<Fact> {
     if matches!(facts.proposal, Proposal::Report | Proposal::Advice) {
         return lines;
     }
+    lines.extend(facts.unmet.iter().map(unmet));
     lines.push(Fact::new("Git", tracked(&facts.tracked)));
     lines.push(Fact::new("In use", activity(&facts.activity)));
     let window = policy.recent_window_days(&finding.rule, facts);
     lines.push(Fact::new("Last change", modified(facts, window)));
     lines
+}
+
+/// A predicate of its rule the finding doesn't satisfy, saying which part of the rule.
+fn unmet(unmet: &Unmet) -> Fact {
+    let label = match unmet.clause {
+        Clause::Requirement => "Requirement",
+        Clause::Eligibility => "Eligibility",
+    };
+    let state = match unmet.state {
+        FactState::Failed => "isn't met",
+        FactState::Unknown => "isn't known",
+    };
+    Fact::new(label, format!("{} {state}", escaped(unmet.fact)))
 }
 
 /// How expensive bringing it back is. An unknown cost is one kipple doesn't estimate;

@@ -116,6 +116,8 @@ fn safe() -> Facts {
         modified: Modified::Ago(41 * DAY),
         recent_days: None,
         lineage: Lineage::default(),
+        supplied: kipple_core::Supplied::default(),
+        unmet: Vec::new(),
     }
 }
 

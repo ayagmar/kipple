@@ -6,36 +6,55 @@
 use std::path::Path;
 
 use kipple_core::{
-    Advice, Evidence, FindingSink, Integration, IntegrationDescriptor, IntegrationError,
-    IntegrationId, IntegrationSelector, Lens, Platform, ProbeError, ScanContext, Selector,
+    Advice, AdviceId, Claim, Evidence, FindingSink, Integration, IntegrationDescriptor,
+    IntegrationError, IntegrationId, IntegrationSelector, Lens, Platform, ProbeError, Rule,
+    ScanContext, Selector, Supplied,
 };
 
 /// Whether the root at a path holds anything worth reporting.
 type HoldsAnything = fn(&ScanContext<'_>, &Path) -> Result<bool, ProbeError>;
 
-/// Adds each path of the root of every rule using `selector`, when it holds anything.
-/// Returns whether any of those roots opened, which is when advice applies.
+/// The rules using `selector`.
+fn rules_of<'cx>(
+    cx: &'cx ScanContext<'_>,
+    selector: &'static str,
+) -> impl Iterator<Item = &'cx Rule> {
+    cx.rules()
+        .iter()
+        .filter(move |rule| rule.selector == Selector::Integration(selector))
+}
+
+/// Whether the root of any rule using `selector` opened, which is when advice applies.
+fn opened(cx: &ScanContext<'_>, selector: &'static str) -> bool {
+    rules_of(cx, selector).any(|rule| cx.roots_of(rule.root).next().is_some())
+}
+
+/// Adds each path of the root of every rule using `selector`, when it holds anything, each
+/// pointing to `advice`.
 fn add_roots(
     cx: &ScanContext<'_>,
     sink: &mut FindingSink<'_>,
     selector: &'static str,
     holds_anything: HoldsAnything,
-) -> Result<bool, IntegrationError> {
-    let mut opened = false;
-    let rules = cx
-        .rules()
-        .iter()
-        .filter(|rule| rule.selector == Selector::Integration(selector));
-    for rule in rules {
+    advice: Option<AdviceId>,
+) -> Result<(), IntegrationError> {
+    for rule in rules_of(cx, selector) {
         for root in cx.roots_of(rule.root) {
-            opened = true;
             if !holds_anything(cx, &root.path)? {
                 continue;
             }
-            sink.add(rule, &root.path, vec![Evidence::Root(rule.root)], None)?;
+            let claim = Claim {
+                evidence: vec![Evidence::Root(rule.root)],
+                consequence: None,
+            };
+            let supplied = Supplied {
+                advice,
+                ..sink.supplied()
+            };
+            sink.add_supplied(rule, &root.path, claim, supplied)?;
         }
     }
-    Ok(opened)
+    Ok(())
 }
 
 /// Whether the directory at `path` has any entry.
@@ -80,7 +99,7 @@ impl Integration for Trash {
         cx: &ScanContext<'_>,
         sink: &mut FindingSink<'_>,
     ) -> Result<(), IntegrationError> {
-        add_roots(cx, sink, TRASH_CONTENTS, not_empty).map(drop)
+        add_roots(cx, sink, TRASH_CONTENTS, not_empty, None)
     }
 }
 
@@ -117,7 +136,7 @@ impl Integration for Pacman {
         cx: &ScanContext<'_>,
         sink: &mut FindingSink<'_>,
     ) -> Result<(), IntegrationError> {
-        if add_roots(cx, sink, PACKAGE_CACHE, not_empty)? {
+        let advice = opened(cx, PACKAGE_CACHE).then(|| {
             sink.advise(Advice {
                 title: "Keep fewer old packages with paccache".to_owned(),
                 text: "paccache, from pacman-contrib, removes cached packages except the \
@@ -133,9 +152,9 @@ impl Integration for Pacman {
                 references: strings(&[
                     "https://wiki.archlinux.org/title/Pacman#Cleaning_the_package_cache",
                 ]),
-            });
-        }
-        Ok(())
+            })
+        });
+        add_roots(cx, sink, PACKAGE_CACHE, not_empty, advice)
     }
 }
 
@@ -172,7 +191,7 @@ impl Integration for Journald {
         cx: &ScanContext<'_>,
         sink: &mut FindingSink<'_>,
     ) -> Result<(), IntegrationError> {
-        if add_roots(cx, sink, JOURNAL_FILES, not_empty)? {
+        let advice = opened(cx, JOURNAL_FILES).then(|| {
             sink.advise(Advice {
                 title: "Cap the journal's size".to_owned(),
                 text: "journalctl --vacuum-size removes the oldest archived journal files \
@@ -190,8 +209,8 @@ impl Integration for Journald {
                     "https://www.freedesktop.org/software/systemd/man/latest/journald.conf.html",
                     "https://www.freedesktop.org/software/systemd/man/latest/journalctl.html",
                 ]),
-            });
-        }
-        Ok(())
+            })
+        });
+        add_roots(cx, sink, JOURNAL_FILES, not_empty, advice)
     }
 }

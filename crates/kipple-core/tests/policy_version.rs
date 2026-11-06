@@ -71,6 +71,8 @@ fn safe() -> Facts {
         modified: Modified::Ago(Duration::from_secs(400 * DAY)),
         recent_days: None,
         lineage: Lineage(vec![Some(id(10)), Some(id(3)), Some(id(1))]),
+        supplied: kipple_core::Supplied::default(),
+        unmet: Vec::new(),
     }
 }
 

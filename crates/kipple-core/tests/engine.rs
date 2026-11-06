@@ -12,15 +12,17 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use kipple_core::{
-    Activity, ActivityGap, Allocated, Anchor, Apparent, CancelToken, Category, Clock, Completeness,
-    Consequence, Cost, DirEntryMeta, Engine, EngineError, EntryKind, EntryMeta, EventChannel,
-    EventRx, Evidence, Facts, FileIdentity, FindingSink, FrozenTree, FsProbe, GitGap, Hold,
-    Integration, IntegrationDescriptor, IntegrationError, IntegrationId, Inventory, Lens, Level,
-    Measurement, Method, Modified, Name, NodeId, Observer, Omission, OpenedRoot, Operation,
-    Platform, Policy, Ports, ProbeError, ProcessOutcome, ProcessProbe, ProcessRecord,
-    ProcessSnapshot, Recovery, ResolvedRoot, RootLink, RootSource, Roots, Rule, RuleId, RuleText,
+    Activity, ActivityGap, Advice, Allocated, Anchor, Apparent, Bounds, CancelToken, Category,
+    Claim, Clause, Clock, Completeness, Consequence, Cost, DirEntryMeta, Engine, EngineError,
+    EntryKind, EntryMeta, EventChannel, EventRx, Evidence, FactKind, FactSpec, FactState,
+    FactValue, Facts, FileIdentity, FindingSink, FrozenTree, FsProbe, GitGap, Hold, Integration,
+    IntegrationDescriptor, IntegrationError, IntegrationId, Inventory, Lens, Level, Measurement,
+    Method, Modified, Name, NodeId, Observer, Omission, OpenedRoot, Operation, Platform, Policy,
+    Ports, Predicate, ProbeError, ProcessOutcome, ProcessProbe, ProcessRecord, ProcessSnapshot,
+    Proposal, Recovery, ResolvedRoot, RootLink, RootSource, Roots, Rule, RuleId, RuleText,
     ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Selector, Sizer, SpaceEstimate,
-    SymbolicRoot, Tracked, TrackedQuery, UnresolvedRoot, Verdict, WalkGap, event_channel,
+    Supplied, SymbolicRoot, Test, Tracked, TrackedQuery, UnresolvedRoot, Verdict, WalkGap,
+    event_channel,
 };
 
 /// Ten times the 100 ms cancellation budget: long enough not to flake on a loaded CI
@@ -1435,4 +1437,271 @@ fn a_complete_walk_with_an_entry_without_a_time_leaves_only_the_last_change_unkn
         "a complete walk finds no repository even without an entry time"
     );
     assert_eq!(facts.modified, Modified::Unknown(WalkGap::Untimed));
+}
+
+/// A fact of the [`Supplier`] integration.
+const DIALECT: FactSpec = FactSpec {
+    name: "test.dialect",
+    kind: FactKind::Enum(&["old", "new"]),
+    selector: None,
+    meaning: "which dialect it speaks",
+};
+
+/// Adds one finding at `/found/item` under a rule with this operation and these
+/// predicates, supplying `values`, and advice when `advice` says to.
+#[derive(Debug)]
+struct Supplier {
+    operation: Operation,
+    requirements: Vec<Predicate>,
+    eligibility: Vec<Predicate>,
+    values: BTreeMap<&'static str, FactValue>,
+    advice: Advised,
+}
+
+/// Whether a [`Supplier`] gives advice, and whether its finding names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Advised {
+    Nothing,
+    OnTheSide,
+    ForTheFinding,
+}
+
+impl Supplier {
+    fn eligible(fact: &'static str, test: Test) -> Self {
+        Self {
+            operation: Operation::RemoveFiles(vec![Method::Delete]),
+            requirements: Vec::new(),
+            eligibility: vec![Predicate { fact, test }],
+            values: BTreeMap::new(),
+            advice: Advised::Nothing,
+        }
+    }
+
+    fn with(mut self, fact: &'static str, value: FactValue) -> Self {
+        self.values.insert(fact, value);
+        self
+    }
+
+    fn rule(&self) -> Rule {
+        Rule {
+            requirements: self.requirements.clone(),
+            eligibility: self.eligibility.clone(),
+            operation: self.operation.clone(),
+            ..any_rule("supplier")
+        }
+    }
+
+    /// The facts its one finding gets.
+    #[expect(
+        clippy::unwrap_used,
+        reason = "a fixture that fails to build fails the test"
+    )]
+    fn scan(self) -> Facts {
+        let rule = self.rule();
+        let ports = ports(FakeFs::default(), FakeSizer::default());
+        let engine = Engine::new(ports, vec![Box::new(self)], vec![rule]).unwrap();
+        run(&engine, &found())
+            .findings
+            .into_iter()
+            .next()
+            .and_then(|finding| finding.facts)
+            .unwrap()
+    }
+}
+
+impl Integration for Supplier {
+    fn descriptor(&self) -> IntegrationDescriptor {
+        IntegrationDescriptor {
+            roots: &[SymbolicRoot::XdgCache],
+            facts: &[DIALECT],
+            ..descriptor("supplier")
+        }
+    }
+
+    fn discover(
+        &self,
+        _: &ScanContext<'_>,
+        sink: &mut FindingSink<'_>,
+    ) -> Result<(), IntegrationError> {
+        let advice = (self.advice != Advised::Nothing).then(|| {
+            sink.advise(Advice {
+                title: "Ask the tool".to_owned(),
+                text: String::new(),
+                snippets: Vec::new(),
+                references: Vec::new(),
+            })
+        });
+        let claim = Claim {
+            evidence: vec![Evidence::Signature("TAG".to_owned())],
+            consequence: Some(Consequence {
+                recovery: Recovery::RebuildLocal,
+                loss: &[],
+                cost: Cost::Unknown,
+            }),
+        };
+        let supplied = Supplied {
+            values: self.values.clone(),
+            advice: advice.filter(|_| self.advice == Advised::ForTheFinding),
+            ..sink.supplied()
+        };
+        sink.add_supplied(&self.rule(), Path::new("/found/item"), claim, supplied)
+    }
+}
+
+/// The one way the finding's single predicate fell short, if it did.
+fn unmet_state(facts: &Facts) -> Option<FactState> {
+    assert!(
+        facts.unmet.len() <= 1,
+        "each of these rules has one predicate, got {:?}",
+        facts.unmet
+    );
+    facts.unmet.first().map(|unmet| unmet.state)
+}
+
+fn dialect_is_new() -> Supplier {
+    Supplier::eligible(DIALECT.name, Test::OneOf(vec!["new"]))
+}
+
+/// What holds the finding, whatever the level.
+fn holds(facts: &Facts) -> Vec<Hold> {
+    let rule = RuleId("builtin.supplier.test".to_owned());
+    match Policy::at(Level::Thorough).verdict(&rule, Path::new("/found/item"), facts) {
+        Verdict::Protected(holds) => holds,
+        Verdict::Safe | Verdict::Review(_) => Vec::new(),
+    }
+}
+
+/// Catches a predicate over a fact nobody supplied passing, because a missing value reads
+/// as "nothing wrong".
+#[test]
+fn predicate_on_unsupplied_fact_holds() {
+    let facts = dialect_is_new().scan();
+
+    assert_eq!(unmet_state(&facts), Some(FactState::Unknown));
+    assert!(
+        holds(&facts).contains(&Hold::FactUnknown),
+        "expected the unknown fact to hold it, got {:?}",
+        holds(&facts)
+    );
+}
+
+/// Catches a value of another type, or one its spec doesn't list, being compared anyway.
+#[test]
+fn wrong_fact_type_is_unknown() {
+    let cases = [
+        ("another type", FactValue::Bool(true)),
+        ("a value the spec doesn't list", FactValue::Enum("newest")),
+        ("said to be unknown", FactValue::Unknown),
+    ];
+    for (case, value) in cases {
+        let facts = dialect_is_new().with(DIALECT.name, value).scan();
+        assert_eq!(unmet_state(&facts), Some(FactState::Unknown), "{case}");
+    }
+    let test_of_another_type = Supplier::eligible(DIALECT.name, Test::Is(true))
+        .with(DIALECT.name, FactValue::Enum("new"))
+        .scan();
+    assert_eq!(unmet_state(&test_of_another_type), Some(FactState::Unknown));
+}
+
+/// Catches an integration's fact being ignored once the host has a value of its own, which
+/// would let the host's view of a generic fact override what the tool knows.
+#[test]
+fn supplied_fact_wins_over_generic() {
+    let at_least_a_gigabyte = || {
+        let bounds = Bounds {
+            min: Some(1 << 30),
+            max: None,
+        };
+        Supplier::eligible("size", Test::Bytes(bounds))
+    };
+
+    let measured = at_least_a_gigabyte().scan();
+    assert_eq!(unmet_state(&measured), Some(FactState::Failed));
+    let supplied = at_least_a_gigabyte()
+        .with("size", FactValue::Bytes(1 << 31))
+        .scan();
+    assert_eq!(unmet_state(&supplied), None);
+}
+
+/// Catches a fact nothing publishes passing, as a rule of a newer integration would.
+#[test]
+fn a_fact_nothing_publishes_is_unknown_even_when_supplied() {
+    let facts = Supplier::eligible("test.unpublished", Test::Is(true))
+        .with("test.unpublished", FactValue::Bool(true))
+        .scan();
+
+    assert_eq!(unmet_state(&facts), Some(FactState::Unknown));
+}
+
+/// Catches a known answer of the wrong value reading as unknown, or as passed, and a
+/// requirement being treated unlike an eligibility clause.
+#[test]
+fn a_failed_predicate_holds_in_either_clause() {
+    let eligibility = dialect_is_new().with(DIALECT.name, FactValue::Enum("old"));
+    let requirement = Supplier {
+        requirements: eligibility.eligibility.clone(),
+        eligibility: Vec::new(),
+        ..dialect_is_new().with(DIALECT.name, FactValue::Enum("old"))
+    };
+
+    let in_eligibility = eligibility.scan();
+    let in_requirements = requirement.scan();
+
+    assert_eq!(in_eligibility.unmet[0].clause, Clause::Eligibility);
+    assert_eq!(in_requirements.unmet[0].clause, Clause::Requirement);
+    for facts in [in_eligibility, in_requirements] {
+        assert!(
+            holds(&facts).contains(&Hold::FactUnmet),
+            "expected the failed predicate to hold it, got {:?}",
+            holds(&facts)
+        );
+    }
+}
+
+/// Catches a passing predicate holding, which would turn every predicate rule off.
+#[test]
+fn a_met_predicate_changes_nothing() {
+    let facts = dialect_is_new()
+        .with(DIALECT.name, FactValue::Enum("new"))
+        .scan();
+
+    assert_eq!(facts.unmet, Vec::new());
+    let found = holds(&facts);
+    assert!(
+        !found.contains(&Hold::FactUnmet) && !found.contains(&Hold::FactUnknown),
+        "expected no predicate to hold it, got {found:?}"
+    );
+}
+
+/// Catches advice spreading to every report finding of an integration that gave some, which
+/// is what a per-integration flag did.
+#[test]
+fn only_a_finding_that_names_advice_points_to_it() {
+    let proposal = |advice| {
+        let supplier = Supplier {
+            operation: Operation::Report,
+            eligibility: Vec::new(),
+            advice,
+            ..dialect_is_new()
+        };
+        supplier.scan().proposal
+    };
+
+    assert_eq!(proposal(Advised::ForTheFinding), Proposal::Advice);
+    assert_eq!(proposal(Advised::OnTheSide), Proposal::Report);
+}
+
+/// Catches a report rule's unmet predicate adding holds to a finding nothing removes, which
+/// would change the reasons `scan --json` gives for it.
+#[test]
+fn a_rule_that_only_reports_decides_nothing_by_its_predicates() {
+    let facts = Supplier {
+        operation: Operation::Report,
+        ..dialect_is_new()
+    }
+    .scan();
+
+    assert_eq!(facts.proposal, Proposal::Report);
+    let found = holds(&facts);
+    assert_eq!(found, vec![Hold::ReportOnly], "a report rule only reports");
 }

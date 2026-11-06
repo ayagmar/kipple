@@ -19,7 +19,7 @@ use crate::activity::{Processes, Scope, Subject};
 use crate::cancel::CancelToken;
 use crate::discovery::{WalkPlan, Walks};
 use crate::event::{EventTx, ScanEvent, Stopped};
-use crate::facts::{Above, Repositories};
+use crate::facts::{Above, Evaluated, Repositories, unmet};
 use crate::format::{IntegrationDigests, integration_digest};
 use crate::integration::{
     Advice, Evidence, FindingSink, Integration, IntegrationDescriptor, IntegrationError,
@@ -33,6 +33,7 @@ use crate::process::ProcessProbe;
 use crate::root::{ResolvedRoot, Roots, SymbolicRoot, UnresolvedRoot};
 use crate::rule::{Category, Lens, Operation, Rule, RuleId};
 use crate::size::{Completeness, Measurement, SpaceEstimate};
+use crate::supplied::{AdviceId, Supplied};
 use crate::tracked::TrackedQuery;
 
 /// A finding's ID within one scan. IDs are references, never authorization.
@@ -458,6 +459,7 @@ impl Engine {
             next_id: shared.next_id,
             found: Vec::new(),
             advice: Vec::new(),
+            evidence: registered.descriptor.evidence(),
         };
         if !shared.cancel.is_cancelled() {
             // A panic is caught here so what the integration found before it is kept.
@@ -491,7 +493,7 @@ impl Engine {
         found.sort_by(|a, b| a.finding.path.cmp(&b.finding.path));
         let owner = Owner {
             registered,
-            advised: !advice.is_empty(),
+            advice: advice.len(),
             roots: &opened,
         };
         let findings = self.measure_all(found, owner, shared, &mut omissions);
@@ -664,8 +666,8 @@ impl Engine {
             project: &owner.project(&found.finding),
         };
         let processes = self.ports.processes.as_ref();
-        Facts {
-            proposal: owner.proposal(rule),
+        let mut facts = Facts {
+            proposal: owner.proposal(rule, found.supplied.advice),
             layout_verified,
             consequence: found.consequence,
             tracked,
@@ -673,7 +675,18 @@ impl Engine {
             modified,
             recent_days: rule.and_then(|rule| rule.recent_days),
             lineage,
+            supplied: found.supplied.clone(),
+            unmet: Vec::new(),
+        };
+        if let Some(rule) = rule {
+            let finding = Evaluated {
+                evidence: &found.finding.evidence,
+                size: measurement.map(|m| m.size),
+                facts: &facts,
+            };
+            facts.unmet = unmet(rule, owner.registered.descriptor.facts, finding);
         }
+        facts
     }
 }
 
@@ -757,12 +770,12 @@ impl Identities {
     }
 }
 
-/// The integration whose findings are measured, whether it gave advice, and the roots it
+/// The integration whose findings are measured, how much advice it gave, and the roots it
 /// read.
 #[derive(Debug, Clone, Copy)]
 struct Owner<'engine> {
     registered: &'engine Registered,
-    advised: bool,
+    advice: usize,
     roots: &'engine [ResolvedRoot],
 }
 
@@ -776,16 +789,17 @@ impl<'a> Owner<'a> {
         project_dir(finding, self.roots.iter().map(|root| root.path.as_path()))
     }
 
-    /// What `rule` proposes: a report rule of an integration that gave advice points to
-    /// that advice.
-    fn proposal(&self, rule: Option<&Rule>) -> Proposal {
+    /// What `rule` proposes for a finding that names `advice`: a report rule points to
+    /// the advice, if the integration gave it.
+    fn proposal(&self, rule: Option<&Rule>, advice: Option<AdviceId>) -> Proposal {
+        let advised = advice.is_some_and(|AdviceId(entry)| entry < self.advice);
         match rule.map(|rule| &rule.operation) {
             Some(Operation::RemoveFiles(methods)) => Proposal::Remove(methods.clone()),
             Some(Operation::RemoveVerifiedRelease { methods, .. }) => {
                 Proposal::RemoveRelease(methods.clone())
             }
             Some(Operation::Native(kind)) => Proposal::Native(*kind),
-            Some(Operation::Report) | None if self.advised => Proposal::Advice,
+            Some(Operation::Report) | None if advised => Proposal::Advice,
             Some(Operation::Report) | None => Proposal::Report,
         }
     }
@@ -806,11 +820,13 @@ fn project_dir<'root>(finding: &Finding, roots: impl Iterator<Item = &'root Path
     project.or_else(|| path.parent()).unwrap_or(path).to_owned()
 }
 
-/// A finding as its integration added it, with the consequence it verified.
+/// A finding as its integration added it, with the consequence it verified and what else
+/// it supplied.
 #[derive(Debug)]
 pub(crate) struct Found {
     pub(crate) finding: Finding,
     pub(crate) consequence: Option<Consequence>,
+    pub(crate) supplied: Supplied,
 }
 
 fn missing(error: &ProbeError) -> bool {

@@ -104,7 +104,7 @@ Predicates by type:
 - A predicate whose form doesn't match the fact's type gives `wrong-type`.
 - `unknown` never satisfies any predicate. That is how unknown blocks.
 - The host requires `activity = "idle"` and a known `git.tracked_files_in_item` for every `remove-files` operation, whatever the rule says. Files git tracks inside the item, and their directories, are left out of what is removed, at planning and again at apply (D-066).
-- `requirements` uses the same forms as `eligibility`. The difference is how a failure is reported: a failed requirement means the rule doesn't apply to this machine (an omission), and a failed eligibility predicate blocks that item with a reason.
+- `requirements` uses the same forms as `eligibility`. The engine evaluates both for every finding: a predicate that fails holds it as `fact-unmet`, and one whose fact is missing, of the wrong type or unknown holds it as `fact-unknown`. The difference is how it is worded: a requirement says the rule doesn't apply on this machine, and an eligibility predicate says what this item lacks.
 - There is no negation, no `or` across facts, no arithmetic and no references between rules. A rule whose needs go beyond this is a typed integration, not a bigger language.
 - A dotted fact name may be written with or without quotes: `git.tracked_changes = "absent"` is the same predicate as `"git.tracked_changes" = "absent"`.
 

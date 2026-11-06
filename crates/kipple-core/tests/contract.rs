@@ -993,6 +993,8 @@ fn facts() -> Facts {
         modified: Modified::Ago(Duration::from_hours(24 * 40)),
         recent_days: None,
         lineage: Lineage::default(),
+        supplied: kipple_core::Supplied::default(),
+        unmet: Vec::new(),
     }
 }
 

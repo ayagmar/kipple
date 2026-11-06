@@ -19,6 +19,7 @@ use crate::probe::{DirEntryMeta, EntryKind, EntryMeta, FsProbe, ProbeError};
 use crate::protect::StateDeclaration;
 use crate::root::{ResolvedRoot, SymbolicRoot};
 use crate::rule::{FactSpec, Lens, Platform, Rule, Selector};
+use crate::supplied::{AdviceId, Claim, Supplied};
 use crate::worktree::AgentLabel;
 
 /// A built-in integration's ID, such as `cargo`.
@@ -360,6 +361,8 @@ pub struct FindingSink<'scan> {
     pub(crate) next_id: &'scan AtomicU64,
     pub(crate) found: Vec<Found>,
     pub(crate) advice: Vec<Advice>,
+    /// What a finding is judged by unless it chooses another.
+    pub(crate) evidence: ActivityEvidence,
 }
 
 impl FindingSink<'_> {
@@ -378,6 +381,38 @@ impl FindingSink<'_> {
         evidence: Vec<Evidence>,
         consequence: Option<Consequence>,
     ) -> Result<(), IntegrationError> {
+        let claim = Claim {
+            evidence,
+            consequence,
+        };
+        self.add_supplied(rule, path, claim, self.supplied())
+    }
+
+    /// What a plain finding of this integration supplies, to build on.
+    #[must_use]
+    pub fn supplied(&self) -> Supplied {
+        Supplied {
+            activity: self.evidence,
+            ..Supplied::default()
+        }
+    }
+
+    /// Adds a finding like [`add`](Self::add), with what the integration supplies about
+    /// it.
+    ///
+    /// # Errors
+    /// As [`add`](Self::add).
+    pub fn add_supplied(
+        &mut self,
+        rule: &Rule,
+        path: &Path,
+        claim: Claim,
+        supplied: Supplied,
+    ) -> Result<(), IntegrationError> {
+        let Claim {
+            evidence,
+            consequence,
+        } = claim;
         let finding = Finding {
             id: FindingId(self.next_id.fetch_add(1, Ordering::Relaxed)),
             integration: self.integration,
@@ -397,12 +432,15 @@ impl FindingSink<'_> {
         self.found.push(Found {
             finding,
             consequence,
+            supplied,
         });
         Ok(())
     }
 
-    /// Adds advice, which the report shows with the integration.
-    pub fn advise(&mut self, advice: Advice) {
+    /// Adds advice, which the report shows with the integration, and returns the ID a
+    /// finding it applies to names in [`Supplied::advice`].
+    pub fn advise(&mut self, advice: Advice) -> AdviceId {
         self.advice.push(advice);
+        AdviceId(self.advice.len() - 1)
     }
 }

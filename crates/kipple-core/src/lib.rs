@@ -105,6 +105,7 @@ mod session;
 mod size;
 mod store;
 mod suggest;
+mod supplied;
 mod tracked;
 mod trash;
 mod worktree;
@@ -152,9 +153,9 @@ pub use planner::{
     Refused, Unjudged, plan,
 };
 pub use policy::{
-    Activity, ActivityGap, Bucket, Caution, Consequence, Cost, Facts, HeldPath, Hold, Level,
-    Lineage, Loss, Modified, POLICY_VERSION, Policy, Proposal, Recovery, RuleSettings, Seen,
-    Tracked, Verdict, WalkGap,
+    Activity, ActivityGap, Bucket, Caution, Clause, Consequence, Cost, FactState, Facts, HeldPath,
+    Hold, Level, Lineage, Loss, Modified, POLICY_VERSION, Policy, Proposal, Recovery, RuleSettings,
+    Seen, Tracked, Unmet, Verdict, WalkGap,
 };
 pub use probe::{
     Clock, DirAccess, DirEntryMeta, EntryKind, EntryMeta, FileIdentity, FileSystem, FsProbe,
@@ -191,6 +192,7 @@ pub use store::{
     HEADER_LIMIT, JOURNAL_LIMIT, LOCK_WAIT, LockState, Locked, RunId, RunStore, StoreRefusal,
 };
 pub use suggest::{Suggestion, is_within, suggest};
+pub use supplied::{AdviceId, Claim, FactValue, Subject, Supplied};
 pub use tracked::{GitGap, TrackedQuery};
 pub use trash::{Forgotten, RestoreRequest, SlotState, TrashBackend, TrashDir, TrashSlot};
 pub use worktree::AgentLabel;

@@ -11,6 +11,7 @@ use std::time::Duration;
 use crate::native::NativeKind;
 use crate::probe::{FileIdentity, ProbeError};
 use crate::rule::{Method, RuleId};
+use crate::supplied::Supplied;
 use crate::tracked::GitGap;
 
 named! {
@@ -274,6 +275,39 @@ pub struct Facts {
     /// The file identities of the finding and of each directory above it, so a kept or
     /// excluded path matches it whatever path reaches it.
     pub lineage: Lineage,
+    /// What its integration supplied.
+    pub supplied: Supplied,
+    /// The predicates of its rule it doesn't satisfy.
+    pub unmet: Vec<Unmet>,
+}
+
+/// A predicate of a rule that a finding doesn't satisfy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Unmet {
+    /// The fact it tests.
+    pub fact: &'static str,
+    /// Which part of the rule it is in.
+    pub clause: Clause,
+    /// How it falls short.
+    pub state: FactState,
+}
+
+/// Which part of a rule a predicate is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Clause {
+    /// `requirements`: what must hold for the rule to apply on this machine.
+    Requirement,
+    /// `eligibility`: what each item must satisfy.
+    Eligibility,
+}
+
+/// How a predicate falls short.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FactState {
+    /// The fact is known, and isn't what the predicate accepts.
+    Failed,
+    /// The fact isn't known: missing, of the wrong type, or unknown.
+    Unknown,
 }
 
 /// The file identities of an entry, then of each directory above it up to the file
@@ -632,6 +666,13 @@ fn fact_holds(facts: &Facts) -> Vec<Hold> {
     }
     if matches!(facts.modified, Modified::Unknown(_)) {
         holds.push(Hold::UnknownModified);
+    }
+    let fell_short = |state| facts.unmet.iter().any(|unmet| unmet.state == state);
+    if fell_short(FactState::Failed) {
+        holds.push(Hold::FactUnmet);
+    }
+    if fell_short(FactState::Unknown) {
+        holds.push(Hold::FactUnknown);
     }
     holds
 }
