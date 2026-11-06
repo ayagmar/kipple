@@ -608,7 +608,7 @@ fn a_blocked_config_is_supplied_as_blocked() {
 /// and a lock lost on a registration whose directory is gone.
 #[test]
 fn a_locked_checkout_that_is_gone_keeps_its_lock_and_its_name() {
-    const ODD: &str = "home/projects/app-wt/caf\u{e9} one";
+    const ODD: &str = "home/projects/app-wt/\u{e9}t\u{e9} one";
     let tree = repository_with(&[], |_| {});
     let (main, path) = (tree.at(MAIN), tree.at(ODD));
     let mut gone = clean(&main, &path);
