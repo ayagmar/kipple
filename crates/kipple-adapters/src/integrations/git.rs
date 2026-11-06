@@ -1,11 +1,23 @@
-//! Git worktrees of any agent (`docs/06-adapters-and-rules.md` §4): the descriptor, and what
-//! each registration state advises. It lists no repository yet, so it finds nothing.
+//! Git worktrees of any agent (`docs/06-adapters-and-rules.md` §4). Each path the repositories
+//! the walks reach list gets exactly one finding, and so does each checkout none of them
+//! lists. Every rule here reports, so this only supplies facts: a fact git
+//! couldn't prove is unknown, and the host decides what that holds.
+//!
+//! A worktree's repository can lie outside every root it may read, so what git says comes
+//! through [`WorktreeQuery`](kipple_core::WorktreeQuery). Only finding which directories are
+//! linked worktrees at all reads `.git` files here.
 
-use std::path::Path;
+use std::collections::{BTreeMap, BTreeSet};
+use std::io;
+use std::path::{Component, Path, PathBuf};
 
 use kipple_core::{
-    Advice, FindingSink, Integration, IntegrationDescriptor, IntegrationError, IntegrationId,
-    IntegrationSelector, Lens, Platform, ScanContext, SymbolicRoot,
+    ActivityEvidence, Advice, AdviceId, AgentLabel, Checkout, Claim, ConfigGate, EntryKind,
+    Evidence, FactKind, FactSpec, FactValue, FindingSink, GitGap, Integration,
+    IntegrationDescriptor, IntegrationError, IntegrationId, IntegrationSelector, Lens, NativeTool,
+    OwnerStatus, Platform, ProbeError, Registration, RegistrationState, ResolvedTool, Rule, RuleId,
+    ScanContext, Subject, Supplied, SymbolicRoot, ToolGap, ToolVersion, WorktreeFacts,
+    WorktreeState,
 };
 
 const SELECTORS: &[IntegrationSelector] = &[
@@ -17,6 +29,126 @@ const SELECTORS: &[IntegrationSelector] = &[
         name: "worktree-registrations",
         meaning: "registrations that are missing, unregistered or invalid",
     },
+];
+
+/// The one selector a checkout's own facts apply to.
+const PRESENT: Option<&str> = Some("registered-linked-worktrees");
+
+const fn fact(name: &'static str, kind: FactKind, meaning: &'static str) -> FactSpec {
+    FactSpec {
+        name,
+        kind,
+        selector: PRESENT,
+        meaning,
+    }
+}
+
+const FACTS: &[FactSpec] = &[
+    fact(
+        "worktree.linked",
+        FactKind::Bool,
+        "whether git places it apart from the main worktree",
+    ),
+    fact(
+        "worktree.removal_git",
+        FactKind::Enum(&["supported", "unsupported"]),
+        "whether the git found is new enough to remove a worktree",
+    ),
+    fact(
+        "repository_identity",
+        FactKind::Enum(&["verified", "differs"]),
+        "whether git places it in the repository that lists it",
+    ),
+    fact(
+        "worktree.locked",
+        FactKind::Bool,
+        "whether it is locked, which kipple never undoes",
+    ),
+    FactSpec {
+        name: "registration_state",
+        kind: FactKind::Enum(&[
+            "registered-present",
+            "registered-missing",
+            "present-unregistered",
+            "registered-invalid",
+        ]),
+        selector: None,
+        meaning: "how its registration and its checkout relate",
+    },
+    fact(
+        "worktree.submodules",
+        FactKind::Bool,
+        "whether it has a submodule, populated or not",
+    ),
+    fact(
+        "worktree.config_gate",
+        FactKind::Enum(&["clear", "blocked"]),
+        "whether its repository's config lets kipple ask git further",
+    ),
+    fact(
+        "git.hidden_changes",
+        FactKind::Count,
+        "files git tracks that `status` doesn't look behind",
+    ),
+    fact(
+        "worktree.unclassified_ignored",
+        FactKind::Count,
+        "ignored paths that aren't exactly a finding a rule would remove",
+    ),
+    fact(
+        "worktree.operation_in_progress",
+        FactKind::Bool,
+        "whether a rebase, merge, bisect, cherry-pick or revert is under way",
+    ),
+    fact(
+        "worktree.per_worktree_refs",
+        FactKind::Count,
+        "refs that live only in this worktree",
+    ),
+    fact(
+        "worktree.index_locked",
+        FactKind::Bool,
+        "whether git holds its index or HEAD lock",
+    ),
+    fact(
+        "worktree.head_reachable",
+        FactKind::Bool,
+        "whether a local branch holds its HEAD",
+    ),
+    FactSpec {
+        name: "git_inventory",
+        kind: FactKind::Enum(&["complete"]),
+        selector: None,
+        meaning: "whether git listed the repository's worktrees in full",
+    },
+    FactSpec {
+        name: "storage_availability",
+        kind: FactKind::Enum(&["available"]),
+        selector: None,
+        meaning: "whether what holds the checkout can be read",
+    },
+];
+
+/// The oldest git the removal is proven on: the one `gate` runs on in CI.
+const WORKTREE_REMOVE_OLDEST: [u64; 3] = [2, 39, 5];
+
+/// The most read of a `.git` file: it holds one path.
+const GITFILE_LIMIT: u64 = 64 * 1024;
+
+/// Where each agent keeps worktrees outside any repository, as `git.agent-locations` holds
+/// them. A location is known by its own name, because a setting can move what it is under.
+/// Anything else in that root is Codex's: `<codex home>/worktrees`, wherever that home is.
+const LOCATIONS: [(&str, AgentLabel); 4] = [
+    (".cursor/worktrees", AgentLabel::Cursor),
+    ("conductor/workspaces", AgentLabel::Conductor),
+    (".herdr/worktrees", AgentLabel::Herdr),
+    ("opencode/worktree", AgentLabel::OpenCode),
+];
+
+/// Where each agent keeps worktrees inside a repository.
+const IN_REPOSITORY: [(&str, AgentLabel); 2] = [
+    (".claude/worktrees", AgentLabel::ClaudeCode),
+    (".gemini/worktrees", AgentLabel::GeminiCli),
 ];
 
 /// The Git integration.
@@ -33,29 +165,722 @@ impl Integration for Git {
             selectors: SELECTORS,
             artifacts: &[],
             owner_files: &[],
-            verified: &[],
+            verified: &["git 2.56.0"],
             consequences: &[],
-            facts: &[],
+            facts: FACTS,
             state: &[],
-            evidences: &[],
-            revision: 1,
+            evidences: &[ActivityEvidence::ScopedPaths],
+            revision: 2,
         }
     }
 
     fn discover(
         &self,
-        _: &ScanContext<'_>,
-        _: &mut FindingSink<'_>,
+        cx: &ScanContext<'_>,
+        sink: &mut FindingSink<'_>,
     ) -> Result<(), IntegrationError> {
+        let mut checkouts = BTreeMap::new();
+        for root in [SymbolicRoot::ProjectRoots, SymbolicRoot::GitAgentLocations] {
+            for found in cx.repositories(root)? {
+                checkouts.insert(found.dir, found.git);
+            }
+        }
+        let mut scan = Discovery::new(cx, sink);
+        for (dir, git) in checkouts {
+            scan.visit(dir, git)?;
+        }
+        scan.finish()
+    }
+}
+
+/// What a directory's `.git` file makes it.
+#[derive(Debug, PartialEq, Eq)]
+enum GitFile {
+    /// A linked worktree, as far as its files show, with its repository's common directory.
+    Linked { common: PathBuf },
+    /// The main worktree of a repository whose git directory is elsewhere, there.
+    Separate { git_dir: PathBuf },
+    /// Its target has the shape of an admin directory and isn't there.
+    Broken,
+    /// A submodule's, or none git would read.
+    Other,
+}
+
+/// Where a checkout no repository lists by its name stands.
+enum Placed {
+    /// A repository lists it under another spelling.
+    Listed,
+    /// Its registration still names where it was, and nothing is there.
+    Moved,
+    /// Its link is broken, or git places it elsewhere, and nothing says it moved.
+    Claimed,
+    /// git couldn't say.
+    Unknown(GitGap),
+}
+
+/// A record of a linked worktree, with the main worktree of the repository that printed it.
+struct Listing {
+    main: Registration,
+    registration: Registration,
+}
+
+/// The rules each kind of finding goes to on this platform.
+struct Rules<'rules> {
+    /// Registered and present, inside an opened root: only where removal can ship.
+    remove: Option<&'rules Rule>,
+    inventory: Option<&'rules Rule>,
+    anomalies: Option<&'rules Rule>,
+}
+
+impl<'rules> Rules<'rules> {
+    fn of(cx: &'rules ScanContext<'_>) -> Self {
+        let rule = |id: &str| {
+            cx.rules()
+                .iter()
+                .find(|rule| rule.id == RuleId(id.to_owned()))
+        };
+        Self {
+            remove: rule("builtin.git.worktree-remove"),
+            inventory: rule("builtin.git.worktree-inventory"),
+            anomalies: rule("builtin.git.worktree-anomalies"),
+        }
+    }
+}
+
+/// One scan's walk over the repositories its roots hold.
+struct Discovery<'run, 'context, 'findings> {
+    cx: &'run ScanContext<'context>,
+    sink: &'run mut FindingSink<'findings>,
+    rules: Rules<'run>,
+    tool: Result<ResolvedTool, ToolGap>,
+    /// Every path some repository lists.
+    listed: BTreeSet<PathBuf>,
+    /// The records of each linked path, read once every repository has spoken, since the
+    /// records of one path can come from several.
+    pending: BTreeMap<PathBuf, Vec<Listing>>,
+    /// Each main worktree already gone through, which another of its worktrees lists again.
+    mains: BTreeSet<PathBuf>,
+    /// Each path that has had its finding. Asking who owns a later path can list this one
+    /// again, and it says nothing new.
+    settled: BTreeSet<PathBuf>,
+    /// The main worktree each common directory belongs to, as far as asked.
+    owners: BTreeMap<PathBuf, PathBuf>,
+    /// The common directories git listed, which a copy's list of the same paths says
+    /// nothing about.
+    answered: BTreeSet<PathBuf>,
+    /// The common directories git couldn't list, each reported once.
+    failed: BTreeSet<PathBuf>,
+    /// Linked checkouts to look for in what the repositories listed, once all have been.
+    unconfirmed: Vec<PathBuf>,
+    /// Checkouts whose `.git` leads nowhere.
+    broken: Vec<PathBuf>,
+    /// The advice each state shares.
+    missing: Option<AdviceId>,
+    invalid: Option<AdviceId>,
+}
+
+impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
+    fn new(cx: &'run ScanContext<'context>, sink: &'run mut FindingSink<'findings>) -> Self {
+        Self {
+            cx,
+            sink,
+            rules: Rules::of(cx),
+            tool: cx.tool(NativeTool::Git),
+            listed: BTreeSet::new(),
+            pending: BTreeMap::new(),
+            mains: BTreeSet::new(),
+            settled: BTreeSet::new(),
+            owners: BTreeMap::new(),
+            answered: BTreeSet::new(),
+            failed: BTreeSet::new(),
+            unconfirmed: Vec::new(),
+            broken: Vec::new(),
+            missing: None,
+            invalid: None,
+        }
+    }
+
+    /// Goes through the repository of the directory `dir`, whose `.git` is `git`.
+    fn visit(&mut self, dir: PathBuf, git: EntryKind) -> Result<(), IntegrationError> {
+        match git {
+            EntryKind::Dir => {
+                let common = dir.join(".git");
+                self.list(&dir, &common)
+            }
+            EntryKind::File => match git_file(self.cx, &dir) {
+                GitFile::Linked { common } => {
+                    self.list(&dir, &common)?;
+                    if !self.failed.contains(&common) && !self.broken.contains(&dir) {
+                        self.unconfirmed.push(dir);
+                    }
+                    Ok(())
+                }
+                GitFile::Separate { git_dir } => self.list(&dir, &git_dir),
+                GitFile::Broken => {
+                    self.broken.push(dir);
+                    Ok(())
+                }
+                GitFile::Other => Ok(()),
+            },
+            // A link isn't followed, and git writes neither of the others.
+            EntryKind::Symlink | EntryKind::Other => Ok(()),
+        }
+    }
+
+    /// Asks git for the registrations of the repository `dir` belongs to, unless they came
+    /// with another of its worktrees. A list that fails says so, and never reads as a
+    /// repository with no worktrees.
+    fn list(&mut self, dir: &Path, common: &Path) -> Result<(), IntegrationError> {
+        if self.answered.contains(common) || self.failed.contains(common) {
+            return Ok(());
+        }
+        let listed = self.cx.worktrees().list(dir, self.cx.cancel_token());
+        match listed {
+            Ok(registrations) => {
+                self.answered.insert(common.to_owned());
+                self.registrations(&registrations);
+                Ok(())
+            }
+            Err(_) if self.cx.is_cancelled() => Err(IntegrationError::Stopped),
+            // What its `.git` names is gone, which the platform can see past the roots.
+            Err(GitGap::Unplaced) => {
+                self.broken.push(dir.to_owned());
+                Ok(())
+            }
+            Err(gap) => {
+                self.failed.insert(common.to_owned());
+                self.sink.omit_worktrees(dir, gap);
+                Ok(())
+            }
+        }
+    }
+
+    /// Keeps each linked worktree of a repository for [`Self::settle`]. The first record is
+    /// its main worktree, which is never one.
+    fn registrations(&mut self, registrations: &[Registration]) {
+        let Some((main, linked)) = registrations.split_first() else {
+            return;
+        };
+        self.listed
+            .extend(registrations.iter().map(|r| r.path.clone()));
+        if !self.mains.insert(main.path.clone()) {
+            return;
+        }
+        self.owners.insert(common_of(main), main.path.clone());
+        for registration in linked {
+            let listings = self.pending.entry(registration.path.clone()).or_default();
+            listings.push(Listing {
+                main: main.clone(),
+                registration: registration.clone(),
+            });
+        }
+    }
+
+    /// Adds the one finding of each path the repositories list.
+    fn settle(&mut self) -> Result<(), IntegrationError> {
+        while let Some((path, listings)) = self.pending.pop_first() {
+            if self.cx.is_cancelled() {
+                return Err(IntegrationError::Stopped);
+            }
+            if !self.settled.contains(&path) {
+                self.settle_path(&path, listings)?;
+            }
+        }
         Ok(())
     }
+
+    /// Adds the finding of `path` from its records. Two from one repository can't both
+    /// describe it, and `inspect` starts from the path, so nothing asked there says which
+    /// does. From several repositories, only the checkout's own speaks: a copy of a
+    /// repository lists what the original does, and the rows come from the original.
+    fn settle_path(&mut self, path: &Path, listings: Vec<Listing>) -> Result<(), IntegrationError> {
+        let Some(safest) = safest(&listings) else {
+            return Ok(());
+        };
+        if printed_twice(&listings) {
+            return self.registered(safest, invalid());
+        }
+        let worktrees = self.cx.worktrees();
+        let cancel = self.cx.cancel_token();
+        let asked = listings
+            .iter()
+            .map(|l| worktrees.inspect(&l.registration, cancel));
+        let states: Vec<WorktreeState> = asked.collect();
+        let placed = states.iter().find_map(|state| state.place.as_ref().ok());
+        let Some(common) = placed.map(|place| place.common_dir.clone()) else {
+            return self.registered(safest, agreed(states));
+        };
+        let owner = self.owner(path, &common);
+        // Asking found its repository's own record of this path, which settles it with these.
+        if let Some(more) = self.pending.get_mut(path) {
+            more.extend(listings);
+            return Ok(());
+        }
+        let state = match owner {
+            Ok(owner) => {
+                let mut records = listings.iter().zip(states);
+                let own = records.find(|(l, state)| l.main.path == owner && state.place.is_ok());
+                if let Some((listing, state)) = own {
+                    return self.registered(listing, state);
+                }
+                invalid()
+            }
+            Err(_) if self.cx.is_cancelled() => return Err(IntegrationError::Stopped),
+            Err(gap) => WorktreeState::unknown(gap),
+        };
+        self.registered(safest, state)
+    }
+
+    /// The main worktree of the repository whose common directory is `common`, by git's own
+    /// word from the checkout at `path`. The repository can be outside every root, so its
+    /// files can't be compared from here, and `main/.git` isn't where a repository with a
+    /// separate git directory keeps it.
+    fn owner(&mut self, path: &Path, common: &Path) -> Result<PathBuf, GitGap> {
+        if let Some(main) = self.owners.get(common) {
+            return Ok(main.clone());
+        }
+        let records = self.cx.worktrees().list(path, self.cx.cancel_token())?;
+        let main = records.first().ok_or(GitGap::Failed)?.path.clone();
+        self.registrations(&records);
+        self.owners.insert(common.to_owned(), main.clone());
+        Ok(main)
+    }
+
+    fn registered(
+        &mut self,
+        listing: &Listing,
+        state: WorktreeState,
+    ) -> Result<(), IntegrationError> {
+        let Listing { main, registration } = listing;
+        self.settled.insert(registration.path.clone());
+        let agent = label(self.cx, &registration.path);
+        let values = facts(main, registration, &state, &self.tool);
+        let advice = self.advice(&state);
+        let chosen = state.registration;
+        let worktree = WorktreeFacts {
+            registration: registration.clone(),
+            // A row git couldn't prove never reads as present.
+            state: chosen.unwrap_or(RegistrationState::RegisteredInvalid),
+            repository: main.path.clone(),
+            admin: state.place.as_ref().ok().map(|place| place.git_dir.clone()),
+            witness: state.witness,
+            ignored: state.ignored,
+            tool: self.tool.clone(),
+            agent,
+        };
+        let supplied = Supplied {
+            values,
+            subject: Subject::Worktree(Box::new(worktree)),
+            activity: ActivityEvidence::ScopedPaths,
+            advice,
+        };
+        self.add(&registration.path, chosen, agent, supplied)
+    }
+
+    /// Adds the one finding of a registration. What isn't a directory inside an opened root
+    /// is only reported: its path wasn't confined, so nothing may reach it.
+    fn add(
+        &mut self,
+        path: &Path,
+        state: Result<RegistrationState, GitGap>,
+        agent: AgentLabel,
+        supplied: Supplied,
+    ) -> Result<(), IntegrationError> {
+        let inside = self
+            .cx
+            .metadata(path)
+            .is_ok_and(|meta| meta.kind == EntryKind::Dir);
+        let anomaly = matches!(
+            state,
+            Ok(RegistrationState::RegisteredMissing | RegistrationState::RegisteredInvalid)
+        );
+        let rule = match (anomaly, inside) {
+            (true, _) => self.rules.anomalies,
+            (false, true) => self.rules.remove.or(self.rules.inventory),
+            (false, false) => self.rules.inventory,
+        };
+        let Some(rule) = rule else {
+            return Ok(());
+        };
+        let evidence = vec![Evidence::Worktree { agent }];
+        if inside {
+            let claim = Claim {
+                evidence,
+                consequence: None,
+            };
+            self.sink.add_supplied(rule, path, claim, supplied)
+        } else {
+            self.sink.add_unread(rule, path, evidence, supplied)
+        }
+    }
+
+    /// The advice of a registration in `state`, given once however many share it.
+    fn advice(&mut self, state: &WorktreeState) -> Option<AdviceId> {
+        let (slot, anomaly) = match state.registration {
+            Ok(RegistrationState::RegisteredMissing) => (&mut self.missing, Anomaly::Missing),
+            Ok(RegistrationState::RegisteredInvalid) => (&mut self.invalid, Anomaly::Invalid),
+            _ => return None,
+        };
+        let sink = &mut *self.sink;
+        Some(*slot.get_or_insert_with(|| sink.advise(registration_advice(anomaly))))
+    }
+
+    /// Reports each checkout no repository lists, now that all have been asked.
+    fn finish(mut self) -> Result<(), IntegrationError> {
+        self.settle()?;
+        // A repository that moved still lists its checkouts, whose links now lead nowhere:
+        // those have their registration's finding.
+        for dir in std::mem::take(&mut self.broken) {
+            if !self.listed.contains(&dir) {
+                self.unregistered(&dir, Unregistered::TargetGone)?;
+            }
+        }
+        for dir in std::mem::take(&mut self.unconfirmed) {
+            if self.listed.contains(&dir) {
+                continue;
+            }
+            match self.placed(&dir) {
+                _ if self.cx.is_cancelled() => return Err(IntegrationError::Stopped),
+                Placed::Listed => {}
+                Placed::Moved => self.unregistered(&dir, Unregistered::Moved)?,
+                Placed::Claimed => self.unregistered(&dir, Unregistered::Claimed)?,
+                Placed::Unknown(gap) => self.sink.omit_worktrees(&dir, gap),
+            }
+        }
+        // A layout is supported once git has read one, and one it couldn't read says so.
+        if !self.mains.is_empty() && self.failed.is_empty() {
+            self.sink.set_owner_status(OwnerStatus::Supported);
+        }
+        Ok(())
+    }
+
+    /// Where the checkout at `dir` stands, which no repository lists by that name: one may
+    /// under another spelling, as below a link in a root's parents, since git prints the
+    /// path it resolved. It isn't listed only if its link is broken or git places it
+    /// elsewhere, and it moved only if the platform, which reads past the roots, says what
+    /// its registration names is gone: a copy's names the original, still there.
+    fn placed(&self, dir: &Path) -> Placed {
+        let asked = Registration {
+            path: dir.to_owned(),
+            head: None,
+            checkout: Checkout::Unnamed,
+            locked: None,
+            prunable: false,
+            bare: false,
+        };
+        let state = self.cx.worktrees().inspect(&asked, self.cx.cancel_token());
+        match (state.registration, state.place) {
+            (Err(gap), _) => Placed::Unknown(gap),
+            (Ok(RegistrationState::RegisteredPresent), Ok(place)) => {
+                if self.listed.contains(&place.top) {
+                    Placed::Listed
+                } else {
+                    Placed::Claimed
+                }
+            }
+            (Ok(RegistrationState::RegisteredPresent), Err(gap))
+                if gap != GitGap::OtherWorkTree =>
+            {
+                Placed::Unknown(gap)
+            }
+            (Ok(_), Err(GitGap::Unplaced)) => Placed::Moved,
+            (Ok(_), _) => Placed::Claimed,
+        }
+    }
+
+    /// Adds the finding of a checkout no repository lists. It is no [`WorktreeFacts`]: there
+    /// is no registration, and its repository may be gone.
+    fn unregistered(&mut self, dir: &Path, why: Unregistered) -> Result<(), IntegrationError> {
+        let Some(rule) = self.rules.anomalies else {
+            return Ok(());
+        };
+        let advice = self
+            .sink
+            .advise(registration_advice(Anomaly::Unregistered(dir, why)));
+        let mut supplied = self.sink.supplied();
+        supplied.advice = Some(advice);
+        supplied.values.insert(
+            "registration_state",
+            FactValue::Enum(RegistrationState::PresentUnregistered.name()),
+        );
+        let claim = Claim {
+            evidence: vec![Evidence::Worktree {
+                agent: label(self.cx, dir),
+            }],
+            consequence: None,
+        };
+        self.sink.add_supplied(rule, dir, claim, supplied)
+    }
+}
+
+/// The record to speak for a path when nothing says whose it is: one with a lock, since a
+/// copy's record has none the original took after it.
+fn safest(listings: &[Listing]) -> Option<&Listing> {
+    let locked = listings.iter().find(|l| l.registration.locked.is_some());
+    locked.or_else(|| listings.first())
+}
+
+/// What `states`, none of which could be placed, say of one path: the state they share, and
+/// when they differ the one that promises nothing and advises no prune.
+fn agreed(states: Vec<WorktreeState>) -> WorktreeState {
+    let mut states = states.into_iter();
+    match states.next() {
+        Some(first) if states.all(|state| state == first) => first,
+        _ => invalid(),
+    }
+}
+
+/// Whether one repository printed two of these records.
+fn printed_twice(listings: &[Listing]) -> bool {
+    let mut mains = BTreeSet::new();
+    listings.iter().any(|l| !mains.insert(&l.main.path))
+}
+
+/// The common directory of the repository whose main worktree is `main`: `<main>/.git`, or a
+/// bare main itself.
+fn common_of(main: &Registration) -> PathBuf {
+    if main.bare {
+        main.path.clone()
+    } else {
+        main.path.join(".git")
+    }
+}
+
+/// What is known of a registration nothing could be asked about.
+fn invalid() -> WorktreeState {
+    WorktreeState {
+        registration: Ok(RegistrationState::RegisteredInvalid),
+        ..WorktreeState::unknown(GitGap::Failed)
+    }
+}
+
+/// What the `.git` file in `dir` makes it. It is linked when its target's parent is named
+/// `worktrees` and holds `commondir`: a submodule's and a `--separate-git-dir` repository's
+/// don't. A target this integration can't read may still be one, so git is asked.
+fn git_file(cx: &ScanContext<'_>, dir: &Path) -> GitFile {
+    let admin = match target(cx, dir) {
+        Target::Path(admin) => admin,
+        Target::Unread => {
+            return GitFile::Linked {
+                common: dir.join(".git"),
+            };
+        }
+        Target::None => return GitFile::Other,
+    };
+    let Some(worktrees) = admin.parent().filter(|at| at.ends_with("worktrees")) else {
+        return if names_a_repository(cx, &admin) {
+            GitFile::Separate { git_dir: admin }
+        } else {
+            GitFile::Other
+        };
+    };
+    let common = worktrees.parent().unwrap_or(worktrees).to_owned();
+    match cx.metadata(&admin) {
+        Ok(meta) if meta.kind != EntryKind::Dir => GitFile::Other,
+        Ok(_) => match cx.metadata(&admin.join("commondir")) {
+            Err(error) if is_absent(&error) => GitFile::Other,
+            Ok(_) | Err(_) => GitFile::Linked { common },
+        },
+        Err(error) if is_absent(&error) => GitFile::Broken,
+        Err(_) => GitFile::Linked { common },
+    }
+}
+
+/// Whether `git_dir`, which a `.git` file names, is a repository of its own: not a submodule's,
+/// which lives in `.git/modules`, and not somewhere with no `HEAD`.
+fn names_a_repository(cx: &ScanContext<'_>, git_dir: &Path) -> bool {
+    let names = git_dir.components().map(Component::as_os_str);
+    let submodule = names
+        .skip_while(|name| *name != ".git")
+        .any(|name| name == "modules");
+    let no_head = cx
+        .metadata(&git_dir.join("HEAD"))
+        .is_err_and(|error| is_absent(&error));
+    !submodule && !no_head
+}
+
+/// What a `.git` file says.
+enum Target {
+    /// This, resolved against its directory.
+    Path(PathBuf),
+    /// A link read as bytes alone can't be followed here, as one that isn't UTF-8 or that
+    /// couldn't be read. git reads bytes, so it is the one to ask.
+    Unread,
+    /// No link git would read.
+    None,
+}
+
+/// Where the `.git` file in `dir` points, with `.` and `..` folded by text since a confined
+/// read refuses them.
+fn target(cx: &ScanContext<'_>, dir: &Path) -> Target {
+    let Ok(bytes) = cx.read_file(&dir.join(".git"), GITFILE_LIMIT) else {
+        return Target::Unread;
+    };
+    let Some(link) = bytes.strip_prefix(b"gitdir: ") else {
+        return Target::None;
+    };
+    let Ok(text) = std::str::from_utf8(link) else {
+        return Target::Unread;
+    };
+    let path = text.trim_end_matches(['\r', '\n']);
+    if path.is_empty() {
+        return Target::None;
+    }
+    Target::Path(folded(&dir.join(path)))
+}
+
+fn folded(path: &Path) -> PathBuf {
+    let mut parts = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                parts.pop();
+            }
+            part @ (Component::Prefix(_) | Component::RootDir | Component::Normal(_)) => {
+                parts.push(part);
+            }
+        }
+    }
+    parts
+}
+
+/// Whether `error` says nothing is there. A path outside the roots or through a link says
+/// nothing of the kind.
+fn is_absent(error: &ProbeError) -> bool {
+    matches!(
+        error.io_kind(),
+        Some(io::ErrorKind::NotFound | io::ErrorKind::NotADirectory)
+    )
+}
+
+/// Whose location `path` is in, from where it is alone. A branch name proves nothing, and a
+/// location moved by a setting reads as unknown, which is safe: the label grants nothing.
+fn label(cx: &ScanContext<'_>, path: &Path) -> AgentLabel {
+    let location = cx
+        .roots_of(SymbolicRoot::GitAgentLocations)
+        .find(|root| path.starts_with(&root.path));
+    if let Some(root) = location {
+        let known = LOCATIONS.iter().find(|(at, _)| root.path.ends_with(at));
+        return known.map_or(AgentLabel::Codex, |(_, agent)| *agent);
+    }
+    let parent = path.parent();
+    let inside = IN_REPOSITORY
+        .iter()
+        .find(|(at, _)| parent.is_some_and(|parent| parent.ends_with(at)));
+    inside.map_or(AgentLabel::Unknown, |(_, agent)| *agent)
+}
+
+/// Every fact of a registration. An `Err` row is [`FactValue::Unknown`], which holds. That
+/// ignored paths are classified is the scan's to settle, so it starts unknown.
+fn facts(
+    main: &Registration,
+    registration: &Registration,
+    state: &WorktreeState,
+    tool: &Result<ResolvedTool, ToolGap>,
+) -> BTreeMap<&'static str, FactValue> {
+    let count = |row: &Result<u64, GitGap>| row.map_or(FactValue::Unknown, FactValue::Count);
+    let flag = |row: &Result<bool, GitGap>| row.map_or(FactValue::Unknown, FactValue::Bool);
+    let present = state.registration == Ok(RegistrationState::RegisteredPresent);
+    let linked = state
+        .place
+        .as_ref()
+        .map(|place| place.git_dir != place.common_dir);
+    BTreeMap::from([
+        (
+            "worktree.linked",
+            linked.map_or(FactValue::Unknown, FactValue::Bool),
+        ),
+        ("worktree.removal_git", removal_git(tool)),
+        ("repository_identity", identity(main, state)),
+        (
+            "worktree.locked",
+            FactValue::Bool(registration.locked.is_some()),
+        ),
+        (
+            "registration_state",
+            state
+                .registration
+                .map_or(FactValue::Unknown, |state| FactValue::Enum(state.name())),
+        ),
+        ("worktree.submodules", flag(&state.submodules)),
+        (
+            "worktree.config_gate",
+            state
+                .config_gate
+                .map_or(FactValue::Unknown, |gate| match gate {
+                    ConfigGate::Clear => FactValue::Enum("clear"),
+                    ConfigGate::Blocked(_) => FactValue::Enum("blocked"),
+                }),
+        ),
+        ("git.tracked_changes", count(&state.tracked_changes)),
+        ("git.untracked_files", count(&state.untracked_files)),
+        ("git.hidden_changes", count(&state.hidden_changes)),
+        ("worktree.unclassified_ignored", FactValue::Unknown),
+        (
+            "worktree.operation_in_progress",
+            flag(&state.operation_in_progress),
+        ),
+        (
+            "worktree.per_worktree_refs",
+            count(&state.per_worktree_refs),
+        ),
+        ("worktree.index_locked", flag(&state.index_locked)),
+        ("worktree.head_reachable", flag(&state.head_reachable)),
+        ("git_inventory", FactValue::Enum("complete")),
+        (
+            "storage_availability",
+            if present {
+                FactValue::Enum("available")
+            } else {
+                FactValue::Unknown
+            },
+        ),
+    ])
+}
+
+/// Whether git places the worktree in the repository that lists it: `<main>/.git`, or a bare
+/// main itself. Anything else differs, and a witness that couldn't be built is unknown.
+fn identity(main: &Registration, state: &WorktreeState) -> FactValue {
+    match (&state.place, &state.witness) {
+        (Err(GitGap::OtherWorkTree), _) => FactValue::Enum("differs"),
+        (Ok(place), Ok(_)) => FactValue::Enum(if place.common_dir == common_of(main) {
+            "verified"
+        } else {
+            "differs"
+        }),
+        _ => FactValue::Unknown,
+    }
+}
+
+/// Whether the git a removal would run reaches [`WORKTREE_REMOVE_OLDEST`]. A version kipple
+/// can't read is unknown.
+fn removal_git(tool: &Result<ResolvedTool, ToolGap>) -> FactValue {
+    let Some(version) = tool.as_ref().ok().and_then(|tool| version(&tool.version)) else {
+        return FactValue::Unknown;
+    };
+    FactValue::Enum(if version < ToolVersion(WORKTREE_REMOVE_OLDEST.to_vec()) {
+        "unsupported"
+    } else {
+        "supported"
+    })
+}
+
+/// The leading numbers of a version as a tool printed it, such as `2.39.5 (Apple Git-154)`.
+fn version(text: &str) -> Option<ToolVersion> {
+    let number = text.split_whitespace().next()?;
+    let parts: Option<Vec<u64>> = number.split('.').map(|part| part.parse().ok()).collect();
+    parts.filter(|parts| !parts.is_empty()).map(ToolVersion)
 }
 
 /// What is wrong with a checkout no repository lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unregistered {
-    /// Its `gitdir` still leads to an admin directory, so the checkout moved.
+    /// Its `.git` leads to a registration that names where it was, and nothing is there.
     Moved,
+    /// Its `.git` leads to a registration that doesn't name it, and nothing says it moved:
+    /// the registration may belong to a checkout still there, which this may be a copy of.
+    Claimed,
     /// Its `gitdir` leads nowhere.
     TargetGone,
 }
@@ -97,6 +922,15 @@ pub fn registration_advice(anomaly: Anomaly<'_>) -> Advice {
                 path.display()
             ),
             vec!["git worktree repair".to_owned()],
+        ),
+        Anomaly::Unregistered(_, Unregistered::Claimed) => (
+            "A checkout git lists under another directory",
+            "This checkout's `.git` file leads to a registration that doesn't name it, so it may \
+             be a copy of a worktree that is still there. Review it by hand: it may hold work \
+             found nowhere else, and `git worktree repair` here can take the registration from \
+             the other directory."
+                .to_owned(),
+            Vec::new(),
         ),
         Anomaly::Unregistered(_, Unregistered::TargetGone) => (
             "A checkout that lost its repository",

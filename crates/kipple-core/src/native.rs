@@ -92,8 +92,8 @@ pub enum NativeArg {
     NullDevice(&'static str),
 }
 
-/// What keeps git from running a hook or a monitor, taking an optional lock or starting a
-/// pager.
+/// What keeps git from running a hook or a monitor, taking an optional lock, starting a
+/// pager or correcting a command it doesn't know into an alias a repository chose.
 ///
 /// Both the check and the removal start from this list, so neither can drift from the
 /// other. The environment half stays in the platform.
@@ -103,6 +103,8 @@ pub const GIT_ISOLATION: &[NativeArg] = &[
     NativeArg::Fixed("core.fsmonitor=false"),
     NativeArg::Fixed("-c"),
     NativeArg::NullDevice("core.hooksPath="),
+    NativeArg::Fixed("-c"),
+    NativeArg::Fixed("help.autocorrect=0"),
     NativeArg::Fixed("--no-optional-locks"),
 ];
 

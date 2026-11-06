@@ -19,7 +19,9 @@ const NULL_DEVICE: &str = "/dev/null";
 const NULL_DEVICE: &str = "NUL";
 
 /// The variables git gets beside the runner's, for a query and a removal alike: no system
-/// or global config, no XDG config directory, no optional locks and no pager.
+/// or global config, no XDG config directory, no optional locks, no pager and no lazy
+/// fetch. Only some releases honour that last one and no version number says which, so it
+/// backs the repository config gate (`git/worktree.rs`) and never replaces it.
 pub(crate) fn git_isolation() -> Vec<Var<'static>> {
     let var = |name, value| Var {
         name,
@@ -30,6 +32,13 @@ pub(crate) fn git_isolation() -> Vec<Var<'static>> {
         var("GIT_CONFIG_GLOBAL", NULL_DEVICE),
         var("GIT_OPTIONAL_LOCKS", "0"),
         var("GIT_PAGER", "cat"),
+        var("GIT_NO_LAZY_FETCH", "1"),
+        // Both of these are second lines. What holds is that a promisor is refused, so no
+        // fetch starts: no version number says which gits honour the line above, and a
+        // fetch that has started can reach what this list never sees, as `fetch.bundleURI`
+        // does. Git can't be told to list nothing, so it lists one name no alias can hold:
+        // empty or `:` would list the empty name, which `::x` as a remote's URL picks.
+        var("GIT_ALLOW_PROTOCOL", "\n"),
         // Windows has no directory that can't hold a file: its XDG directory stays unset,
         // as `HOME` is, so git looks for none.
         #[cfg(unix)]

@@ -107,6 +107,9 @@ pub struct WorktreeFacts {
     pub admin: Option<PathBuf>,
     /// What apply compares, or why it couldn't be built.
     pub witness: Result<WorktreeWitness, GitGap>,
+    /// The ignored paths `status` prints, relative to the checkout, which a scan settles
+    /// against its findings, or why git didn't say.
+    pub ignored: Result<Vec<PathBuf>, GitGap>,
     /// The `git` a removal would run, or why there is none.
     pub tool: Result<ResolvedTool, ToolGap>,
     /// Whose location it is in.
@@ -155,7 +158,8 @@ pub enum ConfigGate {
 /// holds the worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeState {
-    /// Where git places it.
+    /// Where git places it. [`GitGap::Unplaced`] says the registration its `.git` leads to
+    /// names a checkout that isn't there, so this one moved rather than being a copy.
     pub place: Result<WorktreePlace, GitGap>,
     /// How its registration and its checkout relate.
     pub registration: Result<RegistrationState, GitGap>,
@@ -216,6 +220,8 @@ pub trait WorktreeQuery: fmt::Debug + Send + Sync {
     ///
     /// # Errors
     /// When git couldn't answer in full: never "no worktrees".
+    /// [`GitGap::Unplaced`] says `<repository>/.git` is a file naming nothing that is there,
+    /// so there is no repository to ask.
     fn list(&self, repository: &Path, cancel: &CancelToken) -> Result<Vec<Registration>, GitGap>;
 
     /// What the worktree `registration` names is now.

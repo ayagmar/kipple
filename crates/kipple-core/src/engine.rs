@@ -490,11 +490,13 @@ impl Engine {
             next_id: shared.next_id,
             found: Vec::new(),
             advice: Vec::new(),
+            omissions: Vec::new(),
             evidence: registered.descriptor.evidence(),
             owner: OwnerStatus::Unsupported,
         };
         let finished = !shared.cancel.is_cancelled()
             && discover(registered, &cx, &mut sink, &mut omissions) == Discovery::Finished;
+        omissions.append(&mut sink.omissions);
         // A directory under two paths of a root is one gap, in path order.
         let mut unlisted = BTreeMap::new();
         let mut excluded = BTreeSet::new();

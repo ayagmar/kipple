@@ -13,7 +13,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::cancel::CancelToken;
 use crate::capability::NativeTool;
 use crate::discovery::{RepositoryDir, Walk, WalkPlan, WalkStop, Walks};
-use crate::engine::{Finding, FindingId, Found, Reading};
+use crate::engine::{Finding, FindingId, Found, Omission, Reading};
 use crate::event::{EventTx, ScanEvent, Stopped};
 use crate::native::{ResolvedTool, ToolGap, ToolResolver};
 use crate::policy::Consequence;
@@ -22,6 +22,7 @@ use crate::protect::{OwnerStatus, StateDeclaration};
 use crate::root::{ResolvedRoot, SymbolicRoot};
 use crate::rule::{FactSpec, Lens, Operation, Platform, Rule, Selector};
 use crate::supplied::{AdviceId, Claim, Supplied};
+use crate::tracked::GitGap;
 use crate::worktree::{AgentLabel, WorktreeQuery};
 
 /// A built-in integration's ID, such as `cargo`.
@@ -300,6 +301,13 @@ impl ScanContext<'_> {
         self.cancel.is_cancelled()
     }
 
+    /// The scan's cancel token, for a port that takes one, so a cancel reaches a query
+    /// already running.
+    #[must_use]
+    pub const fn cancel_token(&self) -> &CancelToken {
+        self.cancel
+    }
+
     /// What `path` itself is, without following a link.
     ///
     /// # Errors
@@ -493,6 +501,8 @@ pub struct FindingSink<'scan> {
     pub(crate) next_id: &'scan AtomicU64,
     pub(crate) found: Vec<Found>,
     pub(crate) advice: Vec<Advice>,
+    /// What it could not cover, past the walks the host reports for it.
+    pub(crate) omissions: Vec<Omission>,
     /// What a finding is judged by unless it chooses another.
     pub(crate) evidence: ActivityEvidence,
     /// What it said about the layout it read.
@@ -528,6 +538,15 @@ impl FindingSink<'_> {
             consequence,
         };
         self.add_supplied(rule, path, claim, self.supplied())
+    }
+
+    /// Records that git couldn't list the worktrees of `repository`, so the report says
+    /// they aren't known and never reads as "no worktrees".
+    pub fn omit_worktrees(&mut self, repository: &Path, gap: GitGap) {
+        self.omissions.push(Omission::GitInventory {
+            repository: repository.to_owned(),
+            gap,
+        });
     }
 
     /// Says whether the integration recognised what it read, which is what lets its state

@@ -731,8 +731,125 @@
     {
       "id": "git",
       "lens": "agents",
-      "verified": [],
-      "facts": [],
+      "verified": [
+        "git 2.56.0"
+      ],
+      "facts": [
+        {
+          "name": "worktree.linked",
+          "kind": "bool",
+          "selector": "registered-linked-worktrees",
+          "meaning": "whether git places it apart from the main worktree"
+        },
+        {
+          "name": "worktree.removal_git",
+          "kind": "enum",
+          "values": [
+            "supported",
+            "unsupported"
+          ],
+          "selector": "registered-linked-worktrees",
+          "meaning": "whether the git found is new enough to remove a worktree"
+        },
+        {
+          "name": "repository_identity",
+          "kind": "enum",
+          "values": [
+            "verified",
+            "differs"
+          ],
+          "selector": "registered-linked-worktrees",
+          "meaning": "whether git places it in the repository that lists it"
+        },
+        {
+          "name": "worktree.locked",
+          "kind": "bool",
+          "selector": "registered-linked-worktrees",
+          "meaning": "whether it is locked, which kipple never undoes"
+        },
+        {
+          "name": "registration_state",
+          "kind": "enum",
+          "values": [
+            "registered-present",
+            "registered-missing",
+            "present-unregistered",
+            "registered-invalid"
+          ],
+          "selector": null,
+          "meaning": "how its registration and its checkout relate"
+        },
+        {
+          "name": "worktree.submodules",
+          "kind": "bool",
+          "selector": "registered-linked-worktrees",
+          "meaning": "whether it has a submodule, populated or not"
+        },
+        {
+          "name": "worktree.config_gate",
+          "kind": "enum",
+          "values": [
+            "clear",
+            "blocked"
+          ],
+          "selector": "registered-linked-worktrees",
+          "meaning": "whether its repository's config lets kipple ask git further"
+        },
+        {
+          "name": "git.hidden_changes",
+          "kind": "count",
+          "selector": "registered-linked-worktrees",
+          "meaning": "files git tracks that `status` doesn't look behind"
+        },
+        {
+          "name": "worktree.unclassified_ignored",
+          "kind": "count",
+          "selector": "registered-linked-worktrees",
+          "meaning": "ignored paths that aren't exactly a finding a rule would remove"
+        },
+        {
+          "name": "worktree.operation_in_progress",
+          "kind": "bool",
+          "selector": "registered-linked-worktrees",
+          "meaning": "whether a rebase, merge, bisect, cherry-pick or revert is under way"
+        },
+        {
+          "name": "worktree.per_worktree_refs",
+          "kind": "count",
+          "selector": "registered-linked-worktrees",
+          "meaning": "refs that live only in this worktree"
+        },
+        {
+          "name": "worktree.index_locked",
+          "kind": "bool",
+          "selector": "registered-linked-worktrees",
+          "meaning": "whether git holds its index or HEAD lock"
+        },
+        {
+          "name": "worktree.head_reachable",
+          "kind": "bool",
+          "selector": "registered-linked-worktrees",
+          "meaning": "whether a local branch holds its HEAD"
+        },
+        {
+          "name": "git_inventory",
+          "kind": "enum",
+          "values": [
+            "complete"
+          ],
+          "selector": null,
+          "meaning": "whether git listed the repository's worktrees in full"
+        },
+        {
+          "name": "storage_availability",
+          "kind": "enum",
+          "values": [
+            "available"
+          ],
+          "selector": null,
+          "meaning": "whether what holds the checkout can be read"
+        }
+      ],
       "protected": [],
       "open": [],
       "rules": [
@@ -743,20 +860,20 @@
       "platforms": [
         {
           "platform": "linux",
-          "discover": false,
-          "report": false,
+          "discover": true,
+          "report": true,
           "mutate": false
         },
         {
           "platform": "macos",
-          "discover": false,
-          "report": false,
+          "discover": true,
+          "report": true,
           "mutate": false
         },
         {
           "platform": "windows",
-          "discover": false,
-          "report": false,
+          "discover": true,
+          "report": true,
           "mutate": false
         }
       ]

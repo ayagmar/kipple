@@ -623,6 +623,7 @@ fn native_scan(home: &Home) -> ScanReport {
         repository: finding.path.clone(),
         admin: None,
         witness: Ok(witness),
+        ignored: Ok(Vec::new()),
         tool: Ok(tool),
         agent: AgentLabel::Unknown,
     };

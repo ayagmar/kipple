@@ -1,6 +1,11 @@
 //! Running git: found once on `PATH`, checked to be the same file before each run, and
-//! isolated from every config and hook but the repository's own, which its command line
-//! overrides where it could run anything.
+//! isolated from every config and hook but the repository's own. Its command line overrides
+//! `core.fsmonitor` and `core.hooksPath`, and every query that can read an object reads the
+//! repository's config names first, because a repository's config can name a program no
+//! override reaches. The worktree queries stop at what could run a filter (`worktree.rs`), and
+//! the tracked query at a promisor: a lazy fetch only starts in one, and once it has started
+//! it reaches programs and URLs nothing here covers. Which gits honour `GIT_NO_LAZY_FETCH`
+//! no version number says, so that variable and `GIT_ALLOW_PROTOCOL` are second lines.
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -8,7 +13,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use kipple_core::{
-    CancelToken, Component, FileIdentity, GIT_ISOLATION, GitGap, NativeTool, ToolVersion,
+    CancelToken, Component, ConfigClass, FileIdentity, GIT_ISOLATION, GitGap, NativeTool,
+    ToolVersion,
 };
 
 use crate::capabilities;
@@ -27,12 +33,20 @@ pub(super) const OUTPUT_LIMIT: u64 = 64 * 1024 * 1024;
 /// be left out.
 const OLDEST: [u64; 2] = [2, 32];
 
+/// The first git whose `ls-files --sparse` is safe to pass: 2.35 has the flag and not the
+/// expansion for files on disk in a sparse directory, so what is tracked below one would
+/// read as nothing. An older git expands a sparse index, which is the right answer in a
+/// complete repository, and a promisor, where it would be a fetch, never gets that far.
+const SPARSE_OLDEST: [u64; 2] = [2, 36];
+
 /// The git kipple runs: an absolute path from `PATH`, and the file it was when its version
 /// was checked.
 #[derive(Debug, Clone)]
 pub(super) struct Git {
     path: PathBuf,
     identity: FileIdentity,
+    /// What it said it is when it was found.
+    version: ToolVersion,
     /// The environment it runs in, for what the runner passes on.
     env: Environment,
 }
@@ -59,17 +73,61 @@ pub(super) fn resolve(env: &Environment) -> Result<Git, GitGap> {
     Ok(Git {
         path,
         identity,
+        version,
         env: env.clone(),
     })
 }
 
-/// The identity of the file at `path`.
-fn identity(path: &Path) -> Option<FileIdentity> {
+/// The identity of the file at `path`, through any link.
+pub(super) fn identity(path: &Path) -> Option<FileIdentity> {
     let meta = fs::metadata(path).ok()?;
     os::identity(path, &meta)
 }
 
 impl Git {
+    /// Whether this git is older than `floor`.
+    pub(super) fn older_than(&self, floor: &[u64]) -> bool {
+        self.version < ToolVersion(floor.to_vec())
+    }
+
+    /// What git prints for `tail` from `dir`, whole and with exit 0.
+    pub(super) fn ask(
+        &self,
+        dir: &Path,
+        tail: &[&str],
+        cancel: &CancelToken,
+    ) -> Result<Vec<u8>, GitGap> {
+        let tail: Vec<&OsStr> = tail.iter().map(OsStr::new).collect();
+        let output = self.run(dir, Matching::Exact, &tail, cancel)?;
+        Ok(output.stdout)
+    }
+
+    /// What the `ls-files` of `tail` prints from `dir`, unless it lost part of the index.
+    pub(super) fn ask_index(
+        &self,
+        dir: &Path,
+        tail: &[&str],
+        cancel: &CancelToken,
+    ) -> Result<Vec<u8>, GitGap> {
+        let tail: Vec<&OsStr> = tail.iter().map(OsStr::new).collect();
+        read_index(self.run(dir, Matching::Exact, &tail, cancel)?)
+    }
+
+    /// The class of each key the config at `dir` names that kipple stops at, in git's order.
+    /// Names only, with includes, because a value can hold a credential.
+    pub(super) fn config_classes(
+        &self,
+        dir: &Path,
+        cancel: &CancelToken,
+    ) -> Result<Vec<ConfigClass>, GitGap> {
+        let tail = ["config", "--includes", "--null", "--name-only", "--list"];
+        let names = self.ask(dir, &tail, cancel)?;
+        Ok(records(&names)?
+            .into_iter()
+            .filter_map(config_class)
+            .collect())
+    }
+
     /// The work tree git finds from `dir`, as it prints it.
     pub(super) fn toplevel(&self, dir: &Path, cancel: &CancelToken) -> Result<PathBuf, GitGap> {
         let tail = [OsStr::new("rev-parse"), OsStr::new("--show-toplevel")];
@@ -83,23 +141,38 @@ impl Git {
     }
 
     /// Every path the index of the repository at `dir` holds at or below `pathspec`,
-    /// relative to its top.
+    /// relative to its top. `--sparse` keeps a sparse index as it is where it can, and a
+    /// sparse directory the pathspec names comes back as a record [`Listing`] refuses. git
+    /// still expands the index for a sparse directory that has something on disk, as an
+    /// item below one does, unless config says not to, which would hide what is tracked
+    /// there: so that config is overridden, and [`read_index`] sees an expansion that failed.
+    /// In a promisor an expansion can be a fetch, so one is refused before `ls-files` runs.
     pub(super) fn tracked(
         &self,
         dir: &Path,
         pathspec: &Pathspec,
         cancel: &CancelToken,
     ) -> Result<Listing, GitGap> {
+        if self
+            .config_classes(dir, cancel)?
+            .contains(&ConfigClass::PartialClone)
+        {
+            return Err(GitGap::Failed);
+        }
         let mut tail = vec![
+            OsStr::new("-c"),
+            OsStr::new("sparse.expectFilesOutsideOfPatterns=false"),
             OsStr::new("ls-files"),
             OsStr::new("-z"),
             OsStr::new("--cached"),
-            OsStr::new("--full-name"),
-            OsStr::new("--"),
         ];
+        if !self.older_than(&SPARSE_OLDEST) {
+            tail.push(OsStr::new("--sparse"));
+        }
+        tail.extend([OsStr::new("--full-name"), OsStr::new("--")]);
         tail.extend(pathspec.arg.as_deref());
         let output = self.run(dir, pathspec.matching, &tail, cancel)?;
-        Listing::of(output.stdout)
+        Listing::of(read_index(output)?)
     }
 
     fn run(
@@ -142,6 +215,43 @@ impl Git {
         }
         Ok(output)
     }
+}
+
+/// The class of the config key `name`, if it is one the gate stops at. Git prints a key's
+/// section and variable in lowercase, and the part between them as written.
+pub(super) fn config_class(name: &[u8]) -> Option<ConfigClass> {
+    let name = String::from_utf8_lossy(name).to_ascii_lowercase();
+    let (section, rest) = name.split_once('.')?;
+    let variable = rest.rsplit('.').next()?;
+    match (section, variable) {
+        ("filter", "clean" | "smudge" | "process") => Some(ConfigClass::Filter),
+        ("remote", "promisor" | "partialclonefilter") | ("extensions", "partialclone") => {
+            Some(ConfigClass::PartialClone)
+        }
+        ("core", "worktree") => Some(ConfigClass::WorkTree),
+        ("extensions", "refstorage") => Some(ConfigClass::RefStorage),
+        _ => None,
+    }
+}
+
+/// The records of output that ends each one in a NUL.
+pub(super) fn records(stdout: &[u8]) -> Result<Vec<&[u8]>, GitGap> {
+    if stdout.is_empty() {
+        return Ok(Vec::new());
+    }
+    let body = stdout.strip_suffix(b"\0").ok_or(GitGap::Truncated)?;
+    Ok(body.split(|byte| *byte == 0).collect())
+}
+
+/// What `ls-files` printed, unless it lost part of the index: a tree it couldn't read when
+/// expanding a sparse index prints `error:`, leaves those entries out and still exits 0. Only
+/// that line counts, as an expansion that worked prints hints here.
+fn read_index(output: Output) -> Result<Vec<u8>, GitGap> {
+    let mut lines = output.stderr.split(|byte| *byte == b'\n');
+    if lines.any(|line| line.starts_with(b"error:")) {
+        return Err(GitGap::Failed);
+    }
+    Ok(output.stdout)
 }
 
 /// One pathspec, and how git is to match it.
@@ -234,13 +344,13 @@ fn record(bytes: &[u8]) -> Result<Record, GitGap> {
     clippy::unnecessary_wraps,
     reason = "every byte string is a path on Linux and macOS, not on Windows"
 )]
-fn os_string(bytes: &[u8]) -> Option<OsString> {
+pub(super) fn os_string(bytes: &[u8]) -> Option<OsString> {
     use std::os::unix::ffi::OsStrExt as _;
     Some(OsStr::from_bytes(bytes).to_owned())
 }
 
 #[cfg(windows)]
-fn os_string(bytes: &[u8]) -> Option<OsString> {
+pub(super) fn os_string(bytes: &[u8]) -> Option<OsString> {
     std::str::from_utf8(bytes).ok().map(OsString::from)
 }
 
