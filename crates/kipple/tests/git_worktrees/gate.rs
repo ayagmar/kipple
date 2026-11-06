@@ -344,15 +344,9 @@ fn one_way_registration(repo: &Repo) {
 }
 
 fn unborn(repo: &Repo) {
-    repo.git(&[
-        "worktree",
-        "add",
-        "-q",
-        "--orphan",
-        "-b",
-        "new",
-        "../unborn",
-    ]);
+    repo.git(&["worktree", "add", "-q", "--detach", "../unborn"]);
+    let unborn = repo.temp.path().join("projects/unborn");
+    repo.git_in(&unborn, &["checkout", "-q", "--orphan", "new"]);
 }
 
 const CASES: &[Case] = &[
