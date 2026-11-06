@@ -487,6 +487,39 @@ fn a_blocked_gate_runs_no_ls_files() {
     assert_eq!(runs(&gated_log, " ls-files "), 0);
 }
 
+/// Catches the same through real git, with a repository outside the roots below a directory
+/// that isn't UTF-8. A system that refuses such a name, as macOS does, skips it and says so.
+#[test]
+#[expect(
+    clippy::print_stderr,
+    reason = "a test that skips says so in its output"
+)]
+fn a_checkout_of_a_repository_below_a_name_that_is_not_utf8_is_found() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let repo = Repo::bare_bones(Refs::Files);
+    let odd = repo.temp.path().join(OsStr::from_bytes(b"out\xff"));
+    if let Err(error) = fs::create_dir(&odd) {
+        eprintln!("skipped: this file system refuses a name that isn't UTF-8: {error}");
+        return;
+    }
+    let away = odd.join("app");
+    let source = repo.main.display().to_string();
+    repo.git_in(&odd, &["clone", "-q", &source, "app"]);
+    repo.git_in(
+        &away,
+        &["worktree", "add", "-q", "-b", "far", "../../projects/far"],
+    );
+
+    let scan = repo.scan();
+
+    assert_eq!(
+        scan.fact_at("far", "worktree.linked"),
+        FactValue::Bool(true)
+    );
+}
+
 /// Catches the worktree floor raised for everything: a git too old for `list -z` can
 /// still answer what is tracked, and only worktrees are lost, with an omission.
 #[test]

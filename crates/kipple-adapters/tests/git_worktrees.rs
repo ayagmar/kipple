@@ -523,6 +523,24 @@ fn submodule_gitfile_is_no_worktree() {
     assert_eq!(run.of("git").len(), 0);
 }
 
+/// Catches a `.git` that isn't UTF-8 dropping its checkout with nothing said: git reads bytes,
+/// so a repository below such a directory has to be asked. These are a file's bytes, so no
+/// system refuses them.
+#[test]
+fn a_git_file_that_is_not_utf8_is_asked_about() {
+    let tree = repository_with(&[], |tree| {
+        tree.file(
+            &format!("{CHECKOUT}/.git"),
+            b"gitdir: /outside/caf\xff/.git/worktrees/wt\n",
+        );
+    });
+    let (main, path) = (tree.at("outside/app"), tree.at(CHECKOUT));
+
+    let run = tree.scan(Script::repository(&main, &[&path]));
+
+    assert_eq!(run.at(&path).len(), 1);
+}
+
 /// Catches `worktree.useRelativePaths` links read against the wrong directory, or `demo.rs`
 /// drifting from the layout: a relative `gitdir` reads like an absolute one.
 #[test]

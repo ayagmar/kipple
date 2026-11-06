@@ -483,8 +483,14 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
 /// `worktrees` and holds `commondir`: a submodule's and a `--separate-git-dir` repository's
 /// don't. A target this integration can't read may still be one, so git is asked.
 fn git_file(cx: &ScanContext<'_>, dir: &Path) -> GitFile {
-    let Some(admin) = target(cx, dir) else {
-        return GitFile::Other;
+    let admin = match target(cx, dir) {
+        Target::Path(admin) => admin,
+        Target::Unread => {
+            return GitFile::Linked {
+                common: dir.join(".git"),
+            };
+        }
+        Target::None => return GitFile::Other,
     };
     let Some(worktrees) = admin.parent().filter(|at| at.ends_with("worktrees")) else {
         return GitFile::Other;
@@ -501,15 +507,34 @@ fn git_file(cx: &ScanContext<'_>, dir: &Path) -> GitFile {
     }
 }
 
-/// Where the `.git` file in `dir` points, resolved against `dir`, with `.` and `..` folded
-/// by text since a confined read refuses them. `None` when it isn't a link git would read.
-fn target(cx: &ScanContext<'_>, dir: &Path) -> Option<PathBuf> {
-    let bytes = cx.read_file(&dir.join(".git"), GITFILE_LIMIT).ok()?;
-    let text = std::str::from_utf8(&bytes).ok()?;
-    let path = text
-        .strip_prefix("gitdir: ")?
-        .trim_end_matches(['\r', '\n']);
-    (!path.is_empty()).then(|| folded(&dir.join(path)))
+/// What a `.git` file says.
+enum Target {
+    /// This, resolved against its directory.
+    Path(PathBuf),
+    /// A link read as bytes alone can't be followed here, as one that isn't UTF-8 or that
+    /// couldn't be read. git reads bytes, so it is the one to ask.
+    Unread,
+    /// No link git would read.
+    None,
+}
+
+/// Where the `.git` file in `dir` points, with `.` and `..` folded by text since a confined
+/// read refuses them.
+fn target(cx: &ScanContext<'_>, dir: &Path) -> Target {
+    let Ok(bytes) = cx.read_file(&dir.join(".git"), GITFILE_LIMIT) else {
+        return Target::Unread;
+    };
+    let Some(link) = bytes.strip_prefix(b"gitdir: ") else {
+        return Target::None;
+    };
+    let Ok(text) = std::str::from_utf8(link) else {
+        return Target::Unread;
+    };
+    let path = text.trim_end_matches(['\r', '\n']);
+    if path.is_empty() {
+        return Target::None;
+    }
+    Target::Path(folded(&dir.join(path)))
 }
 
 fn folded(path: &Path) -> PathBuf {
