@@ -525,6 +525,35 @@ fn records_that_disagree_with_nothing_placed_read_invalid() {
     }
 }
 
+/// Catches a transport denial a repository can name its way past. `Git::tracked` has no gate,
+/// and a remote can pick a helper by any name, the empty one as well, which git runs as
+/// `git remote-<name>`: an alias of that name in the repository's config then runs a program.
+/// The last route's alias form needs git 2.54, and an older git ignores it.
+#[test]
+fn no_helper_a_repository_names_runs_when_asked_what_is_tracked() {
+    let routes = [
+        ("remote.origin.url", "::x", "alias.remote-"),
+        ("remote.origin.vcs", "none", "alias.remote-none"),
+        ("remote.origin.vcs", "_", "alias.remote-_.command"),
+    ];
+    for (key, value, alias) in routes {
+        let repo = Repo::bare_bones(Refs::Files);
+        let mark = treeless_sparse_clone(&repo);
+        let clone = repo.projects().join("clone");
+        repo.git_in(&clone, &["config", key, value]);
+        let program = format!("!{}", mark.script);
+        repo.git_in(&clone, &["config", alias, &program]);
+        let query = GitQuery::new(&git_that_can_fetch(&repo));
+        let left = repo.checkout.join("away/left");
+        fs::create_dir_all(&left).unwrap();
+
+        let count = query.count(&repo.checkout, &left, &CancelToken::new());
+
+        assert_eq!(count, Err(GitGap::Failed), "{key}={value}");
+        assert!(!mark.path.exists(), "{key}={value} ran no program");
+    }
+}
+
 /// Catches `ls-files` ahead of the gate again: on a blocked gate nothing that can read the
 /// index runs. The clean repository shows the log would catch one.
 #[test]
