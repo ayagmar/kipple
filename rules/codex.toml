@@ -30,7 +30,7 @@ kind = "report"
 id = "builtin.codex.release-inventory"
 integration = "codex"
 title = "Codex releases, reported only"
-description = "Local builds, older layouts, unknown directories, retired releases, and inactive releases where the store isn't verified."
+description = "Local builds, older layouts, unknown directories, retired releases, and inactive releases of a store kipple can't act on."
 why = "Codex and its installers leave these in the release store."
 loss = "Nothing. Report only."
 category = "release-install"
@@ -56,8 +56,14 @@ platforms = ["linux"]
 root = "codex.home"
 selection = "codex-legacy-tui-log"
 
+[rule.requirements]
+layout = "supported"
+"log_dir.configured" = false
+"tui_log.writer" = "none"
+
 [rule.operation]
-kind = "report"
+kind = "remove-files"
+methods = ["delete", "trash"]
 
 [[rule]]
 id = "builtin.codex.plugin-catalog-cache"
@@ -73,8 +79,12 @@ platforms = ["linux"]
 root = "codex.home"
 selection = "codex-plugin-catalog-files"
 
+[rule.requirements]
+layout = "supported"
+
 [rule.operation]
-kind = "report"
+kind = "remove-files"
+methods = ["delete", "trash"]
 
 [[rule]]
 id = "builtin.codex.store-inventory"

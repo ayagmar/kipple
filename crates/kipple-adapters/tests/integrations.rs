@@ -308,7 +308,7 @@ fn every_builtin_rule_applies_only_where_its_integration_runs() {
 fn a_stub_finds_nothing_and_keeps_its_roots_closed() {
     let Scanned { report, .. } = scan(&demo_home::tree(demo_home::looked_at()));
 
-    for id in ["codex", "cursor", "git", "npm", "pi"] {
+    for id in ["cursor", "git", "npm", "pi"] {
         let integration = report.integrations.iter().find(|i| i.id.0 == id).unwrap();
         assert_eq!(integration.owner, OwnerStatus::Unsupported, "{id}");
         assert!(
