@@ -11,7 +11,7 @@
 //! directory by file identity; `config --includes --null --name-only --list`, which must
 //! name nothing that makes the repository a promisor, since `ls-files` can start a fetch in
 //! one, so what a partial clone holds is held on every git; and `ls-files -z --cached
-//! --full-name`, with `--sparse` from git 2.35, with one literal pathspec: the item's path, or the nearest directory above it whose every name is ASCII (and on Windows the
+//! --full-name`, with `--sparse` from git 2.36, with one literal pathspec: the item's path, or the nearest directory above it whose every name is ASCII (and on Windows the
 //! name it is stored under, not an 8.3 short name). git matches pathspecs as strings,
 //! folding at most ASCII case, while a file system may fold Unicode case and
 //! normalization or take a short name; asking about the item by such a name could miss

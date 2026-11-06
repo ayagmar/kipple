@@ -551,14 +551,16 @@ fn what_is_tracked_below_a_sparse_directory_is_counted() {
     assert_eq!(query.count(&repo.main, &left, &CancelToken::new()), Ok(1));
 }
 
-/// Catches `--sparse` passed to a git that doesn't have it, which refuses and holds every
-/// artifact in every repository on a git kipple supports, and left out on one that has it,
-/// where `ls-files` would expand a sparse index for nothing.
+/// Catches `--sparse` passed to a git it misleads. Below 2.35 git refuses it, which holds every
+/// artifact in every repository on a git kipple supports. On 2.35 it has the flag and not the
+/// expansion for files on disk, so a tracked file below a sparse directory reads as nothing
+/// tracked. From 2.36 leaving it out would expand a sparse index for nothing.
 #[test]
 fn sparse_is_asked_of_a_git_that_has_it_and_no_other() {
     for (version, refused) in [
         ("2.34.1", "*--sparse*"),
-        ("2.35.0", "*--cached\\ --full-name*"),
+        ("2.35.0", "*--sparse*"),
+        ("2.36.0", "*--cached\\ --full-name*"),
     ] {
         let repo = Repo::new();
         write(&repo.main.join("src/kept.txt"), b"x\n");

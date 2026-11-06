@@ -33,10 +33,11 @@ pub(super) const OUTPUT_LIMIT: u64 = 64 * 1024 * 1024;
 /// be left out.
 const OLDEST: [u64; 2] = [2, 32];
 
-/// The first git with `ls-files --sparse`. An older one expands a sparse index, which is the
-/// right answer in a complete repository, and a promisor, where it would be a fetch, never
-/// gets that far.
-const SPARSE_OLDEST: [u64; 2] = [2, 35];
+/// The first git whose `ls-files --sparse` is safe to pass: 2.35 has the flag and not the
+/// expansion for files on disk in a sparse directory, so what is tracked below one would
+/// read as nothing. An older git expands a sparse index, which is the right answer in a
+/// complete repository, and a promisor, where it would be a fetch, never gets that far.
+const SPARSE_OLDEST: [u64; 2] = [2, 36];
 
 /// The git kipple runs: an absolute path from `PATH`, and the file it was when its version
 /// was checked.
