@@ -709,8 +709,139 @@ fn an_unreadable_setting_is_unknown_and_shows_no_other_value() {
     assert!(!shown.contains("s3cret"), "shows no other value: {shown}");
 }
 
-/// Catches the key readers panicking on what a person left in a file: they slice text, and
-/// any input must end in a value, an unknown or nothing.
+const CODEX_CONFIG: &str = ".codex/config.toml";
+const PI_SETTINGS: &str = ".pi/agent/settings.json";
+
+/// What `root` resolves to with `document` at `file` under a new home, sorted.
+fn set_by(file: &str, root: SymbolicRoot, document: &str) -> Vec<Result<PathBuf, String>> {
+    let dir = home();
+    let at = dir.path().join(file);
+    fs::create_dir_all(at.parent().unwrap()).unwrap();
+    fs::write(&at, document).unwrap();
+    let roots = roots(&[("HOME", text(dir.path()))]);
+    let mut found: Vec<_> = roots
+        .all(root)
+        .iter()
+        .map(|resolved| {
+            let path = resolved.as_ref().map(|r| r.path.clone());
+            path.map_err(ToString::to_string)
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+fn paths(expected: &[&str]) -> Vec<Result<PathBuf, String>> {
+    expected.iter().map(|p| Ok(PathBuf::from(p))).collect()
+}
+
+/// Catches a TOML form decoded wrongly or missed: that names the wrong directory and leaves
+/// the real store open.
+#[test]
+fn every_toml_form_of_a_setting_decodes_to_its_path() {
+    let rows: [(&str, &[&str]); 12] = [
+        (
+            r#"sqlite_home = "/data/co\u0064ex\ttab""#,
+            &["/data/codex\ttab"],
+        ),
+        (r"sqlite_home = '/data/co\dex'", &[r"/data/co\dex"]),
+        (r#""sqlite_home" = "/data/quoted""#, &["/data/quoted"]),
+        (
+            r#"'sqlite_home' = "/data/literal-key""#,
+            &["/data/literal-key"],
+        ),
+        (r#"profile.sqlite_home = "/data/dotted""#, &["/data/dotted"]),
+        (
+            r#"profile = { sqlite_home = "/data/inline" }"#,
+            &["/data/inline"],
+        ),
+        (
+            "sqlite_home = \"\"\"\n/data/multi\\\n   -line\"\"\"",
+            &["/data/multi-line"],
+        ),
+        ("sqlite_home = '''\n/data/raw\\n'''", &[r"/data/raw\n"]),
+        (
+            "[[profile]]\nsqlite_home = \"/data/a\"\n[[profile]]\nsqlite_home = \"/data/b\"\n",
+            &["/data/a", "/data/b"],
+        ),
+        (
+            "sqlite_home = \"/data/top\"\n[profile.deep]\nsqlite_home = \"/data/table\"\n",
+            &["/data/table", "/data/top"],
+        ),
+        ("# sqlite_home = \"/data/comment\"\n", &[]),
+        (r#"note = "sqlite_home = '/data/string'""#, &[]),
+    ];
+
+    for (document, expected) in rows {
+        let found = set_by(CODEX_CONFIG, SymbolicRoot::CodexSqliteHome, document);
+        assert_eq!(found, paths(expected), "for {document:?}");
+    }
+}
+
+/// Catches a JSON form decoded wrongly or missed, or a key's name taken for the key where it
+/// is only text.
+#[test]
+fn every_json_form_of_a_setting_decodes_to_its_path() {
+    let rows: [(&str, &[&str]); 7] = [
+        (r#"{"sessionDir": "/data/pi\u0073"}"#, &["/data/pis"]),
+        (r#"{"sessionDir": "/data/\ud83d\ude00"}"#, &["/data/😀"]),
+        (
+            r#"{"session\u0044ir": "/data/escaped-key"}"#,
+            &["/data/escaped-key"],
+        ),
+        (
+            r#"{"a": {"sessionDir": "/data/a"}, "b": [{"sessionDir": "/data/b"}]}"#,
+            &["/data/a", "/data/b"],
+        ),
+        (
+            r#"{"sessionDir": "/data/first", "sessionDir": "/data/last"}"#,
+            &["/data/last"],
+        ),
+        (r#"{"theme": "sessionDir"}"#, &[]),
+        (r#"{"note": "\"sessionDir\": \"/data/string\""}"#, &[]),
+    ];
+
+    for (document, expected) in rows {
+        let found = set_by(PI_SETTINGS, SymbolicRoot::PiSessionDir, document);
+        assert_eq!(found, paths(expected), "for {document:?}");
+    }
+}
+
+/// Catches a file kipple can't parse counting as one that sets nothing, a non-string value
+/// being skipped, and the parser's own message reaching the output: toml's quotes the line,
+/// and these files can hold tokens. A file nested past any use must not crash the scan.
+#[test]
+fn a_setting_file_kipple_cant_parse_is_unknown_and_quotes_nothing() {
+    let deep = "[".repeat(100_000);
+    let toml_rows = [
+        "token = \"s3cret\"\nsqlite_home = \"/data/unclosed\n".to_owned(),
+        "token = \"s3cret\"\ntoken = \"s3cret\"\n".to_owned(),
+        "[profile]\nsqlite_home = [\"/data/s3cret\"]\n".to_owned(),
+        "[profile]\nsqlite_home = { token = \"s3cret\" }\n".to_owned(),
+        format!("token = {deep}"),
+    ];
+    let json_rows = [
+        "{\"token\": \"s3cret\", \"sessionDir\": }".to_owned(),
+        "{\"token\": \"s3cret\", \"sessionDir\": null}".to_owned(),
+        "{\"a\": [{\"sessionDir\": 12}], \"token\": \"s3cret\"}".to_owned(),
+        deep,
+    ];
+    let toml_cases = toml_rows
+        .iter()
+        .map(|row| set_by(CODEX_CONFIG, SymbolicRoot::CodexSqliteHome, row));
+    let json_cases = json_rows
+        .iter()
+        .map(|row| set_by(PI_SETTINGS, SymbolicRoot::PiSessionDir, row));
+
+    for found in toml_cases.chain(json_cases) {
+        assert_eq!(found.len(), 1, "one unknown root, found {found:?}");
+        let message = found[0].as_ref().unwrap_err();
+        assert!(!message.contains("s3cret"), "shows no value: {message}");
+    }
+}
+
+/// Catches the parsers' input reaching a panic through what a person left in a file: any
+/// input must end in a value, an unknown or nothing.
 #[test]
 fn the_setting_readers_survive_generated_input() {
     const PIECES: [&str; 14] = [

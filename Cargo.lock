@@ -522,7 +522,9 @@ dependencies = [
  "kipple-core",
  "libc",
  "rayon",
+ "serde_json",
  "tempfile",
+ "toml",
  "windows-sys",
 ]
 
