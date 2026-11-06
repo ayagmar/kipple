@@ -32,7 +32,7 @@ use kipple_core::{
     Policy, Proposal, Protection, Protections, Receipt, Recovery, RelPath, Rule, RuleId,
     RuleSettings, RuleText, ScanOutcome, ScanReport, Scope, Selection, Selector, Skip,
     SpaceEstimate, Stamp, Standing, StateDeclaration, StateRoot, Status, Stop, SymbolicRoot,
-    Tracked, Unjudged, Unresolved, Unsupported, apply, plan, reconcile,
+    Tracked, Unavailable, Unjudged, Unresolved, Unsupported, apply, plan, reconcile,
 };
 use kipple_core::{ApplyPorts, Depth, Reconciled, Recorders, RunRead, StoredRun, read_run};
 use kipple_core::{
@@ -272,6 +272,9 @@ const fn ports(world: &World) -> MutationPorts<'_> {
         executor: world,
         trash: world,
         tracked: world,
+        runner: &Unavailable,
+        locks: &Unavailable,
+        worktrees: &Unavailable,
     }
 }
 
@@ -310,6 +313,8 @@ fn rescanned(scan: &ScanReport) -> Rescanned {
     Rescanned {
         scan: scan.clone(),
         activity: None,
+        refuses: None,
+        log: None,
     }
 }
 
@@ -410,7 +415,7 @@ const fn skip_of(outcome: &ItemOutcome) -> Option<&Skip> {
 
 fn left(outcome: &ItemOutcome, reason: LeftReason) -> u64 {
     outcome
-        .effect()
+        .file_effect()
         .and_then(|effect| effect.left.0.get(&reason))
         .map_or(0, |left| left.count)
 }
@@ -1001,6 +1006,9 @@ fn a_cancel_during_reconciliation_leaves_the_item_pending() {
         executor: &world,
         trash: &world,
         tracked: &world,
+        runner: &Unavailable,
+        locks: &Unavailable,
+        worktrees: &Unavailable,
     };
     let mut journal = world.recorder();
     let run = stored(&world, &planned.plan);
@@ -1138,10 +1146,10 @@ fn refusals(planned: &Planned) -> Vec<(FindingId, Skip)> {
         .collect()
 }
 
-/// Catches a rule of a new operation reaching a plan before the card that owns it: a tool's
-/// command can't be planned as files, and a release waits for settle.
+/// Catches a new operation running before the card that owns it: a tool's command with
+/// no tool has nothing to build, and a release waits for settle.
 #[test]
-fn no_new_operation_can_be_planned_yet() {
+fn no_new_operation_can_run_yet() {
     let (item, target) = project(0, 100, TARGET);
     let world = world_of(&[(item.clone(), target)]);
     let config = Config::new();
@@ -1161,13 +1169,9 @@ fn no_new_operation_can_be_planned_yet() {
         }),
     );
     let commands = plan_all(&native, &config, &world, PlanMode::Review);
-    assert!(
-        matches!(
-            refusals(&commands).as_slice(),
-            [(FindingId(0), Skip::MethodNotOffered(_))]
-        ),
-        "expected a native item to be refused, got {:?}",
-        refusals(&commands)
+    assert_eq!(
+        refusals(&commands),
+        [(FindingId(0), Skip::ToolChanged(ToolGap::Missing))]
     );
 
     let release = scan_with(
@@ -2010,8 +2014,12 @@ fn check_reconciled(seed: u64, world: &World, case: &Case) {
     assert_eq!(state.order_problem(), None, "seed {seed}");
 }
 
+#[path = "apply/native.rs"]
+mod native;
 #[path = "apply/profile.rs"]
 mod profile;
+#[path = "apply/releases.rs"]
+mod releases;
 #[path = "apply/replan.rs"]
 mod replan;
 #[path = "apply/runs.rs"]

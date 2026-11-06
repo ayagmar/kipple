@@ -126,6 +126,8 @@ The core defines a closed enum of first-party native operations. Each variant st
 
 When a tool cannot enumerate targets up front, the review screen shows the plan as **semantic**: the command, its scope and a conservative estimate. It never shows a guessed file list. Third-party rule packs cannot reference native operations, `remove-verified-release` or `git-worktree-remove` in v1. First-party-only status comes from the capability table, not from an ID prefix.
 
+Status: planning, review and every refusal are built, and no native command runs yet. A plan item holds its command, tool and witness, and the plan's digest covers them. Review, in the TUI and at the command line's prompt, shows the command and its target, and says it cannot be undone. `--yes`, a profile and a plan file never carry one, and a plan file is refused rather than written without one unsaid. Anything git tracks inside the target holds the whole item, as does any entry revalidation dropped. A reviewed native item that passes every check is still refused at apply.
+
 ## 7. Journal and partial outcomes
 
 - The plan, with every item's frozen tree, is stored durably before anything runs. Then each item's intent is made durable before its first mutation, and its outcome is recorded after. One intent per item names every entry it may change, because it names the item's stored tree and what revalidation left of it; an intent per entry would add nothing but a sync per file (D-063).
@@ -141,6 +143,7 @@ When a tool cannot enumerate targets up front, the review screen shows the plan 
 
 - `SpaceEstimate` holds apparent bytes, allocated bytes (where the platform reports them), a unique-reclaim estimate (taking hard links into account) and a completeness flag.
 - Wording: "removed an estimated X of allocated storage". "Moved Y to Trash, still on disk" is reported separately.
+- A native command's result is reported apart from both: kipple enumerated nothing, so it measures the target before and after and says "freed about X", or "not measured" when either measurement was incomplete. It never counts toward what kipple removed.
 - An observed change in free space is shown separately, labelled as observed, and not attributed to kipple when other writes may have happened.
 - Network filesystems are unsupported for mutation in v0.1. They are reported, never touched.
 

@@ -1,8 +1,9 @@
 //! Git worktrees as an integration describes them (`docs/06-adapters-and-rules.md` §4).
 
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
+use crate::cancel::CancelToken;
 use crate::native::{ResolvedTool, ToolGap};
 use crate::probe::FileIdentity;
 use crate::tracked::GitGap;
@@ -110,4 +111,113 @@ pub struct WorktreeFacts {
     pub tool: Result<ResolvedTool, ToolGap>,
     /// Whose location it is in.
     pub agent: AgentLabel,
+}
+
+/// Where git places a worktree, as `rev-parse` printed it from there.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreePlace {
+    /// Its git directory: its admin directory when it is linked.
+    pub git_dir: PathBuf,
+    /// Its repository's common directory.
+    pub common_dir: PathBuf,
+    /// The top of its work tree.
+    pub top: PathBuf,
+}
+
+named! {
+    /// Which keys of a repository's config stopped kipple from asking git more. Only the
+    /// class is ever shown, because a value can hold a credential.
+    ConfigClass {
+        /// A clean, smudge or process filter, which `status` would run.
+        Filter = "filter",
+        /// A partial clone, whose rename detection would fetch.
+        PartialClone = "partial-clone",
+        /// `core.worktree`, which moves `status` onto another tree.
+        WorkTree = "work-tree",
+        /// A ref storage that moves per-worktree state out of the admin directory.
+        RefStorage = "ref-storage",
+    }
+}
+
+/// Whether a repository's config lets kipple ask git about a checkout.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigGate {
+    /// Nothing in it would run a program or move what is asked about.
+    Clear,
+    /// It holds a key of this class.
+    Blocked(ConfigClass),
+}
+
+/// What a worktree is, row by row, each proven on its own.
+///
+/// `git worktree remove` exits 0 and deletes what its own refusal doesn't cover, so its
+/// refusal proves nothing. Every row is a fact, and an `Err` is that fact unknown, which
+/// holds the worktree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorktreeState {
+    /// Where git places it.
+    pub place: Result<WorktreePlace, GitGap>,
+    /// How its registration and its checkout relate.
+    pub registration: Result<RegistrationState, GitGap>,
+    /// Whether it has a submodule, populated or not.
+    pub submodules: Result<bool, GitGap>,
+    /// Whether its config lets kipple ask further.
+    pub config_gate: Result<ConfigGate, GitGap>,
+    /// How many paths `status` lists as changed.
+    pub tracked_changes: Result<u64, GitGap>,
+    /// How many paths `status` lists as untracked.
+    pub untracked_files: Result<u64, GitGap>,
+    /// The ignored paths `status` prints, relative to the checkout. A scan decides whether
+    /// each is exactly a classified finding.
+    pub ignored: Result<Vec<PathBuf>, GitGap>,
+    /// How many paths `ls-files -v` tags as anything but plainly tracked: edits `status`
+    /// doesn't show.
+    pub hidden_changes: Result<u64, GitGap>,
+    /// Whether a rebase, bisect, cherry-pick, revert or merge is in progress.
+    pub operation_in_progress: Result<bool, GitGap>,
+    /// How many refs its admin directory holds.
+    pub per_worktree_refs: Result<u64, GitGap>,
+    /// Whether `index.lock` or `HEAD.lock` is in its admin directory.
+    pub index_locked: Result<bool, GitGap>,
+    /// Whether a local branch holds its HEAD.
+    pub head_reachable: Result<bool, GitGap>,
+    /// What apply compares.
+    pub witness: Result<WorktreeWitness, GitGap>,
+}
+
+impl WorktreeState {
+    /// A worktree of which nothing could be established, for `gap`.
+    #[must_use]
+    pub const fn unknown(gap: GitGap) -> Self {
+        Self {
+            place: Err(gap),
+            registration: Err(gap),
+            submodules: Err(gap),
+            config_gate: Err(gap),
+            tracked_changes: Err(gap),
+            untracked_files: Err(gap),
+            ignored: Err(gap),
+            hidden_changes: Err(gap),
+            operation_in_progress: Err(gap),
+            per_worktree_refs: Err(gap),
+            index_locked: Err(gap),
+            head_reachable: Err(gap),
+            witness: Err(gap),
+        }
+    }
+}
+
+/// Asks git about a repository's worktrees. Read-only: it runs git through the platform's
+/// runner, isolated as [`TrackedQuery`](crate::TrackedQuery) is, and never runs a program a
+/// repository's config names.
+pub trait WorktreeQuery: fmt::Debug + Send + Sync {
+    /// Every registration of the repository whose main worktree is `repository`, the main
+    /// one first.
+    ///
+    /// # Errors
+    /// When git couldn't answer in full: never "no worktrees".
+    fn list(&self, repository: &Path, cancel: &CancelToken) -> Result<Vec<Registration>, GitGap>;
+
+    /// What the worktree `registration` names is now.
+    fn inspect(&self, registration: &Registration, cancel: &CancelToken) -> WorktreeState;
 }

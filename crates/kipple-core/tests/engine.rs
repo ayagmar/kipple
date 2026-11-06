@@ -15,16 +15,16 @@ use kipple_core::{
     Activity, ActivityGap, Advice, AgentLabel, Allocated, Anchor, Apparent, Bounds, CancelToken,
     Category, Checkout, Claim, Clause, Clock, Completeness, Consequence, Cost, DirEntryMeta,
     Engine, EngineError, EntryKind, EntryMeta, EventChannel, EventRx, Evidence, FactKind, FactSpec,
-    FactState, FactValue, Facts, FileIdentity, FindingSink, FrozenTree, FsProbe, GitGap, GroupKey,
-    Hold, Integration, IntegrationDescriptor, IntegrationError, IntegrationId, Inventory, Lens,
-    Level, Lineage, Measurement, Method, Modified, Name, NativeKind, NodeId, Observer, Omission,
-    OpenedRoot, Operation, OwnerStatus, Platform, Policy, Ports, Predicate, ProbeError,
+    FactState, FactValue, Facts, FileIdentity, Finding, FindingSink, FrozenTree, FsProbe, GitGap,
+    GroupKey, Hold, Integration, IntegrationDescriptor, IntegrationError, IntegrationId, Inventory,
+    Lens, Level, Lineage, Measurement, Method, Modified, Name, NativeKind, NodeId, Now, Observer,
+    Omission, OpenedRoot, Operation, OwnerStatus, Platform, Policy, Ports, Predicate, ProbeError,
     ProcessOutcome, ProcessProbe, ProcessRecord, ProcessSnapshot, Proposal, Recovery, Registration,
     RegistrationState, ReleaseFacts, ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion,
-    RepositoryDir, ResolvedRoot, Retention, RootLink, RootSource, Roots, Rule, RuleId, RuleText,
-    ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Selector, Settlement, Sizer,
-    SpaceEstimate, Subject, Supplied, SymbolicRoot, Test, ToolGap, Tracked, TrackedQuery,
-    UnresolvedRoot, Verdict, WalkGap, WorktreeFacts, event_channel,
+    RepositoryDir, Rescan as _, ResolvedRoot, Retention, RootLink, RootSource, Roots, Rule, RuleId,
+    RuleText, ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Selector,
+    SemanticFacts, Settlement, Sizer, Skip, SpaceEstimate, Subject, Supplied, SymbolicRoot, Test,
+    ToolGap, Tracked, TrackedQuery, UnresolvedRoot, Verdict, WalkGap, WorktreeFacts, event_channel,
 };
 
 /// Ten times the 100 ms cancellation budget: long enough not to flake on a loaded CI
@@ -208,6 +208,8 @@ fn ports(fs: FakeFs, sizer: FakeSizer) -> Ports {
         processes: Box::new(no_processes()),
         clock: Box::new(FixedClock),
         tracked: Box::new(FakeGit(Err(GitGap::Unsupported))),
+        tools: Box::new(kipple_core::Unavailable),
+        worktrees: Box::new(kipple_core::Unavailable),
     }
 }
 
@@ -2024,6 +2026,190 @@ fn a_worktree_stops_counting_only_its_own_git() {
             Tracked::HoldsRepository { .. }
         ),
         "any integration but git keeps the protection"
+    );
+}
+
+/// [`Subjected`]'s finding, read again at apply as `read` says.
+#[derive(Debug)]
+struct Revisiting {
+    subjected: Subjected,
+    read: Reading,
+}
+
+/// What an integration reads again at apply.
+type Reading = fn() -> Result<Option<Supplied>, IntegrationError>;
+
+impl Integration for Revisiting {
+    fn descriptor(&self) -> IntegrationDescriptor {
+        self.subjected.descriptor()
+    }
+
+    fn discover(
+        &self,
+        cx: &ScanContext<'_>,
+        sink: &mut FindingSink<'_>,
+    ) -> Result<(), IntegrationError> {
+        self.subjected.discover(cx, sink)
+    }
+
+    fn revisit(
+        &self,
+        _: &ScanContext<'_>,
+        _: &Finding,
+    ) -> Result<Option<Supplied>, IntegrationError> {
+        (self.read)()
+    }
+}
+
+const fn subjected(subject: Subject) -> Subjected {
+    Subjected {
+        id: "git",
+        path: "/found/item",
+        operation: Operation::Report,
+        subject,
+    }
+}
+
+/// What `engine` says its only finding rests on now, twice over one apply's rescan.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a fixture that fails to build fails the test"
+)]
+fn now_of(engine: &Engine, times: usize) -> Vec<Result<Now, Skip>> {
+    let request = found();
+    let report = run(engine, &request);
+    let finding = report.findings.first().unwrap();
+    let rescan = engine.rescan(&request);
+    (0..times)
+        .map(|_| rescan.now(&report, finding, &CancelToken::new()))
+        .collect()
+}
+
+fn subjects() -> [Subject; 3] {
+    [
+        Subject::Release(ReleaseFacts {
+            group: ReleaseGroup {
+                component: "cli".to_owned(),
+                target: "any".to_owned(),
+            },
+            version: ReleaseVersion("1.0.0".to_owned()),
+            role: ReleaseRole::Installed,
+            files: Vec::new(),
+            locks: Vec::new(),
+            state: ReleaseState::Sound,
+        }),
+        worktree("/found/item"),
+        Subject::Semantic(SemanticFacts {
+            kind: NativeKind::NpmCacheClean,
+            tool: Err(ToolGap::Missing),
+        }),
+    ]
+}
+
+/// Catches a forgotten override passing mid-run on the facts the apply scan read before
+/// the item's lock (pinned 13). A plain finding has nothing to read again.
+#[test]
+fn revisit_default_is_refused_for_release_worktree_and_semantic() {
+    let fs = || FakeFs {
+        no_git: true,
+        ..FakeFs::default()
+    };
+    for subject in subjects() {
+        let engine = subjected(subject).engine(ports(fs(), FakeSizer::default()));
+        let refused = now_of(&engine, 1).remove(0).map(|_| ());
+        assert_eq!(refused, Err(Skip::RevisitMissing));
+    }
+
+    let engine = subjected(Subject::Plain).engine(ports(fs(), FakeSizer::default()));
+    assert!(
+        now_of(&engine, 1).remove(0).is_ok(),
+        "expected a plain finding's facts to stand"
+    );
+}
+
+/// Catches a reading that failed or crashed taken for one that found nothing changed: the
+/// set of items only shrinks (pinned 13).
+#[test]
+fn a_revisit_that_fails_holds_the_item() {
+    let fails: [Reading; 2] = [
+        || Err(IntegrationError::Stopped),
+        || panic!("a bug in an integration"),
+    ];
+    for read in fails {
+        let revisiting = Revisiting {
+            subjected: subjected(Subject::Plain),
+            read,
+        };
+        let rule = revisiting.subjected.rule();
+        let fs = FakeFs {
+            no_git: true,
+            ..FakeFs::default()
+        };
+        let ports = ports(fs, FakeSizer::default());
+        let engine = Engine::new(ports, vec![Box::new(revisiting)], vec![rule]).unwrap();
+
+        let held = now_of(&engine, 1).remove(0).map(|_| ());
+
+        assert_eq!(held, Err(Skip::Protected(vec![Hold::FactUnknown])));
+    }
+}
+
+/// How many process snapshots a host was asked for.
+#[derive(Debug, Default)]
+struct Counted(Arc<AtomicUsize>);
+
+impl ProcessProbe for Counted {
+    fn snapshot(&self) -> Result<ProcessSnapshot, ProbeError> {
+        self.0.fetch_add(1, Ordering::SeqCst);
+        no_processes().snapshot()
+    }
+}
+
+/// Catches an item that isn't plain judged by a snapshot from before its lock, and a
+/// plain one paying for a snapshot per item (pinned 13). Half of
+/// `native_snapshot_is_taken_after_the_locks`, whose other half is apply's order.
+#[test]
+fn a_finding_that_is_not_plain_takes_a_new_snapshot_and_a_plain_one_a_recent_one() {
+    let snapshots = |subject, read| {
+        let taken = Arc::new(AtomicUsize::new(0));
+        let revisiting = Revisiting {
+            subjected: subjected(subject),
+            read,
+        };
+        let rule = revisiting.subjected.rule();
+        let fs = FakeFs {
+            no_git: true,
+            ..FakeFs::default()
+        };
+        let ports = Ports {
+            processes: Box::new(Counted(Arc::clone(&taken))),
+            ..ports(fs, FakeSizer::default())
+        };
+        let engine = Engine::new(ports, vec![Box::new(revisiting)], vec![rule]).unwrap();
+        let now = now_of(&engine, 2);
+        assert!(
+            now.iter().all(Result::is_ok),
+            "expected both to read: {now:?}"
+        );
+        taken.load(Ordering::SeqCst)
+    };
+    let the_scans_own = 1;
+
+    let again = || {
+        Ok(Some(Supplied {
+            subject: worktree("/found/item"),
+            ..Supplied::default()
+        }))
+    };
+    assert_eq!(
+        snapshots(worktree("/found/item"), again),
+        the_scans_own + 2,
+        "one per item"
+    );
+    assert_eq!(
+        snapshots(Subject::Plain, || Ok(None)),
+        the_scans_own + 1,
+        "one shared while it is recent"
     );
 }
 

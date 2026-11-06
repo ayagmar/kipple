@@ -139,7 +139,8 @@ pub struct ReplanRequest<'file> {
     /// A fresh scan of the roots the current config resolves.
     pub scan: &'file ScanReport,
     /// [`PlanMode::SafeOnly`] for `apply --yes`, [`PlanMode::Safe`] for a person who
-    /// reviews the summary. Review items drop either way.
+    /// reviews the summary. Review items drop either way, and so does an item whose rule
+    /// now runs a tool's own command: a file never authorizes one.
     pub mode: PlanMode,
 }
 
@@ -308,10 +309,13 @@ fn narrow(entry: &mut PlanEntry, items: &[(usize, &ImportedItem)]) -> Result<(),
         if anchor.root != item.root || anchor.relative != item.relative {
             return Err(Dropped::RootChanged);
         }
-        if entry.method() != item.method {
+        let Some(method) = entry.file_method() else {
+            return Err(Dropped::Refused(Skip::SemanticNotReviewed));
+        };
+        if method != item.method {
             return Err(Dropped::MethodWidened {
                 file: item.method,
-                now: entry.method(),
+                now: method,
             });
         }
         let outside = outside(entry.tree(), &item.tree);

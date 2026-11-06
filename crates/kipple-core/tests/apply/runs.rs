@@ -8,10 +8,11 @@ use std::sync::Arc;
 
 use kipple_core::format::{decode_line, encode_line, encode_stored_plan};
 use kipple_core::{
-    ApplyError, ApplyPorts, CancelToken, CleanRequest, Component, Consent, Depth, Digest, Effect,
-    Ending, ErrorCode, Finished, Found, Intent, ItemId, ItemOutcome, Method, OsError, OsErrorKind,
+    Allocated, ApplyError, ApplyPorts, CancelToken, Cause, CleanRequest, Component, Consent, Depth,
+    Digest, Effect, Ending, ErrorCode, FileEffect, Finished, Found, Intent, ItemId, ItemMethod,
+    ItemOutcome, LockGap, Measured, Method, NativeEffect, NativeEnd, OsError, OsErrorKind,
     PlanMode, Receipt, Record, RestoreResult, RunId, RunRead, RunState, Session, Skip, Stop,
-    TrashSlot, Trashed, Unreadable, history, read_run, run_clean, run_reconcile,
+    ToolGap, TrashSlot, Trashed, Unreadable, history, read_run, run_clean, run_reconcile,
 };
 
 use super::codec::TestCodec;
@@ -62,6 +63,8 @@ fn reconcile_all(world: &World, config: &Config) -> Ending {
     let rescan = Rescanned {
         scan: scan_of(&[]),
         activity: None,
+        refuses: None,
+        log: None,
     };
     let session = Session {
         judge: config.judge(),
@@ -166,7 +169,7 @@ fn removed_by_item(receipt: &Receipt) -> Vec<u64> {
         .iter()
         .map(|item| {
             item.outcome
-                .effect()
+                .file_effect()
                 .map_or(0, |effect| effect.removed.names)
         })
         .collect()
@@ -372,7 +375,7 @@ fn records_out_of_order_make_the_run_unreadable() {
         Record::Intent(Intent {
             plan,
             item: ItemId(0),
-            method: Method::Delete,
+            method: ItemMethod::Delete,
             reviewed: Digest(1),
             authorized: Digest(1),
             entries: 1,
@@ -410,7 +413,7 @@ fn history_says_running_only_while_the_lock_is_held() {
     let intent = Record::Intent(Intent {
         plan: Digest(0),
         item: ItemId(0),
-        method: Method::Delete,
+        method: ItemMethod::Delete,
         reviewed: Digest(0),
         authorized: Digest(0),
         entries: 1,
@@ -447,31 +450,67 @@ fn history_says_running_only_while_the_lock_is_held() {
     }
 }
 
+/// The records of a native item's run: exit code and signal, never its output.
+fn native_records() -> Vec<Record> {
+    let end = NativeEnd {
+        exit: Some(1),
+        signal: None,
+    };
+    let native = Effect::Native(NativeEffect {
+        exit: end,
+        reclaimed: Measured::Bytes {
+            before: Allocated(4096),
+            after: Allocated(0),
+        },
+    });
+    [
+        ItemOutcome::Failed {
+            error: ApplyError::native(ErrorCode::NativeFailed, end),
+            effect: Some(native.clone()),
+        },
+        ItemOutcome::Failed {
+            error: ApplyError::new(ErrorCode::NativeFailed),
+            effect: None,
+        },
+        ItemOutcome::Done(native),
+        ItemOutcome::Skipped(Skip::InstallerBusy(LockGap::Held)),
+        ItemOutcome::Skipped(Skip::ToolChanged(ToolGap::Changed)),
+    ]
+    .into_iter()
+    .map(|outcome| Record::Outcome {
+        item: ItemId(1),
+        outcome,
+    })
+    .collect()
+}
+
 /// Every kind of record, each error with an OS message and a path in it.
 fn every_record() -> Vec<Record> {
     let error = ApplyError {
         code: ErrorCode::Io,
-        os: Some(OsError {
-            kind: OsErrorKind::PermissionDenied,
-            code: Some(13),
+        cause: Some(Cause::Os {
+            os: Some(OsError {
+                kind: OsErrorKind::PermissionDenied,
+                code: Some(13),
+            }),
+            below: Some(super::rel("debug/app")),
         }),
-        at: Some(super::rel("debug/app")),
         detail: Some(Arc::new(io::Error::other("SECRET free text"))),
     };
     let slot = TrashSlot {
         trash: super::world::trash_dir(),
         name: Component::new("item-0").unwrap(),
     };
-    let trashed = Effect {
+    let trashed = Effect::Files(FileEffect {
         trashed: Some(Trashed { slot: slot.clone() }),
-        ..Effect::default()
-    };
+        ..FileEffect::default()
+    });
     vec![
         Record::Plan { digest: Digest(1) },
         Record::Intent(Intent {
             plan: Digest(1),
             item: ItemId(0),
-            method: Method::Trash,
+            method: ItemMethod::Trash,
             reviewed: Digest(2),
             authorized: Digest(3),
             entries: 4,
@@ -485,7 +524,7 @@ fn every_record() -> Vec<Record> {
             item: ItemId(1),
             outcome: ItemOutcome::Failed {
                 error: error.clone(),
-                effect: Effect::default(),
+                effect: Some(Effect::Files(FileEffect::default())),
             },
         },
         Record::Outcome {
@@ -529,8 +568,11 @@ const STRUCTURED: &[&str] = &[
     "skip",
     "found",
     "code",
-    "os_kind",
-    "at",
+    "kind",
+    "below",
+    "from",
+    "ran",
+    "measured",
     "name",
     "path",
     "result",
@@ -601,7 +643,7 @@ fn stored_records_hold_no_free_text() {
     let header = encode_stored_plan(&planned.plan, &TestCodec).unwrap();
     let header = &header[..=header.iter().position(|byte| *byte == b'\n').unwrap()];
     let mut lines = vec![header.to_vec(), super::profile::stored_with_a_note()];
-    for record in every_record() {
+    for record in every_record().into_iter().chain(native_records()) {
         let line = encode_line(&record, &TestCodec);
         assert_eq!(
             decode_line(&line[..line.len() - 1], &TestCodec).as_ref(),
@@ -628,6 +670,45 @@ fn stored_records_hold_no_free_text() {
             "keys holding text that isn't structured"
         );
     }
+}
+
+/// Catches a stored run of an earlier development build half-read, or counted as removing
+/// anything (pinned 25; 04 §7): the plan decodes whole in the current shape or is refused,
+/// and the next run isn't blocked by it.
+#[test]
+fn run_of_an_earlier_shape_is_unreadable_and_counts_nothing() {
+    let (item, target) = project(0, 100, &["a"]);
+    let world = world_of(&[(item.clone(), target)]);
+    let scan = scan_of(&[item]);
+    clean(
+        &world,
+        &Config::new(),
+        &scan,
+        &rescanned(&scan),
+        &CancelToken::new(),
+    );
+    let id = world.state().runs.keys().next().unwrap().clone();
+    let stored = world.state().runs[&id].plan.clone().unwrap();
+    let end = stored.iter().position(|byte| *byte == b'\n').unwrap();
+    let header = std::str::from_utf8(&stored[..end]).unwrap();
+    let earlier = header
+        .rsplit_once(r#","digest":""#)
+        .unwrap()
+        .0
+        .replace(r#""execution":{"method":"delete"}"#, r#""method":"delete""#);
+    let digest = Digest::of_bytes(earlier.as_bytes());
+    let mut signed = format!(r#"{earlier},"digest":"{digest}"}}"#).into_bytes();
+    signed.extend_from_slice(&stored[end..]);
+    world.state().runs.get_mut(&id).unwrap().plan = Some(signed);
+
+    let read = read_run(&world, &id, Depth::Headers, &TestCodec);
+    assert!(
+        matches!(read, RunRead::Unreadable(_, Unreadable::Plan(_))),
+        "an earlier shape is refused, never half-read: {read:?}"
+    );
+    let summaries = history(&world, kipple_core::LockState::Free, &TestCodec).unwrap();
+    assert_eq!(summaries[0].state, RunState::Unreadable);
+    assert_eq!(summaries[0].receipt.totals().removed.names, 0);
 }
 
 /// Catches a run stored without its plan claiming items, or a record a crash kept from

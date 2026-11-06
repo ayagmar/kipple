@@ -7,10 +7,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use kipple_core::{CancelToken, Component, FileIdentity, GitGap, NativeTool, ToolVersion};
+use kipple_core::{
+    CancelToken, Component, FileIdentity, GIT_ISOLATION, GitGap, NativeTool, ToolVersion,
+};
 
 use crate::capabilities;
 use crate::environment::Environment;
+use crate::native::{git_isolation, rendered};
 use crate::os;
 use crate::runner::{self, Invocation, Output, Var};
 
@@ -23,14 +26,6 @@ pub(super) const OUTPUT_LIMIT: u64 = 64 * 1024 * 1024;
 /// The first git with `GIT_CONFIG_GLOBAL`, without which the user's global config can't
 /// be left out.
 const OLDEST: [u64; 2] = [2, 32];
-
-/// A file that is always empty and that no one can replace: the global config, the
-/// hooks directory and, on Linux and macOS, the XDG config directory all point here, so
-/// git finds nothing in them.
-#[cfg(unix)]
-const NULL_DEVICE: &str = "/dev/null";
-#[cfg(windows)]
-const NULL_DEVICE: &str = "NUL";
 
 /// The git kipple runs: an absolute path from `PATH`, and the file it was when its version
 /// was checked.
@@ -117,26 +112,26 @@ impl Git {
         if identity(&self.path) != Some(self.identity) {
             return Err(GitGap::Failed);
         }
-        let hooks = format!("core.hooksPath={NULL_DEVICE}");
-        let mut args = vec![OsStr::new("-C"), dir.as_os_str(), OsStr::new("--no-pager")];
+        let isolation_args = rendered(GIT_ISOLATION, None).ok_or(GitGap::Failed)?;
+        let mut args = vec![OsStr::new("-C"), dir.as_os_str()];
+        let mut vars = git_isolation();
         if matching == Matching::Exact {
             args.push(OsStr::new("--literal-pathspecs"));
+            vars.push(Var {
+                name: "GIT_LITERAL_PATHSPECS",
+                value: OsStr::new("1"),
+            });
         }
-        args.extend([
-            OsStr::new("-c"),
-            OsStr::new("core.fsmonitor=false"),
-            OsStr::new("-c"),
-            OsStr::new(&hooks),
-            OsStr::new("--no-optional-locks"),
-        ]);
+        args.extend(isolation_args.iter().map(OsString::as_os_str));
         args.extend(tail);
         let invocation = Invocation {
             program: &self.path,
             args: &args,
-            vars: &isolation(matching),
+            vars: &vars,
             deadline: DEADLINE,
             limit: OUTPUT_LIMIT,
             cancel: Some(cancel),
+            dir: None,
         };
         let output = runner::invoke(&invocation, &self.env).map_err(|_| GitGap::Failed)?;
         if !output.status.success() {
@@ -147,29 +142,6 @@ impl Git {
         }
         Ok(output)
     }
-}
-
-/// The variables git gets beside the runner's: no system or global config, no XDG config
-/// directory, no optional locks, no pager, and literal pathspecs where they are exact.
-fn isolation(matching: Matching) -> Vec<Var<'static>> {
-    let var = |name, value| Var {
-        name,
-        value: OsStr::new(value),
-    };
-    let mut vars = vec![
-        var("GIT_CONFIG_NOSYSTEM", "1"),
-        var("GIT_CONFIG_GLOBAL", NULL_DEVICE),
-        var("GIT_OPTIONAL_LOCKS", "0"),
-        var("GIT_PAGER", "cat"),
-    ];
-    // Windows has no directory that can't hold a file: its XDG directory stays unset, as
-    // `HOME` is, so git looks for none.
-    #[cfg(unix)]
-    vars.push(var("XDG_CONFIG_HOME", NULL_DEVICE));
-    if matching == Matching::Exact {
-        vars.push(var("GIT_LITERAL_PATHSPECS", "1"));
-    }
-    vars
 }
 
 /// One pathspec, and how git is to match it.

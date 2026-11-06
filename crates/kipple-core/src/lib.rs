@@ -105,6 +105,7 @@ mod run;
 mod session;
 mod size;
 mod store;
+mod store_lock;
 mod suggest;
 mod supplied;
 mod tracked;
@@ -115,13 +116,15 @@ pub use activity::{ProcessCensus, census};
 pub use apply::{
     ApplyPorts, ApplyRequest, ItemEvent, ItemSink, Reconciled, Recorders, apply, reconcile,
 };
-pub use authorize::{Authorization, Authorized, AuthorizedOp, DeleteOp, ReviewedPlan, TrashOp};
+pub use authorize::{
+    Authorization, Authorized, AuthorizedOp, DeleteOp, NativeOp, ReviewedPlan, TrashOp,
+};
 pub use cancel::{CancelToken, Waited};
 pub use capability::{NativeTool, ToolError, ToolStatus, ToolVersion};
 pub use digest::Digest;
 pub use discovery::{RepositoryDir, WalkStop};
 pub use engine::{
-    Engine, EngineError, EngineRescan, FRESH, Finding, FindingId, IntegrationReport, Omission,
+    Engine, EngineError, EngineRescan, FRESH, Finding, FindingId, IntegrationReport, Now, Omission,
     OpenedRoot, Ports, Rescan, ScanOutcome, ScanReport, ScanRequest,
 };
 pub use event::{EventChannel, EventRx, EventTx, ScanEvent, Sequenced, event_channel};
@@ -139,15 +142,19 @@ pub use journal::{Intent, Journal, Record, RestoreResult};
 pub use mutation::{
     EffectSink, Executor, FileSystemClass, Finish, Freeze, Freezer, LocalFileSystem, Unsupported,
 };
-pub use native::{NativeKind, ResolvedTool, SemanticFacts, ToolFile, ToolGap};
+pub use native::{
+    GIT_ISOLATION, NativeArg, NativeCommand, NativeEnd, NativeExit, NativeKind, NativeRunner,
+    NativeSpec, NativeStatus, Postcondition, ResolvedTool, SemanticFacts, ToolFile, ToolGap,
+    ToolResolver, Unavailable,
+};
 pub use outcome::{
-    ApplyError, Effect, ErrorCode, Found, Freed, ItemOutcome, Left, LeftCount, LeftReason, OsError,
-    OsErrorKind, Receipt, ReceiptItem, Removed, SAMPLE, Skip, Status, Stop, Tally, Totals, Trashed,
-    TrashedTotal,
+    ApplyError, Cause, Effect, ErrorCode, FileEffect, Found, Freed, ItemOutcome, Left, LeftCount,
+    LeftReason, Measured, NativeEffect, NativeTotal, OsError, OsErrorKind, Receipt, ReceiptItem,
+    Removed, SAMPLE, Skip, Status, Stop, Tally, Totals, Trashed, TrashedTotal,
 };
 pub use plan::{
-    Anchor, ItemId, Judgement, JudgementField, MethodChoice, MethodRefusal, Plan, PlanEntry,
-    Selection, Standing, Total, VerifiedRoot,
+    Anchor, Execution, ItemId, ItemMethod, Judgement, JudgementField, MethodChoice, MethodRefusal,
+    Plan, PlanEntry, Removal, Selection, Standing, Total, VerifiedRoot,
 };
 pub use planner::{
     Conflict, ConflictKind, Judge, Merged, Methods, MutationPorts, PlanMode, PlanRequest, Planned,
@@ -196,10 +203,12 @@ pub use size::{Allocated, Apparent, Completeness, Measurement, SpaceEstimate};
 pub use store::{
     HEADER_LIMIT, JOURNAL_LIMIT, LOCK_WAIT, LockState, Locked, RunId, RunStore, StoreRefusal,
 };
+pub use store_lock::{HeldLocks, LockGap, StoreLocks};
 pub use suggest::{Suggestion, is_within, suggest};
 pub use supplied::{AdviceId, Claim, FactValue, Subject, Supplied};
 pub use tracked::{GitGap, TrackedQuery};
 pub use trash::{Forgotten, RestoreRequest, SlotState, TrashBackend, TrashDir, TrashSlot};
 pub use worktree::{
-    AgentLabel, Checkout, ObjectId, Registration, RegistrationState, WorktreeFacts, WorktreeWitness,
+    AgentLabel, Checkout, ConfigClass, ConfigGate, ObjectId, Registration, RegistrationState,
+    WorktreeFacts, WorktreePlace, WorktreeQuery, WorktreeState, WorktreeWitness,
 };

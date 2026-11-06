@@ -334,7 +334,10 @@ mod unix {
         let refused = refused_move(&site, &op);
 
         assert_eq!(refused.code, ErrorCode::TargetChanged, "{refused:?}");
-        assert_eq!(refused.at, Some(RelPath::of(Path::new("sub/b")).unwrap()));
+        assert_eq!(
+            refused.below(),
+            Some(&RelPath::of(Path::new("sub/b")).unwrap())
+        );
     }
 
     /// Catches a move of an item that gained an entry after its freeze: its directory

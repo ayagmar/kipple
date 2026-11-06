@@ -168,6 +168,24 @@ pub trait FsProbe: fmt::Debug + Send + Sync {
     fn access(&self, dir: &Path) -> Result<DirAccess, ProbeError> {
         Err(ProbeError::io(dir, io::ErrorKind::Unsupported.into()))
     }
+
+    /// Where the link at `path` points, exactly as it is stored. Nothing is followed.
+    ///
+    /// # Errors
+    /// When it isn't a link or can't be read.
+    fn read_link(&self, path: &Path) -> Result<PathBuf, ProbeError> {
+        Err(ProbeError::io(path, io::ErrorKind::Unsupported.into()))
+    }
+
+    /// What the OS says of the link at `path` itself, as
+    /// `<st_dev> <st_ino> <ctime_sec>.<ctime_nsec>`: a tool that records this can tell a
+    /// file written for this link from one written for another.
+    ///
+    /// # Errors
+    /// When it isn't a link, can't be read, or the OS has no such stamp.
+    fn link_stamp(&self, path: &Path) -> Result<String, ProbeError> {
+        Err(ProbeError::io(path, io::ErrorKind::Unsupported.into()))
+    }
 }
 
 /// Measures what removing an item would free.

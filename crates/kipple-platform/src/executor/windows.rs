@@ -698,7 +698,7 @@ fn listed(buf: &[u8], names: &mut Vec<OsString>) -> io::Result<()> {
 }
 
 /// Whether opening a directory failed because the name isn't one.
-pub(super) fn is_link_or_file(error: &io::Error) -> bool {
+pub(crate) fn is_link_or_file(error: &io::Error) -> bool {
     error.raw_os_error() == Some(ERROR_DIRECTORY.cast_signed())
 }
 

@@ -373,6 +373,8 @@ impl Host {
             })),
             clock: Box::new(Epoch),
             tracked: Box::new(NoGit),
+            tools: Box::new(kipple_core::Unavailable),
+            worktrees: Box::new(kipple_core::Unavailable),
         };
         Engine::new(ports, vec![Box::new(artifact)], vec![rule()]).unwrap()
     }
@@ -1802,7 +1804,9 @@ fn a_rescan_judges_a_finding_by_the_evidence_it_chose() {
     let request = host.request();
 
     let finding = report.findings.first();
-    let activity = finding.map(|finding| engine.rescan(&request).activity(&report, finding));
+    let cancel = CancelToken::new();
+    let now = finding.map(|finding| engine.rescan(&request).now(&report, finding, &cancel));
+    let activity = now.and_then(Result::ok).map(|now| now.activity);
 
     assert_eq!(
         activity.as_ref().and_then(seen),

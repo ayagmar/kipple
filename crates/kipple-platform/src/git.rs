@@ -26,6 +26,7 @@
 
 mod command;
 mod place;
+mod worktree;
 
 use std::fs;
 use std::io;

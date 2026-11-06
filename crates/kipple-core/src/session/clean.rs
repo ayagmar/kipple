@@ -70,7 +70,8 @@ impl Consent<'_> {
     const fn mode(&self) -> PlanMode {
         match self {
             Self::Yes => PlanMode::SafeOnly,
-            Self::Ask(_) | Self::Profile(_) => PlanMode::Safe,
+            Self::Ask(_) => PlanMode::Safe,
+            Self::Profile(_) => PlanMode::SafeFiles,
         }
     }
 

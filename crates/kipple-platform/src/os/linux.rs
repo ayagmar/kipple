@@ -18,9 +18,12 @@ use kipple_core::{
     UnresolvedRoot,
 };
 
+/// Where an open directory can be named, however its ancestors have moved.
+pub(crate) const FD_DIR: Option<&str> = Some("/proc/self/fd");
+
 pub(crate) use super::unix::{
     INHERITED_VARS, KIPPLE_DIRS, allocated, device, dir_access, env_name_matches, hard_link,
-    identity, is_executable, physical, raw_bytes,
+    identity, is_executable, link_stamp, physical, raw_bytes, working_dir,
 };
 use super::unix::{env_paths, identity_of, nul_separated, owner, path_args, unread, xdg_roots};
 use crate::environment::Environment;

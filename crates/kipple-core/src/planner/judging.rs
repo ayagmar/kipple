@@ -9,12 +9,17 @@ use super::{Judge, Unjudged};
 use crate::engine::{Finding, ScanReport};
 use crate::frozen::RelPath;
 use crate::integration::IntegrationId;
+use crate::native::{NativeCommand, NativeKind, NativeSpec};
 use crate::outcome::Skip;
-use crate::plan::{Anchor, Judgement, JudgementField, VerifiedRoot};
-use crate::policy::{Facts, Lineage, Proposal, Verdict, starts_with};
+use crate::plan::{
+    Anchor, Execution, ItemMethod, Judgement, JudgementField, Removal, VerifiedRoot,
+};
+use crate::policy::{Facts, Hold, Lineage, Proposal, Verdict, starts_with};
 use crate::probe::FileIdentity;
 use crate::protect::Protection;
-use crate::rule::{Method, RuleId};
+use crate::rule::RuleId;
+use crate::supplied::Subject;
+use crate::tracked::OwnGit;
 
 /// A scan with every finding's verdict, indexed for the checks that look past one
 /// finding.
@@ -98,6 +103,8 @@ pub(crate) struct Judged<'scan> {
     pub(crate) proposal: Proposal,
     /// What it is judged under, with its method.
     pub(crate) judgement: Judgement,
+    /// How it is to run.
+    pub(crate) execution: Execution,
     /// Where it is.
     pub(crate) anchor: Anchor,
     /// Its own identity.
@@ -105,9 +112,18 @@ pub(crate) struct Judged<'scan> {
 }
 
 impl Judged<'_> {
-    /// How it is to be removed.
-    pub(crate) const fn method(&self) -> Method {
+    /// How it is to run.
+    pub(crate) const fn method(&self) -> ItemMethod {
         self.judgement.method
+    }
+
+    /// Whether its own top-level `.git` stands for a repository inside it.
+    pub(crate) fn own_git(&self) -> OwnGit {
+        OwnGit::of(
+            &self.proposal,
+            &self.facts.supplied.subject,
+            self.facts.integration,
+        )
     }
 }
 
@@ -164,8 +180,9 @@ impl<'scan> Scene<'scan> {
     ///
     /// In order: it must have been measured; the host must not protect it; it must not
     /// be Protected, nor any other finding at it or inside it; its rule must still exist
-    /// and be first-party; the method chosen must be one its rule offers; and its root,
-    /// its own identity and its directory's must be known.
+    /// and be first-party; the method chosen must be one its rule offers; its root, its
+    /// own identity and its directory's must be known; and a native item's command must
+    /// be one its subject can build.
     pub(crate) fn judge(&self, index: usize, judge: &Judge<'_>) -> Result<Judged<'scan>, Skip> {
         let finding = self
             .scan
@@ -194,16 +211,24 @@ impl<'scan> Scene<'scan> {
             return Err(Skip::NotGranted);
         }
         let choice = judge.methods.choice(&rule.id);
-        let method = choice
+        let removal = choice
             .for_proposal(&facts.proposal)
             .map_err(|_| Skip::MethodNotOffered(choice.resolve()))?;
         let (anchor, own_identity) = self.anchor(finding, facts)?;
+        let execution = match removal {
+            Removal::Files(method) => Execution::Files(method),
+            Removal::Native(kind) => {
+                let subject = &facts.supplied.subject;
+                Execution::Native(Box::new(native_spec(kind, subject, &anchor)?))
+            }
+        };
         Ok(Judged {
             finding,
             facts,
             verdict: self.standing(own, finding, facts),
             proposal: facts.proposal.clone(),
-            judgement: Judgement::new(judge.policy, rule, facts, method),
+            judgement: Judgement::new(judge.policy, rule, facts, execution.method()),
+            execution,
             anchor,
             own: own_identity,
         })
@@ -291,5 +316,46 @@ impl<'scan> Scene<'scan> {
             parent,
         };
         Ok((anchor, own))
+    }
+}
+
+/// The command for `kind` on the item at `anchor`, from what its integration read. Only
+/// here is one built, and only from its subject: an `Err` in its tool or witness leaves
+/// nothing to build, which holds the item.
+fn native_spec(kind: NativeKind, subject: &Subject, anchor: &Anchor) -> Result<NativeSpec, Skip> {
+    let (command, tool) = match (kind, subject) {
+        (NativeKind::NpmCacheClean, Subject::Semantic(facts)) if facts.kind == kind => {
+            let tool = facts.tool.clone().map_err(Skip::ToolChanged)?;
+            let cache = cache_root(anchor)?;
+            (NativeCommand::NpmCacheClean { cache }, tool)
+        }
+        (NativeKind::GitWorktreeRemove, Subject::Worktree(facts)) => {
+            let tool = facts.tool.clone().map_err(Skip::ToolChanged)?;
+            let witness = facts.witness.clone().map_err(Skip::Git)?;
+            let checkout = anchor.clone();
+            (NativeCommand::GitWorktreeRemove { checkout, witness }, tool)
+        }
+        (
+            NativeKind::NpmCacheClean | NativeKind::GitWorktreeRemove,
+            Subject::Plain | Subject::Release(_) | Subject::Semantic(_) | Subject::Worktree(_),
+        ) => return Err(Skip::Protected(vec![Hold::SubjectMismatch])),
+    };
+    Ok(NativeSpec {
+        command,
+        tool,
+        scope: anchor.clone(),
+    })
+}
+
+/// The cache root npm is pointed at: the root holding the store at `item`, directly
+/// below it. Anywhere else, the command would clean something the item isn't.
+fn cache_root(item: &Anchor) -> Result<Anchor, Skip> {
+    match item.relative.components() {
+        [_] => Ok(Anchor {
+            root: item.root.clone(),
+            relative: RelPath::new(Vec::new()),
+            parent: None,
+        }),
+        _ => Err(Skip::Unjudged(Unjudged::Unanchored)),
     }
 }

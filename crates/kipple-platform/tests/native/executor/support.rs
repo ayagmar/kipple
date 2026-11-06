@@ -168,7 +168,7 @@ impl<F: FnMut(Report, &CancelToken)> EffectSink for Watched<'_, '_, F> {
 /// How many reviewed entries `outcome` left for `reason`.
 pub(crate) fn left(outcome: &ItemOutcome, reason: LeftReason) -> u64 {
     outcome
-        .effect()
+        .file_effect()
         .and_then(|effect| effect.left.0.get(&reason))
         .map_or(0, |left| left.count)
 }
@@ -176,7 +176,7 @@ pub(crate) fn left(outcome: &ItemOutcome, reason: LeftReason) -> u64 {
 /// What `outcome` removed.
 pub(crate) fn removed(outcome: &ItemOutcome) -> Removed {
     outcome
-        .effect()
+        .file_effect()
         .map(|effect| effect.removed)
         .unwrap_or_default()
 }

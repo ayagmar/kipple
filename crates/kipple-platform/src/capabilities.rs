@@ -91,6 +91,7 @@ fn parse_version(tool: NativeTool, line: &str) -> Option<ToolVersion> {
         NativeTool::Git => "git version ",
         NativeTool::Paccache => "paccache ",
         NativeTool::Journalctl => "systemd ",
+        NativeTool::Npm => "",
     };
     let token = line.strip_prefix(prefix)?.split_whitespace().next()?;
     let token = token.strip_prefix('v').unwrap_or(token);

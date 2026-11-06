@@ -37,6 +37,49 @@
     "digest"
   ],
   "$defs": {
+    "AnchorOut": {
+      "description": "A place below a verified root.",
+      "type": "object",
+      "properties": {
+        "parent": {
+          "description": "The identity of the directory holding it, when that is checked.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FileIdentity"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "relative": {
+          "description": "The components from the root to it; none for the root itself.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/TextOut"
+          }
+        },
+        "root": {
+          "description": "The root it is below.",
+          "$ref": "#/$defs/SymbolicRoot"
+        },
+        "root_identity": {
+          "description": "That root's identity when the scan opened it.",
+          "$ref": "#/$defs/FileIdentity"
+        },
+        "root_path": {
+          "description": "That root's directory.",
+          "$ref": "#/$defs/TextOut"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "root",
+        "root_path",
+        "root_identity",
+        "relative"
+      ]
+    },
     "Caution": {
       "type": "string",
       "enum": [
@@ -150,9 +193,79 @@
         "completeness"
       ]
     },
+    "ExecutionOut": {
+      "description": "How an item runs.",
+      "oneOf": [
+        {
+          "description": "Its files are deleted.",
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "const": "delete"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "method"
+          ]
+        },
+        {
+          "description": "It moves to the trash.",
+          "type": "object",
+          "properties": {
+            "method": {
+              "type": "string",
+              "const": "trash"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "method"
+          ]
+        },
+        {
+          "description": "Its tool's own command runs.",
+          "type": "object",
+          "properties": {
+            "command": {
+              "description": "The command.",
+              "$ref": "#/$defs/NativeCommandOut"
+            },
+            "method": {
+              "type": "string",
+              "const": "native"
+            },
+            "scope": {
+              "description": "What it changes.",
+              "$ref": "#/$defs/AnchorOut"
+            },
+            "tool": {
+              "description": "The tool that runs it, as found when the item was planned.",
+              "$ref": "#/$defs/ToolOut"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "method",
+            "command",
+            "tool",
+            "scope"
+          ]
+        }
+      ]
+    },
     "FileIdentity": {
       "type": "string",
       "pattern": "^[0-9]+:[0-9]+$"
+    },
+    "ItemMethod": {
+      "type": "string",
+      "enum": [
+        "delete",
+        "trash",
+        "native"
+      ]
     },
     "ItemOut": {
       "description": "One item's header.",
@@ -168,6 +281,10 @@
               "type": "null"
             }
           ]
+        },
+        "execution": {
+          "description": "How it runs.",
+          "$ref": "#/$defs/ExecutionOut"
         },
         "file_system": {
           "description": "The file system it is on.",
@@ -188,10 +305,6 @@
         "judgement": {
           "description": "What it was judged under.",
           "$ref": "#/$defs/JudgementOut"
-        },
-        "method": {
-          "description": "How it is removed.",
-          "$ref": "#/$defs/Method"
         },
         "parent": {
           "description": "The identity of the target's directory, for a target below its root.",
@@ -245,7 +358,7 @@
         "root_path",
         "root_identity",
         "relative",
-        "method",
+        "execution",
         "standing",
         "judgement",
         "file_system",
@@ -265,8 +378,8 @@
           "$ref": "#/$defs/Level"
         },
         "method": {
-          "description": "The method.",
-          "$ref": "#/$defs/Method"
+          "description": "How it runs.",
+          "$ref": "#/$defs/ItemMethod"
         },
         "policy": {
           "description": "The whole policy.",
@@ -322,11 +435,77 @@
         "refs"
       ]
     },
-    "Method": {
-      "type": "string",
-      "enum": [
-        "delete",
-        "trash"
+    "NativeCommandOut": {
+      "description": "A native command.",
+      "oneOf": [
+        {
+          "description": "`npm cache clean --force`.",
+          "type": "object",
+          "properties": {
+            "cache": {
+              "description": "The cache root.",
+              "$ref": "#/$defs/AnchorOut"
+            },
+            "command": {
+              "type": "string",
+              "const": "npm-cache-clean"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "command",
+            "cache"
+          ]
+        },
+        {
+          "description": "`git worktree remove .`.",
+          "type": "object",
+          "properties": {
+            "checkout": {
+              "description": "The checkout.",
+              "$ref": "#/$defs/AnchorOut"
+            },
+            "command": {
+              "type": "string",
+              "const": "git-worktree-remove"
+            },
+            "witness": {
+              "description": "What ties it to its repository.",
+              "$ref": "#/$defs/WitnessOut"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "command",
+            "checkout",
+            "witness"
+          ]
+        }
+      ]
+    },
+    "NativeTool": {
+      "description": "A native tool kipple knows how to probe.",
+      "oneOf": [
+        {
+          "description": "Git, for worktree discovery.",
+          "type": "string",
+          "const": "git"
+        },
+        {
+          "description": "`paccache` from pacman-contrib, for package cache advice.",
+          "type": "string",
+          "const": "paccache"
+        },
+        {
+          "description": "`journalctl` from systemd, for journal advice.",
+          "type": "string",
+          "const": "journalctl"
+        },
+        {
+          "description": "npm, for its own cache command. Not in [`NativeTool::ALL`]: probing runs the first\n`npm` on `PATH`, a shim included, and `npm --version` writes a log. Only\n[`ToolResolver`](crate::ToolResolver) finds it.",
+          "type": "string",
+          "const": "npm"
+        }
       ]
     },
     "StandingOut": {
@@ -428,6 +607,65 @@
         }
       ]
     },
+    "ToolFileOut": {
+      "description": "A file a native tool runs from.",
+      "type": "object",
+      "properties": {
+        "identity": {
+          "description": "Its identity.",
+          "$ref": "#/$defs/FileIdentity"
+        },
+        "path": {
+          "description": "Where it is.",
+          "$ref": "#/$defs/TextOut"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "identity"
+      ]
+    },
+    "ToolOut": {
+      "description": "A native tool as found on this machine.",
+      "type": "object",
+      "properties": {
+        "identity": {
+          "description": "Its executable's identity.",
+          "$ref": "#/$defs/FileIdentity"
+        },
+        "path": {
+          "description": "Its executable.",
+          "$ref": "#/$defs/TextOut"
+        },
+        "runtime": {
+          "description": "What runs it, when it is a script.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ToolFileOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tool": {
+          "description": "Which tool.",
+          "$ref": "#/$defs/NativeTool"
+        },
+        "version": {
+          "description": "Its version, as it reported it.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "tool",
+        "path",
+        "identity",
+        "version"
+      ]
+    },
     "TreeOut": {
       "description": "Where an item's frozen tree is stored.",
       "type": "object",
@@ -466,6 +704,47 @@
         "stored",
         "digest",
         "entries"
+      ]
+    },
+    "WitnessOut": {
+      "description": "What ties a worktree to its repository.",
+      "type": "object",
+      "properties": {
+        "admin": {
+          "description": "This worktree's admin directory in it.",
+          "$ref": "#/$defs/FileIdentity"
+        },
+        "branch": {
+          "description": "Its branch, when it has one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "common": {
+          "description": "The repository's common directory.",
+          "$ref": "#/$defs/FileIdentity"
+        },
+        "gitdir_file": {
+          "description": "The admin directory's `gitdir` file.",
+          "$ref": "#/$defs/FileIdentity"
+        },
+        "gitfile": {
+          "description": "The checkout's `.git` file.",
+          "$ref": "#/$defs/FileIdentity"
+        },
+        "head": {
+          "description": "The commit it has checked out.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "common",
+        "admin",
+        "gitfile",
+        "gitdir_file",
+        "head"
       ]
     }
   }

@@ -30,8 +30,7 @@ use crate::mutation::LocalFileSystem;
 use crate::outcome::{ApplyError, Found, ItemOutcome, Receipt, ReceiptItem, Skip, Stop};
 #[cfg(doc)]
 use crate::plan::Plan;
-use crate::plan::{Anchor, ItemId, Judgement, Standing};
-use crate::rule::Method;
+use crate::plan::{Anchor, Execution, ItemId, ItemMethod, Judgement, Standing};
 use crate::size::SpaceEstimate;
 use crate::store::{RunId, RunStore};
 use crate::trash::TrashSlot;
@@ -72,7 +71,7 @@ pub struct StoredItem {
     pub(crate) finding: FindingId,
     pub(crate) path: PathBuf,
     pub(crate) anchor: Anchor,
-    pub(crate) method: Method,
+    pub(crate) execution: Execution,
     pub(crate) standing: Standing,
     pub(crate) judgement: Judgement,
     pub(crate) estimate: Option<SpaceEstimate>,
@@ -101,10 +100,16 @@ impl StoredItem {
         &self.anchor
     }
 
-    /// How it was to be removed.
+    /// How it was to run.
     #[must_use]
-    pub const fn method(&self) -> Method {
-        self.method
+    pub const fn execution(&self) -> &Execution {
+        &self.execution
+    }
+
+    /// How run records name it.
+    #[must_use]
+    pub const fn method(&self) -> ItemMethod {
+        self.execution.method()
     }
 
     /// What it was judged under.
@@ -308,7 +313,7 @@ impl StoredRun {
                 ReceiptItem {
                     item: item.item,
                     path: item.path.clone(),
-                    method: item.method,
+                    method: item.method(),
                     estimate: item.estimate,
                     outcome,
                     restored: self.restored(item.item).cloned(),

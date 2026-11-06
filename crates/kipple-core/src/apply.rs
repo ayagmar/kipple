@@ -9,12 +9,14 @@
 //! 2. It is judged again from that scan, through the same engine facts, protections and
 //!    policy as at planning, under the current config: layout, git and every other fact
 //!    are fresh, never taken from the planning scan (H).
-//! 3. It is frozen again, and git is asked again which entries of the fresh tree it
+//! 3. A release's tool locks are taken, without waiting. They are held until the item's
+//!    outcome is recorded.
+//! 4. It is frozen again, and git is asked again which entries of the fresh tree it
 //!    tracks, which are left out.
-//! 4. A process snapshot under a second old judges its activity again, the way the scan
-//!    does: in use or unknown skips it as Protected.
-//! 5. [`admit`] makes its operation, or says why not: revalidation only subtracts.
-//! 6. Its intent is made durable, then the operation runs, the platform makes its effect
+//! 5. [`Rescan::now`] reads again what it rests on, and judges its activity and predicates
+//!    from that: in use or unknown skips it as Protected.
+//! 6. [`admit`] makes its operation, or says why not: revalidation only subtracts.
+//! 7. Its intent is made durable, then the operation runs, the platform makes its effect
 //!    durable, and its outcome is recorded (pinned 8, F).
 //!
 //! Every item that ends gets an outcome record, skips included. A journal write that fails
@@ -32,11 +34,14 @@ use crate::cancel::CancelToken;
 use crate::engine::{Rescan, ScanReport};
 use crate::journal::{Intent, Journal, Record};
 use crate::mutation::{Finish, Freeze};
-use crate::outcome::{ApplyError, ErrorCode, ItemOutcome, Receipt, ReceiptItem, Skip, Stop, Tally};
-use crate::plan::{ItemId, Plan, PlanEntry, VerifiedRoot};
+use crate::outcome::{
+    ApplyError, Effect, ErrorCode, ItemOutcome, Receipt, ReceiptItem, Skip, Stop, Tally,
+};
+use crate::plan::{ItemId, ItemMethod, Plan, PlanEntry, VerifiedRoot};
 use crate::planner::{Judge, Judged, MutationPorts, Scene, Unjudged, untracked};
-use crate::policy::Verdict;
-use crate::rule::Method;
+use crate::policy::{Caution, Verdict};
+use crate::store_lock::{HeldLocks, LockGap};
+use crate::supplied::Subject;
 use crate::trash::TrashSlot;
 
 /// What to apply.
@@ -175,6 +180,13 @@ fn stopped_before(plan: &Plan, events: &mut dyn ItemSink) -> Receipt {
     receipt
 }
 
+/// An item's operation, with the locks it runs under: they go when this does.
+#[derive(Debug)]
+struct Admitted {
+    op: AuthorizedOp,
+    _locks: Option<HeldLocks>,
+}
+
 /// What one apply shares across its items.
 #[derive(Debug)]
 struct Run<'run> {
@@ -244,15 +256,16 @@ impl Run<'_> {
 
     /// Revalidates `entry`, then runs it between its intent and its outcome.
     fn item(&self, entry: &PlanEntry, journal: &mut dyn Journal, events: &mut dyn ItemSink) -> Ran {
-        if entry.method() == Method::Trash {
+        if entry.method() == ItemMethod::Trash {
             // Its result is read again when the slot is chosen.
             self.prepare_home().ok();
         }
-        let op = match self.authorize(entry) {
-            Ok(op) => op,
+        let admitted = match self.authorize(entry) {
+            Ok(admitted) => admitted,
             Err(skip) => return Ran::skipped(entry, skip, journal),
         };
-        let ready = match &op {
+        let op = &admitted.op;
+        let ready = match op {
             AuthorizedOp::Delete(delete) => Ready::Delete(delete),
             AuthorizedOp::Trash(trash) => match self.destination(trash) {
                 Ok(slot) => Ready::Trash(trash, slot),
@@ -264,7 +277,7 @@ impl Run<'_> {
             Ready::Trash(_, slot) => Some(slot.clone()),
         };
         if journal
-            .record(&Record::Intent(self.intent(&op, slot)))
+            .record(&Record::Intent(self.intent(op, slot)))
             .is_err()
         {
             return Ran {
@@ -316,7 +329,7 @@ impl Run<'_> {
         Intent {
             plan: self.request.plan.digest(),
             item: target.item(),
-            method: op.method(),
+            method: op.method().into(),
             reviewed: target.tree().digest(),
             authorized: target.digest(),
             entries: target.marks().authorized(),
@@ -325,22 +338,41 @@ impl Run<'_> {
     }
 
     /// The operation revalidation allows for `entry` now, or why there is none.
-    fn authorize(&self, entry: &PlanEntry) -> Result<AuthorizedOp, Skip> {
+    fn authorize(&self, entry: &PlanEntry) -> Result<Admitted, Skip> {
         let judged = self.current(entry)?;
+        let locks = self.locks(&judged)?;
         let freeze = self.freeze(&judged)?;
         let verdict = self.active(&judged)?;
         let recheck = Recheck {
             verdict: &verdict,
             proposal: &judged.proposal,
             judgement: &judged.judgement,
+            own_git: judged.own_git(),
             freeze,
         };
-        admit(
+        let op = admit(
             self.request.plan,
             entry.item(),
             &self.request.authorization,
             recheck,
-        )
+        )?;
+        Ok(Admitted { op, _locks: locks })
+    }
+
+    /// The tool's locks a release is removed under. It is removed under all of them or
+    /// not at all, and a release that names none has nothing to hold them by.
+    fn locks(&self, judged: &Judged<'_>) -> Result<Option<HeldLocks>, Skip> {
+        let Subject::Release(release) = &judged.facts.supplied.subject else {
+            return Ok(None);
+        };
+        if release.locks.is_empty() {
+            return Err(Skip::InstallerBusy(LockGap::Missing));
+        }
+        self.mutation()
+            .locks
+            .try_hold(&release.locks)
+            .map(Some)
+            .map_err(Skip::InstallerBusy)
     }
 
     /// `entry`'s finding, judged again from the scan run for this apply. Its root comes
@@ -380,23 +412,27 @@ impl Run<'_> {
         Ok(freeze)
     }
 
-    /// `judged`'s verdict with its activity judged again now, from a fresh process
-    /// snapshot: in use or unknown holds it (pinned 4).
+    /// `judged`'s verdict with what it rests on read again now: in use or unknown holds it
+    /// (pinned 4), and whatever else that reading gives it counts with its verdict.
     fn active(&self, judged: &Judged<'_>) -> Result<Verdict, Skip> {
-        let activity = self
+        let finding = judged.finding;
+        let now = self
             .ports
             .rescan
-            .activity(self.scene.scan(), judged.finding);
+            .now(self.scene.scan(), finding, self.cancel)?;
         let mut facts = judged.facts.clone();
-        facts.activity = activity;
-        let finding = judged.finding;
+        facts.activity = now.activity;
+        facts.supplied = now.supplied;
+        facts.settlement = now.settlement;
+        facts.unmet = now.unmet;
         match self
             .judge
             .policy
             .verdict(&finding.rule, &finding.path, &facts)
         {
             Verdict::Protected(holds) => Err(Skip::Protected(holds)),
-            Verdict::Safe | Verdict::Review(_) => Ok(judged.verdict.clone()),
+            Verdict::Safe => Ok(judged.verdict.clone()),
+            Verdict::Review(cautions) => Ok(with_cautions(&judged.verdict, cautions)),
         }
     }
 
@@ -417,12 +453,22 @@ impl Run<'_> {
             Ok(trashed) => {
                 let mut effect = tally.before_run();
                 effect.trashed = Some(trashed);
-                ItemOutcome::Done(effect)
+                ItemOutcome::Done(Effect::Files(effect))
             }
             Err(error) if error.code == ErrorCode::Cancelled => tally.finish(Ok(Finish::Cancelled)),
             Err(error) => tally.finish(Err(error)),
         }
     }
+}
+
+/// `verdict` with `cautions` too, each once.
+fn with_cautions(verdict: &Verdict, mut cautions: Vec<Caution>) -> Verdict {
+    if let Verdict::Review(standing) = verdict {
+        cautions.extend(standing.iter().copied());
+    }
+    cautions.sort_unstable();
+    cautions.dedup();
+    Verdict::Review(cautions)
 }
 
 /// Whether `scan` opened `root` with the identity the plan recorded.

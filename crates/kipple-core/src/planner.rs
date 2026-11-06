@@ -22,14 +22,17 @@ use crate::cancel::CancelToken;
 use crate::engine::{FindingId, ScanReport};
 use crate::frozen::{FrozenTree, Mark, NodeId};
 use crate::mutation::{Executor, FileSystemClass, Freezer, LocalFileSystem};
+use crate::native::NativeRunner;
 use crate::outcome::{ApplyError, ErrorCode, Skip, Stop};
-use crate::plan::{ItemId, MethodChoice, Plan, PlanEntry, Selection, Standing};
+use crate::plan::{ItemId, ItemMethod, MethodChoice, Plan, PlanEntry, Selection, Standing};
 use crate::policy::{Hold, Policy, Tracked, Verdict};
 use crate::probe::EntryKind;
 use crate::protect::Protections;
 use crate::rule::{Method, Rule, RuleId};
+use crate::store_lock::StoreLocks;
 use crate::tracked::{GitGap, TrackedQuery, holds_repository};
 use crate::trash::TrashBackend;
+use crate::worktree::WorktreeQuery;
 
 /// What decides how a finding is judged and removed now.
 ///
@@ -76,10 +79,14 @@ named! {
     PlanMode {
         /// A person, who reviews it item by item in the TUI: Safe and Review items.
         Review = "review",
-        /// A person at the command line, who reviews the summary, or a profile, which
-        /// recorded that review when it was made: Safe items by any method. Review
-        /// items need the TUI's per-item review (pinned 1).
+        /// A person at the command line, who reviews the summary: Safe items by any
+        /// method, a tool's own command included. Review items need the TUI's per-item
+        /// review (pinned 1).
         Safe = "safe",
+        /// What runs later, with no person at it: a profile, which recorded its review
+        /// when it was made, or a plan file. Safe items that remove files, by either
+        /// method. A tool's own command is never one (pinned 24).
+        SafeFiles = "safe-files",
         /// Automation without a profile (`clean` or `apply` with `--yes`): Safe items
         /// removed by a delete, nothing else (pinned 1).
         SafeOnly = "safe-only",
@@ -97,6 +104,12 @@ pub struct MutationPorts<'ports> {
     pub trash: &'ports dyn TrashBackend,
     /// Asks git which entries of a frozen tree it tracks.
     pub tracked: &'ports dyn TrackedQuery,
+    /// Starts a tool's own command.
+    pub runner: &'ports dyn NativeRunner,
+    /// Takes a tool's own locks for one removal.
+    pub locks: &'ports dyn StoreLocks,
+    /// Asks git what it lists now, after a removal.
+    pub worktrees: &'ports dyn WorktreeQuery,
 }
 
 /// What to plan.
@@ -250,14 +263,14 @@ fn unsuited(judged: &Judged<'_>, mode: PlanMode) -> Option<Skip> {
     match (mode, &judged.verdict, judged.method()) {
         (PlanMode::Review, _, _)
         | (PlanMode::Safe, Verdict::Safe, _)
-        | (PlanMode::SafeOnly, Verdict::Safe, Method::Delete) => None,
-        (PlanMode::Safe | PlanMode::SafeOnly, Verdict::Review(cautions), _) => {
-            Some(Skip::Riskier(cautions.clone()))
+        | (PlanMode::SafeFiles, Verdict::Safe, ItemMethod::Delete | ItemMethod::Trash)
+        | (PlanMode::SafeOnly, Verdict::Safe, ItemMethod::Delete) => None,
+        (PlanMode::SafeFiles | PlanMode::SafeOnly, _, ItemMethod::Native) => {
+            Some(Skip::SemanticNotReviewed)
         }
-        (PlanMode::Safe | PlanMode::SafeOnly, Verdict::Protected(holds), _) => {
-            Some(Skip::Protected(holds.clone()))
-        }
-        (PlanMode::SafeOnly, Verdict::Safe, Method::Trash) => Some(Skip::WholeNotReviewed),
+        (_, Verdict::Review(cautions), _) => Some(Skip::Riskier(cautions.clone())),
+        (_, Verdict::Protected(holds), _) => Some(Skip::Protected(holds.clone())),
+        (PlanMode::SafeOnly, Verdict::Safe, ItemMethod::Trash) => Some(Skip::WholeNotReviewed),
     }
 }
 
@@ -326,7 +339,7 @@ fn merge<'scan>(
 fn differs(a: &Judged<'_>, b: &Judged<'_>) -> Option<ConflictKind> {
     if a.anchor.scope() != b.anchor.scope() {
         Some(ConflictKind::Scope)
-    } else if a.method() != b.method() {
+    } else if a.execution != b.execution {
         Some(ConflictKind::Method)
     } else {
         None
@@ -424,7 +437,7 @@ fn freeze(
     cancel: &CancelToken,
 ) -> Result<PlanEntry, Skip> {
     let anchor = &judged.anchor;
-    if judged.method() == Method::Trash {
+    if judged.method() == ItemMethod::Trash {
         ports
             .trash
             .available(anchor)
@@ -483,28 +496,35 @@ pub(crate) fn leave_out(entry: &mut PlanEntry, ids: &[NodeId]) {
 
 /// The entries of `tree` git tracks, which the item leaves out: none when no repository
 /// holds it. A `.git` inside the item, or an answer git couldn't give in full, refuses it
-/// (D-066).
+/// (D-066). A native item can't leave anything out, so any such entry refuses it: its
+/// command would delete it anyway. For a worktree's removal only the worktree's own `.git`
+/// stops counting ([`OwnGit`](crate::tracked::OwnGit)): the facts ask the repositories
+/// above it, and a repository deeper inside is held there and here.
 pub(crate) fn untracked(
     judged: &Judged<'_>,
     tree: &FrozenTree,
     ports: &MutationPorts<'_>,
     cancel: &CancelToken,
 ) -> Result<Vec<NodeId>, Skip> {
-    if holds_repository(tree) {
+    if holds_repository(tree, judged.own_git()) {
         return Err(Skip::Git(GitGap::NestedRepository));
     }
-    match &judged.facts.tracked {
+    let tracked = match &judged.facts.tracked {
         Tracked::Asked { work_tree, .. } => ports
             .tracked
             .entries(work_tree, &judged.anchor, tree, cancel)
-            .map_err(Skip::Git),
-        Tracked::NoRepository => Ok(Vec::new()),
+            .map_err(Skip::Git)?,
+        Tracked::NoRepository => Vec::new(),
         // Planning never gets this far with these: each holds the item.
-        Tracked::InsideRepository { gap, .. } => Err(Skip::Git(*gap)),
+        Tracked::InsideRepository { gap, .. } => return Err(Skip::Git(*gap)),
         Tracked::Unchecked(_) | Tracked::HoldsRepository { .. } | Tracked::Unwalked(_) => {
-            Err(Skip::Protected(vec![Hold::UnknownGit]))
+            return Err(Skip::Protected(vec![Hold::UnknownGit]));
         }
+    };
+    if judged.method() == ItemMethod::Native && !tracked.is_empty() {
+        return Err(Skip::Protected(vec![Hold::TrackedInsideNative]));
     }
+    Ok(tracked)
 }
 
 /// The bytes of the files at and below `id`, which leaving it out keeps on disk.
@@ -527,7 +547,7 @@ fn entry(judged: &Judged<'_>, file_system: LocalFileSystem, tree: Arc<FrozenTree
         finding: judged.finding.id,
         path: judged.finding.path.clone(),
         anchor: judged.anchor.clone(),
-        method: judged.method(),
+        execution: judged.execution.clone(),
         standing,
         judgement: judged.judgement.clone(),
         estimate: judged.finding.size,

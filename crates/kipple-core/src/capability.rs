@@ -10,7 +10,19 @@ use std::sync::Arc;
 use std::time::Duration;
 
 /// A native tool kipple knows how to probe.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    serde::Serialize,
+    serde::Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(rename_all = "kebab-case")]
 pub enum NativeTool {
     /// Git, for worktree discovery.
     Git,
@@ -18,10 +30,14 @@ pub enum NativeTool {
     Paccache,
     /// `journalctl` from systemd, for journal advice.
     Journalctl,
+    /// npm, for its own cache command. Not in [`NativeTool::ALL`]: probing runs the first
+    /// `npm` on `PATH`, a shim included, and `npm --version` writes a log. Only
+    /// [`ToolResolver`](crate::ToolResolver) finds it.
+    Npm,
 }
 
 impl NativeTool {
-    /// Every tool, in report order.
+    /// Every tool `doctor` probes, in report order.
     pub const ALL: [Self; 3] = [Self::Git, Self::Paccache, Self::Journalctl];
 
     /// The executable's name without an extension.
@@ -31,6 +47,7 @@ impl NativeTool {
             Self::Git => "git",
             Self::Paccache => "paccache",
             Self::Journalctl => "journalctl",
+            Self::Npm => "npm",
         }
     }
 }

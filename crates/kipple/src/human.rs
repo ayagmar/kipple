@@ -675,6 +675,7 @@ fn idle_except(unchecked: usize, by_command_line: usize) -> String {
         .join("; ")
 }
 
+pub(crate) mod native;
 pub(crate) mod outcome;
 pub(crate) mod profile;
 pub(crate) mod receipt;

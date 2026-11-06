@@ -16,6 +16,7 @@ mod fs_probe;
 mod git;
 mod host;
 mod interrupt;
+mod native;
 mod os;
 mod process;
 mod profiles;
@@ -23,8 +24,10 @@ mod project_search;
 mod roots;
 mod runner;
 mod runs;
+mod store_lock;
 #[cfg(feature = "test-roots")]
 mod test_host;
+mod tools;
 mod trash;
 mod typeahead;
 mod walk;
@@ -37,6 +40,7 @@ pub use fs_probe::NoFollowFs;
 pub use git::GitQuery;
 pub use host::{SystemClock, clock, processes};
 pub use interrupt::cancel_on_interrupt;
+pub use native::NativeCommands;
 pub use process::OsProcesses;
 pub use profiles::FileProfileStore;
 pub use project_search::{ProjectSearch, ProjectsFound, SearchLimits, search_projects};
@@ -45,6 +49,8 @@ pub use roots::{
     resolve_roots_from,
 };
 pub use runs::FileRunStore;
+pub use store_lock::FileLocks;
+pub use tools::PathTools;
 pub use trash::ConfinedTrash;
 pub use typeahead::{discard_typeahead, wait_for_line};
 pub use walk::Walker;

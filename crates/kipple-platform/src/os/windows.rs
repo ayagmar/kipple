@@ -294,6 +294,20 @@ pub(crate) const fn is_executable(_: &fs::Metadata) -> bool {
 /// Processes fail in odd ways without `SystemRoot`.
 pub(crate) const INHERITED_VARS: &[&str] = &["SystemRoot"];
 
+/// No mechanism is pinned here yet, so a command can't start from a checked directory.
+#[expect(
+    clippy::missing_const_for_fn,
+    reason = "the Unix function of this name reads the handle and can't be const"
+)]
+pub(crate) fn working_dir(_: &crate::executor::sys::Dir) -> Option<PathBuf> {
+    None
+}
+
+/// Windows has no such stamp: a tool records a USN there, which `std` can't read.
+pub(crate) fn link_stamp(_: &Path) -> io::Result<String> {
+    Err(io::ErrorKind::Unsupported.into())
+}
+
 #[expect(
     unsafe_code,
     reason = "windows-sys exposes K32EnumProcesses as a raw call"

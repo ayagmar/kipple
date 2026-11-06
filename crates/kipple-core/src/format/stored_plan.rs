@@ -21,15 +21,20 @@ use super::{
     DigestOut, FormatError, IdentityOut, STORED_PLAN, TREE_LIMIT, TextOut, path_out, rel_of,
     rel_out, signed, verified,
 };
+use crate::capability::NativeTool;
 use crate::digest::Digest;
 use crate::engine::FindingId;
 use crate::frozen::{FrozenTree, NameCodec};
 use crate::mutation::LocalFileSystem;
-use crate::plan::{Anchor, ItemId, Judgement, Plan, PlanEntry, Standing, VerifiedRoot};
+use crate::native::{NativeCommand, NativeSpec, ResolvedTool, ToolFile};
+use crate::plan::{
+    Anchor, Execution, ItemId, ItemMethod, Judgement, Plan, PlanEntry, Standing, VerifiedRoot,
+};
 use crate::policy::{Caution, Level};
 use crate::root::SymbolicRoot;
 use crate::rule::{Method, RuleId};
 use crate::run::{StoredItem, StoredPlan};
+use crate::worktree::{ObjectId, WorktreeWitness};
 
 /// The header line of a stored plan.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -77,8 +82,8 @@ pub(crate) struct ItemOut {
     pub relative: Vec<TextOut>,
     /// The identity of the target's directory, for a target below its root.
     pub parent: Option<IdentityOut>,
-    /// How it is removed.
-    pub method: Method,
+    /// How it runs.
+    pub execution: ExecutionOut,
     /// The bucket and cautions it was planned with.
     pub standing: StandingOut,
     /// What it was judged under.
@@ -89,6 +94,247 @@ pub(crate) struct ItemOut {
     pub file_system: LocalFileSystem,
     /// Where its frozen tree is.
     pub tree: TreeOut,
+}
+
+/// How an item runs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "method", rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) enum ExecutionOut {
+    /// Its files are deleted.
+    Delete,
+    /// It moves to the trash.
+    Trash,
+    /// Its tool's own command runs.
+    Native {
+        /// The command.
+        command: Box<NativeCommandOut>,
+        /// The tool that runs it, as found when the item was planned.
+        tool: Box<ToolOut>,
+        /// What it changes.
+        scope: Box<AnchorOut>,
+    },
+}
+
+/// A place below a verified root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AnchorOut {
+    /// The root it is below.
+    pub root: SymbolicRoot,
+    /// That root's directory.
+    pub root_path: TextOut,
+    /// That root's identity when the scan opened it.
+    pub root_identity: IdentityOut,
+    /// The components from the root to it; none for the root itself.
+    pub relative: Vec<TextOut>,
+    /// The identity of the directory holding it, when that is checked.
+    pub parent: Option<IdentityOut>,
+}
+
+/// A native command.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "command", rename_all = "kebab-case", deny_unknown_fields)]
+pub(crate) enum NativeCommandOut {
+    /// `npm cache clean --force`.
+    NpmCacheClean {
+        /// The cache root.
+        cache: AnchorOut,
+    },
+    /// `git worktree remove .`.
+    GitWorktreeRemove {
+        /// The checkout.
+        checkout: AnchorOut,
+        /// What ties it to its repository.
+        witness: WitnessOut,
+    },
+}
+
+/// What ties a worktree to its repository.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct WitnessOut {
+    /// The repository's common directory.
+    pub common: IdentityOut,
+    /// This worktree's admin directory in it.
+    pub admin: IdentityOut,
+    /// The checkout's `.git` file.
+    pub gitfile: IdentityOut,
+    /// The admin directory's `gitdir` file.
+    pub gitdir_file: IdentityOut,
+    /// The commit it has checked out.
+    pub head: String,
+    /// Its branch, when it has one.
+    pub branch: Option<String>,
+}
+
+/// A file a native tool runs from.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ToolFileOut {
+    /// Where it is.
+    pub path: TextOut,
+    /// Its identity.
+    pub identity: IdentityOut,
+}
+
+/// A native tool as found on this machine.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ToolOut {
+    /// Which tool.
+    pub tool: NativeTool,
+    /// Its executable.
+    pub path: TextOut,
+    /// Its executable's identity.
+    pub identity: IdentityOut,
+    /// Its version, as it reported it.
+    pub version: String,
+    /// What runs it, when it is a script.
+    pub runtime: Option<ToolFileOut>,
+}
+
+impl AnchorOut {
+    fn of(anchor: &Anchor, codec: &dyn NameCodec) -> Self {
+        Self {
+            root: anchor.root.root,
+            root_path: path_out(&anchor.root.path, codec),
+            root_identity: IdentityOut(anchor.root.identity),
+            relative: rel_out(&anchor.relative, codec),
+            parent: anchor.parent.map(IdentityOut),
+        }
+    }
+
+    fn read(&self, codec: &dyn NameCodec) -> Result<Anchor, FormatError> {
+        Ok(Anchor {
+            root: VerifiedRoot {
+                root: self.root,
+                path: self
+                    .root_path
+                    .path(codec)
+                    .ok_or_else(|| invalid("root path"))?,
+                identity: self.root_identity.0,
+            },
+            relative: rel_of(&self.relative, codec).ok_or_else(|| invalid("relative path"))?,
+            parent: self.parent.map(|parent| parent.0),
+        })
+    }
+}
+
+impl ToolFileOut {
+    fn read(&self, codec: &dyn NameCodec) -> Result<ToolFile, FormatError> {
+        Ok(ToolFile {
+            path: self.path.path(codec).ok_or_else(|| invalid("tool path"))?,
+            identity: self.identity.0,
+        })
+    }
+}
+
+impl ToolOut {
+    fn of(tool: &ResolvedTool, codec: &dyn NameCodec) -> Self {
+        Self {
+            tool: tool.tool,
+            path: path_out(&tool.path, codec),
+            identity: IdentityOut(tool.identity),
+            version: tool.version.clone(),
+            runtime: tool.runtime.as_ref().map(|file| ToolFileOut {
+                path: path_out(&file.path, codec),
+                identity: IdentityOut(file.identity),
+            }),
+        }
+    }
+
+    fn read(&self, codec: &dyn NameCodec) -> Result<ResolvedTool, FormatError> {
+        Ok(ResolvedTool {
+            tool: self.tool,
+            path: self.path.path(codec).ok_or_else(|| invalid("tool path"))?,
+            identity: self.identity.0,
+            version: self.version.clone(),
+            runtime: match &self.runtime {
+                Some(file) => Some(file.read(codec)?),
+                None => None,
+            },
+        })
+    }
+}
+
+impl WitnessOut {
+    fn of(witness: &WorktreeWitness) -> Self {
+        Self {
+            common: IdentityOut(witness.common),
+            admin: IdentityOut(witness.admin),
+            gitfile: IdentityOut(witness.gitfile),
+            gitdir_file: IdentityOut(witness.gitdir_file),
+            head: witness.head.0.clone(),
+            branch: witness.branch.clone(),
+        }
+    }
+
+    fn read(&self) -> WorktreeWitness {
+        WorktreeWitness {
+            common: self.common.0,
+            admin: self.admin.0,
+            gitfile: self.gitfile.0,
+            gitdir_file: self.gitdir_file.0,
+            head: ObjectId(self.head.clone()),
+            branch: self.branch.clone(),
+        }
+    }
+}
+
+impl NativeCommandOut {
+    fn of(command: &NativeCommand, codec: &dyn NameCodec) -> Self {
+        match command {
+            NativeCommand::NpmCacheClean { cache } => Self::NpmCacheClean {
+                cache: AnchorOut::of(cache, codec),
+            },
+            NativeCommand::GitWorktreeRemove { checkout, witness } => Self::GitWorktreeRemove {
+                checkout: AnchorOut::of(checkout, codec),
+                witness: WitnessOut::of(witness),
+            },
+        }
+    }
+
+    fn read(&self, codec: &dyn NameCodec) -> Result<NativeCommand, FormatError> {
+        Ok(match self {
+            Self::NpmCacheClean { cache } => NativeCommand::NpmCacheClean {
+                cache: cache.read(codec)?,
+            },
+            Self::GitWorktreeRemove { checkout, witness } => NativeCommand::GitWorktreeRemove {
+                checkout: checkout.read(codec)?,
+                witness: witness.read(),
+            },
+        })
+    }
+}
+
+impl ExecutionOut {
+    fn of(execution: &Execution, codec: &dyn NameCodec) -> Self {
+        match execution {
+            Execution::Files(Method::Delete) => Self::Delete,
+            Execution::Files(Method::Trash) => Self::Trash,
+            Execution::Native(spec) => Self::Native {
+                command: Box::new(NativeCommandOut::of(&spec.command, codec)),
+                tool: Box::new(ToolOut::of(&spec.tool, codec)),
+                scope: Box::new(AnchorOut::of(&spec.scope, codec)),
+            },
+        }
+    }
+
+    fn read(&self, codec: &dyn NameCodec) -> Result<Execution, FormatError> {
+        Ok(match self {
+            Self::Delete => Execution::Files(Method::Delete),
+            Self::Trash => Execution::Files(Method::Trash),
+            Self::Native {
+                command,
+                tool,
+                scope,
+            } => Execution::Native(Box::new(NativeSpec {
+                command: command.read(codec)?,
+                tool: tool.read(codec)?,
+                scope: scope.read(codec)?,
+            })),
+        })
+    }
 }
 
 /// The bucket an item was planned in.
@@ -119,8 +365,8 @@ pub(crate) struct JudgementOut {
     pub level: Level,
     /// The effective recent window, in days.
     pub recent_days: u16,
-    /// The method.
-    pub method: Method,
+    /// How it runs.
+    pub method: ItemMethod,
     /// The kept and excluded paths.
     pub held: DigestOut,
 }
@@ -194,7 +440,7 @@ fn item_out(entry: &PlanEntry, tree: &[u8], offset: u64, codec: &dyn NameCodec) 
         root_identity: IdentityOut(anchor.root.identity),
         relative: rel_out(&anchor.relative, codec),
         parent: anchor.parent.map(IdentityOut),
-        method: entry.method(),
+        execution: ExecutionOut::of(entry.execution(), codec),
         standing: match entry.standing() {
             Standing::Safe => StandingOut::Safe,
             Standing::Review(cautions) => StandingOut::Review {
@@ -262,7 +508,8 @@ fn read_item(item: &ItemOut, codec: &dyn NameCodec) -> Result<StoredItem, Format
     if !rule_id_ok(&judgement.rule) {
         return Err(invalid("rule ID"));
     }
-    if judgement.method != item.method {
+    let execution = item.execution.read(codec)?;
+    if judgement.method != execution.method() {
         return Err(invalid("method"));
     }
     let relative = rel_of(&item.relative, codec).ok_or_else(|| invalid("relative path"))?;
@@ -286,7 +533,7 @@ fn read_item(item: &ItemOut, codec: &dyn NameCodec) -> Result<StoredItem, Format
         finding: FindingId(item.finding),
         path: item.path.path(codec).ok_or_else(|| invalid("path"))?,
         anchor,
-        method: item.method,
+        execution,
         standing: match &item.standing {
             StandingOut::Safe => Standing::Safe,
             StandingOut::Review { cautions } => {

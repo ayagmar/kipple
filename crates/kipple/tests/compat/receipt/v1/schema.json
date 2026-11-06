@@ -73,6 +73,84 @@
     "totals"
   ],
   "$defs": {
+    "CauseOut": {
+      "description": "What caused an error.",
+      "oneOf": [
+        {
+          "description": "The OS, or an entry of the target.",
+          "type": "object",
+          "properties": {
+            "below": {
+              "description": "Where below the target, as components, if it is about one entry.",
+              "type": [
+                "array",
+                "null"
+              ],
+              "items": {
+                "$ref": "#/$defs/TextOut"
+              }
+            },
+            "code": {
+              "description": "The OS's own number for it, where it has one.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            },
+            "from": {
+              "type": "string",
+              "const": "os"
+            },
+            "kind": {
+              "description": "The OS error's kind, if one caused it.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/OsErrorKind"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "from"
+          ]
+        },
+        {
+          "description": "How a tool's own command ended.",
+          "type": "object",
+          "properties": {
+            "exit": {
+              "description": "Its exit code, when it exited.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            },
+            "from": {
+              "type": "string",
+              "const": "native"
+            },
+            "signal": {
+              "description": "The signal that ended it.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "int32"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "from"
+          ]
+        }
+      ]
+    },
     "Caution": {
       "type": "string",
       "enum": [
@@ -289,42 +367,76 @@
     },
     "EffectOut": {
       "description": "What a run of an item did.",
-      "type": "object",
-      "properties": {
-        "excluded": {
-          "description": "Entries the plan left out from the start, kept as reviewed.",
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0
-        },
-        "left": {
-          "description": "The reviewed entries it didn't remove, by reason.",
-          "type": "array",
-          "items": {
-            "$ref": "#/$defs/LeftOut"
-          }
-        },
-        "removed": {
-          "description": "What it removed.",
-          "$ref": "#/$defs/RemovedOut"
-        },
-        "trashed": {
-          "description": "Where it moved the item, for a trash item that moved.",
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SlotOut"
+      "oneOf": [
+        {
+          "description": "Files removed or moved, entry by entry.",
+          "type": "object",
+          "properties": {
+            "excluded": {
+              "description": "Entries the plan left out from the start, kept as reviewed.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
             },
-            {
-              "type": "null"
+            "left": {
+              "description": "The reviewed entries it didn't remove, by reason.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/LeftOut"
+              }
+            },
+            "ran": {
+              "type": "string",
+              "const": "files"
+            },
+            "removed": {
+              "description": "What it removed.",
+              "$ref": "#/$defs/RemovedOut"
+            },
+            "trashed": {
+              "description": "Where it moved the item, for a trash item that moved.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/SlotOut"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ran",
+            "removed",
+            "left",
+            "excluded"
+          ]
+        },
+        {
+          "description": "A tool's own command.",
+          "type": "object",
+          "properties": {
+            "exit": {
+              "description": "How it ended.",
+              "$ref": "#/$defs/NativeEndOut"
+            },
+            "ran": {
+              "type": "string",
+              "const": "native"
+            },
+            "reclaimed": {
+              "description": "What it freed.",
+              "$ref": "#/$defs/MeasuredOut"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ran",
+            "exit",
+            "reclaimed"
           ]
         }
-      },
-      "additionalProperties": false,
-      "required": [
-        "removed",
-        "left",
-        "excluded"
       ]
     },
     "EndingOut": {
@@ -397,6 +509,8 @@
         "journal",
         "unsynced",
         "cancelled",
+        "native-failed",
+        "native-timed-out",
         "io"
       ]
     },
@@ -404,38 +518,20 @@
       "description": "What went wrong: kipple's code and the OS error, never the OS's message.",
       "type": "object",
       "properties": {
-        "at": {
-          "description": "Where below the target, as components, if it is about one entry.",
-          "type": [
-            "array",
-            "null"
-          ],
-          "items": {
-            "$ref": "#/$defs/TextOut"
-          }
-        },
-        "code": {
-          "description": "kipple's code.",
-          "$ref": "#/$defs/ErrorCode"
-        },
-        "os_code": {
-          "description": "The OS's own number for it, where it has one.",
-          "type": [
-            "integer",
-            "null"
-          ],
-          "format": "int32"
-        },
-        "os_kind": {
-          "description": "The OS error's kind, if one caused it.",
+        "cause": {
+          "description": "What caused it, past its code.",
           "anyOf": [
             {
-              "$ref": "#/$defs/OsErrorKind"
+              "$ref": "#/$defs/CauseOut"
             },
             {
               "type": "null"
             }
           ]
+        },
+        "code": {
+          "description": "kipple's code.",
+          "$ref": "#/$defs/ErrorCode"
         }
       },
       "additionalProperties": false,
@@ -669,6 +765,14 @@
         "tracked-inside-native"
       ]
     },
+    "ItemMethod": {
+      "type": "string",
+      "enum": [
+        "delete",
+        "trash",
+        "native"
+      ]
+    },
     "JudgementField": {
       "type": "string",
       "enum": [
@@ -727,11 +831,119 @@
         "not-reached"
       ]
     },
+    "LockGap": {
+      "type": "string",
+      "enum": [
+        "lock-missing",
+        "lock-held",
+        "lock-unreadable",
+        "lock-unsupported"
+      ]
+    },
+    "MeasuredOut": {
+      "description": "What a native command freed.",
+      "oneOf": [
+        {
+          "description": "Measured in full both times.",
+          "type": "object",
+          "properties": {
+            "after": {
+              "description": "Allocated bytes after it ended.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "before": {
+              "description": "Allocated bytes before the command ran.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "measured": {
+              "type": "string",
+              "const": "bytes"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "measured",
+            "before",
+            "after"
+          ]
+        },
+        {
+          "description": "Either measurement was incomplete.",
+          "type": "object",
+          "properties": {
+            "measured": {
+              "type": "string",
+              "const": "unknown"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "measured"
+          ]
+        }
+      ]
+    },
     "Method": {
       "type": "string",
       "enum": [
         "delete",
         "trash"
+      ]
+    },
+    "NativeEndOut": {
+      "description": "How a native command's process ended.",
+      "type": "object",
+      "properties": {
+        "exit": {
+          "description": "Its exit code, when it exited.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        },
+        "signal": {
+          "description": "The signal that ended it.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "int32"
+        }
+      },
+      "additionalProperties": false
+    },
+    "NativeTotalOut": {
+      "description": "What native commands freed.",
+      "type": "object",
+      "properties": {
+        "items": {
+          "description": "Items whose command ran.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "reclaimed_bytes": {
+          "description": "What those measured in full freed, in allocated bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        },
+        "unmeasured": {
+          "description": "Those not measured in full.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "items",
+        "reclaimed_bytes",
+        "unmeasured"
       ]
     },
     "OsErrorKind": {
@@ -817,8 +1029,15 @@
           "type": "object",
           "properties": {
             "effect": {
-              "description": "What it did until then.",
-              "$ref": "#/$defs/EffectOut"
+              "description": "What it did until then. Absent for a command that never started.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EffectOut"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "error": {
               "description": "The error.",
@@ -832,8 +1051,7 @@
           "additionalProperties": false,
           "required": [
             "status",
-            "error",
-            "effect"
+            "error"
           ]
         },
         {
@@ -936,7 +1154,7 @@
         },
         "method": {
           "description": "How it was to be removed.",
-          "$ref": "#/$defs/Method"
+          "$ref": "#/$defs/ItemMethod"
         },
         "outcome": {
           "description": "What happened.",
@@ -1473,6 +1691,86 @@
             "skip",
             "gap"
           ]
+        },
+        {
+          "description": "Its tool's own locks couldn't be held.",
+          "type": "object",
+          "properties": {
+            "gap": {
+              "description": "Why.",
+              "$ref": "#/$defs/LockGap"
+            },
+            "skip": {
+              "type": "string",
+              "const": "installer-busy"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip",
+            "gap"
+          ]
+        },
+        {
+          "description": "A native command runs only for a person who saw it.",
+          "type": "object",
+          "properties": {
+            "skip": {
+              "type": "string",
+              "const": "semantic-not-reviewed"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip"
+          ]
+        },
+        {
+          "description": "Its tool can't be used, or isn't what the review showed.",
+          "type": "object",
+          "properties": {
+            "gap": {
+              "description": "Why.",
+              "$ref": "#/$defs/ToolGap"
+            },
+            "skip": {
+              "type": "string",
+              "const": "tool-changed"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip",
+            "gap"
+          ]
+        },
+        {
+          "description": "What ties a worktree to its repository changed.",
+          "type": "object",
+          "properties": {
+            "skip": {
+              "type": "string",
+              "const": "witness-changed"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip"
+          ]
+        },
+        {
+          "description": "Its integration reads nothing again at apply.",
+          "type": "object",
+          "properties": {
+            "skip": {
+              "type": "string",
+              "const": "revisit-missing"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip"
+          ]
         }
       ]
     },
@@ -1530,10 +1828,24 @@
         }
       ]
     },
+    "ToolGap": {
+      "type": "string",
+      "enum": [
+        "tool-missing",
+        "tool-unreadable",
+        "tool-unknown-version",
+        "tool-unverified-version",
+        "tool-changed"
+      ]
+    },
     "TotalsOut": {
       "description": "A receipt's totals.",
       "type": "object",
       "properties": {
+        "native": {
+          "description": "What native commands freed, apart from what kipple removed.",
+          "$ref": "#/$defs/NativeTotalOut"
+        },
         "removed": {
           "description": "What every item removed, as each run reported it.",
           "$ref": "#/$defs/RemovedOut"
@@ -1601,6 +1913,7 @@
         "removed",
         "trashed_items",
         "trashed_apparent_bytes",
+        "native",
         "statuses"
       ]
     },
