@@ -682,9 +682,8 @@ fn inspect(
         Err(stopped) => return Err(stopped),
     };
     let program = path.join(&manifest.entrypoint);
-    let aliased = match read_alias(cx, &path, named.target) {
-        Ok(aliased) => aliased,
-        Err(_) => return Ok(Entry::Unread(path)),
+    let Ok(aliased) = read_alias(cx, &path, named.target) else {
+        return Ok(Entry::Unread(path));
     };
     if !walked.ordinary || !aliased || !walked.files.contains(&program) {
         return Ok(Entry::Kept(path));

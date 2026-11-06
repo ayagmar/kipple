@@ -69,7 +69,7 @@ struct Long;
 
 impl Clock for Long {
     fn now(&self) -> SystemTime {
-        SystemTime::UNIX_EPOCH + Duration::from_secs(4_102_444_800)
+        SystemTime::UNIX_EPOCH + Duration::from_hours(1_139_568)
     }
 }
 
@@ -250,7 +250,7 @@ impl Gate {
 
 /// `path` held as the config holds a path: by its name and what is there and above it.
 fn held(path: &Path) -> HeldPath {
-    let identity = |path| NoFollowFs.metadata(path).ok()?.identity;
+    let identity = |at| NoFollowFs.metadata(at).ok()?.identity;
     HeldPath {
         forms: vec![path.to_owned()],
         lineage: Lineage(path.ancestors().map(identity).collect()),
@@ -291,14 +291,16 @@ fn engine(fs: Box<dyn FsProbe>, rules: Vec<Rule>) -> Engine {
 fn at<'report>(gate: &Gate, report: &'report ScanReport, path: &str) -> &'report Finding {
     let path = gate.home().join(path);
     let found = report.findings.iter().find(|finding| finding.path == path);
-    found.unwrap_or_else(|| panic!("nothing at {}: {report:#?}", path.display()))
+    found.unwrap()
 }
 
 /// What each release of `report` says of itself, by the release's version.
 fn releases(report: &ScanReport) -> BTreeMap<String, ReleaseFacts> {
-    let facts = |finding: &Finding| match &finding.facts.as_ref()?.supplied.subject {
-        Subject::Release(release) => Some((release.version.0.clone(), release.clone())),
-        _ => None,
+    let facts = |finding: &Finding| {
+        let Subject::Release(release) = &finding.facts.as_ref()?.supplied.subject else {
+            return None;
+        };
+        Some((release.version.0.clone(), release.clone()))
     };
     report.findings.iter().filter_map(facts).collect()
 }
