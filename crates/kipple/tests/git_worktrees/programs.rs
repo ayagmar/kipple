@@ -233,6 +233,30 @@ fn submodule_row_runs_before_status() {
     assert_eq!(scan.fact("git.tracked_changes"), FactValue::Unknown);
 }
 
+/// Catches the lazy-fetch guard lost from the isolation: the gate stops a blobless clone
+/// before anything reads a blob, so only this says the second line is still there.
+#[test]
+fn every_git_run_forbids_a_lazy_fetch() {
+    let repo = Repo::new();
+    let log = repo.temp.path().join("env.log");
+    let bin = repo.temp.path().join("bin");
+    let text = format!(
+        "#!/bin/sh\nprintf '%s %s\\n' \"$GIT_NO_LAZY_FETCH\" \"$*\" >> '{}'\nexec '{}' \"$@\"\n",
+        log.display(),
+        real_git().display()
+    );
+    executable(&bin.join("git"), &text);
+
+    repo.scan_in(&repo.env_with(bin.into_os_string()));
+
+    let logged = fs::read_to_string(&log).unwrap();
+    // Which git this is gets asked outside any repository, so it reads no blob.
+    let asked = logged.lines().filter(|line| !line.ends_with("--version"));
+    let unguarded = asked.clone().filter(|line| !line.starts_with("1 ")).count();
+    assert_eq!(unguarded, 0, "every line of {logged:?}");
+    assert_ne!(asked.count(), 0, "git ran");
+}
+
 /// Catches the worktree floor raised for everything: a git too old for `list -z` can
 /// still answer what is tracked, and only worktrees are lost, with an omission.
 #[test]

@@ -365,6 +365,32 @@ fn report_finding_does_not_classify_an_ignored_path() {
     );
 }
 
+/// Catches a checkout no repository lists classifying the ignored path it stands at: it is a
+/// plain finding with a verified layout, and it holds a repository nothing was asked about.
+#[test]
+fn an_unregistered_checkout_does_not_classify_an_ignored_path() {
+    const STRAY: &str = "home/projects/app-wt/fix-1/scratch";
+    let tree = repository_with(&[CHECKOUT], |tree| {
+        v2_56_0::gitfile(tree, MAIN, "gone", STRAY, Links::Relative);
+    });
+    let (main, path) = (tree.at(MAIN), tree.at(CHECKOUT));
+    let mut state = clean(&main, &path);
+    state.ignored = Ok(vec![PathBuf::from("scratch/")]);
+    let script = Script::repository(&main, &[&path]).state(&path, state);
+
+    let run = tree.scan(script);
+
+    assert_eq!(
+        run.at(&path.join("scratch")).len(),
+        1,
+        "the stray is a finding"
+    );
+    assert_eq!(
+        run.fact(&path, "worktree.unclassified_ignored"),
+        FactValue::Count(1)
+    );
+}
+
 /// Catches an ignored path no finding stands at reading as classified: an `.env` is what the
 /// worktree exists to keep from being lost.
 #[test]

@@ -180,3 +180,46 @@ const fn stands_on_its_own(facts: &Facts) -> bool {
     let worktree = matches!(facts.supplied.subject, Subject::Worktree(_));
     removes && facts.layout_verified && repository_free && !worktree
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Method;
+    use crate::policy::{Activity, Lineage, Modified};
+    use crate::retention::Settlement;
+    use crate::supplied::Supplied;
+
+    fn verified(proposal: Proposal) -> Facts {
+        Facts {
+            proposal,
+            layout_verified: true,
+            consequence: None,
+            tracked: Tracked::NoRepository,
+            activity: Activity::Idle,
+            modified: Modified::Ago(std::time::Duration::ZERO),
+            recent_days: None,
+            lineage: Lineage::default(),
+            supplied: Supplied::default(),
+            unmet: Vec::new(),
+            settlement: Settlement::Unsettled,
+            integration: IntegrationId("test"),
+        }
+    }
+
+    /// Catches a report standing for proof. No built-in report rule reaches a project with a
+    /// verified layout and nothing tracked today, so a scan can't show this yet: the first
+    /// that does would let a worktree's ignored path go on a finding that only reports it.
+    #[test]
+    fn only_a_rule_that_removes_stands_on_its_own() {
+        for reports in [Proposal::Report, Proposal::Advice] {
+            let facts = verified(reports);
+            assert!(
+                !stands_on_its_own(&facts),
+                "{:?} only reports",
+                facts.proposal
+            );
+        }
+        let removes = verified(Proposal::Remove(vec![Method::Delete]));
+        assert!(stands_on_its_own(&removes), "a rule that removes stands");
+    }
+}
