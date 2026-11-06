@@ -9,11 +9,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use kipple_core::{
-    Activity, ActivityGap, Clause, Consequence, Cost, Digest, FactState, Facts, FileIdentity,
-    GitGap, HeldPath, IntegrationId, Level, Lineage, Loss, Method, Modified, NativeKind,
-    POLICY_VERSION, Policy, ProbeError, Proposal, Recovery, ReleaseFacts, ReleaseGroup,
-    ReleaseRole, ReleaseState, ReleaseVersion, Retained, RuleId, RuleSettings, Seen, SemanticFacts,
-    Settlement, Subject, Supplied, ToolGap, Tracked, Unmet, WalkGap,
+    Activity, ActivityGap, AgentLabel, Checkout, Clause, Consequence, Cost, Digest, FactState,
+    Facts, FileIdentity, GitGap, HeldPath, IntegrationId, Level, Lineage, Loss, Method, Modified,
+    NativeKind, POLICY_VERSION, Policy, ProbeError, Proposal, Recovery, Registration,
+    RegistrationState, ReleaseFacts, ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion,
+    Retained, RuleId, RuleSettings, Seen, SemanticFacts, Settlement, Subject, Supplied, ToolGap,
+    Tracked, Unmet, WalkGap, WorktreeFacts,
 };
 
 /// Every classification there has been, oldest first: its version and the digest of
@@ -21,7 +22,7 @@ use kipple_core::{
 /// version, and review holds rows to append-only: the test sees only the rows as they are.
 const HISTORY: &[(u32, &str)] = &[
     (1, "8465c62ae444a033bfb801d45aca1aed"),
-    (2, "a1fdf3d57ffbb10f0227a73aef2512f9"),
+    (2, "85fff6351399322d17e4f1b8ce829ab6"),
 ];
 
 const DAY: u64 = 24 * 60 * 60;
@@ -106,6 +107,32 @@ fn release() -> Subject {
     })
 }
 
+fn worktree() -> Subject {
+    Subject::Worktree(Box::new(WorktreeFacts {
+        registration: Registration {
+            path: at("p"),
+            head: None,
+            checkout: Checkout::Detached,
+            locked: None,
+            prunable: false,
+            bare: false,
+        },
+        state: RegistrationState::RegisteredPresent,
+        repository: at("r"),
+        admin: None,
+        witness: Err(GitGap::Unsupported),
+        tool: Err(ToolGap::Missing),
+        agent: AgentLabel::Unknown,
+    }))
+}
+
+/// Facts of git's own removal of a worktree.
+fn worktree_removal(facts: &mut Facts) {
+    facts.proposal = Proposal::Native(NativeKind::GitWorktreeRemove);
+    facts.supplied.subject = worktree();
+    facts.integration = IntegrationId::GIT;
+}
+
 const fn cache_clean() -> Subject {
     Subject::Semantic(SemanticFacts {
         kind: NativeKind::NpmCacheClean,
@@ -160,6 +187,26 @@ fn predicate_or_subject_each() -> Vec<(String, Facts)> {
             work_tree: at("p"),
             tracked: 1,
         };
+    });
+    with("worktree", &worktree_removal);
+    with("worktree-of-another-integration", &|f| {
+        worktree_removal(f);
+        f.integration = IntegrationId("test");
+    });
+    with("worktree-tracked", &|f| {
+        worktree_removal(f);
+        f.tracked = Tracked::Asked {
+            work_tree: at("p"),
+            tracked: 1,
+        };
+    });
+    with("worktree-under-remove", &|f| {
+        worktree_removal(f);
+        f.proposal = Proposal::Remove(vec![Method::Delete]);
+    });
+    with("worktree-removal-of-a-plain-item", &|f| {
+        worktree_removal(f);
+        f.supplied.subject = Subject::Plain;
     });
     cases
 }

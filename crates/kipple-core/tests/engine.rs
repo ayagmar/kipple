@@ -164,6 +164,7 @@ const fn measured(size: SpaceEstimate) -> Measurement {
         size,
         modified: Some(NOW),
         repository: None,
+        nested_repository: None,
     }
 }
 
@@ -1266,6 +1267,7 @@ fn only_a_complete_measurement_dates_a_finding_and_a_future_time_counts_as_now()
                 },
                 modified: Some(at),
                 repository: None,
+                nested_repository: None,
             }),
             ..FakeSizer::default()
         };
@@ -1322,6 +1324,7 @@ fn a_checkout_inside_a_finding_holds_it_and_an_incomplete_walk_cant_rule_one_out
     let editable = Measurement {
         // `pip install -e git+…` checks a package out inside the venv.
         repository: Some(PathBuf::from("/found/.venv/src/pkg")),
+        nested_repository: Some(PathBuf::from("/found/.venv/src/pkg")),
         ..measured(SIZE)
     };
     let unreadable = measured(SpaceEstimate {
@@ -1342,6 +1345,7 @@ fn a_checkout_inside_a_finding_holds_it_and_an_incomplete_walk_cant_rule_one_out
     // A walk that met a checkout before an unreadable entry shows the specific reason.
     let unreadable_after_checkout = Measurement {
         repository: Some(PathBuf::from("/found/.venv/src/pkg")),
+        nested_repository: Some(PathBuf::from("/found/.venv/src/pkg")),
         ..unreadable
     };
     assert!(
@@ -1458,6 +1462,7 @@ struct Supplier {
     eligibility: Vec<Predicate>,
     values: BTreeMap<&'static str, FactValue>,
     advice: Advised,
+    subject: Subject,
 }
 
 /// Whether a [`Supplier`] gives advice, and whether its finding names it.
@@ -1476,6 +1481,15 @@ impl Supplier {
             eligibility: vec![Predicate { fact, test }],
             values: BTreeMap::new(),
             advice: Advised::Nothing,
+            subject: Subject::Plain,
+        }
+    }
+
+    /// The same, about a worktree at `/found/item`.
+    fn of_a_worktree(self) -> Self {
+        Self {
+            subject: worktree("/found/item"),
+            ..self
         }
     }
 
@@ -1500,7 +1514,11 @@ impl Supplier {
     )]
     fn scan(self) -> Facts {
         let rule = self.rule();
-        let ports = ports(FakeFs::default(), FakeSizer::default());
+        let fs = FakeFs {
+            no_git: true,
+            ..FakeFs::default()
+        };
+        let ports = ports(fs, FakeSizer::default());
         let engine = Engine::new(ports, vec![Box::new(self)], vec![rule]).unwrap();
         run(&engine, &found())
             .findings
@@ -1544,6 +1562,7 @@ impl Integration for Supplier {
         let supplied = Supplied {
             values: self.values.clone(),
             advice: advice.filter(|_| self.advice == Advised::ForTheFinding),
+            subject: self.subject.clone(),
             ..sink.supplied()
         };
         sink.add_supplied(&self.rule(), Path::new("/found/item"), claim, supplied)
@@ -1605,24 +1624,111 @@ fn wrong_fact_type_is_unknown() {
     assert_eq!(unmet_state(&test_of_another_type), Some(FactState::Unknown));
 }
 
-/// Catches an integration's fact being ignored once the host has a value of its own, which
-/// would let the host's view of a generic fact override what the tool knows.
+/// Catches the host's "no repository" standing in for git's answer about a worktree, which
+/// is a repository: a dirty one would pass "no changes".
 #[test]
 fn supplied_fact_wins_over_generic() {
-    let at_least_a_gigabyte = || {
-        let bounds = Bounds {
-            min: Some(1 << 30),
-            max: None,
+    let no_changes = || {
+        let none = Bounds {
+            min: None,
+            max: Some(0),
         };
-        Supplier::eligible("size", Test::Bytes(bounds))
+        Supplier::eligible("git.tracked_changes", Test::Count(none)).of_a_worktree()
     };
 
-    let measured = at_least_a_gigabyte().scan();
-    assert_eq!(unmet_state(&measured), Some(FactState::Failed));
-    let supplied = at_least_a_gigabyte()
-        .with("size", FactValue::Bytes(1 << 31))
+    let dirty = no_changes()
+        .with("git.tracked_changes", FactValue::Count(3))
         .scan();
-    assert_eq!(unmet_state(&supplied), None);
+    assert_eq!(unmet_state(&dirty), Some(FactState::Failed));
+    let clean = no_changes()
+        .with("git.tracked_changes", FactValue::Count(0))
+        .scan();
+    assert_eq!(unmet_state(&clean), None);
+}
+
+const fn at_least<T>(min: T) -> Bounds<T> {
+    Bounds {
+        min: Some(min),
+        max: None,
+    }
+}
+
+/// Catches an integration talking its finding past a rule's stricter predicate: what the
+/// host measured stands, on any subject, and what git status doesn't cover stays the host's.
+#[test]
+fn a_supplied_value_never_beats_the_host() {
+    let long = Duration::from_secs(1 << 40);
+    let cases = [
+        (
+            "size",
+            Test::Bytes(at_least(1 << 40)),
+            FactValue::Bytes(1 << 41),
+        ),
+        (
+            "modified_age",
+            Test::Duration(at_least(long)),
+            FactValue::Duration(long),
+        ),
+        ("marker.present", Test::Is(true), FactValue::Bool(true)),
+        (
+            "activity",
+            Test::OneOf(vec!["busy"]),
+            FactValue::Enum("busy"),
+        ),
+        (
+            "git.tracked_files_in_item",
+            Test::Count(at_least(1)),
+            FactValue::Count(1),
+        ),
+    ];
+    for (fact, test, value) in cases {
+        let asked = || Supplier::eligible(fact, test.clone());
+        let plain = unmet_state(&asked().scan());
+        assert!(plain.is_some(), "expected the host to fail {fact}");
+        assert_eq!(
+            unmet_state(&asked().with(fact, value).scan()),
+            plain,
+            "{fact}"
+        );
+
+        let checkout = unmet_state(&asked().of_a_worktree().scan());
+        assert!(checkout.is_some(), "expected the host to fail {fact}");
+        let supplied = asked().of_a_worktree().with(fact, value).scan();
+        assert_eq!(unmet_state(&supplied), checkout, "{fact}");
+    }
+}
+
+/// The git facts, each with the test a clean item passes.
+fn git_facts_at_most_zero() -> [(&'static str, Test); 3] {
+    let none = || {
+        Test::Count(Bounds {
+            min: None,
+            max: Some(0),
+        })
+    };
+    [
+        ("git.tracked_files_in_item", none()),
+        ("git.tracked_changes", none()),
+        ("git.untracked_files", none()),
+    ]
+}
+
+/// Catches a worktree outside any repository passing "no changes" when git's answer is
+/// missing: the host's "no repository" says nothing about a checkout that is one.
+#[test]
+fn an_unsupplied_git_fact_of_a_worktree_is_unknown() {
+    for (fact, test) in git_facts_at_most_zero() {
+        let plain = Supplier::eligible(fact, test.clone()).scan();
+        assert_eq!(unmet_state(&plain), None, "{fact}");
+
+        let checkout = Supplier::eligible(fact, test).of_a_worktree().scan();
+        assert!(
+            matches!(checkout.tracked, Tracked::NoRepository),
+            "expected no repository around it, got {:?}",
+            checkout.tracked
+        );
+        assert_eq!(unmet_state(&checkout), Some(FactState::Unknown), "{fact}");
+    }
 }
 
 /// Catches a fact nothing publishes passing, as a rule of a newer integration would.
@@ -1852,12 +1958,14 @@ impl Integration for Subjected {
 )]
 fn worktree_tracked(
     id: &'static str,
-    inside: Option<&str>,
+    deeper: Option<&str>,
     answer: Result<u64, GitGap>,
 ) -> Tracked {
     let sizer = FakeSizer {
+        // As the walker reports a worktree: first its own `.git`, then what is below it.
         measurement: Some(Measurement {
-            repository: inside.map(PathBuf::from),
+            repository: Some(PathBuf::from("/found/repo/wt")),
+            nested_repository: deeper.map(PathBuf::from),
             ..measured(SIZE)
         }),
         ..FakeSizer::default()
@@ -1889,18 +1997,16 @@ fn worktree_tracked(
 /// in the worktree, or covering a repository deeper in it.
 #[test]
 fn a_worktree_stops_counting_only_its_own_git() {
-    let own = Some("/found/repo/wt");
-
     assert!(
         matches!(
-            worktree_tracked("git", own, Ok(0)),
+            worktree_tracked("git", None, Ok(0)),
             Tracked::Asked { tracked: 0, work_tree } if work_tree == Path::new("/found/repo")
         ),
         "the repository above is asked, and the worktree's own `.git` doesn't count"
     );
     assert!(
         matches!(
-            worktree_tracked("git", own, Ok(2)),
+            worktree_tracked("git", None, Ok(2)),
             Tracked::Asked { tracked: 2, .. }
         ),
         "what the repository above tracks is reported"
@@ -1914,7 +2020,7 @@ fn a_worktree_stops_counting_only_its_own_git() {
     );
     assert!(
         matches!(
-            worktree_tracked("cargo", own, Ok(0)),
+            worktree_tracked("cargo", None, Ok(0)),
             Tracked::HoldsRepository { .. }
         ),
         "any integration but git keeps the protection"
