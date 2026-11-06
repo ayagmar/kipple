@@ -522,7 +522,10 @@ fn an_agent_location_with_no_base_is_unknown() {
 #[test]
 fn pi_dir_expands_tilde_and_an_absent_one_holds_nothing() {
     let dir = home();
-    let home = dir.path();
+    // A directory that exists comes back in its physical parent (D-045), and macOS's temp
+    // dir sits below a link, so `~` has to be compared in that form.
+    let physical = dir.path().canonicalize().unwrap();
+    let home = physical.as_path();
     for (value, expected) in [
         ("~", home.to_owned()),
         ("~/pi/agent", home.join("pi/agent")),
