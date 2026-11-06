@@ -35,6 +35,10 @@ use kipple_core::{
     Tracked, Unjudged, Unresolved, Unsupported, apply, plan, reconcile,
 };
 use kipple_core::{ApplyPorts, Depth, Reconciled, Recorders, RunRead, StoredRun, read_run};
+use kipple_core::{
+    NativeKind, ReleaseFacts, ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion,
+    SemanticFacts, Subject, ToolGap,
+};
 use world::{Crash, Crashed, Record, Rescanned, Target, World};
 
 /// The home directory the scenarios run in: absolute on the OS the tests run on, as a
@@ -1132,6 +1136,59 @@ fn refusals(planned: &Planned) -> Vec<(FindingId, Skip)> {
         .iter()
         .map(|refused| (refused.finding, refused.skip.clone()))
         .collect()
+}
+
+/// Catches a rule of a new operation reaching a plan before the card that owns it: a tool's
+/// command can't be planned as files, and a release waits for settle.
+#[test]
+fn no_new_operation_can_be_planned_yet() {
+    let (item, target) = project(0, 100, TARGET);
+    let world = world_of(&[(item.clone(), target)]);
+    let config = Config::new();
+    let scan_with = |proposal, subject| {
+        let mut scan = scan_of(std::slice::from_ref(&item));
+        let facts = scan.findings[0].facts.as_mut().unwrap();
+        facts.proposal = proposal;
+        facts.supplied.subject = subject;
+        scan
+    };
+
+    let native = scan_with(
+        Proposal::Native(NativeKind::NpmCacheClean),
+        Subject::Semantic(SemanticFacts {
+            kind: NativeKind::NpmCacheClean,
+            tool: Err(ToolGap::Missing),
+        }),
+    );
+    let commands = plan_all(&native, &config, &world, PlanMode::Review);
+    assert!(
+        matches!(
+            refusals(&commands).as_slice(),
+            [(FindingId(0), Skip::MethodNotOffered(_))]
+        ),
+        "expected a native item to be refused, got {:?}",
+        refusals(&commands)
+    );
+
+    let release = scan_with(
+        Proposal::RemoveRelease(vec![Method::Delete]),
+        Subject::Release(ReleaseFacts {
+            group: ReleaseGroup {
+                component: "cli".to_owned(),
+                target: "any".to_owned(),
+            },
+            version: ReleaseVersion("1.0.0".to_owned()),
+            role: ReleaseRole::Installed,
+            files: Vec::new(),
+            locks: Vec::new(),
+            state: ReleaseState::Sound,
+        }),
+    );
+    let releases = plan_all(&release, &config, &world, PlanMode::Review);
+    assert_eq!(
+        refusals(&releases),
+        [(FindingId(0), Skip::Protected(vec![Hold::Unsettled]))]
+    );
 }
 
 /// Catches the planner asking about a state root with the wrong integration, or without
