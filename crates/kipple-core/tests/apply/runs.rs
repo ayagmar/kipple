@@ -63,6 +63,8 @@ fn reconcile_all(world: &World, config: &Config) -> Ending {
     let rescan = Rescanned {
         scan: scan_of(&[]),
         activity: None,
+        refuses: None,
+        log: None,
     };
     let session = Session {
         judge: config.judge(),

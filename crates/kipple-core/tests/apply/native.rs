@@ -7,6 +7,7 @@
 //! went missing shows as that skip, not as a pass.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use kipple_core::format::encode_stored_plan;
 use kipple_core::format::{decode_plan_file, decode_stored_plan, encode_plan_file};
@@ -18,12 +19,16 @@ use kipple_core::{
 };
 
 use super::codec::TestCodec;
-use super::world::{Target, World};
+use super::world::{Locks, Log, Rescanned, Target, World};
 use super::{
-    Config, Item, TARGET, apply_as, home, id, plan_all, project, refusals, rel, rescanned, scan_of,
-    snapshot, world_of,
+    Config, Item, TARGET, apply_as, home, id, plan_all, ports, project, refusals, rel, rescanned,
+    scan_of, snapshot, world_of,
 };
-use kipple_core::{EntryKind, FindingId};
+use kipple_core::{
+    ApplyPorts, ApplyRequest, CancelToken, EntryKind, FindingId, LockGap, Method, MutationPorts,
+    Recorders, ReleaseFacts, ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion, Settlement,
+    Status, apply,
+};
 
 fn tool(tool: NativeTool) -> ResolvedTool {
     ResolvedTool {
@@ -380,4 +385,137 @@ fn a_stored_native_item_reads_back_with_its_command() {
     let item = stored.item(entry.item()).unwrap();
     assert_eq!(item.execution(), entry.execution());
     assert_eq!(item.method(), ItemMethod::Native);
+}
+
+/// A release retention let go, naming one lock, and the world holding it.
+fn release(locks: Vec<PathBuf>) -> (ScanReport, World) {
+    let (item, target) = project(0, 100, TARGET);
+    let world = world_of(&[(item.clone(), target)]);
+    let mut scan = scan_of(&[item]);
+    let facts = scan.findings[0].facts.as_mut().unwrap();
+    facts.proposal = Proposal::RemoveRelease(vec![Method::Delete]);
+    facts.settlement = Settlement::Candidate;
+    facts.supplied.subject = Subject::Release(ReleaseFacts {
+        group: ReleaseGroup {
+            component: "cli".to_owned(),
+            target: "any".to_owned(),
+        },
+        version: ReleaseVersion("1.0.0".to_owned()),
+        role: ReleaseRole::Installed,
+        files: Vec::new(),
+        locks,
+        state: ReleaseState::Sound,
+    });
+    (scan, world)
+}
+
+/// What applying `plan` under `locks` did, reading it again as `rescan` does.
+fn applied_under(plan: &Plan, rescan: &Rescanned, locks: &Locks, world: &World) -> ItemOutcome {
+    let mutation = MutationPorts {
+        locks,
+        ..ports(world)
+    };
+    let ports = ApplyPorts {
+        rescan,
+        mutation: &mutation,
+    };
+    let mut journal = world.recorder();
+    let to = Recorders {
+        journal: &mut journal,
+        events: &mut (),
+    };
+    let request = ApplyRequest {
+        plan,
+        authorization: Authorization::Reviewed(ReviewedPlan::for_core_tests(plan)),
+    };
+    let config = Config::new();
+    let receipt = apply(&request, &config.judge(), &ports, to, &CancelToken::new());
+    receipt.items[0].outcome.clone()
+}
+
+/// A log shared by a rescan and locks that answer `held`.
+fn logged(scan: &ScanReport, held: Result<(), LockGap>, world: &World) -> (Rescanned, Locks, Log) {
+    let log = Log::default();
+    world.state().log = Some(Arc::clone(&log));
+    let rescan = Rescanned {
+        log: Some(Arc::clone(&log)),
+        ..rescanned(scan)
+    };
+    let locks = Locks {
+        log: Arc::clone(&log),
+        held,
+    };
+    (rescan, locks, log)
+}
+
+/// Catches an item judged from a reading that predates its lock, and a lock let go before
+/// the item ran: an install could start between them (pinned 13). The engine's half, that
+/// such a reading takes a new snapshot, is in `tests/engine.rs`.
+#[test]
+fn native_snapshot_is_taken_after_the_locks() {
+    let (scan, world) = release(vec![home("install.lock")]);
+    let plan = reviewed(&scan, &world).plan;
+    assert_eq!(
+        plan.entries().len(),
+        1,
+        "{:?}",
+        refusals(&reviewed(&scan, &world))
+    );
+    let (rescan, locks, log) = logged(&scan, Ok(()), &world);
+
+    let outcome = applied_under(&plan, &rescan, &locks, &world);
+
+    assert_eq!(outcome.status(), Status::Done, "{outcome:?}");
+    assert_eq!(
+        *log.lock().unwrap(),
+        ["locks", "now", "ran", "released"],
+        "taken first, held through the run"
+    );
+}
+
+/// Catches a release removed beside a running install: a lock held elsewhere, or a store
+/// that names none, leaves it alone before anything of it is read again (pinned 13).
+#[test]
+fn a_lock_that_cant_be_held_leaves_the_release_alone() {
+    let (scan, world) = release(vec![home("install.lock")]);
+    let plan = reviewed(&scan, &world).plan;
+    let (rescan, locks, log) = logged(&scan, Err(LockGap::Held), &world);
+
+    let outcome = applied_under(&plan, &rescan, &locks, &world);
+
+    assert_eq!(
+        outcome,
+        ItemOutcome::Skipped(Skip::InstallerBusy(LockGap::Held))
+    );
+    assert_eq!(*log.lock().unwrap(), [] as [&str; 0], "nothing went on");
+}
+
+/// Catches a release naming no lock passing as one with nothing to fear.
+#[test]
+fn a_release_that_names_no_lock_is_left_alone() {
+    let (scan, world) = release(Vec::new());
+    let plan = reviewed(&scan, &world).plan;
+    let (rescan, locks, _) = logged(&scan, Ok(()), &world);
+
+    let outcome = applied_under(&plan, &rescan, &locks, &world);
+
+    assert_eq!(
+        outcome,
+        ItemOutcome::Skipped(Skip::InstallerBusy(LockGap::Missing))
+    );
+}
+
+/// Catches an item that can't be read again running on what the apply scan said, and a
+/// lock kept past the item that took it.
+#[test]
+fn an_item_that_cant_be_read_again_is_skipped_and_its_locks_go() {
+    let (scan, world) = release(vec![home("install.lock")]);
+    let plan = reviewed(&scan, &world).plan;
+    let (mut rescan, locks, log) = logged(&scan, Ok(()), &world);
+    rescan.refuses = Some(Skip::RevisitMissing);
+
+    let outcome = applied_under(&plan, &rescan, &locks, &world);
+
+    assert_eq!(outcome, ItemOutcome::Skipped(Skip::RevisitMissing));
+    assert_eq!(*log.lock().unwrap(), ["locks", "now", "released"]);
 }

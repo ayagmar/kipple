@@ -124,7 +124,7 @@ pub use capability::{NativeTool, ToolError, ToolStatus, ToolVersion};
 pub use digest::Digest;
 pub use discovery::{RepositoryDir, WalkStop};
 pub use engine::{
-    Engine, EngineError, EngineRescan, FRESH, Finding, FindingId, IntegrationReport, Omission,
+    Engine, EngineError, EngineRescan, FRESH, Finding, FindingId, IntegrationReport, Now, Omission,
     OpenedRoot, Ports, Rescan, ScanOutcome, ScanReport, ScanRequest,
 };
 pub use event::{EventChannel, EventRx, EventTx, ScanEvent, Sequenced, event_channel};

@@ -313,6 +313,8 @@ fn rescanned(scan: &ScanReport) -> Rescanned {
     Rescanned {
         scan: scan.clone(),
         activity: None,
+        refuses: None,
+        log: None,
     }
 }
 

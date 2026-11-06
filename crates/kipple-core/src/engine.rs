@@ -4,7 +4,7 @@
 mod rescan;
 mod settle;
 
-pub use rescan::{EngineRescan, FRESH, Rescan};
+pub use rescan::{EngineRescan, FRESH, Now, Rescan};
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};

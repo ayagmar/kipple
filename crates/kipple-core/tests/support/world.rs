@@ -20,7 +20,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, UNIX_EPOCH};
 
 pub(crate) use kipple_core::Record;
@@ -28,10 +28,11 @@ use kipple_core::format::{decode_line, encode_line, encode_stored_plan};
 use kipple_core::{
     Activity, Allocated, Anchor, ApplyError, CancelToken, Component, DeleteOp, EffectSink,
     EntryKind, EntrySnapshot, ErrorCode, Executor, FileIdentity, FileSystemClass, Finding, Finish,
-    Forgotten, Freed, Freeze, Freezer, FrozenTree, GitGap, Intent, ItemId, ItemOutcome, Journal,
-    LeftReason, LocalFileSystem, LockState, Locked, NodeId, Plan, RelPath, Rescan, RestoreRequest,
-    RunId, RunStore, ScanReport, Scope, SlotState, StoreRefusal, TrackedQuery, TrashBackend,
-    TrashDir, TrashOp, TrashSlot, Trashed, TreeBuilder, Volume,
+    Forgotten, Freed, Freeze, Freezer, FrozenTree, GitGap, HeldLocks, Intent, ItemId, ItemOutcome,
+    Journal, LeftReason, LocalFileSystem, LockGap, LockState, Locked, NodeId, Now, Plan, RelPath,
+    Rescan, RestoreRequest, RunId, RunStore, ScanReport, Scope, Skip, SlotState, SpaceEstimate,
+    StoreLocks, StoreRefusal, TrackedQuery, TrashBackend, TrashDir, TrashOp, TrashSlot, Trashed,
+    TreeBuilder, Volume,
 };
 
 use crate::codec::TestCodec;
@@ -127,6 +128,8 @@ pub(crate) struct State {
     pub(crate) removals: Vec<Removal>,
     /// Items whose operation ran, each time it ran.
     pub(crate) ran: Vec<ItemId>,
+    /// Says when an item runs, among what else a test logs.
+    pub(crate) log: Option<Log>,
     /// Items whose operation ran with no durable intent.
     pub(crate) unjournalled: Vec<ItemId>,
     pub(crate) records: Vec<Record>,
@@ -179,6 +182,9 @@ impl World {
     fn started(&self, item: ItemId) {
         let mut state = self.state();
         state.ran.push(item);
+        if let Some(log) = &state.log {
+            log.lock().unwrap().push("ran");
+        }
         let intended = state
             .records
             .iter()
@@ -499,20 +505,66 @@ impl TrackedQuery for World {
 pub(crate) struct Rescanned {
     pub(crate) scan: ScanReport,
     pub(crate) activity: Option<Activity>,
+    /// Refuses every item, as a reading that failed does.
+    pub(crate) refuses: Option<Skip>,
+    /// Says when each item is read again.
+    pub(crate) log: Option<Log>,
 }
+
+/// What happened, in order, across the fakes that share it.
+pub(crate) type Log = Arc<Mutex<Vec<&'static str>>>;
 
 impl Rescan for Rescanned {
     fn scan(&self, _: &CancelToken) -> ScanReport {
         self.scan.clone()
     }
 
-    fn activity(&self, _: &ScanReport, finding: &Finding) -> Activity {
-        self.activity.clone().unwrap_or_else(|| {
-            finding.facts.as_ref().map_or(
-                Activity::Unknown(kipple_core::ActivityGap::Unsupported),
-                |facts| facts.activity.clone(),
-            )
+    fn now(&self, _: &ScanReport, finding: &Finding, _: &CancelToken) -> Result<Now, Skip> {
+        if let Some(log) = &self.log {
+            log.lock().unwrap().push("now");
+        }
+        if let Some(skip) = &self.refuses {
+            return Err(skip.clone());
+        }
+        let facts = finding.facts.as_ref().unwrap();
+        Ok(Now {
+            activity: self
+                .activity
+                .clone()
+                .unwrap_or_else(|| facts.activity.clone()),
+            supplied: facts.supplied.clone(),
+            settlement: facts.settlement,
+            unmet: facts.unmet.clone(),
         })
+    }
+
+    fn size(&self, _: &Path, _: &CancelToken) -> Option<SpaceEstimate> {
+        None
+    }
+}
+
+/// Tool locks that answer `held`, saying when they are taken and released.
+#[derive(Debug)]
+pub(crate) struct Locks {
+    pub(crate) log: Log,
+    pub(crate) held: Result<(), LockGap>,
+}
+
+/// Says `released` when it is dropped.
+#[derive(Debug)]
+struct Release(Log);
+
+impl Drop for Release {
+    fn drop(&mut self) {
+        self.0.lock().unwrap().push("released");
+    }
+}
+
+impl StoreLocks for Locks {
+    fn try_hold(&self, _: &[PathBuf]) -> Result<HeldLocks, LockGap> {
+        self.held?;
+        self.log.lock().unwrap().push("locks");
+        Ok(HeldLocks::new(Release(Arc::clone(&self.log))))
     }
 }
 
