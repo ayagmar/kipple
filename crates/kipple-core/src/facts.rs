@@ -14,7 +14,7 @@ use crate::policy::{Activity, Clause, FactState, Facts, Modified, Tracked, Unmet
 use crate::probe::{FsProbe, ProbeError};
 use crate::rule::{Bounds, FactKind, FactSpec, GENERIC_FACTS, Predicate, Rule, Test};
 use crate::size::{Completeness, SpaceEstimate};
-use crate::supplied::FactValue;
+use crate::supplied::{FactValue, Subject};
 
 /// What one directory holds, as far as git goes.
 #[derive(Debug, Clone)]
@@ -174,6 +174,13 @@ fn generic(name: &str, finding: Evaluated<'_>) -> FactValue {
                 .iter()
                 .any(|evidence| matches!(evidence, Evidence::Marker(_))),
         ),
+        // The host speaks for plain directories. A release or a worktree is more than that:
+        // around a worktree "no repository" says nothing about the checkout itself.
+        "git.tracked_files_in_item" | "git.tracked_changes" | "git.untracked_files"
+            if facts.supplied.subject != Subject::Plain =>
+        {
+            FactValue::Unknown
+        }
         "git.tracked_files_in_item" => match facts.tracked {
             Tracked::NoRepository => FactValue::Count(0),
             Tracked::Asked { tracked, .. } => FactValue::Count(tracked),

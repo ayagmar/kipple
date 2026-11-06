@@ -1462,6 +1462,7 @@ struct Supplier {
     eligibility: Vec<Predicate>,
     values: BTreeMap<&'static str, FactValue>,
     advice: Advised,
+    subject: Subject,
 }
 
 /// Whether a [`Supplier`] gives advice, and whether its finding names it.
@@ -1480,6 +1481,15 @@ impl Supplier {
             eligibility: vec![Predicate { fact, test }],
             values: BTreeMap::new(),
             advice: Advised::Nothing,
+            subject: Subject::Plain,
+        }
+    }
+
+    /// The same, about a worktree at `/found/item`.
+    fn of_a_worktree(self) -> Self {
+        Self {
+            subject: worktree("/found/item"),
+            ..self
         }
     }
 
@@ -1504,7 +1514,11 @@ impl Supplier {
     )]
     fn scan(self) -> Facts {
         let rule = self.rule();
-        let ports = ports(FakeFs::default(), FakeSizer::default());
+        let fs = FakeFs {
+            no_git: true,
+            ..FakeFs::default()
+        };
+        let ports = ports(fs, FakeSizer::default());
         let engine = Engine::new(ports, vec![Box::new(self)], vec![rule]).unwrap();
         run(&engine, &found())
             .findings
@@ -1548,6 +1562,7 @@ impl Integration for Supplier {
         let supplied = Supplied {
             values: self.values.clone(),
             advice: advice.filter(|_| self.advice == Advised::ForTheFinding),
+            subject: self.subject.clone(),
             ..sink.supplied()
         };
         sink.add_supplied(&self.rule(), Path::new("/found/item"), claim, supplied)
@@ -1627,6 +1642,39 @@ fn supplied_fact_wins_over_generic() {
         .with("size", FactValue::Bytes(1 << 31))
         .scan();
     assert_eq!(unmet_state(&supplied), None);
+}
+
+/// The git facts, each with the test a clean item passes.
+fn git_facts_at_most_zero() -> [(&'static str, Test); 3] {
+    let none = || {
+        Test::Count(Bounds {
+            min: None,
+            max: Some(0),
+        })
+    };
+    [
+        ("git.tracked_files_in_item", none()),
+        ("git.tracked_changes", none()),
+        ("git.untracked_files", none()),
+    ]
+}
+
+/// Catches a worktree outside any repository passing "no changes" when git's answer is
+/// missing: the host's "no repository" says nothing about a checkout that is one.
+#[test]
+fn an_unsupplied_git_fact_of_a_worktree_is_unknown() {
+    for (fact, test) in git_facts_at_most_zero() {
+        let plain = Supplier::eligible(fact, test.clone()).scan();
+        assert_eq!(unmet_state(&plain), None, "{fact}");
+
+        let checkout = Supplier::eligible(fact, test).of_a_worktree().scan();
+        assert!(
+            matches!(checkout.tracked, Tracked::NoRepository),
+            "expected no repository around it, got {:?}",
+            checkout.tracked
+        );
+        assert_eq!(unmet_state(&checkout), Some(FactState::Unknown), "{fact}");
+    }
 }
 
 /// Catches a fact nothing publishes passing, as a rule of a newer integration would.
