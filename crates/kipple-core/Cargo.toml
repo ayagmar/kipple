@@ -22,7 +22,8 @@ serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 
-# `kipple-platform`'s dev-dependency turns the feature on in a workspace test run.
+# `kipple-platform`'s dev-dependency turns the feature on in a workspace test run, and
+# `cargo xtask check` fails if this target isn't in that run.
 [[test]]
 name = "apply"
 required-features = ["platform-tests"]

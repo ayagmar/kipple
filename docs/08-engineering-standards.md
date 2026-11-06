@@ -11,7 +11,7 @@ Status: steps 1–14, §2–§4 and §8 are in place and enforced. The `native` 
 | 1 | Format | `cargo fmt --all --check` | M0 |
 | 2 | Lint | `cargo clippy --workspace --all-targets --locked -- -D warnings`, then the same with `--all-features`: the first lints the build that ships, the second the code behind `test-roots` | M0 |
 | 3 | Rustdoc | `cargo doc --workspace --no-deps --locked` with `RUSTDOCFLAGS=-D warnings` | M0 |
-| 4 | Tests | `cargo nextest run --workspace --locked` and `cargo test --doc --workspace --locked` | M0 |
+| 4 | Tests | `cargo nextest run --workspace --locked` and `cargo test --doc --workspace --locked`; then `cargo nextest list` must show `kipple-core`'s `apply` target in the run, since a target whose `required-features` are off drops out silently | M0 |
 | 5 | Supply chain | `cargo deny check` (CI runs it as a separate job; see 10-ci-and-release.md §1) | M0 |
 | 6 | Unused deps | `cargo machete` | M0 |
 | 7 | Spelling | `typos` | M0 |

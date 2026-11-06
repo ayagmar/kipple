@@ -1,10 +1,13 @@
 //! The gate (`docs/08-engineering-standards.md` §1) and `fix`.
 
+use std::collections::BTreeMap;
 use std::io::{self, Write as _};
 use std::path::Path;
 
-use anyhow::{Result, bail};
+use anyhow::{Context as _, Result, bail};
 use clap::ValueEnum;
+use serde::Deserialize;
+use serde_json::Value;
 
 use crate::{arch, cmd, compat, docs_cmds, gen_docs, style};
 
@@ -109,6 +112,24 @@ const STEPS: &[Step] = &[
     },
 ];
 
+/// Test targets the run must hold. `kipple-core`'s apply tests need a feature only another
+/// crate's dev-dependency turns on, and a target whose `required-features` are off drops out
+/// of the run without a word.
+const REQUIRED_TEST_TARGETS: &[&str] = &["kipple-core::apply"];
+
+/// What `cargo nextest list --message-format json` says the run holds.
+#[derive(Debug, Deserialize)]
+struct TestList {
+    #[serde(rename = "rust-suites")]
+    suites: BTreeMap<String, Suite>,
+}
+
+/// A test target. One the run's filter leaves out is listed with no test cases.
+#[derive(Debug, Deserialize)]
+struct Suite {
+    testcases: BTreeMap<String, Value>,
+}
+
 /// Runs every gate step in order and stops at the first failure.
 pub(crate) fn run(root: &Path, skip: &[Skip]) -> Result<()> {
     for step in STEPS {
@@ -121,6 +142,8 @@ pub(crate) fn run(root: &Path, skip: &[Skip]) -> Result<()> {
         command.args(step.args).envs(step.env.iter().copied());
         cmd::run(&mut command)?;
     }
+    announce("required test targets")?;
+    required_test_targets(root)?;
     announce("architecture")?;
     arch::run(root)?;
     announce("generated docs")?;
@@ -132,6 +155,38 @@ pub(crate) fn run(root: &Path, skip: &[Skip]) -> Result<()> {
     announce("style")?;
     style::run(root)?;
     announce("all checks passed")
+}
+
+/// Fails unless the workspace test run holds every one of [`REQUIRED_TEST_TARGETS`]. The
+/// test step has already built what this lists.
+fn required_test_targets(root: &Path) -> Result<()> {
+    let mut command = cmd::command("cargo", root);
+    command.args(["nextest", "list", "--workspace", "--locked"]);
+    command.args(["--message-format", "json"]);
+    let json = cmd::stdout(&mut command)?;
+    let list = serde_json::from_slice(&json).context("could not parse `cargo nextest list`")?;
+    let missing = missing_targets(&list);
+    if !missing.is_empty() {
+        bail!(
+            "the workspace test run doesn't run {}; see `required-features` in its crate's \
+             Cargo.toml",
+            missing.join(", ")
+        );
+    }
+    Ok(())
+}
+
+/// Those of [`REQUIRED_TEST_TARGETS`] with no test in `list`.
+fn missing_targets(list: &TestList) -> Vec<&'static str> {
+    REQUIRED_TEST_TARGETS
+        .iter()
+        .copied()
+        .filter(|target| {
+            list.suites
+                .get(*target)
+                .is_none_or(|suite| suite.testcases.is_empty())
+        })
+        .collect()
 }
 
 /// The machine xtask runs on.
@@ -179,4 +234,26 @@ pub(crate) fn fix(root: &Path) -> Result<()> {
 fn announce(message: &str) -> Result<()> {
     writeln!(io::stderr(), "xtask: {message}")?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn missing(json: &str) -> Vec<&'static str> {
+        missing_targets(&serde_json::from_str(json).unwrap())
+    }
+
+    /// Catches the check reading a target as run when `required-features` took it out of the
+    /// list, or the run's filter left it there empty, which is how nextest shows that.
+    #[test]
+    fn a_required_target_counts_only_with_a_test_in_the_run() {
+        let running = r#"{"rust-suites": {"kipple-core::apply": {"testcases": {"t": {}}}}}"#;
+        let filtered = r#"{"rust-suites": {"kipple-core::apply": {"testcases": {}}}}"#;
+        let absent = r#"{"rust-suites": {"kipple-core": {"testcases": {"t": {}}}}}"#;
+
+        assert_eq!(missing(running), [] as [&str; 0]);
+        assert_eq!(missing(filtered), ["kipple-core::apply"]);
+        assert_eq!(missing(absent), ["kipple-core::apply"]);
+    }
 }
