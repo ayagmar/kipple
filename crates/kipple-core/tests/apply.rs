@@ -413,7 +413,7 @@ const fn skip_of(outcome: &ItemOutcome) -> Option<&Skip> {
 
 fn left(outcome: &ItemOutcome, reason: LeftReason) -> u64 {
     outcome
-        .effect()
+        .file_effect()
         .and_then(|effect| effect.left.0.get(&reason))
         .map_or(0, |left| left.count)
 }

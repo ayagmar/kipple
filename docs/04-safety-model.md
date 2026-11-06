@@ -141,6 +141,7 @@ When a tool cannot enumerate targets up front, the review screen shows the plan 
 
 - `SpaceEstimate` holds apparent bytes, allocated bytes (where the platform reports them), a unique-reclaim estimate (taking hard links into account) and a completeness flag.
 - Wording: "removed an estimated X of allocated storage". "Moved Y to Trash, still on disk" is reported separately.
+- A native command's result is reported apart from both: kipple enumerated nothing, so it measures the target before and after and says "freed about X", or "not measured" when either measurement was incomplete. It never counts toward what kipple removed.
 - An observed change in free space is shown separately, labelled as observed, and not attributed to kipple when other writes may have happened.
 - Network filesystems are unsupported for mutation in v0.1. They are reported, never touched.
 

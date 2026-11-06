@@ -8,10 +8,11 @@ use std::sync::Arc;
 
 use kipple_core::format::{decode_line, encode_line, encode_stored_plan};
 use kipple_core::{
-    ApplyError, ApplyPorts, CancelToken, CleanRequest, Component, Consent, Depth, Digest, Effect,
-    Ending, ErrorCode, Finished, Found, Intent, ItemId, ItemOutcome, Method, OsError, OsErrorKind,
-    PlanMode, Receipt, Record, RestoreResult, RunId, RunRead, RunState, Session, Skip, Stop,
-    TrashSlot, Trashed, Unreadable, history, read_run, run_clean, run_reconcile,
+    Allocated, ApplyError, ApplyPorts, CancelToken, Cause, CleanRequest, Component, Consent, Depth,
+    Digest, Effect, Ending, ErrorCode, FileEffect, Finished, Found, Intent, ItemId, ItemOutcome,
+    LockGap, Measured, Method, NativeEffect, NativeEnd, OsError, OsErrorKind, PlanMode, Receipt,
+    Record, RestoreResult, RunId, RunRead, RunState, Session, Skip, Stop, ToolGap, TrashSlot,
+    Trashed, Unreadable, history, read_run, run_clean, run_reconcile,
 };
 
 use super::codec::TestCodec;
@@ -166,7 +167,7 @@ fn removed_by_item(receipt: &Receipt) -> Vec<u64> {
         .iter()
         .map(|item| {
             item.outcome
-                .effect()
+                .file_effect()
                 .map_or(0, |effect| effect.removed.names)
         })
         .collect()
@@ -447,25 +448,57 @@ fn history_says_running_only_while_the_lock_is_held() {
     }
 }
 
+/// The records of a native item's run: exit code and signal, never its output.
+fn native_records() -> Vec<Record> {
+    let end = NativeEnd {
+        exit: Some(1),
+        signal: None,
+    };
+    let native = Effect::Native(NativeEffect {
+        exit: end,
+        reclaimed: Measured::Bytes {
+            before: Allocated(4096),
+            after: Allocated(0),
+        },
+    });
+    [
+        ItemOutcome::Failed {
+            error: ApplyError::native(ErrorCode::NativeFailed, end),
+            effect: native.clone(),
+        },
+        ItemOutcome::Done(native),
+        ItemOutcome::Skipped(Skip::InstallerBusy(LockGap::Held)),
+        ItemOutcome::Skipped(Skip::ToolChanged(ToolGap::Changed)),
+    ]
+    .into_iter()
+    .map(|outcome| Record::Outcome {
+        item: ItemId(1),
+        outcome,
+    })
+    .collect()
+}
+
 /// Every kind of record, each error with an OS message and a path in it.
 fn every_record() -> Vec<Record> {
     let error = ApplyError {
         code: ErrorCode::Io,
-        os: Some(OsError {
-            kind: OsErrorKind::PermissionDenied,
-            code: Some(13),
+        cause: Some(Cause::Os {
+            os: Some(OsError {
+                kind: OsErrorKind::PermissionDenied,
+                code: Some(13),
+            }),
+            below: Some(super::rel("debug/app")),
         }),
-        at: Some(super::rel("debug/app")),
         detail: Some(Arc::new(io::Error::other("SECRET free text"))),
     };
     let slot = TrashSlot {
         trash: super::world::trash_dir(),
         name: Component::new("item-0").unwrap(),
     };
-    let trashed = Effect {
+    let trashed = Effect::Files(FileEffect {
         trashed: Some(Trashed { slot: slot.clone() }),
-        ..Effect::default()
-    };
+        ..FileEffect::default()
+    });
     vec![
         Record::Plan { digest: Digest(1) },
         Record::Intent(Intent {
@@ -485,7 +518,7 @@ fn every_record() -> Vec<Record> {
             item: ItemId(1),
             outcome: ItemOutcome::Failed {
                 error: error.clone(),
-                effect: Effect::default(),
+                effect: Effect::Files(FileEffect::default()),
             },
         },
         Record::Outcome {
@@ -529,8 +562,11 @@ const STRUCTURED: &[&str] = &[
     "skip",
     "found",
     "code",
-    "os_kind",
-    "at",
+    "kind",
+    "below",
+    "from",
+    "ran",
+    "measured",
     "name",
     "path",
     "result",
@@ -601,7 +637,7 @@ fn stored_records_hold_no_free_text() {
     let header = encode_stored_plan(&planned.plan, &TestCodec).unwrap();
     let header = &header[..=header.iter().position(|byte| *byte == b'\n').unwrap()];
     let mut lines = vec![header.to_vec(), super::profile::stored_with_a_note()];
-    for record in every_record() {
+    for record in every_record().into_iter().chain(native_records()) {
         let line = encode_line(&record, &TestCodec);
         assert_eq!(
             decode_line(&line[..line.len() - 1], &TestCodec).as_ref(),

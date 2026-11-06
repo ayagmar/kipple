@@ -32,7 +32,9 @@ use crate::cancel::CancelToken;
 use crate::engine::{Rescan, ScanReport};
 use crate::journal::{Intent, Journal, Record};
 use crate::mutation::{Finish, Freeze};
-use crate::outcome::{ApplyError, ErrorCode, ItemOutcome, Receipt, ReceiptItem, Skip, Stop, Tally};
+use crate::outcome::{
+    ApplyError, Effect, ErrorCode, ItemOutcome, Receipt, ReceiptItem, Skip, Stop, Tally,
+};
 use crate::plan::{ItemId, Plan, PlanEntry, VerifiedRoot};
 use crate::planner::{Judge, Judged, MutationPorts, Scene, Unjudged, untracked};
 use crate::policy::Verdict;
@@ -417,7 +419,7 @@ impl Run<'_> {
             Ok(trashed) => {
                 let mut effect = tally.before_run();
                 effect.trashed = Some(trashed);
-                ItemOutcome::Done(effect)
+                ItemOutcome::Done(Effect::Files(effect))
             }
             Err(error) if error.code == ErrorCode::Cancelled => tally.finish(Ok(Finish::Cancelled)),
             Err(error) => tally.finish(Err(error)),

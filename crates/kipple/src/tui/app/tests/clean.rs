@@ -42,8 +42,8 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use kipple_core::{
-    Allocated, Apparent, ApplyEvent, CancelToken, Completeness, Effect as Removal, Ending,
-    EventChannel, Finding, FindingId, Finished, Found, ItemEvent, ItemId, ItemOutcome,
+    Allocated, Apparent, ApplyEvent, CancelToken, Completeness, Effect as Ran, Ending,
+    EventChannel, FileEffect, Finding, FindingId, Finished, Found, ItemEvent, ItemId, ItemOutcome,
     JudgementField, Left, LeftCount, LeftReason, Method, Platform, Receipt, ReceiptItem,
     Reconciled, Removed, RunId, ScanEvent, ScanReport, ScanRequest, Skip, SpaceEstimate,
     event_channel,
@@ -747,14 +747,14 @@ fn finished(app: &App) -> Finished {
         panic!("no review");
     };
     let entries = review.prepared.plan().entries();
-    let removed = Removal {
+    let removed = FileEffect {
         removed: Removed {
             names: 9,
             estimated: Allocated(8 * MIB),
             shared: 0,
             unmeasured: 0,
         },
-        ..Removal::default()
+        ..FileEffect::default()
     };
     let mut left = Left::default();
     left.0.insert(
@@ -764,7 +764,7 @@ fn finished(app: &App) -> Finished {
             sample: Vec::new(),
         },
     );
-    let partial = Removal {
+    let partial = FileEffect {
         left,
         ..removed.clone()
     };
@@ -784,8 +784,8 @@ fn finished(app: &App) -> Finished {
         run: Some(run_id()),
         receipt: Receipt {
             items: vec![
-                item(0, ItemOutcome::Done(removed)),
-                item(1, ItemOutcome::Partial(partial)),
+                item(0, ItemOutcome::Done(Ran::Files(removed))),
+                item(1, ItemOutcome::Partial(Ran::Files(partial))),
                 item(
                     2,
                     ItemOutcome::Skipped(Skip::Rejudged(JudgementField::Level)),

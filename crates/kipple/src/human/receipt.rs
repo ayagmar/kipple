@@ -6,11 +6,11 @@
 use std::path::Path;
 
 use kipple_core::{
-    Completeness, Ending, ItemOutcome, Left, Method, Plan, RunState, SpaceEstimate, Status, Total,
-    Totals,
+    Completeness, Effect, Ending, ItemOutcome, Left, Method, Plan, RunState, SpaceEstimate, Status,
+    Total, Totals,
 };
 
-use super::outcome::{error_text, found, left_reason, skip, status};
+use super::outcome::{error_text, found, left_reason, measured, skip, status};
 use super::{bytes, escaped};
 
 /// Why `clean --yes` without `--only` runs nothing (J6).
@@ -170,7 +170,10 @@ pub(crate) fn outcome_detail(outcome: &ItemOutcome) -> Option<String> {
     let detail = match outcome {
         ItemOutcome::Done(effect)
         | ItemOutcome::Partial(effect)
-        | ItemOutcome::Cancelled(effect) => left_counts(&effect.left),
+        | ItemOutcome::Cancelled(effect) => match effect {
+            Effect::Files(files) => left_counts(&files.left),
+            Effect::Native(native) => measured(native.reclaimed),
+        },
         ItemOutcome::Skipped(why) => skip(why),
         ItemOutcome::Failed { error, .. } => error_text(error),
         ItemOutcome::Indeterminate(seen) => found(seen),
@@ -207,6 +210,18 @@ pub(crate) fn totals(totals: &Totals) -> String {
             "Moved {} in {} to the trash, still on disk.",
             bytes(size),
             items_word(usize::try_from(trashed.items).unwrap_or(usize::MAX))
+        ));
+    }
+    let native = &totals.native;
+    if native.items > 0 {
+        parts.push(format!(
+            "Native commands freed about {} in {}{}.",
+            bytes(native.reclaimed.0),
+            items_word(usize::try_from(native.items).unwrap_or(usize::MAX)),
+            match native.unmeasured {
+                0 => String::new(),
+                count => format!(", {count} not measured"),
+            }
         ));
     }
     let others: Vec<String> = totals

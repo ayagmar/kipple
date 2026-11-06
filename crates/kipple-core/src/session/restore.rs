@@ -181,7 +181,7 @@ fn trashed_slot(run: &StoredRun, item: ItemId) -> Option<TrashSlot> {
         });
     }
     outcome
-        .effect()
+        .file_effect()
         .and_then(|effect| effect.trashed.as_ref())
         .map(|trashed| trashed.slot.clone())
 }

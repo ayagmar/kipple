@@ -4,9 +4,9 @@
 //! fails to build until it is.
 
 use kipple_core::{
-    ApplyError, Dropped, Ending, ErrorCode, Found, GitGap, JudgementField, LeftReason, Method,
-    RestoreResult, Restoring, RunState, Skip, Status, Stop, StoreRefusal, Unjudged, Unreadable,
-    Unsupported,
+    ApplyError, Cause, Dropped, Ending, ErrorCode, Found, GitGap, JudgementField, LeftReason,
+    LockGap, Measured, Method, NativeEnd, RestoreResult, Restoring, RunState, Skip, Status, Stop,
+    StoreRefusal, ToolGap, Unjudged, Unreadable, Unsupported,
 };
 
 use super::{caution, hold};
@@ -61,6 +61,17 @@ pub(crate) fn skip(skip: &Skip) -> String {
         Skip::Conflict(_) => "it overlaps another item".to_owned(),
         Skip::TrashUnavailable(error) => format!("the trash can't take it: {}", error_text(error)),
         Skip::Git(gap) => format!("git couldn't say what it tracks in it: {}", git_gap(*gap)),
+        Skip::InstallerBusy(gap) => {
+            format!("its tool may be installing: {}", lock_gap(*gap))
+        }
+        Skip::SemanticNotReviewed => {
+            "a tool's own command runs only after you review it".to_owned()
+        }
+        Skip::ToolChanged(gap) => format!("its tool can't run it: {}", tool_gap(*gap)),
+        Skip::WitnessChanged => {
+            "the repository and worktree aren't tied as they were at review".to_owned()
+        }
+        Skip::RevisitMissing => "nothing could read it again before the run".to_owned(),
     }
 }
 
@@ -115,18 +126,48 @@ pub(crate) fn unsupported(why: &Unsupported) -> String {
     }
 }
 
-/// An error, with the entry it is about.
+/// An error, with the entry it is about or how a tool's command ended.
 pub(crate) fn error_text(error: &ApplyError) -> String {
     let what = error_code(error.code);
-    match &error.at {
-        Some(at) if !at.is_empty() => {
+    match &error.cause {
+        Some(Cause::Os {
+            below: Some(at), ..
+        }) if !at.is_empty() => {
             format!(
                 "{what} at {}",
                 super::escaped(&at.below(std::path::Path::new("")).display().to_string())
             )
         }
-        Some(_) | None => what.to_owned(),
+        Some(Cause::Native(end)) => {
+            native_end(*end).map_or_else(|| what.to_owned(), |ended| format!("{what} ({ended})"))
+        }
+        Some(Cause::Os { .. }) | None => what.to_owned(),
     }
+}
+
+/// How a tool's command ended, when it says anything.
+fn native_end(end: NativeEnd) -> Option<String> {
+    match end {
+        NativeEnd {
+            signal: Some(signal),
+            ..
+        } => Some(format!("ended by signal {signal}")),
+        NativeEnd {
+            exit: Some(exit), ..
+        } => Some(format!("exit code {exit}")),
+        NativeEnd {
+            exit: None,
+            signal: None,
+        } => None,
+    }
+}
+
+/// What a native command freed, as a fragment.
+pub(crate) fn measured(measured: Measured) -> String {
+    measured.reclaimed().map_or_else(
+        || "not measured".to_owned(),
+        |freed| format!("freed about {}", super::bytes(freed.0)),
+    )
 }
 
 /// kipple's error code, as a sentence fragment.
@@ -158,6 +199,8 @@ pub(crate) const fn error_code(code: ErrorCode) -> &'static str {
             "the change couldn't be saved to disk, so a power loss could undo it"
         }
         ErrorCode::Cancelled => "cancelled",
+        ErrorCode::NativeFailed => "its tool's command failed",
+        ErrorCode::NativeTimedOut => "its tool's command took too long and was stopped",
         ErrorCode::Io => "the system refused",
     }
 }
@@ -204,6 +247,25 @@ pub(crate) const fn git_gap(gap: GitGap) -> &'static str {
         GitGap::Unpassable => "its path can't be passed to git",
         GitGap::NestedRepository => "another repository lives inside it",
         GitGap::Unsupported => "this build doesn't ask git",
+    }
+}
+
+const fn lock_gap(gap: LockGap) -> &'static str {
+    match gap {
+        LockGap::Missing => "its lock file isn't there",
+        LockGap::Held => "something else holds its lock",
+        LockGap::Unreadable => "its lock can't be read",
+        LockGap::Unsupported => "this system can't take its lock",
+    }
+}
+
+const fn tool_gap(gap: ToolGap) -> &'static str {
+    match gap {
+        ToolGap::Missing => "it isn't installed",
+        ToolGap::Unreadable => "it can't be read",
+        ToolGap::UnknownVersion => "its version can't be read",
+        ToolGap::UnverifiedVersion => "kipple hasn't verified that version",
+        ToolGap::Changed => "it isn't what you reviewed",
     }
 }
 

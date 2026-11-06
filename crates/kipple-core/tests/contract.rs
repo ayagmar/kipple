@@ -25,13 +25,13 @@ use codec::TestCodec;
 use fakes::{FakeExecutor, Script};
 use kipple_core::{
     Activity, Allocated, Anchor, Apparent, BadName, CancelToken, Completeness, Component,
-    Consequence, Cost, DecodeError, Drift, EntryKind, EntrySnapshot, ErrorCode, Facts,
-    FileIdentity, Fingerprint, Finish, FrozenTree, HeldPath, ItemId, ItemOutcome, Judgement,
-    JudgementField, LeftReason, Level, Lineage, Loss, Mark, Marks, Method, MethodChoice,
-    MethodRefusal, Modified, NameCodec as _, NodeId, Policy, Proposal, Receipt, ReceiptItem,
-    Recovery, RelPath, RestoreRequest, RuleSettings, Scope, ShapeError, Skip, SpaceEstimate, Stamp,
-    Status, Tally, Tracked, TrashDir, TrashSlot, Trashed, TreeBuilder, Unauthorized, VerifiedRoot,
-    Volume,
+    Consequence, Cost, DecodeError, Drift, Effect, EntryKind, EntrySnapshot, ErrorCode, Facts,
+    FileEffect, FileIdentity, Fingerprint, Finish, FrozenTree, HeldPath, ItemId, ItemOutcome,
+    Judgement, JudgementField, LeftReason, Level, Lineage, Loss, Mark, Marks, Measured, Method,
+    MethodChoice, MethodRefusal, Modified, NameCodec as _, NativeEffect, NativeEnd, NodeId, Policy,
+    Proposal, Receipt, ReceiptItem, Recovery, RelPath, RestoreRequest, RuleSettings, Scope,
+    ShapeError, Skip, SpaceEstimate, Stamp, Status, Tally, Tracked, TrashDir, TrashSlot, Trashed,
+    TreeBuilder, Unauthorized, VerifiedRoot, Volume,
 };
 
 const VOLUME: Volume = Volume {
@@ -643,7 +643,8 @@ fn run(tree: &FrozenTree, marks: &Marks, script: Script) -> ItemOutcome {
 #[test]
 fn an_item_is_done_only_when_every_reviewed_entry_went() {
     let tree = build(Scope::Whole, &target());
-    let ItemOutcome::Done(effect) = run(&tree, &Marks::of(&tree), Script::default()) else {
+    let ItemOutcome::Done(Effect::Files(effect)) = run(&tree, &Marks::of(&tree), Script::default())
+    else {
         panic!("every entry removed is done");
     };
     assert_eq!(effect.removed.names, 8);
@@ -655,7 +656,7 @@ fn an_item_is_done_only_when_every_reviewed_entry_went() {
 
     let mut marks = Marks::of(&tree);
     marks.drop_subtree(&tree, find(&tree, ".rustc_info.json"), LeftReason::Changed);
-    let ItemOutcome::Partial(partial) = run(&tree, &marks, Script::default()) else {
+    let ItemOutcome::Partial(Effect::Files(partial)) = run(&tree, &marks, Script::default()) else {
         panic!("an entry dropped at revalidation makes the item partial");
     };
     let changed = &partial.left.0[&LeftReason::Changed];
@@ -672,7 +673,7 @@ fn a_directory_kept_for_new_entries_is_a_note_not_a_failure() {
         appeared: BTreeSet::from([path("debug/deps")]),
         ..Script::default()
     };
-    let ItemOutcome::Done(effect) = run(&tree, &Marks::of(&tree), script) else {
+    let ItemOutcome::Done(Effect::Files(effect)) = run(&tree, &Marks::of(&tree), script) else {
         panic!("still done");
     };
     assert_eq!(
@@ -692,7 +693,7 @@ fn removals_inside_failed_and_cancelled_items_count_and_the_rest_is_not_reached(
         denied: BTreeSet::from([path(".rustc_info.json")]),
         ..Script::default()
     };
-    let ItemOutcome::Partial(partial) = run(&tree, &marks, denied) else {
+    let ItemOutcome::Partial(Effect::Files(partial)) = run(&tree, &marks, denied) else {
         panic!("a refusal leaves the entry and goes on");
     };
     assert_eq!(partial.left.0[&LeftReason::Denied].count, 1);
@@ -702,7 +703,11 @@ fn removals_inside_failed_and_cancelled_items_count_and_the_rest_is_not_reached(
         ..Script::default()
     };
     let failed = run(&tree, &marks, failing);
-    let ItemOutcome::Failed { error, effect } = &failed else {
+    let ItemOutcome::Failed {
+        error,
+        effect: Effect::Files(effect),
+    } = &failed
+    else {
         panic!("an error stops the item");
     };
     assert_eq!(error.code, ErrorCode::Io);
@@ -736,10 +741,10 @@ fn removals_inside_failed_and_cancelled_items_count_and_the_rest_is_not_reached(
         outcome,
         restored: None,
     };
-    let trashed = ItemOutcome::Done(kipple_core::Effect {
+    let trashed = ItemOutcome::Done(Effect::Files(FileEffect {
         trashed: Some(Trashed { slot: slot() }),
-        ..kipple_core::Effect::default()
-    });
+        ..FileEffect::default()
+    }));
     let receipt = Receipt {
         items: vec![
             item(failed.clone(), Method::Delete),
@@ -749,7 +754,8 @@ fn removals_inside_failed_and_cancelled_items_count_and_the_rest_is_not_reached(
         ],
     };
     let totals = receipt.totals();
-    let names = failed.effect().unwrap().removed.names + cancelled.effect().unwrap().removed.names;
+    let names = failed.file_effect().unwrap().removed.names
+        + cancelled.file_effect().unwrap().removed.names;
     assert_eq!(totals.removed.names, names);
     assert_eq!(totals.trashed.items, 1);
     assert_eq!(totals.trashed.allocated, Some(Allocated(12_288)));
@@ -829,7 +835,7 @@ fn each_entry_counts_once() {
     tally.removed(app, Freed::Allocated(Allocated(10)));
     tally.removed(app, Freed::Allocated(Allocated(10)));
     tally.left(app, LeftReason::Busy);
-    let ItemOutcome::Cancelled(effect) = tally.finish(Ok(Finish::Cancelled)) else {
+    let ItemOutcome::Cancelled(Effect::Files(effect)) = tally.finish(Ok(Finish::Cancelled)) else {
         panic!("cancelled");
     };
     assert_eq!(effect.removed.names, 1);
@@ -853,7 +859,11 @@ fn a_removal_the_run_may_not_make_fails_the_item_and_counts_once() {
     let before = {
         let mut tally = Tally::new(&tree, &marks);
         let run = FakeExecutor::default().run(&tree, &marks, &mut tally, &CancelToken::new());
-        effect_of(tally.finish(run)).expect("a run has an effect")
+        tally
+            .finish(run)
+            .file_effect()
+            .cloned()
+            .expect("a run has an effect")
     };
 
     let cases = [
@@ -865,12 +875,16 @@ fn a_removal_the_run_may_not_make_fails_the_item_and_counts_once() {
         let mut tally = Tally::new(&tree, &marks);
         let run = FakeExecutor::default().run(&tree, &marks, &mut tally, &CancelToken::new());
         tally.removed(id, Freed::Allocated(Allocated(10)));
-        let ItemOutcome::Failed { error, effect } = tally.finish(run) else {
+        let ItemOutcome::Failed {
+            error,
+            effect: Effect::Files(effect),
+        } = tally.finish(run)
+        else {
             panic!("removing {at:?} fails the item");
         };
 
         assert_eq!(
-            (error.code, error.at.clone()),
+            (error.code, error.below().cloned()),
             (ErrorCode::Unauthorized, at)
         );
         let counted = effect.removed.names + effect.left.total() + effect.excluded;
@@ -918,14 +932,54 @@ fn tree_with_entries_outside_the_run() -> (FrozenTree, Marks, NodeId, NodeId) {
     (tree, marks, excluded, dropped)
 }
 
-fn effect_of(outcome: ItemOutcome) -> Option<kipple_core::Effect> {
-    match outcome {
-        ItemOutcome::Done(effect)
-        | ItemOutcome::Partial(effect)
-        | ItemOutcome::Cancelled(effect)
-        | ItemOutcome::Failed { effect, .. } => Some(effect),
-        ItemOutcome::Skipped(_) | ItemOutcome::Indeterminate(_) => None,
-    }
+/// Catches what a tool's command freed reported as kipple's own removal, and a target
+/// that grew or went unmeasured counted as freeing something (spec M4 pinned 32).
+#[test]
+fn native_totals_stand_apart_from_what_kipple_removed() {
+    let exit = NativeEnd {
+        exit: Some(0),
+        signal: None,
+    };
+    let item = |at: u32, reclaimed| ReceiptItem {
+        item: ItemId(at),
+        path: PathBuf::from("/p/cache"),
+        method: Method::Delete,
+        estimate: None,
+        outcome: ItemOutcome::Done(Effect::Native(NativeEffect { exit, reclaimed })),
+        restored: None,
+    };
+    let receipt = Receipt {
+        items: vec![
+            item(
+                0,
+                Measured::Bytes {
+                    before: Allocated(100),
+                    after: Allocated(40),
+                },
+            ),
+            item(
+                1,
+                Measured::Bytes {
+                    before: Allocated(10),
+                    after: Allocated(50),
+                },
+            ),
+            item(2, Measured::Unknown),
+        ],
+    };
+
+    let totals = receipt.totals();
+
+    assert_eq!(totals.removed.estimated, Allocated(0));
+    assert_eq!(totals.removed.names, 0);
+    assert_eq!(
+        (
+            totals.native.items,
+            totals.native.reclaimed,
+            totals.native.unmeasured
+        ),
+        (3, Allocated(60), 1)
+    );
 }
 
 /// Catches a method picked by the wrong precedence, or a trash item quietly planned as

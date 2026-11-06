@@ -10,9 +10,11 @@ use super::{FormatError, IdentityOut, TextOut, path_out, rel_of, rel_out};
 use crate::engine::FindingId;
 use crate::frozen::NameCodec;
 use crate::mutation::Unsupported;
+use crate::native::{NativeEnd, ToolGap};
 use crate::outcome::{
-    ApplyError, Effect, ErrorCode, Found, ItemOutcome, Left, LeftCount, LeftReason, OsError,
-    OsErrorKind, Removed, SAMPLE, Skip, Status, Stop, Trashed,
+    ApplyError, Cause, Effect, ErrorCode, FileEffect, Found, ItemOutcome, Left, LeftCount,
+    LeftReason, Measured, NativeEffect, OsError, OsErrorKind, Removed, SAMPLE, Skip, Status, Stop,
+    Trashed,
 };
 use crate::plan::JudgementField;
 use crate::planner::{Conflict, ConflictKind, Unjudged};
@@ -20,6 +22,7 @@ use crate::policy::{Caution, Hold};
 use crate::protect::Protection;
 use crate::rule::Method;
 use crate::size::{Allocated, Apparent, Completeness, SpaceEstimate};
+use crate::store_lock::LockGap;
 use crate::tracked::GitGap;
 use crate::trash::{TrashDir, TrashSlot};
 
@@ -29,41 +32,92 @@ use crate::trash::{TrashDir, TrashSlot};
 pub struct ErrorOut {
     /// kipple's code.
     pub code: ErrorCode,
-    /// The OS error's kind, if one caused it.
+    /// What caused it, past its code.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub os_kind: Option<OsErrorKind>,
-    /// The OS's own number for it, where it has one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub os_code: Option<i32>,
-    /// Where below the target, as components, if it is about one entry.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub at: Option<Vec<TextOut>>,
+    pub cause: Option<CauseOut>,
+}
+
+/// What caused an error.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "from", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum CauseOut {
+    /// The OS, or an entry of the target.
+    Os {
+        /// The OS error's kind, if one caused it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        kind: Option<OsErrorKind>,
+        /// The OS's own number for it, where it has one.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        code: Option<i32>,
+        /// Where below the target, as components, if it is about one entry.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        below: Option<Vec<TextOut>>,
+    },
+    /// How a tool's own command ended.
+    Native {
+        /// Its exit code, when it exited.
+        exit: Option<i32>,
+        /// The signal that ended it.
+        signal: Option<i32>,
+    },
+}
+
+impl CauseOut {
+    fn of(cause: &Cause, codec: &dyn NameCodec) -> Self {
+        match cause {
+            Cause::Os { os, below } => Self::Os {
+                kind: os.map(|os| os.kind),
+                code: os.and_then(|os| os.code),
+                below: below.as_ref().map(|below| rel_out(below, codec)),
+            },
+            Cause::Native(end) => Self::Native {
+                exit: end.exit,
+                signal: end.signal,
+            },
+        }
+    }
+
+    fn read(&self, codec: &dyn NameCodec) -> Result<Cause, FormatError> {
+        match self {
+            Self::Native { exit, signal } => Ok(Cause::Native(NativeEnd {
+                exit: *exit,
+                signal: *signal,
+            })),
+            Self::Os { kind, code, below } => {
+                let os = match (kind, code) {
+                    (Some(kind), code) => Some(OsError {
+                        kind: *kind,
+                        code: *code,
+                    }),
+                    (None, None) => None,
+                    (None, Some(_)) => return Err(invalid("OS error number without its kind")),
+                };
+                let below = match below {
+                    Some(below) => Some(rel_of(below, codec).ok_or_else(|| invalid("error path"))?),
+                    None => None,
+                };
+                Ok(Cause::Os { os, below })
+            }
+        }
+    }
 }
 
 impl ErrorOut {
     pub(crate) fn of(error: &ApplyError, codec: &dyn NameCodec) -> Self {
         Self {
             code: error.code,
-            os_kind: error.os.map(|os| os.kind),
-            os_code: error.os.and_then(|os| os.code),
-            at: error.at.as_ref().map(|at| rel_out(at, codec)),
+            cause: error.cause.as_ref().map(|cause| CauseOut::of(cause, codec)),
         }
     }
 
     pub(crate) fn read(&self, codec: &dyn NameCodec) -> Result<ApplyError, FormatError> {
-        let os = match (self.os_kind, self.os_code) {
-            (Some(kind), code) => Some(OsError { kind, code }),
-            (None, None) => None,
-            (None, Some(_)) => return Err(invalid("OS error number without its kind")),
-        };
-        let at = match &self.at {
-            Some(at) => Some(rel_of(at, codec).ok_or_else(|| invalid("error path"))?),
+        let cause = match &self.cause {
+            Some(cause) => Some(cause.read(codec)?),
             None => None,
         };
         Ok(ApplyError {
             code: self.code,
-            os,
-            at,
+            cause,
             detail: None,
         })
     }
@@ -188,45 +242,115 @@ fn read_left(left: &[LeftOut], codec: &dyn NameCodec) -> Result<Left, FormatErro
     Ok(Left(read))
 }
 
+/// How a native command's process ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct NativeEndOut {
+    /// Its exit code, when it exited.
+    pub exit: Option<i32>,
+    /// The signal that ended it.
+    pub signal: Option<i32>,
+}
+
+/// What a native command freed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "measured", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum MeasuredOut {
+    /// Measured in full both times.
+    Bytes {
+        /// Allocated bytes before the command ran.
+        before: u64,
+        /// Allocated bytes after it ended.
+        after: u64,
+    },
+    /// Either measurement was incomplete.
+    Unknown,
+}
+
 /// What a run of an item did.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct EffectOut {
-    /// What it removed.
-    pub removed: RemovedOut,
-    /// Where it moved the item, for a trash item that moved.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub trashed: Option<SlotOut>,
-    /// The reviewed entries it didn't remove, by reason.
-    pub left: Vec<LeftOut>,
-    /// Entries the plan left out from the start, kept as reviewed.
-    pub excluded: u64,
+#[serde(tag = "ran", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum EffectOut {
+    /// Files removed or moved, entry by entry.
+    Files {
+        /// What it removed.
+        removed: RemovedOut,
+        /// Where it moved the item, for a trash item that moved.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        trashed: Option<SlotOut>,
+        /// The reviewed entries it didn't remove, by reason.
+        left: Vec<LeftOut>,
+        /// Entries the plan left out from the start, kept as reviewed.
+        excluded: u64,
+    },
+    /// A tool's own command.
+    Native {
+        /// How it ended.
+        exit: NativeEndOut,
+        /// What it freed.
+        reclaimed: MeasuredOut,
+    },
 }
 
 impl EffectOut {
     pub(crate) fn of(effect: &Effect, codec: &dyn NameCodec) -> Self {
-        Self {
-            removed: RemovedOut::of(&effect.removed),
-            trashed: effect
-                .trashed
-                .as_ref()
-                .map(|trashed| SlotOut::of(&trashed.slot, codec)),
-            left: left_out(&effect.left, codec),
-            excluded: effect.excluded,
+        match effect {
+            Effect::Files(effect) => Self::Files {
+                removed: RemovedOut::of(&effect.removed),
+                trashed: effect
+                    .trashed
+                    .as_ref()
+                    .map(|trashed| SlotOut::of(&trashed.slot, codec)),
+                left: left_out(&effect.left, codec),
+                excluded: effect.excluded,
+            },
+            Effect::Native(effect) => Self::Native {
+                exit: NativeEndOut {
+                    exit: effect.exit.exit,
+                    signal: effect.exit.signal,
+                },
+                reclaimed: match effect.reclaimed {
+                    Measured::Bytes { before, after } => MeasuredOut::Bytes {
+                        before: before.0,
+                        after: after.0,
+                    },
+                    Measured::Unknown => MeasuredOut::Unknown,
+                },
+            },
         }
     }
 
     fn read(&self, codec: &dyn NameCodec) -> Result<Effect, FormatError> {
-        Ok(Effect {
-            removed: self.removed.read(),
-            trashed: match &self.trashed {
-                Some(slot) => Some(Trashed {
-                    slot: slot.read(codec)?,
-                }),
-                None => None,
-            },
-            left: read_left(&self.left, codec)?,
-            excluded: self.excluded,
+        Ok(match self {
+            Self::Files {
+                removed,
+                trashed,
+                left,
+                excluded,
+            } => Effect::Files(FileEffect {
+                removed: removed.read(),
+                trashed: match trashed {
+                    Some(slot) => Some(Trashed {
+                        slot: slot.read(codec)?,
+                    }),
+                    None => None,
+                },
+                left: read_left(left, codec)?,
+                excluded: *excluded,
+            }),
+            Self::Native { exit, reclaimed } => Effect::Native(NativeEffect {
+                exit: NativeEnd {
+                    exit: exit.exit,
+                    signal: exit.signal,
+                },
+                reclaimed: match reclaimed {
+                    MeasuredOut::Bytes { before, after } => Measured::Bytes {
+                        before: Allocated(*before),
+                        after: Allocated(*after),
+                    },
+                    MeasuredOut::Unknown => Measured::Unknown,
+                },
+            }),
         })
     }
 }
@@ -381,6 +505,22 @@ pub enum SkipOut {
         /// Why.
         gap: GitGap,
     },
+    /// Its tool's own locks couldn't be held.
+    InstallerBusy {
+        /// Why.
+        gap: LockGap,
+    },
+    /// A native command runs only for a person who saw it.
+    SemanticNotReviewed,
+    /// Its tool can't be used, or isn't what the review showed.
+    ToolChanged {
+        /// Why.
+        gap: ToolGap,
+    },
+    /// What ties a worktree to its repository changed.
+    WitnessChanged,
+    /// Its integration reads nothing again at apply.
+    RevisitMissing,
 }
 
 impl SkipOut {
@@ -426,6 +566,11 @@ impl SkipOut {
             },
             Skip::TrashUnavailable(e) => Self::TrashUnavailable { error: error(e) },
             Skip::Git(gap) => Self::Git { gap: *gap },
+            Skip::InstallerBusy(gap) => Self::InstallerBusy { gap: *gap },
+            Skip::SemanticNotReviewed => Self::SemanticNotReviewed,
+            Skip::ToolChanged(gap) => Self::ToolChanged { gap: *gap },
+            Skip::WitnessChanged => Self::WitnessChanged,
+            Skip::RevisitMissing => Self::RevisitMissing,
         }
     }
 
@@ -461,6 +606,11 @@ impl SkipOut {
             }),
             Self::TrashUnavailable { error: e } => Skip::TrashUnavailable(error(e)?),
             Self::Git { gap } => Skip::Git(*gap),
+            Self::InstallerBusy { gap } => Skip::InstallerBusy(*gap),
+            Self::SemanticNotReviewed => Skip::SemanticNotReviewed,
+            Self::ToolChanged { gap } => Skip::ToolChanged(*gap),
+            Self::WitnessChanged => Skip::WitnessChanged,
+            Self::RevisitMissing => Skip::RevisitMissing,
         })
     }
 }

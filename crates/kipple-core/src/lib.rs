@@ -148,9 +148,9 @@ pub use native::{
     ToolResolver, Unavailable,
 };
 pub use outcome::{
-    ApplyError, Effect, ErrorCode, Found, Freed, ItemOutcome, Left, LeftCount, LeftReason, OsError,
-    OsErrorKind, Receipt, ReceiptItem, Removed, SAMPLE, Skip, Status, Stop, Tally, Totals, Trashed,
-    TrashedTotal,
+    ApplyError, Cause, Effect, ErrorCode, FileEffect, Found, Freed, ItemOutcome, Left, LeftCount,
+    LeftReason, Measured, NativeEffect, NativeTotal, OsError, OsErrorKind, Receipt, ReceiptItem,
+    Removed, SAMPLE, Skip, Status, Stop, Tally, Totals, Trashed, TrashedTotal,
 };
 pub use plan::{
     Anchor, ItemId, Judgement, JudgementField, MethodChoice, MethodRefusal, Plan, PlanEntry,

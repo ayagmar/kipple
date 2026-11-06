@@ -648,7 +648,7 @@ fn activity_and_git_are_asked_again_at_apply() {
     let outcome = &finished.receipt.items[0].outcome;
     assert_eq!(outcome.status(), Status::Done, "{outcome:?}");
     assert_eq!(
-        outcome.effect().map(|effect| effect.excluded),
+        outcome.file_effect().map(|effect| effect.excluded),
         Some(1),
         "the entry git tracks now is left out"
     );

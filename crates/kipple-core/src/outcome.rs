@@ -20,12 +20,14 @@ use std::sync::Arc;
 use crate::frozen::{FrozenTree, Mark, Marks, NodeId, RelPath, Unauthorized};
 use crate::journal::RestoreResult;
 use crate::mutation::{EffectSink, Finish, Unsupported};
+use crate::native::{NativeEnd, ToolGap};
 use crate::plan::{ItemId, JudgementField};
 use crate::planner::{Conflict, Unjudged};
 use crate::policy::{Caution, Hold};
 use crate::protect::Protection;
 use crate::rule::Method;
 use crate::size::{Allocated, Apparent, SpaceEstimate};
+use crate::store_lock::LockGap;
 use crate::tracked::GitGap;
 use crate::trash::TrashSlot;
 
@@ -145,9 +147,9 @@ pub struct Trashed {
     pub slot: TrashSlot,
 }
 
-/// What a run of an item did.
+/// What a file item's run did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Effect {
+pub struct FileEffect {
     /// What it removed.
     pub removed: Removed,
     /// Where it moved the item, for a trash item that moved.
@@ -156,6 +158,61 @@ pub struct Effect {
     pub left: Left,
     /// Entries the plan left out from the start (`excluded`), kept as reviewed.
     pub excluded: u64,
+}
+
+/// What a native command freed, by measuring its target before and after. Nothing was
+/// enumerated, so there is no count of what it removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Measured {
+    /// Measured in full both times.
+    Bytes {
+        /// Before the command ran.
+        before: Allocated,
+        /// After it ended.
+        after: Allocated,
+    },
+    /// Either measurement was incomplete.
+    Unknown,
+}
+
+impl Measured {
+    /// How much smaller the target became, when that is known.
+    #[must_use]
+    pub const fn reclaimed(self) -> Option<Allocated> {
+        match self {
+            Self::Bytes { before, after } => Some(Allocated(before.0.saturating_sub(after.0))),
+            Self::Unknown => None,
+        }
+    }
+}
+
+/// What a native item's run did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NativeEffect {
+    /// How its command ended.
+    pub exit: NativeEnd,
+    /// What it freed.
+    pub reclaimed: Measured,
+}
+
+/// What a run of an item did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Effect {
+    /// Files removed or moved, entry by entry.
+    Files(FileEffect),
+    /// A tool's own command.
+    Native(NativeEffect),
+}
+
+impl Effect {
+    /// What it did to files, for a file item.
+    #[must_use]
+    pub const fn files(&self) -> Option<&FileEffect> {
+        match self {
+            Self::Files(effect) => Some(effect),
+            Self::Native(_) => None,
+        }
+    }
 }
 
 /// Why an item was dropped before anything of it was touched.
@@ -222,6 +279,18 @@ pub enum Skip {
     /// It is inside a git repository, and git couldn't say in full which of its entries
     /// it tracks, or a `.git` lives inside it (D-066).
     Git(GitGap),
+    /// Its tool's own locks couldn't be held: an install may be running.
+    InstallerBusy(LockGap),
+    /// A tool's own command runs only for a person who saw it in review: never under
+    /// automation or a profile (04 §6).
+    SemanticNotReviewed,
+    /// Its tool can't be used, or isn't the file and version the review showed.
+    ToolChanged(ToolGap),
+    /// What ties a worktree to its repository isn't what the review saw.
+    WitnessChanged,
+    /// Its integration reads nothing again at apply, which a finding that isn't plain
+    /// needs: the scan's facts can't stand mid-run.
+    RevisitMissing,
 }
 
 named! {
@@ -335,6 +404,15 @@ impl ItemOutcome {
             Self::Skipped(_) | Self::Indeterminate(_) => None,
         }
     }
+
+    /// What it did to files, where a file item ran.
+    #[must_use]
+    pub const fn file_effect(&self) -> Option<&FileEffect> {
+        match self.effect() {
+            Some(effect) => effect.files(),
+            None => None,
+        }
+    }
 }
 
 named! {
@@ -387,6 +465,10 @@ named! {
         Unsynced = "unsynced",
         /// The operation was cancelled before it changed anything.
         Cancelled = "cancelled",
+        /// A tool's own command failed.
+        NativeFailed = "native-failed",
+        /// A tool's own command missed its deadline and was stopped.
+        NativeTimedOut = "native-timed-out",
         /// Another OS error.
         Io = "io",
     }
@@ -469,6 +551,20 @@ impl OsError {
     }
 }
 
+/// What caused an [`ApplyError`], past its code.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Cause {
+    /// The OS, or an entry of the target.
+    Os {
+        /// The OS error, if one caused it.
+        os: Option<OsError>,
+        /// Where below the target, if it is about one entry.
+        below: Option<RelPath>,
+    },
+    /// How a tool's own command ended.
+    Native(NativeEnd),
+}
+
 /// Something that went wrong while freezing, removing, moving, restoring or journalling.
 ///
 /// The structured fields are what is stored and compared. `detail` keeps the upstream
@@ -477,10 +573,8 @@ impl OsError {
 pub struct ApplyError {
     /// kipple's code.
     pub code: ErrorCode,
-    /// The OS error, if one caused it.
-    pub os: Option<OsError>,
-    /// Where below the target, if it is about one entry.
-    pub at: Option<RelPath>,
+    /// What caused it, past its code.
+    pub cause: Option<Cause>,
     /// The upstream error, never stored.
     #[source]
     pub detail: Option<Arc<io::Error>>,
@@ -492,8 +586,7 @@ impl ApplyError {
     pub const fn new(code: ErrorCode) -> Self {
         Self {
             code,
-            os: None,
-            at: None,
+            cause: None,
             detail: None,
         }
     }
@@ -503,24 +596,52 @@ impl ApplyError {
     pub fn io(code: ErrorCode, error: io::Error) -> Self {
         Self {
             code,
-            os: Some(OsError::of(&error)),
-            at: None,
+            cause: Some(Cause::Os {
+                os: Some(OsError::of(&error)),
+                below: None,
+            }),
             detail: Some(Arc::new(error)),
+        }
+    }
+
+    /// An error with `code`, from how a tool's own command ended.
+    #[must_use]
+    pub const fn native(code: ErrorCode, end: NativeEnd) -> Self {
+        Self {
+            code,
+            cause: Some(Cause::Native(end)),
+            detail: None,
         }
     }
 
     /// This error, about the entry at `path`.
     #[must_use]
     pub fn at(mut self, path: RelPath) -> Self {
-        self.at = Some(path);
+        let os = match self.cause {
+            Some(Cause::Os { os, .. }) => os,
+            Some(Cause::Native(_)) | None => None,
+        };
+        self.cause = Some(Cause::Os {
+            os,
+            below: Some(path),
+        });
         self
+    }
+
+    /// The entry below the target it is about, if it is about one.
+    #[must_use]
+    pub const fn below(&self) -> Option<&RelPath> {
+        match &self.cause {
+            Some(Cause::Os { below, .. }) => below.as_ref(),
+            Some(Cause::Native(_)) | None => None,
+        }
     }
 }
 
 /// Equal when the stored fields are: the detail isn't compared.
 impl PartialEq for ApplyError {
     fn eq(&self, other: &Self) -> bool {
-        (self.code, self.os, &self.at) == (other.code, other.os, &other.at)
+        (self.code, &self.cause) == (other.code, &other.cause)
     }
 }
 
@@ -529,7 +650,7 @@ impl Eq for ApplyError {}
 impl fmt::Display for ApplyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.code.name())?;
-        if let Some(path) = &self.at {
+        if let Some(path) = self.below() {
             write!(f, " at {path}")?;
         }
         if let Some(detail) = &self.detail {
@@ -676,7 +797,7 @@ impl<'run> Tally<'run> {
     }
 
     /// The effect so far, every authorized entry not reported counted as not reached.
-    fn effect(mut self) -> Effect {
+    fn effect(mut self) -> FileEffect {
         let pending: Vec<NodeId> = self
             .tree
             .entries()
@@ -689,7 +810,7 @@ impl<'run> Tally<'run> {
         self.into_effect()
     }
 
-    fn into_effect(self) -> Effect {
+    fn into_effect(self) -> FileEffect {
         let tree = self.tree;
         let left = self
             .left
@@ -707,7 +828,7 @@ impl<'run> Tally<'run> {
                 (reason, count)
             })
             .collect();
-        Effect {
+        FileEffect {
             removed: self.removed,
             trashed: None,
             left: Left(left),
@@ -718,7 +839,7 @@ impl<'run> Tally<'run> {
     /// What revalidation dropped and what the plan left out, before anything ran.
     /// Entries still authorized aren't counted.
     #[must_use]
-    pub fn before_run(self) -> Effect {
+    pub fn before_run(self) -> FileEffect {
         self.into_effect()
     }
 
@@ -737,7 +858,9 @@ impl<'run> Tally<'run> {
         let fault = self.fault.take();
         let untouched = fault.is_none() && !self.states.contains(&State::Reported);
         let refused = |error: &ApplyError| untouched && error.code != ErrorCode::Stranded;
-        let effect = self.effect();
+        let files = self.effect();
+        let short = files.left.is_short();
+        let effect = Effect::Files(files);
         match fault.map_or(run, Err) {
             Err(error) if error.code == ErrorCode::Unsynced => {
                 ItemOutcome::Indeterminate(Found::Unsynced(error))
@@ -745,7 +868,7 @@ impl<'run> Tally<'run> {
             Err(error) if refused(&error) => ItemOutcome::Skipped(Skip::Refused(error)),
             Err(error) => ItemOutcome::Failed { error, effect },
             Ok(Finish::Cancelled) => ItemOutcome::Cancelled(effect),
-            Ok(Finish::Completed) if effect.left.is_short() => ItemOutcome::Partial(effect),
+            Ok(Finish::Completed) if short => ItemOutcome::Partial(effect),
             Ok(Finish::Completed) => ItemOutcome::Done(effect),
         }
     }
@@ -819,6 +942,17 @@ pub struct TrashedTotal {
     pub allocated: Option<Allocated>,
 }
 
+/// What native commands freed, apart from what kipple removed: nothing was enumerated.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct NativeTotal {
+    /// Items whose command ran.
+    pub items: u64,
+    /// What those measured in full freed.
+    pub reclaimed: Allocated,
+    /// Those not measured in full.
+    pub unmeasured: u64,
+}
+
 /// A receipt's totals, the one place they are counted.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Totals {
@@ -827,8 +961,20 @@ pub struct Totals {
     pub removed: Removed,
     /// What moved to the trash.
     pub trashed: TrashedTotal,
+    /// What native commands freed.
+    pub native: NativeTotal,
     /// How many items ended in each status.
     pub items: BTreeMap<Status, u64>,
+}
+
+impl NativeTotal {
+    const fn add(&mut self, effect: &NativeEffect) {
+        self.items += 1;
+        match effect.reclaimed.reclaimed() {
+            Some(bytes) => self.reclaimed = Allocated(self.reclaimed.0.saturating_add(bytes.0)),
+            None => self.unmeasured += 1,
+        }
+    }
 }
 
 impl Receipt {
@@ -844,8 +990,13 @@ impl Receipt {
         };
         for item in &self.items {
             *totals.items.entry(item.outcome.status()).or_default() += 1;
-            let Some(effect) = item.outcome.effect() else {
-                continue;
+            let effect = match item.outcome.effect() {
+                None => continue,
+                Some(Effect::Native(native)) => {
+                    totals.native.add(native);
+                    continue;
+                }
+                Some(Effect::Files(effect)) => effect,
             };
             totals.removed.add(&effect.removed);
             if effect.trashed.is_some() {
