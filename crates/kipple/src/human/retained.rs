@@ -12,6 +12,7 @@ const fn gap(gap: GroupGap) -> &'static str {
         GroupGap::InstallerBusy => "an install is in progress",
         GroupGap::ActivityUnknown => "a program may be using one of its releases",
         GroupGap::RetiredRunning => "a program runs a release set aside for removal",
+        GroupGap::Unreadable => "part of its store can't be read",
     }
 }
 

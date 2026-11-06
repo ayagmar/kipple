@@ -43,6 +43,8 @@ named! {
         ActivityUnknown = "activity-unknown",
         /// A process runs from a release already set aside.
         RetiredRunning = "retired-running",
+        /// Part of its store couldn't be read, so its listing may be short.
+        Unreadable = "unreadable",
     }
 }
 
