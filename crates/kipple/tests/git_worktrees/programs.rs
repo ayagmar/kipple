@@ -259,6 +259,20 @@ fn every_git_run_forbids_a_lazy_fetch() {
     assert_ne!(asked.count(), 0, "git ran");
 }
 
+/// Catches `status` entering an unregistered gitlink: with no `.gitmodules` only the index
+/// names it, and the repository inside has a config nothing read.
+#[test]
+fn a_gitlink_alone_stops_status() {
+    let repo = Repo::new();
+    bare_gitlink(&repo);
+    let (env, log) = logging_git(&repo);
+
+    let scan = repo.scan_in(&env);
+
+    assert_eq!(status_runs(&log), 0);
+    assert_eq!(scan.fact("worktree.submodules"), FactValue::Bool(true));
+}
+
 /// A git that ignores `GIT_NO_LAZY_FETCH`, as every one from 2.36 to 2.44.0 does.
 fn git_that_can_fetch(repo: &Repo) -> Environment {
     let bin = repo.temp.path().join("bin");

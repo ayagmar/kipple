@@ -331,6 +331,14 @@ fn rebase_stopped(repo: &Repo) {
     assert!(!output.status.success(), "the rebase stops: {output:?}");
 }
 
+/// A gitlink in the index with no `.gitmodules`, so only the index says it is there.
+fn bare_gitlink(repo: &Repo) {
+    let head = repo.wt(&["rev-parse", "HEAD"]);
+    let head = String::from_utf8_lossy(&head);
+    let entry = format!("160000,{},sm", head.trim());
+    repo.wt(&["update-index", "--add", "--cacheinfo", &entry]);
+}
+
 fn unreachable_head(repo: &Repo) {
     repo.wt(&["checkout", "-q", "--detach"]);
     write(&repo.checkout.join("file.txt"), b"changed\n");
@@ -455,6 +463,24 @@ const CASES: &[Case] = &[
         "merge",
         |repo| write(&repo.admin().join("MERGE_HEAD"), b"x\n"),
         OPERATION,
+        FactValue::Bool(true),
+    ),
+    case(
+        "sequencer",
+        |repo| fs::create_dir(repo.admin().join("sequencer")).unwrap(),
+        OPERATION,
+        FactValue::Bool(true),
+    ),
+    case(
+        "gitlink with no .gitmodules",
+        bare_gitlink,
+        "worktree.submodules",
+        FactValue::Bool(true),
+    ),
+    case(
+        "modules in the admin directory",
+        |repo| fs::create_dir(repo.admin().join("modules")).unwrap(),
+        "worktree.submodules",
         FactValue::Bool(true),
     ),
     case(
