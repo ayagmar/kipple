@@ -333,8 +333,30 @@ fn agent_roots(env: &Environment, roots: &mut Roots) {
     for resolved in pi_session_dirs(env, roots) {
         roots.add(SymbolicRoot::PiSessionDir, resolved);
     }
+    cursor_roots(env, roots);
     for resolved in agent_locations(roots) {
         roots.add(SymbolicRoot::GitAgentLocations, resolved);
+    }
+}
+
+/// Where Cursor's config may also be, past the default paths: `$CURSOR_CONFIG_DIR`, and its
+/// XDG forms on Linux. Which one the CLI and the editor use isn't verified, and these roots
+/// only protect, so each is closed.
+fn cursor_roots(env: &Environment, roots: &mut Roots) {
+    let root = SymbolicRoot::CursorConfig;
+    let var = "CURSOR_CONFIG_DIR";
+    match absolute(env, var) {
+        Ok(Some(path)) => roots.add(root, configured_dir(root, path, RootSource::Env(var))),
+        Ok(None) => {}
+        Err(unusable) => roots.add(root, Err(unusable)),
+    }
+    if cfg!(target_os = "linux") {
+        let base = SymbolicRoot::XdgConfig;
+        let config = under(roots, base, root, "cursor");
+        roots.add(root, config);
+        let app_data = SymbolicRoot::CursorAppData;
+        let moved = under(roots, base, app_data, "Cursor");
+        roots.add(app_data, moved);
     }
 }
 

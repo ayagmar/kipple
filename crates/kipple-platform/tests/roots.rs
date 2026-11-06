@@ -1058,6 +1058,80 @@ fn a_codex_profile_kipple_cant_read_is_unknown() {
     }
 }
 
+/// The paths of `root` that resolved.
+fn places(roots: &Roots, root: SymbolicRoot) -> Vec<PathBuf> {
+    let found = roots.all(root).iter().flatten();
+    found.map(|resolved| resolved.path.clone()).collect()
+}
+
+/// Catches `$CURSOR_CONFIG_DIR` being ignored, which leaves the moved directory open and a
+/// bad value reading as the default. `~/.cursor` stays closed whatever the variable says.
+#[test]
+fn cursor_config_follows_its_variable_and_keeps_the_default() {
+    let dir = home();
+    let home = dir.path();
+    let default = home.join(".cursor");
+    let moved = home.join("cursor-config");
+    let file = home.join("a-file");
+    fs::create_dir(&moved).unwrap();
+    fs::write(&file, b"").unwrap();
+    let root = SymbolicRoot::CursorConfig;
+
+    let unset = roots(&[("HOME", text(home))]);
+    let set = roots(&[("HOME", text(home)), ("CURSOR_CONFIG_DIR", text(&moved))]);
+
+    assert!(
+        places(&unset, root).contains(&default),
+        "the default, found {:?}",
+        unset.all(root)
+    );
+    let found = places(&set, root);
+    let physical = moved.canonicalize().unwrap();
+    assert!(found.contains(&default), "the default, found {found:?}");
+    assert!(found.contains(&physical), "the moved one, found {found:?}");
+    for bad in ["relative/cursor", text(&file)] {
+        let roots = roots(&[("HOME", text(home)), ("CURSOR_CONFIG_DIR", bad)]);
+        let all = roots.all(root);
+        assert!(
+            all.iter().any(Result::is_err),
+            "unknown for {bad:?}, found {all:?}"
+        );
+        assert!(places(&roots, root).contains(&default), "for {bad:?}");
+    }
+}
+
+/// Catches Cursor's XDG directories staying open on Linux. Which of them the editor uses
+/// isn't verified, and a path that only protects costs nothing, so each form is closed.
+#[cfg(target_os = "linux")]
+#[test]
+fn cursor_closes_both_forms_of_its_config_directories_on_linux() {
+    let roots = roots(&[("HOME", "/home/u"), ("XDG_CONFIG_HOME", "/data/cfg")]);
+
+    assert_eq!(
+        places(&roots, SymbolicRoot::CursorAppData),
+        [
+            Path::new("/home/u/.config/Cursor"),
+            Path::new("/data/cfg/Cursor")
+        ]
+    );
+    assert_eq!(
+        places(&roots, SymbolicRoot::CursorConfig),
+        [Path::new("/home/u/.cursor"), Path::new("/data/cfg/cursor")]
+    );
+}
+
+/// Catches the two forms being one directory counted twice, which shows it twice.
+#[cfg(target_os = "linux")]
+#[test]
+fn cursors_app_data_is_one_root_when_xdg_is_the_default() {
+    let roots = roots(&[("HOME", "/home/u")]);
+
+    assert_eq!(
+        places(&roots, SymbolicRoot::CursorAppData),
+        [Path::new("/home/u/.config/Cursor")]
+    );
+}
+
 /// Catches the parsers' input reaching a panic through what a person left in a file: any
 /// input must end in a value, an unknown or nothing.
 #[test]
