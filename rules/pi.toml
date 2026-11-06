@@ -23,14 +23,20 @@ platforms = ["linux"]
 root = "pi.agent"
 selection = "pi-closed-logs"
 
+[rule.requirements]
+layout = "supported"
+pi.version_supported = "supported"
+installer_activity = "idle"
+
 [rule.operation]
-kind = "report"
+kind = "remove-files"
+methods = ["delete", "trash"]
 
 [[rule]]
 id = "builtin.pi.store-inventory"
 integration = "pi"
 title = "Pi's store, reported only"
-description = "Logs, inactive releases, staging and helper binaries in the agent directory."
+description = "The active MCP log, crash records, inactive releases, staging, extension caches and helper binaries in the agent directory, and diagnostic logs where they aren't removed."
 why = "Pi keeps these in its agent directory."
 loss = "Nothing. Report only."
 category = "cache"
