@@ -39,12 +39,23 @@ impl WalkStop {
 #[derive(Debug, Default)]
 pub(crate) struct Walk {
     pub(crate) stops: Vec<WalkStop>,
+    /// Every directory the walk listed that holds a `.git`.
+    pub(crate) repositories: Vec<RepositoryDir>,
     /// Directories below the root that could not be listed, so were not covered.
     pub(crate) unreadable: Vec<ProbeError>,
     /// Directories `exclude.paths` names, which the walk didn't enter.
     pub(crate) excluded: Vec<PathBuf>,
     /// Set when the scan was cancelled before the walk finished.
     pub(crate) cancelled: bool,
+}
+
+/// A directory that holds a `.git`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RepositoryDir {
+    /// The directory.
+    pub dir: PathBuf,
+    /// What its `.git` is: a directory for a repository, a file for a linked worktree.
+    pub git: EntryKind,
 }
 
 /// What every walk of one engine stops at and how deep it goes, from all of its rules and
@@ -150,6 +161,11 @@ impl WalkPlan {
         walk: &mut Walk,
     ) -> Vec<PathBuf> {
         let depth = *depth;
+        let git = entries.iter().find(|entry| entry.name == ".git");
+        walk.repositories.extend(git.map(|entry| RepositoryDir {
+            dir: dir.clone(),
+            git: entry.kind,
+        }));
         let files: BTreeSet<String> = entries
             .iter()
             .filter(|entry| entry.kind == EntryKind::File)

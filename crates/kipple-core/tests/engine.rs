@@ -12,17 +12,19 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use kipple_core::{
-    Activity, ActivityGap, Advice, Allocated, Anchor, Apparent, Bounds, CancelToken, Category,
-    Claim, Clause, Clock, Completeness, Consequence, Cost, DirEntryMeta, Engine, EngineError,
-    EntryKind, EntryMeta, EventChannel, EventRx, Evidence, FactKind, FactSpec, FactState,
-    FactValue, Facts, FileIdentity, FindingSink, FrozenTree, FsProbe, GitGap, Hold, Integration,
-    IntegrationDescriptor, IntegrationError, IntegrationId, Inventory, Lens, Level, Measurement,
-    Method, Modified, Name, NodeId, Observer, Omission, OpenedRoot, Operation, OwnerStatus,
-    Platform, Policy, Ports, Predicate, ProbeError, ProcessOutcome, ProcessProbe, ProcessRecord,
-    ProcessSnapshot, Proposal, Recovery, ResolvedRoot, RootLink, RootSource, Roots, Rule, RuleId,
-    RuleText, ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Selector, Sizer,
-    SpaceEstimate, Supplied, SymbolicRoot, Test, Tracked, TrackedQuery, UnresolvedRoot, Verdict,
-    WalkGap, event_channel,
+    Activity, ActivityGap, Advice, AgentLabel, Allocated, Anchor, Apparent, Bounds, CancelToken,
+    Category, Checkout, Claim, Clause, Clock, Completeness, Consequence, Cost, DirEntryMeta,
+    Engine, EngineError, EntryKind, EntryMeta, EventChannel, EventRx, Evidence, FactKind, FactSpec,
+    FactState, FactValue, Facts, FileIdentity, FindingSink, FrozenTree, FsProbe, GitGap, GroupKey,
+    Hold, Integration, IntegrationDescriptor, IntegrationError, IntegrationId, Inventory, Lens,
+    Level, Lineage, Measurement, Method, Modified, Name, NativeKind, NodeId, Observer, Omission,
+    OpenedRoot, Operation, OwnerStatus, Platform, Policy, Ports, Predicate, ProbeError,
+    ProcessOutcome, ProcessProbe, ProcessRecord, ProcessSnapshot, Proposal, Recovery, Registration,
+    RegistrationState, ReleaseFacts, ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion,
+    RepositoryDir, ResolvedRoot, Retention, RootLink, RootSource, Roots, Rule, RuleId, RuleText,
+    ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Selector, Settlement, Sizer,
+    SpaceEstimate, Subject, Supplied, SymbolicRoot, Test, ToolGap, Tracked, TrackedQuery,
+    UnresolvedRoot, Verdict, WalkGap, WorktreeFacts, event_channel,
 };
 
 /// Ten times the 100 ms cancellation budget: long enough not to flake on a loaded CI
@@ -1765,5 +1767,392 @@ fn an_owner_is_supported_only_if_its_discovery_finishes() {
             .owners()
             .status(IntegrationId("owning")),
         OwnerStatus::Unsupported
+    );
+}
+
+/// A worktree as git's integration would supply it, with nothing else known.
+fn worktree(path: &str) -> Subject {
+    Subject::Worktree(Box::new(WorktreeFacts {
+        registration: Registration {
+            path: PathBuf::from(path),
+            head: None,
+            checkout: Checkout::Detached,
+            locked: None,
+            prunable: false,
+            bare: false,
+        },
+        state: RegistrationState::RegisteredPresent,
+        repository: PathBuf::from("/found/main"),
+        admin: None,
+        witness: Err(GitGap::Unsupported),
+        tool: Err(ToolGap::Missing),
+        agent: AgentLabel::Unknown,
+    }))
+}
+
+/// Adds one finding under a rule of `operation`, saying it is `subject`.
+#[derive(Debug)]
+struct Subjected {
+    id: &'static str,
+    path: &'static str,
+    operation: Operation,
+    subject: Subject,
+}
+
+impl Subjected {
+    fn rule(&self) -> Rule {
+        Rule {
+            operation: self.operation.clone(),
+            ..any_rule(self.id)
+        }
+    }
+
+    #[expect(
+        clippy::unwrap_used,
+        reason = "a fixture that fails to build fails the test"
+    )]
+    fn engine(self, ports: Ports) -> Engine {
+        let rule = self.rule();
+        Engine::new(ports, vec![Box::new(self)], vec![rule]).unwrap()
+    }
+}
+
+impl Integration for Subjected {
+    fn descriptor(&self) -> IntegrationDescriptor {
+        IntegrationDescriptor {
+            roots: &[SymbolicRoot::XdgCache],
+            ..descriptor(self.id)
+        }
+    }
+
+    fn discover(
+        &self,
+        _: &ScanContext<'_>,
+        sink: &mut FindingSink<'_>,
+    ) -> Result<(), IntegrationError> {
+        let claim = Claim {
+            evidence: vec![Evidence::Worktree {
+                agent: AgentLabel::Unknown,
+            }],
+            consequence: None,
+        };
+        let supplied = Supplied {
+            subject: self.subject.clone(),
+            ..sink.supplied()
+        };
+        sink.add_supplied(&self.rule(), Path::new(self.path), claim, supplied)
+    }
+}
+
+/// What `Engine::facts` says git tracks of a worktree at `/found/repo/wt`, whose walk found
+/// a `.git` at `inside`, under `git` answering for repositories above.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a fixture that fails to build fails the test"
+)]
+fn worktree_tracked(
+    id: &'static str,
+    inside: Option<&str>,
+    answer: Result<u64, GitGap>,
+) -> Tracked {
+    let sizer = FakeSizer {
+        measurement: Some(Measurement {
+            repository: inside.map(PathBuf::from),
+            ..measured(SIZE)
+        }),
+        ..FakeSizer::default()
+    };
+    let fs = FakeFs {
+        no_git: true,
+        entries: BTreeMap::from([
+            (PathBuf::from("/found/repo/.git"), Ok(EntryKind::Dir)),
+            (PathBuf::from("/found/repo/wt/.git"), Ok(EntryKind::File)),
+        ]),
+        ..FakeFs::default()
+    };
+    let ports = Ports {
+        tracked: Box::new(FakeGit(answer)),
+        ..ports(fs, sizer)
+    };
+    let subjected = Subjected {
+        id,
+        path: "/found/repo/wt",
+        operation: Operation::Native(NativeKind::GitWorktreeRemove),
+        subject: worktree("/found/repo/wt"),
+    };
+    let report = run(&subjected.engine(ports), &found());
+    let finding = report.findings.into_iter().next();
+    finding.and_then(|finding| finding.facts).unwrap().tracked
+}
+
+/// Catches the exception losing the repositories above, which still answer for the files
+/// in the worktree, or covering a repository deeper in it.
+#[test]
+fn a_worktree_stops_counting_only_its_own_git() {
+    let own = Some("/found/repo/wt");
+
+    assert!(
+        matches!(
+            worktree_tracked("git", own, Ok(0)),
+            Tracked::Asked { tracked: 0, work_tree } if work_tree == Path::new("/found/repo")
+        ),
+        "the repository above is asked, and the worktree's own `.git` doesn't count"
+    );
+    assert!(
+        matches!(
+            worktree_tracked("git", own, Ok(2)),
+            Tracked::Asked { tracked: 2, .. }
+        ),
+        "what the repository above tracks is reported"
+    );
+    assert!(
+        matches!(
+            worktree_tracked("git", Some("/found/repo/wt/vendor/lib"), Ok(0)),
+            Tracked::HoldsRepository { work_tree } if work_tree == Path::new("/found/repo/wt/vendor/lib")
+        ),
+        "a repository deeper in the worktree still holds it"
+    );
+    assert!(
+        matches!(
+            worktree_tracked("cargo", own, Ok(0)),
+            Tracked::HoldsRepository { .. }
+        ),
+        "any integration but git keeps the protection"
+    );
+}
+
+/// The events of one scan, in order.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a fixture that fails to build fails the test"
+)]
+fn events_of(engine: &Engine, request: &ScanRequest) -> Vec<ScanEvent> {
+    let cancel = CancelToken::new();
+    let EventChannel { tx, rx } = event_channel(1024, &cancel);
+    let collect = thread::spawn(move || rx.into_iter().map(|one| one.event).collect());
+    let _report = engine.scan(request, &tx, &cancel);
+    drop(tx);
+    collect.join().unwrap()
+}
+
+/// Catches a finding that waits for the settle seam never being announced, so a frontend
+/// shows it unmeasured for good, and a release reaching one before its group settled.
+#[test]
+fn a_finding_that_is_not_plain_is_announced_once_and_stays_held() {
+    let subjected = Subjected {
+        id: "codex",
+        path: "/found/releases/1.0.0",
+        operation: Operation::RemoveVerifiedRelease {
+            methods: vec![Method::Delete],
+            retention: Retention {
+                group_by: vec![GroupKey::Component],
+            },
+        },
+        subject: Subject::Release(ReleaseFacts {
+            group: ReleaseGroup {
+                component: "cli".to_owned(),
+                target: "any".to_owned(),
+            },
+            version: ReleaseVersion("1.0.0".to_owned()),
+            role: ReleaseRole::Installed,
+            files: Vec::new(),
+            locks: Vec::new(),
+            state: ReleaseState::Sound,
+        }),
+    };
+    let engine = subjected.engine(ports(FakeFs::default(), FakeSizer::default()));
+
+    let events = events_of(&engine, &found());
+
+    let updates: Vec<&Facts> = events
+        .iter()
+        .filter_map(|event| {
+            if let ScanEvent::FindingUpdated { facts, .. } = event {
+                Some(facts)
+            } else {
+                None
+            }
+        })
+        .collect();
+    let [facts] = updates.as_slice() else {
+        panic!("one update, got {updates:?}");
+    };
+    assert_eq!(facts.settlement, Settlement::Unsettled);
+    assert!(
+        matches!(events.last(), Some(ScanEvent::ScanCompleted { .. })),
+        "the scan ends last, got {:?}",
+        events.last()
+    );
+}
+
+/// Adds a finding through `add_unread` under a rule of `operation`, which is outside its
+/// roots.
+#[derive(Debug)]
+struct Unreading {
+    operation: Operation,
+    result: Arc<Mutex<Option<bool>>>,
+}
+
+impl Unreading {
+    fn rule(&self) -> Rule {
+        Rule {
+            operation: self.operation.clone(),
+            ..any_rule("unreading")
+        }
+    }
+}
+
+impl Integration for Unreading {
+    fn descriptor(&self) -> IntegrationDescriptor {
+        IntegrationDescriptor {
+            roots: &[SymbolicRoot::XdgCache],
+            ..descriptor("unreading")
+        }
+    }
+
+    #[expect(
+        clippy::unwrap_used,
+        clippy::unwrap_in_result,
+        reason = "a fake whose lock is poisoned fails the test"
+    )]
+    fn discover(
+        &self,
+        _: &ScanContext<'_>,
+        sink: &mut FindingSink<'_>,
+    ) -> Result<(), IntegrationError> {
+        let path = Path::new("/elsewhere/gone");
+        let supplied = sink.supplied();
+        let added = sink.add_unread(&self.rule(), path, Vec::new(), supplied);
+        *self.result.lock().unwrap() = Some(added.is_ok());
+        Ok(())
+    }
+}
+
+/// Catches an unread finding being sized, or its facts reading as anything but unknown.
+#[test]
+fn an_unread_finding_is_reported_and_never_measured() {
+    let unreading = Unreading {
+        operation: Operation::Report,
+        result: Arc::default(),
+    };
+    let rule = unreading.rule();
+    let sizer = FakeSizer::default();
+    let calls = Arc::clone(&sizer.calls);
+    let ports = ports(FakeFs::default(), sizer);
+    let engine = Engine::new(ports, vec![Box::new(unreading)], vec![rule]).unwrap();
+
+    let report = run(&engine, &found());
+
+    let [finding] = report.findings.as_slice() else {
+        panic!("one finding, got {:?}", report.findings);
+    };
+    let facts = finding.facts.clone().unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+    assert_eq!(finding.size, None);
+    assert_eq!(facts.lineage, Lineage::default());
+    assert_eq!(facts.proposal, Proposal::Report);
+    assert!(
+        matches!(facts.activity, Activity::Unknown(_)),
+        "expected unknown activity, got {:?}",
+        facts.activity
+    );
+    assert!(
+        matches!(facts.tracked, Tracked::Unwalked(WalkGap::Unread)),
+        "expected unread git, got {:?}",
+        facts.tracked
+    );
+}
+
+/// Catches a path outside every root getting into a rule that removes, past the
+/// confinement `add` applies.
+#[test]
+fn a_rule_that_removes_cant_add_an_unread_finding() {
+    let result = Arc::default();
+    let unreading = Unreading {
+        operation: Operation::RemoveFiles(vec![Method::Delete]),
+        result: Arc::clone(&result),
+    };
+    let rule = unreading.rule();
+    let ports = ports(FakeFs::default(), FakeSizer::default());
+    let engine = Engine::new(ports, vec![Box::new(unreading)], vec![rule]).unwrap();
+
+    let report = run(&engine, &found());
+
+    assert_eq!(*result.lock().unwrap(), Some(false));
+    assert_eq!(report.findings.len(), 0);
+}
+
+/// Lists what the walk of the project roots found, for a test to read.
+#[derive(Debug)]
+struct RepositoryLister {
+    seen: Arc<Mutex<Vec<RepositoryDir>>>,
+}
+
+impl Integration for RepositoryLister {
+    fn descriptor(&self) -> IntegrationDescriptor {
+        IntegrationDescriptor {
+            owner_files: &["tool.lock"],
+            ..descriptor("lister")
+        }
+    }
+
+    #[expect(
+        clippy::unwrap_used,
+        clippy::unwrap_in_result,
+        reason = "a fake whose lock is poisoned fails the test"
+    )]
+    fn discover(
+        &self,
+        cx: &ScanContext<'_>,
+        _: &mut FindingSink<'_>,
+    ) -> Result<(), IntegrationError> {
+        *self.seen.lock().unwrap() = cx.repositories(SymbolicRoot::ProjectRoots)?;
+        Ok(())
+    }
+}
+
+/// Catches the walk missing a linked worktree, whose `.git` is a file, or a repository in a
+/// directory a tool owns, where the walk stops looking for projects.
+#[test]
+fn the_walk_lists_each_repository_by_what_its_git_is() {
+    let fs = FakeFs::tree(&[
+        "/found/",
+        "/found/app/",
+        "/found/app/.git/",
+        "/found/linked/",
+        "/found/linked/.git",
+        "/found/owned/",
+        "/found/owned/tool.lock",
+        "/found/owned/.git/",
+        "/found/plain/",
+    ]);
+    let seen = Arc::default();
+    let lister = RepositoryLister {
+        seen: Arc::clone(&seen),
+    };
+    let rule = project_rule("lister", "Cargo.toml", "target");
+    let ports = ports(fs, FakeSizer::default());
+    let engine = Engine::new(ports, vec![Box::new(lister)], vec![rule]).unwrap();
+    let mut roots = Roots::default();
+    insert(&mut roots, SymbolicRoot::ProjectRoots, FOUND);
+    let request = ScanRequest {
+        roots,
+        lens: None,
+        exclude: Vec::new(),
+    };
+
+    run(&engine, &request);
+
+    let repository = |dir: &str, git| RepositoryDir {
+        dir: PathBuf::from(dir),
+        git,
+    };
+    assert_eq!(
+        *seen.lock().unwrap(),
+        [
+            repository("/found/app", EntryKind::Dir),
+            repository("/found/linked", EntryKind::File),
+            repository("/found/owned", EntryKind::Dir),
+        ]
     );
 }

@@ -119,6 +119,7 @@ fn safe() -> Facts {
         supplied: kipple_core::Supplied::default(),
         unmet: Vec::new(),
         settlement: kipple_core::Settlement::Unsettled,
+        integration: IntegrationId("test"),
     }
 }
 

@@ -556,6 +556,9 @@ impl From<&Omission> for OmissionOut {
             Omission::RootChanged { root, path } => ("root-changed", Some(*root), Some(path)),
             Omission::Unlisted { error } => ("unlisted", None, Some(error.path())),
             Omission::DiscoveryFailed { error } => ("discovery-failed", None, Some(error.path())),
+            Omission::GitInventory { repository, .. } => {
+                ("git-inventory", None, Some(repository.as_path()))
+            }
             Omission::SizingFailed { error, .. } => ("sizing-failed", None, Some(error.path())),
             Omission::Crashed => ("crashed", None, None),
             Omission::Excluded { path } => ("excluded", None, Some(path)),

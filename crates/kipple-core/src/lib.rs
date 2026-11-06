@@ -119,7 +119,7 @@ pub use authorize::{Authorization, Authorized, AuthorizedOp, DeleteOp, ReviewedP
 pub use cancel::{CancelToken, Waited};
 pub use capability::{NativeTool, ToolError, ToolStatus, ToolVersion};
 pub use digest::Digest;
-pub use discovery::WalkStop;
+pub use discovery::{RepositoryDir, WalkStop};
 pub use engine::{
     Engine, EngineError, EngineRescan, FRESH, Finding, FindingId, IntegrationReport, Omission,
     OpenedRoot, Ports, Rescan, ScanOutcome, ScanReport, ScanRequest,
@@ -139,7 +139,7 @@ pub use journal::{Intent, Journal, Record, RestoreResult};
 pub use mutation::{
     EffectSink, Executor, FileSystemClass, Finish, Freeze, Freezer, LocalFileSystem, Unsupported,
 };
-pub use native::NativeKind;
+pub use native::{NativeKind, ResolvedTool, SemanticFacts, ToolFile, ToolGap};
 pub use outcome::{
     ApplyError, Effect, ErrorCode, Found, Freed, ItemOutcome, Left, LeftCount, LeftReason, OsError,
     OsErrorKind, Receipt, ReceiptItem, Removed, SAMPLE, Skip, Status, Stop, Tally, Totals, Trashed,
@@ -200,4 +200,6 @@ pub use suggest::{Suggestion, is_within, suggest};
 pub use supplied::{AdviceId, Claim, FactValue, Subject, Supplied};
 pub use tracked::{GitGap, TrackedQuery};
 pub use trash::{Forgotten, RestoreRequest, SlotState, TrashBackend, TrashDir, TrashSlot};
-pub use worktree::AgentLabel;
+pub use worktree::{
+    AgentLabel, Checkout, ObjectId, Registration, RegistrationState, WorktreeFacts, WorktreeWitness,
+};

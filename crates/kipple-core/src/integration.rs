@@ -11,14 +11,14 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::cancel::CancelToken;
-use crate::discovery::{Walk, WalkPlan, WalkStop, Walks};
-use crate::engine::{Finding, FindingId, Found};
+use crate::discovery::{RepositoryDir, Walk, WalkPlan, WalkStop, Walks};
+use crate::engine::{Finding, FindingId, Found, Reading};
 use crate::event::{EventTx, ScanEvent, Stopped};
 use crate::policy::Consequence;
 use crate::probe::{DirEntryMeta, EntryKind, EntryMeta, FsProbe, ProbeError};
 use crate::protect::{OwnerStatus, StateDeclaration};
 use crate::root::{ResolvedRoot, SymbolicRoot};
-use crate::rule::{FactSpec, Lens, Platform, Rule, Selector};
+use crate::rule::{FactSpec, Lens, Operation, Platform, Rule, Selector};
 use crate::supplied::{AdviceId, Claim, Supplied};
 use crate::worktree::AgentLabel;
 
@@ -29,6 +29,8 @@ pub struct IntegrationId(pub &'static str);
 impl IntegrationId {
     /// The owner of third-party rules, which use only generic selectors and facts.
     pub const GENERIC: Self = Self("generic");
+    /// Git, the one integration whose worktrees may give way on tracked files.
+    pub const GIT: Self = Self("git");
 }
 
 impl fmt::Display for IntegrationId {
@@ -310,9 +312,34 @@ impl ScanContext<'_> {
     /// # Errors
     /// [`IntegrationError::Stopped`] when the scan was cancelled during the walk.
     pub fn walk_stops(&self, root: SymbolicRoot) -> Result<Vec<WalkStop>, IntegrationError> {
+        self.walks_of(root, |stops, walk| keep_nearest(stops, &walk.stops))
+            .map(BTreeMap::into_values)
+            .map(Iterator::collect)
+    }
+
+    /// Every directory the shared walk of `root` found holding a `.git`, by what that is.
+    ///
+    /// # Errors
+    /// [`IntegrationError::Stopped`] when the scan was cancelled during the walk.
+    pub fn repositories(&self, root: SymbolicRoot) -> Result<Vec<RepositoryDir>, IntegrationError> {
+        self.walks_of(root, |repositories: &mut BTreeMap<_, _>, walk| {
+            for repository in &walk.repositories {
+                repositories.insert(repository.dir.clone(), repository.clone());
+            }
+        })
+        .map(BTreeMap::into_values)
+        .map(Iterator::collect)
+    }
+
+    /// Walks each path of `root`, folding what each walk found into a map by path.
+    fn walks_of<T>(
+        &self,
+        root: SymbolicRoot,
+        fold: impl Fn(&mut BTreeMap<PathBuf, T>, &Walk),
+    ) -> Result<BTreeMap<PathBuf, T>, IntegrationError> {
         // A directory under two paths of the root, given twice or one inside the other,
         // is one stop, as near its root as it is anywhere.
-        let mut stops: BTreeMap<PathBuf, WalkStop> = BTreeMap::new();
+        let mut found = BTreeMap::new();
         for resolved in self.roots_of(root) {
             let walk = self
                 .walks
@@ -320,10 +347,10 @@ impl ScanContext<'_> {
             if walk.cancelled {
                 return Err(IntegrationError::Stopped);
             }
-            keep_nearest(&mut stops, &walk.stops);
+            fold(&mut found, &walk);
             self.walked.borrow_mut().insert(resolved.path.clone(), walk);
         }
-        Ok(stops.into_values().collect())
+        Ok(found)
     }
 
     /// The candidates of a `project-artifact` rule under its root: directories named like
@@ -421,6 +448,14 @@ pub struct FindingSink<'scan> {
     pub(crate) owner: OwnerStatus,
 }
 
+/// What is recorded with a finding, past its rule and path.
+#[derive(Debug)]
+struct Added {
+    claim: Claim,
+    supplied: Supplied,
+    reading: Reading,
+}
+
 impl FindingSink<'_> {
     /// Adds a finding of `rule` at `path`, which must lie inside the integration's roots,
     /// with what removing it costs when the integration verified that. Report-only
@@ -471,16 +506,61 @@ impl FindingSink<'_> {
         claim: Claim,
         supplied: Supplied,
     ) -> Result<(), IntegrationError> {
-        let Claim {
+        let path = self.cx.confined(path)?;
+        let added = Added {
+            claim,
+            supplied,
+            reading: Reading::Measured,
+        };
+        self.record(rule, path, added)
+    }
+
+    /// Adds a finding kipple neither reads nor measures, such as a registered worktree whose
+    /// checkout is gone, or one outside every opened root: it is only reported, has no
+    /// anchor, and everything measuring would say about it is unknown.
+    ///
+    /// # Errors
+    /// [`IntegrationError::Stopped`] as for [`add`](Self::add), and
+    /// [`IntegrationError::Probe`] when `rule` removes anything: its path wasn't confined
+    /// to the roots, so it is outside what a removal may reach.
+    pub fn add_unread(
+        &mut self,
+        rule: &Rule,
+        path: &Path,
+        evidence: Vec<Evidence>,
+        supplied: Supplied,
+    ) -> Result<(), IntegrationError> {
+        if rule.operation != Operation::Report {
+            let path = path.to_owned();
+            return Err(ProbeError::OutsideRoots { path }.into());
+        }
+        let claim = Claim {
             evidence,
-            consequence,
-        } = claim;
+            consequence: None,
+        };
+        let added = Added {
+            claim,
+            supplied,
+            reading: Reading::Unread,
+        };
+        self.record(rule, path.to_owned(), added)
+    }
+
+    fn record(&mut self, rule: &Rule, path: PathBuf, added: Added) -> Result<(), IntegrationError> {
+        let Added {
+            claim: Claim {
+                evidence,
+                consequence,
+            },
+            supplied,
+            reading,
+        } = added;
         let finding = Finding {
             id: FindingId(self.next_id.fetch_add(1, Ordering::Relaxed)),
             integration: self.integration,
             rule: rule.id.clone(),
             category: rule.category,
-            path: self.cx.confined(path)?,
+            path,
             evidence,
             size: None,
             facts: None,
@@ -495,6 +575,7 @@ impl FindingSink<'_> {
             finding,
             consequence,
             supplied,
+            reading,
         });
         Ok(())
     }

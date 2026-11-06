@@ -8,9 +8,12 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use kipple_core::{
-    Activity, ActivityGap, Bucket, Caution, Consequence, Cost, Facts, FileIdentity, GitGap,
-    HeldPath, Hold, Level, Lineage, Loss, Method, Modified, Policy, ProbeError, Proposal, Recovery,
-    Retained, RuleId, RuleSettings, Seen, Settlement, Supplied, Tracked, Verdict, WalkGap,
+    Activity, ActivityGap, AgentLabel, Bucket, Caution, Checkout, Consequence, Cost, Facts,
+    FileIdentity, GitGap, HeldPath, Hold, IntegrationId, Level, Lineage, Loss, Method, Modified,
+    NativeKind, ObjectId, Policy, ProbeError, Proposal, Recovery, Registration, RegistrationState,
+    ReleaseFacts, ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion, Retained, RuleId,
+    RuleSettings, Seen, SemanticFacts, Settlement, Subject, Supplied, ToolGap, Tracked, Verdict,
+    WalkGap, WorktreeFacts,
 };
 
 const DAY: Duration = Duration::from_hours(24);
@@ -34,6 +37,7 @@ fn build_output() -> Facts {
         supplied: Supplied::default(),
         unmet: Vec::new(),
         settlement: Settlement::Unsettled,
+        integration: IntegrationId("test"),
     }
 }
 
@@ -688,12 +692,11 @@ fn a_configured_recent_window_only_lengthens_the_effective_one() {
 #[test]
 fn unsettled_release_holds() {
     let holds = |settlement, level| {
-        let release = Facts {
-            proposal: Proposal::RemoveRelease(vec![Method::Delete]),
+        let facts = Facts {
             settlement,
-            ..build_output()
+            ..subject_facts(REMOVE_RELEASE(), release(), CODEX)
         };
-        match classify(&release, level) {
+        match classify(&facts, level) {
             Verdict::Protected(holds) => holds,
             Verdict::Safe | Verdict::Review(_) => Vec::new(),
         }
@@ -714,4 +717,197 @@ fn only_a_release_removal_waits_for_settlement() {
 
     assert_eq!(plain.settlement, Settlement::Unsettled);
     assert_eq!(balanced(&plain), Verdict::Safe);
+}
+
+fn release() -> Subject {
+    Subject::Release(ReleaseFacts {
+        group: ReleaseGroup {
+            component: "cli".to_owned(),
+            target: "x86_64-unknown-linux-musl".to_owned(),
+        },
+        version: ReleaseVersion("0.165.0".to_owned()),
+        role: ReleaseRole::Installed,
+        files: Vec::new(),
+        locks: Vec::new(),
+        state: ReleaseState::Sound,
+    })
+}
+
+fn worktree() -> Subject {
+    Subject::Worktree(Box::new(WorktreeFacts {
+        registration: Registration {
+            path: PathBuf::from("/home/u/wt"),
+            head: Some(ObjectId("0dc8".to_owned())),
+            checkout: Checkout::Branch("wt".to_owned()),
+            locked: None,
+            prunable: false,
+            bare: false,
+        },
+        state: RegistrationState::RegisteredPresent,
+        repository: PathBuf::from("/home/u/repo"),
+        admin: None,
+        witness: Err(GitGap::Unsupported),
+        tool: Err(ToolGap::Missing),
+        agent: AgentLabel::Unknown,
+    }))
+}
+
+const fn semantic(kind: NativeKind) -> Subject {
+    Subject::Semantic(SemanticFacts {
+        kind,
+        tool: Err(ToolGap::Missing),
+    })
+}
+
+/// A finding of `integration` proposing `proposal`, that its integration says is `subject`,
+/// fit to remove in every other way.
+fn subject_facts(proposal: Proposal, subject: Subject, integration: IntegrationId) -> Facts {
+    Facts {
+        proposal,
+        supplied: Supplied {
+            subject,
+            ..Supplied::default()
+        },
+        settlement: Settlement::Candidate,
+        integration,
+        ..build_output()
+    }
+}
+
+fn holds(facts: &Facts) -> Vec<Hold> {
+    match balanced(facts) {
+        Verdict::Protected(holds) => holds,
+        Verdict::Safe | Verdict::Review(_) => Vec::new(),
+    }
+}
+
+const GIT: IntegrationId = IntegrationId::GIT;
+const CODEX: IntegrationId = IntegrationId("codex");
+const REMOVE: fn() -> Proposal = || Proposal::Remove(vec![Method::Delete]);
+const REMOVE_RELEASE: fn() -> Proposal = || Proposal::RemoveRelease(vec![Method::Delete]);
+const WORKTREE_REMOVE: Proposal = Proposal::Native(NativeKind::GitWorktreeRemove);
+const CACHE_CLEAN: Proposal = Proposal::Native(NativeKind::NpmCacheClean);
+
+/// Catches a rule removing a directory as a release when nothing said it is one, so settle
+/// never saw it.
+#[test]
+fn release_removal_needs_a_release_subject() {
+    let others = [
+        Subject::Plain,
+        worktree(),
+        semantic(NativeKind::NpmCacheClean),
+    ];
+    for subject in others {
+        let facts = subject_facts(REMOVE_RELEASE(), subject, CODEX);
+        assert_eq!(holds(&facts), [Hold::SubjectMismatch]);
+    }
+    assert_eq!(
+        holds(&subject_facts(REMOVE_RELEASE(), release(), CODEX)),
+        []
+    );
+}
+
+/// Catches a worktree going down the file path, which skips everything its own operation
+/// proves, and anything else that isn't plain files with it.
+#[test]
+fn worktree_subject_under_remove_files_is_refused() {
+    let others = [worktree(), release(), semantic(NativeKind::NpmCacheClean)];
+    for subject in others {
+        let facts = subject_facts(REMOVE(), subject, GIT);
+        assert_eq!(holds(&facts), [Hold::SubjectMismatch]);
+    }
+}
+
+/// Catches a worktree passing as a release, the other way to reach its files.
+#[test]
+fn worktree_subject_under_release_removal_is_refused() {
+    let facts = subject_facts(REMOVE_RELEASE(), worktree(), GIT);
+
+    assert_eq!(holds(&facts), [Hold::SubjectMismatch]);
+}
+
+/// Catches the worktree exception opening for anything but git's own worktrees: it is
+/// keyed three ways (04 §3.2).
+#[test]
+fn a_worktree_removal_needs_git_and_a_worktree() {
+    assert_eq!(holds(&subject_facts(WORKTREE_REMOVE, worktree(), GIT)), []);
+    let wrong = [
+        subject_facts(WORKTREE_REMOVE, worktree(), CODEX),
+        subject_facts(WORKTREE_REMOVE, Subject::Plain, GIT),
+        subject_facts(WORKTREE_REMOVE, release(), GIT),
+        subject_facts(
+            WORKTREE_REMOVE,
+            semantic(NativeKind::GitWorktreeRemove),
+            GIT,
+        ),
+    ];
+    for facts in &wrong {
+        assert_eq!(holds(facts), [Hold::SubjectMismatch]);
+    }
+}
+
+/// Catches a tool's command running on something its integration never said it may
+/// clean, or a subject that names another command.
+#[test]
+fn a_cache_clean_needs_its_own_semantic_subject() {
+    let cleans = semantic(NativeKind::NpmCacheClean);
+
+    assert_eq!(holds(&subject_facts(CACHE_CLEAN, cleans, CODEX)), []);
+    let wrong = [
+        subject_facts(CACHE_CLEAN, Subject::Plain, CODEX),
+        subject_facts(CACHE_CLEAN, semantic(NativeKind::GitWorktreeRemove), CODEX),
+        subject_facts(CACHE_CLEAN, worktree(), GIT),
+    ];
+    for facts in &wrong {
+        assert_eq!(holds(facts), [Hold::SubjectMismatch]);
+    }
+}
+
+/// Catches the tracked-file exception reaching a native operation it wasn't written for,
+/// and a native command deleting files git tracks: it can't leave them out as a file plan
+/// does.
+#[test]
+fn other_native_kind_keeps_tracked_protection() {
+    let work_tree = || PathBuf::from("/home/u/repo");
+    let tracked = |tracked| Facts {
+        tracked,
+        ..subject_facts(CACHE_CLEAN, semantic(NativeKind::NpmCacheClean), CODEX)
+    };
+
+    let holding = tracked(Tracked::HoldsRepository {
+        work_tree: work_tree(),
+    });
+    assert_eq!(holds(&holding), [Hold::HoldsRepository]);
+    let inside = tracked(Tracked::Asked {
+        work_tree: work_tree(),
+        tracked: 2,
+    });
+    assert_eq!(holds(&inside), [Hold::TrackedInsideNative]);
+    let none = tracked(Tracked::Asked {
+        work_tree: work_tree(),
+        tracked: 0,
+    });
+    assert_eq!(holds(&none), []);
+
+    let repository_above_tracks_it = Facts {
+        tracked: Tracked::Asked {
+            work_tree: work_tree(),
+            tracked: 1,
+        },
+        ..subject_facts(WORKTREE_REMOVE, worktree(), GIT)
+    };
+    assert_eq!(
+        holds(&repository_above_tracks_it),
+        [Hold::TrackedInsideNative]
+    );
+}
+
+/// Catches a report of a worktree or release being held as a mismatch, which would hide
+/// that it only reports.
+#[test]
+fn a_report_goes_with_any_subject() {
+    for subject in [release(), worktree()] {
+        let facts = subject_facts(Proposal::Report, subject, GIT);
+        assert_eq!(holds(&facts), [Hold::ReportOnly]);
+    }
 }

@@ -8,12 +8,13 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::integration::IntegrationId;
 use crate::native::NativeKind;
 use crate::probe::{FileIdentity, ProbeError};
 use crate::retention::Settlement;
 use crate::root::SymbolicRoot;
 use crate::rule::{Method, RuleId};
-use crate::supplied::Supplied;
+use crate::supplied::{Subject, Supplied};
 use crate::tracked::GitGap;
 
 named! {
@@ -288,6 +289,8 @@ pub struct Facts {
     pub unmet: Vec<Unmet>,
     /// What retention decided, for a release.
     pub settlement: Settlement,
+    /// The integration that found it, which the worktree exception is keyed on.
+    pub integration: IntegrationId,
 }
 
 /// A predicate of a rule that a finding doesn't satisfy.
@@ -648,6 +651,43 @@ impl Policy {
 
 /// Every reason the facts make the finding ineligible. Unknown never makes it Review: it
 /// holds.
+/// Whether what `facts` proposes goes with what its integration says the finding is. A
+/// report or advice removes nothing, so anything goes with it.
+fn paired(facts: &Facts) -> bool {
+    match (&facts.proposal, &facts.supplied.subject) {
+        (Proposal::Report | Proposal::Advice, _)
+        | (Proposal::Remove(_), Subject::Plain)
+        | (Proposal::RemoveRelease(_), Subject::Release(_)) => true,
+        (Proposal::Native(kind), Subject::Semantic(semantic)) => {
+            *kind == NativeKind::NpmCacheClean && semantic.kind == *kind
+        }
+        (Proposal::Native(_), Subject::Worktree(_)) => {
+            replaces_own_git(&facts.proposal, &facts.supplied.subject, facts.integration)
+        }
+        (
+            Proposal::Remove(_),
+            Subject::Release(_) | Subject::Worktree(_) | Subject::Semantic(_),
+        )
+        | (
+            Proposal::RemoveRelease(_),
+            Subject::Plain | Subject::Worktree(_) | Subject::Semantic(_),
+        )
+        | (Proposal::Native(_), Subject::Plain | Subject::Release(_)) => false,
+    }
+}
+
+/// The one exception to tracked-file protection (04 §3.2), keyed three ways: git's own
+/// removal of one of its linked worktrees. Only that worktree's own `.git` stops counting.
+pub(crate) fn replaces_own_git(
+    proposal: &Proposal,
+    subject: &Subject,
+    integration: IntegrationId,
+) -> bool {
+    *proposal == Proposal::Native(NativeKind::GitWorktreeRemove)
+        && matches!(subject, Subject::Worktree(_))
+        && integration == IntegrationId::GIT
+}
+
 fn fact_holds(facts: &Facts) -> Vec<Hold> {
     match facts.proposal {
         Proposal::Report => return vec![Hold::ReportOnly],
@@ -655,6 +695,9 @@ fn fact_holds(facts: &Facts) -> Vec<Hold> {
         Proposal::Remove(_) | Proposal::RemoveRelease(_) | Proposal::Native(_) => {}
     }
     let mut holds = Vec::new();
+    if !paired(facts) {
+        holds.push(Hold::SubjectMismatch);
+    }
     if !facts.layout_verified {
         holds.push(Hold::UnknownLayout);
     }
@@ -662,6 +705,11 @@ fn fact_holds(facts: &Facts) -> Vec<Hold> {
         holds.push(Hold::UnknownConsequence);
     }
     match facts.tracked {
+        Tracked::Asked { tracked, .. }
+            if tracked > 0 && matches!(facts.proposal, Proposal::Native(_)) =>
+        {
+            holds.push(Hold::TrackedInsideNative);
+        }
         Tracked::NoRepository | Tracked::Asked { .. } => {}
         Tracked::HoldsRepository { .. } => holds.push(Hold::HoldsRepository),
         Tracked::InsideRepository { .. } | Tracked::Unchecked(_) | Tracked::Unwalked(_) => {

@@ -7,7 +7,10 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use crate::integration::{ActivityEvidence, Evidence};
+use crate::native::SemanticFacts;
 use crate::policy::Consequence;
+use crate::retention::ReleaseFacts;
+use crate::worktree::WorktreeFacts;
 
 /// A fact's value. A runtime string never enters it, so a version is an enum fact, such as
 /// `supported`, and the version itself stays in the finding's [`Subject`].
@@ -38,6 +41,12 @@ pub struct AdviceId(pub usize);
 pub enum Subject {
     /// Files and directories, and nothing more to say about them.
     Plain,
+    /// A release in a tool's store.
+    Release(ReleaseFacts),
+    /// A linked git worktree.
+    Worktree(Box<WorktreeFacts>),
+    /// The target of a tool's own command.
+    Semantic(SemanticFacts),
 }
 
 /// Everything an integration supplies about one finding.
