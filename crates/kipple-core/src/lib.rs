@@ -89,6 +89,7 @@ mod imported;
 mod integration;
 mod journal;
 mod mutation;
+mod native;
 mod outcome;
 mod plan;
 mod planner;
@@ -97,6 +98,7 @@ mod probe;
 mod process;
 pub mod profile;
 mod protect;
+mod retention;
 mod root;
 mod rule;
 mod run;
@@ -104,8 +106,10 @@ mod session;
 mod size;
 mod store;
 mod suggest;
+mod supplied;
 mod tracked;
 mod trash;
+mod worktree;
 
 pub use activity::{ProcessCensus, census};
 pub use apply::{
@@ -115,7 +119,7 @@ pub use authorize::{Authorization, Authorized, AuthorizedOp, DeleteOp, ReviewedP
 pub use cancel::{CancelToken, Waited};
 pub use capability::{NativeTool, ToolError, ToolStatus, ToolVersion};
 pub use digest::Digest;
-pub use discovery::WalkStop;
+pub use discovery::{RepositoryDir, WalkStop};
 pub use engine::{
     Engine, EngineError, EngineRescan, FRESH, Finding, FindingId, IntegrationReport, Omission,
     OpenedRoot, Ports, Rescan, ScanOutcome, ScanReport, ScanRequest,
@@ -129,12 +133,13 @@ pub use frozen::{
 pub use imported::{Dropped, DroppedItem, ImportedPlan, ReplanRequest, Replanned, replan};
 pub use integration::{
     ActivityEvidence, Advice, Evidence, FindingSink, Integration, IntegrationDescriptor,
-    IntegrationError, IntegrationId, IntegrationSelector, ScanContext,
+    IntegrationError, IntegrationId, IntegrationSelector, Program, ScanContext,
 };
 pub use journal::{Intent, Journal, Record, RestoreResult};
 pub use mutation::{
     EffectSink, Executor, FileSystemClass, Finish, Freeze, Freezer, LocalFileSystem, Unsupported,
 };
+pub use native::{NativeKind, ResolvedTool, SemanticFacts, ToolFile, ToolGap};
 pub use outcome::{
     ApplyError, Effect, ErrorCode, Found, Freed, ItemOutcome, Left, LeftCount, LeftReason, OsError,
     OsErrorKind, Receipt, ReceiptItem, Removed, SAMPLE, Skip, Status, Stop, Tally, Totals, Trashed,
@@ -149,9 +154,9 @@ pub use planner::{
     Refused, Unjudged, plan,
 };
 pub use policy::{
-    Activity, ActivityGap, Bucket, Caution, Consequence, Cost, Facts, HeldPath, Hold, Level,
-    Lineage, Loss, Modified, POLICY_VERSION, Policy, Proposal, Recovery, RuleSettings, Seen,
-    Tracked, Verdict, WalkGap,
+    Activity, ActivityGap, Bucket, Caution, Clause, Consequence, Cost, FactState, Facts, HeldPath,
+    Hold, Level, Lineage, Loss, Modified, POLICY_VERSION, Policy, Proposal, Recovery, RuleSettings,
+    Seen, Tracked, Unmet, Verdict, WalkGap,
 };
 pub use probe::{
     Clock, DirAccess, DirEntryMeta, EntryKind, EntryMeta, FileIdentity, FileSystem, FsProbe,
@@ -161,15 +166,22 @@ pub use process::{
     Capabilities, CommandLines, EnvPath, Inventory, MountNamespace, Observer, Probed, ProcessClass,
     ProcessOutcome, ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Unread, UserId,
 };
-pub use protect::{Protection, Protections, STATE_ROOTS};
+pub use protect::{
+    Area, OpenArea, OwnerStatus, Owners, ProtectedEntry, Protection, Protections, StateDeclaration,
+    StateRoot, Unresolved,
+};
+pub use retention::{
+    GroupGap, ReleaseFacts, ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion, ReleaseView,
+    Retained, Settlement, settle,
+};
 pub use root::{
     LinkProblem, Resolution, ResolvedRoot, RootLink, RootSource, Roots, SettingProblem,
     SymbolicRoot, UnresolvedRoot,
 };
 pub use rule::{
-    Bounds, Category, FactKind, FactSpec, GENERIC_FACTS, GENERIC_SELECTORS, Lens, Method, Name,
-    OPERATIONS, Operation, Pack, PackId, Pattern, Platform, Predicate, Rule, RuleId, RuleText,
-    Selector, Test,
+    Bounds, Category, FactKind, FactSpec, GENERIC_FACTS, GENERIC_SELECTORS, GroupKey, Lens, Method,
+    Name, OPERATIONS, Operation, OperationSpec, Pack, PackId, Pattern, Platform, Predicate,
+    Retention, Rule, RuleId, RuleText, Selector, Test,
 };
 pub use run::{
     Depth, ItemState, PendingRestore, RunRead, RunState, RunSummary, StoredItem, StoredPlan,
@@ -185,5 +197,9 @@ pub use store::{
     HEADER_LIMIT, JOURNAL_LIMIT, LOCK_WAIT, LockState, Locked, RunId, RunStore, StoreRefusal,
 };
 pub use suggest::{Suggestion, is_within, suggest};
+pub use supplied::{AdviceId, Claim, FactValue, Subject, Supplied};
 pub use tracked::{GitGap, TrackedQuery};
 pub use trash::{Forgotten, RestoreRequest, SlotState, TrashBackend, TrashDir, TrashSlot};
+pub use worktree::{
+    AgentLabel, Checkout, ObjectId, Registration, RegistrationState, WorktreeFacts, WorktreeWitness,
+};

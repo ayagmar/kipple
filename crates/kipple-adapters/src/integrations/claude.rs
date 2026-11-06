@@ -5,8 +5,19 @@
 
 use kipple_core::{
     Advice, FindingSink, Integration, IntegrationDescriptor, IntegrationError, IntegrationId, Lens,
-    Platform, ScanContext, SymbolicRoot,
+    Platform, ScanContext, StateDeclaration, SymbolicRoot, Unresolved,
 };
+
+/// Its configuration directory stays closed whole until its layout is verified, and a
+/// `$CLAUDE_CONFIG_DIR` that can't be used may hide credentials anywhere, so that holds
+/// everything.
+const STATE: &[StateDeclaration] = &[StateDeclaration {
+    root: SymbolicRoot::ClaudeConfig,
+    protected: &[],
+    open: &[],
+    delegates: &[],
+    unresolved: Unresolved::HoldAll,
+}];
 
 /// Claude Code's default retention, in days.
 const DEFAULT_DAYS: u64 = 30;
@@ -30,6 +41,9 @@ impl Integration for ClaudeCode {
             owner_files: &[],
             verified: &[],
             consequences: &[],
+            facts: &[],
+            state: STATE,
+            evidences: &[],
             revision: 1,
         }
     }

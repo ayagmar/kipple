@@ -6,8 +6,9 @@
 use std::path::{MAIN_SEPARATOR, Path};
 
 use kipple_core::{
-    Activity, ActivityGap, Bucket, Caution, Cost, Facts, Finding, Hold, Lens, Level, Loss, Method,
-    Modified, Policy, Proposal, Recovery, ScanOutcome, Seen, Tracked, Verdict, WalkGap,
+    Activity, ActivityGap, Bucket, Caution, Clause, Cost, FactState, Facts, Finding, Hold, Lens,
+    Level, Loss, Method, Modified, Policy, Proposal, Recovery, ScanOutcome, Seen, Tracked, Unmet,
+    Verdict, WalkGap,
 };
 
 use crate::json::{CompletenessOut, SizeOut};
@@ -337,6 +338,30 @@ const fn hold_text(hold: Hold) -> (&'static str, &'static str) {
             "last change unknown",
             "kipple couldn't read when it last changed.",
         ),
+        Hold::Retained => (
+            "kept by retention",
+            "Its tool still needs this release, or its group couldn't be settled.",
+        ),
+        Hold::Unsettled => (
+            "not settled",
+            "kipple couldn't settle which releases of its group may go, so all of them stay.",
+        ),
+        Hold::FactUnmet => (
+            "check not passed",
+            "Its rule needs something about it that isn't so.",
+        ),
+        Hold::FactUnknown => (
+            "check unknown",
+            "Its rule needs something about it that kipple couldn't establish.",
+        ),
+        Hold::SubjectMismatch => (
+            "wrong kind of item",
+            "What its rule would do doesn't fit what was found here, so kipple won't do it.",
+        ),
+        Hold::TrackedInsideNative => (
+            "git tracks files in it",
+            "git tracks files inside it, and a tool's own command can't leave them out.",
+        ),
     }
 }
 
@@ -439,20 +464,39 @@ pub(crate) fn facts(finding: &Finding, policy: &Policy) -> Vec<Fact> {
     let proposal = match &facts.proposal {
         Proposal::Report => "report only: kipple never changes it".to_owned(),
         Proposal::Advice => "report only: the tool's own cleanup is advised".to_owned(),
-        Proposal::Remove(methods) => {
+        Proposal::Remove(methods) | Proposal::RemoveRelease(methods) => {
             let names: Vec<&str> = methods.iter().map(|m| m.name()).collect();
             format!("remove ({})", names.join(" or "))
         }
+        Proposal::Native(kind) => format!("its tool's own command ({kind})"),
     };
     lines.push(Fact::new("Proposes", proposal));
-    if !matches!(facts.proposal, Proposal::Remove(_)) {
+    if matches!(facts.proposal, Proposal::Report | Proposal::Advice) {
         return lines;
     }
+    if matches!(facts.proposal, Proposal::RemoveRelease(_)) {
+        let settled = retained::settlement(facts.settlement);
+        lines.push(Fact::new("Retention", settled));
+    }
+    lines.extend(facts.unmet.iter().map(unmet));
     lines.push(Fact::new("Git", tracked(&facts.tracked)));
     lines.push(Fact::new("In use", activity(&facts.activity)));
     let window = policy.recent_window_days(&finding.rule, facts);
     lines.push(Fact::new("Last change", modified(facts, window)));
     lines
+}
+
+/// A predicate of its rule the finding doesn't satisfy, saying which part of the rule.
+fn unmet(unmet: &Unmet) -> Fact {
+    let label = match unmet.clause {
+        Clause::Requirement => "Requirement",
+        Clause::Eligibility => "Eligibility",
+    };
+    let state = match unmet.state {
+        FactState::Failed => "isn't met",
+        FactState::Unknown => "isn't known",
+    };
+    Fact::new(label, format!("{} {state}", escaped(unmet.fact)))
 }
 
 /// How expensive bringing it back is. An unknown cost is one kipple doesn't estimate;
@@ -565,6 +609,9 @@ pub(crate) fn activity(activity: &Activity) -> String {
             "this OS doesn't show which paths running programs use, beyond their executable"
                 .to_owned()
         }
+        Activity::Unknown(ActivityGap::UnresolvedStore(store)) => {
+            format!("{store} couldn't be located, so a program using it can't be ruled out")
+        }
     }
 }
 
@@ -576,7 +623,7 @@ fn in_use(pid: u32, seen: &Seen) -> String {
         Seen::Argument(path) => ("was started with", path),
         Seen::Environment(path) => ("has in its environment", path),
         Seen::MappedFile(path) => ("has loaded", path),
-        Seen::Runtime(path) => ("is its runtime and uses its project at", path),
+        Seen::Runtime(path) => ("is its tool or runtime, at", path),
     };
     format!(
         "process {pid} {how} {}",
@@ -631,6 +678,8 @@ fn idle_except(unchecked: usize, by_command_line: usize) -> String {
 pub(crate) mod outcome;
 pub(crate) mod profile;
 pub(crate) mod receipt;
+pub(crate) mod retained;
 pub(crate) mod review;
 #[cfg(test)]
 mod tests;
+pub(crate) mod worktree;

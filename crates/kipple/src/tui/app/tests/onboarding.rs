@@ -185,6 +185,7 @@ fn report_with_advice() -> ScanReport {
                 snippets: vec!["sudo paccache -rk3".to_owned()],
                 references: Vec::new(),
             }],
+            owner: kipple_core::OwnerStatus::Unsupported,
         }],
         findings: Vec::new(),
         unchecked_system: 0,

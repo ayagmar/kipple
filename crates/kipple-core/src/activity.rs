@@ -13,13 +13,14 @@ use std::path::{Component, Path, PathBuf, is_separator};
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use crate::engine::Identities;
-use crate::integration::ActivityEvidence;
+use crate::integration::{ActivityEvidence, IntegrationDescriptor, Program};
 use crate::policy::{Activity, ActivityGap, Lineage, Seen};
 use crate::probe::{DirAccess, EntryKind, FileIdentity, FileSystem, FsProbe, ProbeError};
 use crate::process::{
     CommandLines, EnvPath, Inventory, Observer, Probed, ProcessClass, ProcessOutcome, ProcessOwner,
     ProcessProbe, ProcessRecord, ProcessSnapshot, Unread,
 };
+use crate::root::{Roots, SymbolicRoot};
 
 /// `CAP_DAC_OVERRIDE` and `CAP_DAC_READ_SEARCH`: a process with either reads past the
 /// mode bits.
@@ -63,9 +64,35 @@ impl Kind {
 /// one of them can't be ruled out.
 const fn kinds(evidence: ActivityEvidence) -> &'static [Kind] {
     match evidence {
-        ActivityEvidence::BuiltExecutables => &[Kind::Executable],
-        ActivityEvidence::Everything | ActivityEvidence::Interpreted { .. } => &EVERY_KIND,
+        ActivityEvidence::BuiltExecutables | ActivityEvidence::ReleaseStore { .. } => {
+            &[Kind::Executable]
+        }
+        ActivityEvidence::Everything
+        | ActivityEvidence::Interpreted { .. }
+        | ActivityEvidence::ScopedPaths
+        | ActivityEvidence::ToolRunning { .. } => &EVERY_KIND,
     }
+}
+
+/// Whether `evidence` lists `view` by name, so that it can't be excused by its command
+/// line (D-052): it may be the tool itself, whatever the rest of its command line says.
+fn listed(evidence: ActivityEvidence, view: &View) -> bool {
+    match evidence {
+        ActivityEvidence::ReleaseStore { names } => view.named(names),
+        ActivityEvidence::ToolRunning {
+            programs, runtimes, ..
+        } => view.named(programs) || view.runs(runtimes),
+        ActivityEvidence::Everything
+        | ActivityEvidence::BuiltExecutables
+        | ActivityEvidence::Interpreted { .. }
+        | ActivityEvidence::ScopedPaths => false,
+    }
+}
+
+/// Whether `view`, which couldn't be inspected, blocks whoever owns it: upstream's own
+/// rule for a store of releases.
+fn blocks_by_name(evidence: ActivityEvidence, view: &View) -> bool {
+    matches!(evidence, ActivityEvidence::ReleaseStore { names } if view.named(names))
 }
 
 /// What one running process shows, apart from its paths.
@@ -84,6 +111,9 @@ struct View {
     cwd_resolved: Option<Vec<FileIdentity>>,
     /// The file names of its executable and of the name it was started by, lowercase.
     names: Vec<String>,
+    /// The file name of every token on its command line, lowercase, so a bare script name
+    /// counts too.
+    arguments: Vec<String>,
     /// Nothing on its command line can name a path kipple couldn't place: it was read and
     /// every relative path in it resolved, or the OS doesn't show other users' command
     /// lines at all.
@@ -150,6 +180,19 @@ impl View {
                 )
             })
         })
+    }
+
+    /// Whether it goes by one of `programs`.
+    fn named(&self, programs: &[Program]) -> bool {
+        let matches = |name: &String| programs.iter().any(|program| program.matches(name));
+        self.names.iter().any(matches)
+    }
+
+    /// Whether its command line names one of `scripts`.
+    fn scripted(&self, scripts: &[&str]) -> bool {
+        self.arguments
+            .iter()
+            .any(|name| scripts.iter().any(|script| *name == script.to_lowercase()))
     }
 
     /// Whether it has root's reach, and so is judged like root's processes (D-050): root
@@ -296,8 +339,17 @@ impl Index {
     }
 
     /// The first process that shows `subject` in use, and how.
-    fn in_use(&self, scope: Scope<'_>, subject: Subject<'_>) -> Option<(u32, Seen)> {
+    fn in_use(
+        &self,
+        scope: Scope<'_>,
+        subject: ActivitySubject<'_>,
+        stores: &[PathBuf],
+    ) -> Option<(u32, Seen)> {
         let pid = |view: usize| self.views.get(view).map(|v| v.pid);
+        if let ActivityEvidence::ToolRunning { .. } = subject.evidence {
+            let (view, path) = self.tool_user(scope, subject, stores)?;
+            return Some((pid(view)?, Seen::Runtime(path)));
+        }
         let inside = self.shown_at(subject.path, subject.lineage.own());
         if let Some(shown) = inside.min_by_key(|shown| shown.rank()) {
             let path = shown.reported(subject.path);
@@ -308,6 +360,50 @@ impl Index {
         };
         let (view, path) = self.runtime_in(scope, subject.project, runtimes)?;
         Some((pid(view)?, Seen::Runtime(path)))
+    }
+
+    /// The first process that goes by one of the tool's names, names one of its scripts or
+    /// shows a path at or in `subject` or one of `stores`, and that path.
+    fn tool_user(
+        &self,
+        scope: Scope<'_>,
+        subject: ActivitySubject<'_>,
+        stores: &[PathBuf],
+    ) -> Option<(usize, PathBuf)> {
+        let ActivityEvidence::ToolRunning {
+            programs, scripts, ..
+        } = subject.evidence
+        else {
+            return None;
+        };
+        let identity = |store: &Path| scope.identities.identity(scope.fs, store);
+        let stores = stores
+            .iter()
+            .map(|store| (store.as_path(), identity(store)));
+        let places = std::iter::once((subject.path, subject.lineage.own())).chain(stores);
+        let shown = places.flat_map(|(place, own)| {
+            let at = self.shown_at(place, own).min_by_key(|shown| shown.rank());
+            let at = at.map(|shown| (shown.view, shown.reported(place)));
+            at.into_iter().chain(self.environment_at(place))
+        });
+        let named = self
+            .views
+            .iter()
+            .position(|view| view.named(programs) || view.scripted(scripts))
+            .map(|view| (view, subject.path.to_owned()));
+        shown.chain(named).min_by_key(|(view, _)| *view)
+    }
+
+    /// The first environment path that leads to or into `place` once its `..` are taken
+    /// away lexically, which a tool's own configuration may leave in it, and that path.
+    fn environment_at(&self, place: &Path) -> Option<(usize, PathBuf)> {
+        let folded_place = folded(place);
+        self.shown
+            .iter()
+            .filter(|shown| shown.kind == Kind::Environment)
+            .filter(|shown| folded(&lexical(&shown.path)).starts_with(&folded_place))
+            .min_by_key(|shown| shown.rank())
+            .map(|shown| (shown.view, shown.reported(place)))
     }
 
     /// The first process of one of `runtimes` that works in `project` or names a path
@@ -576,6 +672,7 @@ fn view(process: &ProcessRecord, observer: &Observer, fs: &dyn FsProbe) -> (View
             .find(|(kind, ..)| *kind == Kind::WorkingDirectory)
             .map(|(.., ids)| ids.clone()),
         names: names(executable.map(PathBuf::as_path), first),
+        arguments: argv.map_or_else(Vec::new, |args| argument_names(args)),
         command_line_placed: placed,
         modes: match &process.capabilities {
             Ok(caps) if caps.0 & READS_PAST_MODES != 0 => Modes::ReadsPast,
@@ -749,6 +846,33 @@ fn names(executable: Option<&Path>, first: Option<&Path>) -> Vec<String> {
         .collect()
 }
 
+/// The file name of every reading of every token of `args`, lowercase.
+fn argument_names(args: &[OsString]) -> Vec<String> {
+    args.iter()
+        .flat_map(|arg| {
+            let (whole, words) = readings(arg);
+            std::iter::once(whole).chain(words.into_iter().flatten())
+        })
+        .filter_map(|name| Path::new(name).file_name())
+        .map(|name| name.to_string_lossy().to_lowercase())
+        .collect()
+}
+
+/// `path` with every `..` taken away with the component before it, whatever that is.
+fn lexical(path: &Path) -> PathBuf {
+    let mut plain = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::ParentDir => {
+                plain.pop();
+            }
+            Component::CurDir => {}
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => plain.push(part),
+        }
+    }
+    plain
+}
+
 /// Whether `text` is empty or only whitespace.
 fn blank(text: &OsStr) -> bool {
     text.to_string_lossy().trim().is_empty()
@@ -834,12 +958,14 @@ const fn running(process: &ProcessRecord) -> bool {
 
 /// What one finding's activity is judged on.
 #[derive(Debug, Clone, Copy)]
-pub(crate) struct Subject<'finding> {
+pub(crate) struct ActivitySubject<'finding> {
     /// Its path.
     pub(crate) path: &'finding Path,
     /// The identities of it and every directory above it.
     pub(crate) lineage: &'finding Lineage,
-    /// What its integration says can show it in use.
+    /// The integration that added it, which must declare `evidence`.
+    pub(crate) owner: &'finding IntegrationDescriptor,
+    /// What can show it in use.
     pub(crate) evidence: ActivityEvidence,
     /// The directory of its project: a runtime working there or below uses it.
     pub(crate) project: &'finding Path,
@@ -852,6 +978,35 @@ pub(crate) struct Scope<'scan> {
     pub(crate) identities: &'scan Identities,
     /// The identity of the home directory, unless it is unknown or `/`.
     pub(crate) home: Option<FileIdentity>,
+    /// Where the roots are, for the stores an evidence names.
+    pub(crate) roots: &'scan Roots,
+}
+
+/// The stores of a [`ToolRunning`](ActivityEvidence::ToolRunning) evidence.
+#[derive(Debug, Default)]
+struct Stores {
+    /// Those with a path. A root this platform doesn't have is no store.
+    paths: Vec<PathBuf>,
+    /// One that has no path, which could be anywhere.
+    unresolved: Option<SymbolicRoot>,
+}
+
+impl Stores {
+    fn of(evidence: ActivityEvidence, roots: &Roots) -> Self {
+        let ActivityEvidence::ToolRunning { stores, .. } = evidence else {
+            return Self::default();
+        };
+        let mut found = Self::default();
+        for store in stores {
+            for resolved in roots.all(*store) {
+                match resolved {
+                    Ok(root) => found.paths.push(root.path.clone()),
+                    Err(_) => found.unresolved = Some(*store),
+                }
+            }
+        }
+        found
+    }
 }
 
 /// The processes that couldn't be inspected and didn't count for one finding.
@@ -879,8 +1034,11 @@ impl Processes {
         &self,
         probe: &dyn ProcessProbe,
         scope: Scope<'_>,
-        subject: Subject<'_>,
+        subject: ActivitySubject<'_>,
     ) -> Activity {
+        if !subject.owner.declares(subject.evidence) {
+            return Activity::Unknown(ActivityGap::Unsupported);
+        }
         let built = self.index.get_or_init(|| {
             let lineage = |path: &Path| scope.identities.lineage(scope.fs, path);
             probe
@@ -891,11 +1049,15 @@ impl Processes {
             Ok(index) => index,
             Err(error) => return Activity::Unknown(ActivityGap::NoListing(error.clone())),
         };
-        if let Some((pid, seen)) = index.in_use(scope, subject) {
+        let stores = Stores::of(subject.evidence, scope.roots);
+        if let Some((pid, seen)) = index.in_use(scope, subject, &stores.paths) {
             return Activity::InUse { pid, seen };
         }
         if let Some(reason) = &index.partial {
             return Activity::Unknown(ActivityGap::Partial(reason.clone()));
+        }
+        if let Some(store) = stores.unresolved {
+            return Activity::Unknown(ActivityGap::UnresolvedStore(store));
         }
         let needs_paths = kinds(subject.evidence) != [Kind::Executable];
         if needs_paths && !index.process_paths {
@@ -925,7 +1087,12 @@ impl Processes {
 
     /// Idle or unknown, from the processes that count for `subject` and couldn't be
     /// inspected.
-    fn uninspected(&self, index: &Index, scope: Scope<'_>, subject: Subject<'_>) -> Activity {
+    fn uninspected(
+        &self,
+        index: &Index,
+        scope: Scope<'_>,
+        subject: ActivitySubject<'_>,
+    ) -> Activity {
         let kinds = kinds(subject.evidence);
         let scoped = subject.evidence != ActivityEvidence::Everything;
         let in_home = scope
@@ -941,6 +1108,7 @@ impl Processes {
             }
             let public = index.command_lines == CommandLines::Public;
             let counts = match &view.owner {
+                _ if blocks_by_name(subject.evidence, view) => true,
                 _ if view.roots_reach(index.command_lines) => {
                     excused
                         .system
@@ -948,7 +1116,8 @@ impl Processes {
                     !view.command_line_placed
                 }
                 ProcessOwner::CurrentUser => {
-                    let judged = public && view.judged_by_command_line();
+                    let judged =
+                        public && view.judged_by_command_line() && !listed(subject.evidence, view);
                     excused.by_command_line.extend(judged.then_some(view.pid));
                     !judged
                 }
@@ -991,7 +1160,7 @@ impl Processes {
     /// Whether no other user can enter `subject`: it is on a local file system, and some
     /// directory from the home directory down to it is the current user's, with no group
     /// or other execute bit and no access control list that grants anything.
-    fn others_shut_out(&self, scope: Scope<'_>, subject: Subject<'_>) -> bool {
+    fn others_shut_out(&self, scope: Scope<'_>, subject: ActivitySubject<'_>) -> bool {
         let local = self
             .access(scope.fs, subject.path)
             .is_some_and(|access| access.file_system == FileSystem::Local);

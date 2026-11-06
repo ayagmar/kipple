@@ -2,6 +2,7 @@
 //! read-only: integrations propose findings, the engine sizes them and reports.
 
 mod rescan;
+mod settle;
 
 pub use rescan::{EngineRescan, FRESH, Rescan};
 
@@ -15,25 +16,29 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Mutex, PoisonError};
 use std::thread;
 
-use crate::activity::{Processes, Scope, Subject};
+use crate::activity::{ActivitySubject, Processes, Scope};
 use crate::cancel::CancelToken;
 use crate::discovery::{WalkPlan, Walks};
 use crate::event::{EventTx, ScanEvent, Stopped};
-use crate::facts::{Above, Repositories};
+use crate::facts::{Above, Evaluated, Repositories, unmet};
 use crate::format::{IntegrationDigests, integration_digest};
 use crate::integration::{
-    ActivityEvidence, Advice, Evidence, FindingSink, Integration, IntegrationDescriptor,
-    IntegrationError, IntegrationId, ScanContext,
+    Advice, Evidence, FindingSink, Integration, IntegrationDescriptor, IntegrationError,
+    IntegrationId, ScanContext,
 };
 use crate::policy::{
-    Consequence, Facts, HeldPath, Lineage, Modified, Policy, Proposal, Tracked, Verdict, WalkGap,
+    Activity, ActivityGap, Consequence, Facts, HeldPath, Lineage, Modified, Policy, Proposal,
+    Tracked, Verdict, WalkGap, replaces_own_git,
 };
 use crate::probe::{Clock, EntryKind, EntryMeta, FileIdentity, FsProbe, ProbeError, Sizer};
 use crate::process::ProcessProbe;
+use crate::protect::{OwnerStatus, Owners};
+use crate::retention::Settlement;
 use crate::root::{ResolvedRoot, Roots, SymbolicRoot, UnresolvedRoot};
 use crate::rule::{Category, Lens, Operation, Rule, RuleId};
 use crate::size::{Completeness, Measurement, SpaceEstimate};
-use crate::tracked::TrackedQuery;
+use crate::supplied::{AdviceId, Subject, Supplied};
+use crate::tracked::{GitGap, TrackedQuery};
 
 /// A finding's ID within one scan. IDs are references, never authorization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -127,6 +132,14 @@ pub enum Omission {
         /// The upstream error.
         error: ProbeError,
     },
+    /// A repository's worktrees could not be listed, so the ones it has aren't known.
+    #[error("the worktrees of {} could not be listed: {gap}", repository.display())]
+    GitInventory {
+        /// The repository.
+        repository: PathBuf,
+        /// Why git couldn't say.
+        gap: GitGap,
+    },
     /// A finding could not be sized.
     #[error("finding {finding} could not be sized: {error}")]
     SizingFailed {
@@ -170,6 +183,8 @@ pub struct IntegrationReport {
     /// they were opened. A plan anchors each item at one of these, and apply compares the
     /// root with this identity before anything else.
     pub opened: Vec<OpenedRoot>,
+    /// Whether it recognised what it read, which is what lets its state roots open.
+    pub owner: OwnerStatus,
 }
 
 /// A root an integration read, as it was when the scan opened it.
@@ -204,6 +219,13 @@ pub struct ScanReport {
 }
 
 impl ScanReport {
+    /// Whether each integration of this scan is supported.
+    #[must_use]
+    pub fn owners(&self) -> Owners {
+        let status = |report: &IntegrationReport| (report.id, report.owner);
+        Owners(self.integrations.iter().map(status).collect())
+    }
+
     /// The root `finding` is anchored below: the deepest root its integration opened that
     /// holds it. What a plan item's anchor is, so what a profile's grant is checked
     /// against.
@@ -270,7 +292,6 @@ pub struct Engine {
 struct Registered {
     integration: Box<dyn Integration>,
     descriptor: IntegrationDescriptor,
-    evidence: ActivityEvidence,
     rules: Vec<Rule>,
 }
 
@@ -310,7 +331,6 @@ impl Engine {
             .into_iter()
             .map(|integration| Registered {
                 descriptor: integration.descriptor(),
-                evidence: integration.activity_evidence(),
                 integration,
                 rules: Vec::new(),
             })
@@ -343,7 +363,7 @@ impl Engine {
             self.integrations
                 .iter()
                 .map(|registered| {
-                    let digest = integration_digest(&registered.descriptor, registered.evidence);
+                    let digest = integration_digest(&registered.descriptor);
                     (registered.descriptor.id, digest)
                 })
                 .collect(),
@@ -398,10 +418,12 @@ impl Engine {
         } else {
             ScanOutcome::Completed
         };
-        events.deliver(ScanEvent::ScanCompleted { outcome }, cancel);
         let mut report = report(outcome, runs);
         report.unchecked_system = processes.left_out();
         report.by_command_line = processes.by_command_line();
+        let changed = self.settle_scan(&mut report.findings, shared);
+        announce_changed(&report.findings, &changed, shared);
+        events.deliver(ScanEvent::ScanCompleted { outcome }, cancel);
         report
     }
 
@@ -460,20 +482,11 @@ impl Engine {
             next_id: shared.next_id,
             found: Vec::new(),
             advice: Vec::new(),
+            evidence: registered.descriptor.evidence(),
+            owner: OwnerStatus::Unsupported,
         };
-        if !shared.cancel.is_cancelled() {
-            // A panic is caught here so what the integration found before it is kept.
-            let discovered = panic::catch_unwind(AssertUnwindSafe(|| {
-                registered.integration.discover(&cx, &mut sink)
-            }));
-            match discovered {
-                Ok(Ok(()) | Err(IntegrationError::Stopped)) => {}
-                Ok(Err(IntegrationError::Probe(error))) => {
-                    omissions.push(Omission::DiscoveryFailed { error });
-                }
-                Err(_) => omissions.push(Omission::Crashed),
-            }
-        }
+        let finished = !shared.cancel.is_cancelled()
+            && discover(registered, &cx, &mut sink, &mut omissions) == Discovery::Finished;
         // A directory under two paths of a root is one gap, in path order.
         let mut unlisted = BTreeMap::new();
         let mut excluded = BTreeSet::new();
@@ -489,11 +502,16 @@ impl Engine {
                 .map(|error| Omission::Unlisted { error }),
         );
         omissions.extend(excluded.into_iter().map(|path| Omission::Excluded { path }));
+        let status = if finished {
+            sink.owner
+        } else {
+            OwnerStatus::Unsupported
+        };
         let (mut found, advice) = (sink.found, sink.advice);
         found.sort_by(|a, b| a.finding.path.cmp(&b.finding.path));
         let owner = Owner {
             registered,
-            advised: !advice.is_empty(),
+            advice: advice.len(),
             roots: &opened,
         };
         let findings = self.measure_all(found, owner, shared, &mut omissions);
@@ -502,6 +520,7 @@ impl Engine {
             omissions,
             advice,
             opened: identities,
+            owner: status,
         };
         finish(report, findings, shared)
     }
@@ -594,36 +613,78 @@ impl Engine {
         omissions: &mut Vec<Omission>,
     ) -> Vec<Finding> {
         let mut findings = Vec::with_capacity(found.len());
+        let mut withheld = Vec::new();
+        let mut unmeasured = Vec::new();
         let mut stopped = false;
         for one in found {
             stopped = stopped || shared.cancel.is_cancelled();
             if stopped {
-                findings.push(one.finding);
+                findings.push(one.finding.clone());
+                unmeasured.push(one);
                 continue;
             }
-            let measured = self.ports.sizer.size(&one.finding.path, shared.cancel);
-            let measurement = match measured {
-                Ok(measurement) => Some(measurement),
-                Err(error) => {
-                    let finding = one.finding.id;
-                    omissions.push(Omission::SizingFailed { finding, error });
-                    None
-                }
-            };
-            let size = measurement.as_ref().map(|m| m.size);
-            let facts = self.facts(&one, measurement.as_ref(), owner, shared);
+            let (size, facts) = self.measure(&one, owner, shared, omissions);
             let mut finding = one.finding;
             finding.size = size;
-            finding.facts = Some(facts.clone());
-            let event = ScanEvent::FindingUpdated {
-                id: finding.id,
-                size: finding.size,
-                facts,
-            };
-            stopped = shared.events.send(event, shared.cancel).is_err();
+            finding.facts = Some(facts);
+            if one.supplied.subject == Subject::Plain {
+                stopped = announce(&finding, shared).is_err();
+            } else {
+                withheld.push(findings.len());
+            }
             findings.push(finding);
         }
+        self.settle_integration(&mut findings, &unmeasured, owner, shared);
+        for finding in withheld.into_iter().filter_map(|at| findings.get(at)) {
+            // After a cancel this goes nowhere, and what it says still holds the finding.
+            if announce(finding, shared).is_err() {
+                break;
+            }
+        }
         findings
+    }
+
+    /// What one finding measures to: its size, unless it couldn't be sized, and its facts.
+    fn measure(
+        &self,
+        one: &Found,
+        owner: Owner<'_>,
+        shared: Shared<'_>,
+        omissions: &mut Vec<Omission>,
+    ) -> (Option<SpaceEstimate>, Facts) {
+        if one.reading == Reading::Unread {
+            return (None, Self::unread_facts(one, owner));
+        }
+        let measured = self.ports.sizer.size(&one.finding.path, shared.cancel);
+        let measurement = match measured {
+            Ok(measurement) => Some(measurement),
+            Err(error) => {
+                let finding = one.finding.id;
+                omissions.push(Omission::SizingFailed { finding, error });
+                None
+            }
+        };
+        let size = measurement.as_ref().map(|m| m.size);
+        (size, self.facts(one, measurement.as_ref(), owner, shared))
+    }
+
+    /// The facts of a finding kipple doesn't read: whatever reading it would say is unknown.
+    fn unread_facts(found: &Found, owner: Owner<'_>) -> Facts {
+        let rule = owner.rule(&found.finding.rule);
+        Facts {
+            proposal: owner.proposal(rule, found.supplied.advice),
+            layout_verified: layout_verified(&found.finding),
+            consequence: found.consequence,
+            tracked: Tracked::Unwalked(WalkGap::Unread),
+            activity: Activity::Unknown(ActivityGap::Unsupported),
+            modified: Modified::Unknown(WalkGap::Unread),
+            recent_days: rule.and_then(|rule| rule.recent_days),
+            lineage: Lineage::default(),
+            supplied: found.supplied.clone(),
+            unmet: Vec::new(),
+            settlement: Settlement::Unsettled,
+            integration: found.finding.integration,
+        }
     }
 
     /// What the host knows about a finding once measured. One that couldn't be measured
@@ -647,36 +708,53 @@ impl Engine {
             (None, None) => Modified::Unknown(WalkGap::Untimed),
             (Some(gap), _) => Modified::Unknown(gap),
         };
-        let tracked = self.tracked(path, measurement, gap, shared);
         let rule = owner.rule(&found.finding.rule);
-        let layout_verified = found
-            .finding
-            .evidence
-            .iter()
-            .any(|evidence| matches!(evidence, Evidence::Signature(_)));
+        let proposal = owner.proposal(rule, found.supplied.advice);
+        let integration = found.finding.integration;
+        let own_git = if replaces_own_git(&proposal, &found.supplied.subject, integration) {
+            OwnGit::Replaced
+        } else {
+            OwnGit::Counts
+        };
+        let tracked = self.tracked(path, measurement, own_git, shared);
         let lineage = shared.identities.lineage(self.ports.fs.as_ref(), path);
         let scope = Scope {
             fs: self.ports.fs.as_ref(),
             identities: shared.identities,
             home: shared.home,
+            roots: shared.roots,
         };
-        let subject = Subject {
+        let subject = ActivitySubject {
             path,
             lineage: &lineage,
-            evidence: owner.registered.evidence,
+            owner: &owner.registered.descriptor,
+            evidence: found.supplied.activity,
             project: &owner.project(&found.finding),
         };
         let processes = self.ports.processes.as_ref();
-        Facts {
-            proposal: owner.proposal(rule),
-            layout_verified,
+        let mut facts = Facts {
+            proposal,
+            layout_verified: layout_verified(&found.finding),
             consequence: found.consequence,
             tracked,
             activity: shared.processes.activity(processes, scope, subject),
             modified,
             recent_days: rule.and_then(|rule| rule.recent_days),
             lineage,
+            supplied: found.supplied.clone(),
+            unmet: Vec::new(),
+            settlement: Settlement::Unsettled,
+            integration,
+        };
+        if let Some(rule) = rule {
+            let finding = Evaluated {
+                evidence: &found.finding.evidence,
+                size: measurement.map(|m| m.size),
+                facts: &facts,
+            };
+            facts.unmet = unmet(rule, owner.registered.descriptor.facts, finding);
         }
+        facts
     }
 }
 
@@ -689,17 +767,27 @@ impl Engine {
         &self,
         path: &Path,
         measurement: Option<&Measurement>,
-        gap: Option<WalkGap>,
+        own_git: OwnGit,
         shared: Shared<'_>,
     ) -> Tracked {
-        let above = shared.repositories.above(self.ports.fs.as_ref(), path);
+        // A worktree's own `.git` is what removing it replaces: every repository above
+        // keeps its answer, so the question starts at the directory holding the checkout.
+        let from = match own_git {
+            OwnGit::Counts => path,
+            OwnGit::Replaced => path.parent().unwrap_or(path),
+        };
+        let above = shared.repositories.above(self.ports.fs.as_ref(), from);
         if let Above::Unchecked(error) = above {
             return Tracked::Unchecked(error);
         }
-        if let Some(work_tree) = measurement.and_then(|m| m.repository.clone()) {
+        let inside = measurement.and_then(|m| match own_git {
+            OwnGit::Counts => m.repository.clone(),
+            OwnGit::Replaced => m.nested_repository.clone(),
+        });
+        if let Some(work_tree) = inside {
             return Tracked::HoldsRepository { work_tree };
         }
-        if let Some(gap) = gap {
+        if let Some(gap) = measurement.map_or(Some(WalkGap::Unread), walk_gap) {
             return Tracked::Unwalked(gap);
         }
         let Above::Repository(work_tree) = above else {
@@ -760,12 +848,12 @@ impl Identities {
     }
 }
 
-/// The integration whose findings are measured, whether it gave advice, and the roots it
+/// The integration whose findings are measured, how much advice it gave, and the roots it
 /// read.
 #[derive(Debug, Clone, Copy)]
 struct Owner<'engine> {
     registered: &'engine Registered,
-    advised: bool,
+    advice: usize,
     roots: &'engine [ResolvedRoot],
 }
 
@@ -779,12 +867,17 @@ impl<'a> Owner<'a> {
         project_dir(finding, self.roots.iter().map(|root| root.path.as_path()))
     }
 
-    /// What `rule` proposes: a report rule of an integration that gave advice points to
-    /// that advice.
-    fn proposal(&self, rule: Option<&Rule>) -> Proposal {
+    /// What `rule` proposes for a finding that names `advice`: a report rule points to
+    /// the advice, if the integration gave it.
+    fn proposal(&self, rule: Option<&Rule>, advice: Option<AdviceId>) -> Proposal {
+        let advised = advice.is_some_and(|AdviceId(entry)| entry < self.advice);
         match rule.map(|rule| &rule.operation) {
             Some(Operation::RemoveFiles(methods)) => Proposal::Remove(methods.clone()),
-            Some(Operation::Report) | None if self.advised => Proposal::Advice,
+            Some(Operation::RemoveVerifiedRelease { methods, .. }) => {
+                Proposal::RemoveRelease(methods.clone())
+            }
+            Some(Operation::Native(kind)) => Proposal::Native(*kind),
+            Some(Operation::Report) | None if advised => Proposal::Advice,
             Some(Operation::Report) | None => Proposal::Report,
         }
     }
@@ -805,11 +898,63 @@ fn project_dir<'root>(finding: &Finding, roots: impl Iterator<Item = &'root Path
     project.or_else(|| path.parent()).unwrap_or(path).to_owned()
 }
 
-/// A finding as its integration added it, with the consequence it verified.
+/// A finding as its integration added it, with the consequence it verified and what else
+/// it supplied.
 #[derive(Debug)]
 pub(crate) struct Found {
     pub(crate) finding: Finding,
     pub(crate) consequence: Option<Consequence>,
+    pub(crate) supplied: Supplied,
+    pub(crate) reading: Reading,
+}
+
+/// Whether a finding is read and measured.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Reading {
+    /// It is.
+    Measured,
+    /// It isn't: only reported.
+    Unread,
+}
+
+/// Whether a finding's own top-level `.git` counts as a repository inside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OwnGit {
+    /// It does.
+    Counts,
+    /// It doesn't: the finding is the worktree that `.git` belongs to.
+    Replaced,
+}
+
+/// Whether the integration recognised `finding`'s layout.
+fn layout_verified(finding: &Finding) -> bool {
+    let recognised = |evidence: &Evidence| {
+        matches!(evidence, Evidence::Signature(_) | Evidence::Worktree { .. })
+    };
+    finding.evidence.iter().any(recognised)
+}
+
+/// Tells the scan's consumer what `finding` measured to.
+fn announce(finding: &Finding, shared: Shared<'_>) -> Result<(), Stopped> {
+    let Some(facts) = finding.facts.clone() else {
+        return Ok(());
+    };
+    let event = ScanEvent::FindingUpdated {
+        id: finding.id,
+        size: finding.size,
+        facts,
+    };
+    shared.events.send(event, shared.cancel)
+}
+
+/// Announces again each of `findings` that `changed` names.
+fn announce_changed(findings: &[Finding], changed: &[FindingId], shared: Shared<'_>) {
+    let again = findings.iter().filter(|f| changed.contains(&f.id));
+    for finding in again {
+        if announce(finding, shared).is_err() {
+            return;
+        }
+    }
 }
 
 fn missing(error: &ProbeError) -> bool {
@@ -841,8 +986,40 @@ fn crashed(id: IntegrationId, shared: Shared<'_>) -> IntegrationRun {
         omissions: vec![Omission::Crashed],
         advice: Vec::new(),
         opened: Vec::new(),
+        owner: OwnerStatus::Unsupported,
     };
     finish(report, Vec::new(), shared)
+}
+
+/// How an integration's discovery ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Discovery {
+    /// It ran to its end.
+    Finished,
+    /// It was stopped, failed or panicked, so what it said about its layout doesn't stand.
+    CutShort,
+}
+
+/// Runs `registered`'s discovery, recording in `omissions` why it failed if it did. A panic
+/// is caught here so what the integration found before it is kept.
+fn discover(
+    registered: &Registered,
+    cx: &ScanContext<'_>,
+    sink: &mut FindingSink<'_>,
+    omissions: &mut Vec<Omission>,
+) -> Discovery {
+    let discovered = panic::catch_unwind(AssertUnwindSafe(|| {
+        registered.integration.discover(cx, sink)
+    }));
+    match discovered {
+        Ok(Ok(())) => return Discovery::Finished,
+        Ok(Err(IntegrationError::Stopped)) => {}
+        Ok(Err(IntegrationError::Probe(error))) => {
+            omissions.push(Omission::DiscoveryFailed { error });
+        }
+        Err(_) => omissions.push(Omission::Crashed),
+    }
+    Discovery::CutShort
 }
 
 fn report(outcome: ScanOutcome, runs: Vec<IntegrationRun>) -> ScanReport {

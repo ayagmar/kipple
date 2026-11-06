@@ -315,6 +315,7 @@ fn the_detail_pane_shows_each_line_of_an_advice_snippet_on_its_own_line() {
                 snippets: vec!["[Journal]\nSystemMaxUse=200M".to_owned()],
                 references: Vec::new(),
             }],
+            owner: kipple_core::OwnerStatus::Unsupported,
         }],
         findings: Vec::new(),
         unchecked_system: 0,

@@ -62,6 +62,9 @@ const PYTHON: IntegrationDescriptor = IntegrationDescriptor {
     owner_files: &[],
     verified: &[],
     consequences: &[],
+    facts: &[],
+    state: &[],
+    evidences: &[],
     revision: 1,
 };
 
@@ -506,7 +509,7 @@ fn capabilities_this_engine_does_not_publish_are_refused() {
     refused(
         ErrorCode::UnknownCapability,
         &[
-            with(&[("root = \"home\"", "root = \"codex.release-store\"")]),
+            with(&[("root = \"home\"", "root = \"nowhere.known\"")]),
             with(&[(
                 "selection = \"dirs-matching\"",
                 "selection = \"everything\"",

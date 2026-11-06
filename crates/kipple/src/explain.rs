@@ -82,6 +82,16 @@ fn operation(operation: &Operation) -> String {
                 names.join(" or ")
             )
         }
+        Operation::RemoveVerifiedRelease { methods, .. } => {
+            let names: Vec<&str> = methods.iter().map(|m| m.name()).collect();
+            format!(
+                "remove a release retention doesn't keep ({}) once you select and confirm it",
+                names.join(" or ")
+            )
+        }
+        Operation::Native(kind) => {
+            format!("run its tool's own command ({kind}) once you review it")
+        }
     }
 }
 
@@ -222,6 +232,7 @@ fn evidence_line(evidence: &EvidenceOut) -> String {
             "nothing inside that its tool writes, so its layout is unknown".to_owned()
         }
         EvidenceOut::Root { root } => format!("it is the {root} root itself"),
+        EvidenceOut::Worktree { agent } => human::worktree::evidence(*agent),
     }
 }
 

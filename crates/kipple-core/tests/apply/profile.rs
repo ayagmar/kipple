@@ -16,9 +16,10 @@ use kipple_core::profile::{
 use kipple_core::{
     ActivityEvidence, ApplyPorts, Authorization, Bucket, CancelToken, CleanRequest, Confirmed,
     Consent, Ending, FindingSink, HeldPath, Integration, IntegrationDescriptor, IntegrationError,
-    IntegrationId, Lens, Level, Lineage, Method, Modified, OpenedRoot, PlanMode, Platform,
-    Prepared, ResolvedRoot, RootSource, Roots, RuleId, RuleSettings, ScanContext, ScanReport,
-    Selector, Session, Skip, Status, SymbolicRoot, WalkGap, prepare_clean, run_clean, run_prepared,
+    IntegrationId, Lens, Level, Lineage, Method, Modified, OpenedRoot, POLICY_VERSION, PlanMode,
+    Platform, Prepared, ResolvedRoot, RootSource, Roots, RuleId, RuleSettings, ScanContext,
+    ScanReport, Selector, Session, Skip, Status, SymbolicRoot, WalkGap, prepare_clean, run_clean,
+    run_prepared,
 };
 
 use super::codec::TestCodec;
@@ -99,12 +100,11 @@ impl Integration for Declared {
             owner_files: &[],
             verified: &[],
             consequences: &[],
+            facts: &[],
+            state: &[],
+            evidences: &[ActivityEvidence::BuiltExecutables],
             revision: self.revision,
         }
-    }
-
-    fn activity_evidence(&self) -> ActivityEvidence {
-        ActivityEvidence::BuiltExecutables
     }
 
     fn discover(
@@ -359,6 +359,35 @@ fn suspends(rule: &str, expected: &[ProfileChange], change: impl FnOnce(&mut Des
             "{} was suspended",
             path.display()
         );
+    }
+}
+
+/// Catches a profile made under the classification before this one running unreviewed: the
+/// upgrade that changed what a verdict can be suspends every entry, once, until `review`.
+#[test]
+fn a_profile_from_an_earlier_classification_suspends_every_entry() {
+    let desk = desk();
+    let made = desk.make(None);
+    let current = format!("\"policy_version\": {POLICY_VERSION}");
+    let bytes = encode_profile(made.contents(), &TestCodec);
+    let text = String::from_utf8(bytes).unwrap();
+    assert!(
+        text.contains(&current),
+        "expected the version in the file, got {text}"
+    );
+    let earlier = text.replace(&current, "\"policy_version\": 1");
+    let shelf = Shelf::default();
+    shelf
+        .create_new(&name("nightly"), earlier.as_bytes())
+        .unwrap();
+
+    let stored = profile::read(&shelf, &name("nightly"), &TestCodec).unwrap();
+    let check = desk.check(&stored);
+
+    assert_eq!(check.active(), []);
+    assert_eq!(check.suspended().len(), 2);
+    for one in check.suspended() {
+        assert_eq!(one.changes, [ProfileChange::PolicyVersion]);
     }
 }
 

@@ -8,8 +8,13 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::integration::IntegrationId;
+use crate::native::NativeKind;
 use crate::probe::{FileIdentity, ProbeError};
+use crate::retention::Settlement;
+use crate::root::SymbolicRoot;
 use crate::rule::{Method, RuleId};
+use crate::supplied::{Subject, Supplied};
 use crate::tracked::GitGap;
 
 named! {
@@ -128,6 +133,10 @@ pub enum Proposal {
     Advice,
     /// Remove its files, by one of these methods.
     Remove(Vec<Method>),
+    /// Remove a release, by one of these methods, if retention lets it go.
+    RemoveRelease(Vec<Method>),
+    /// Run its tool's own command.
+    Native(NativeKind),
 }
 
 /// Whether a git repository could track files inside the finding
@@ -218,7 +227,9 @@ pub enum Seen {
     /// It has this file inside the finding mapped into its memory.
     MappedFile(PathBuf),
     /// It is the finding's runtime, and works in the finding's project at this directory
-    /// or names this path there in its arguments or environment.
+    /// or names this path there in its arguments or environment; or it is the tool behind
+    /// a finding judged by [`ToolRunning`](crate::ActivityEvidence::ToolRunning), by its
+    /// name or at this path.
     Runtime(PathBuf),
 }
 
@@ -232,8 +243,11 @@ pub enum ActivityGap {
     /// This many processes that count couldn't be inspected: some path they could show
     /// couldn't be read, or they see files through another mount namespace or root.
     Uninspected(usize),
-    /// The OS doesn't show the paths of running programs that the finding's layout needs.
+    /// The OS doesn't show the paths of running programs that the finding's layout needs,
+    /// or its integration doesn't declare the evidence it asked to be judged by.
     Unsupported,
+    /// A store its tool runs in has no path, so a process using it can't be ruled out.
+    UnresolvedStore(SymbolicRoot),
 }
 
 /// How long ago something inside the finding last changed.
@@ -253,7 +267,8 @@ pub struct Facts {
     /// What its rule proposes.
     pub proposal: Proposal,
     /// Whether its integration recognised what its tool wrote inside: a
-    /// [`Signature`](crate::Evidence::Signature) among its evidence.
+    /// [`Signature`](crate::Evidence::Signature) or
+    /// [`Worktree`](crate::Evidence::Worktree) among its evidence.
     pub layout_verified: bool,
     /// What removing it costs, when its integration verified that.
     pub consequence: Option<Consequence>,
@@ -268,6 +283,43 @@ pub struct Facts {
     /// The file identities of the finding and of each directory above it, so a kept or
     /// excluded path matches it whatever path reaches it.
     pub lineage: Lineage,
+    /// What its integration supplied.
+    pub supplied: Supplied,
+    /// The predicates of its rule it doesn't satisfy.
+    pub unmet: Vec<Unmet>,
+    /// What retention decided, for a release.
+    pub settlement: Settlement,
+    /// The integration that found it, which the worktree exception is keyed on.
+    pub integration: IntegrationId,
+}
+
+/// A predicate of a rule that a finding doesn't satisfy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Unmet {
+    /// The fact it tests.
+    pub fact: &'static str,
+    /// Which part of the rule it is in.
+    pub clause: Clause,
+    /// How it falls short.
+    pub state: FactState,
+}
+
+/// Which part of a rule a predicate is in.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Clause {
+    /// `requirements`: what must hold for the rule to apply on this machine.
+    Requirement,
+    /// `eligibility`: what each item must satisfy.
+    Eligibility,
+}
+
+/// How a predicate falls short.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FactState {
+    /// The fact is known, and isn't what the predicate accepts.
+    Failed,
+    /// The fact isn't known: missing, of the wrong type, or unknown.
+    Unknown,
 }
 
 /// The file identities of an entry, then of each directory above it up to the file
@@ -321,6 +373,21 @@ named! {
         UnknownActivity = "unknown-activity",
         /// Not everything inside could be read, so when it last changed isn't known.
         UnknownModified = "unknown-modified",
+        /// Retention keeps it at every level: a release its tool needs, or one of a group
+        /// that couldn't be settled.
+        Retained = "retained",
+        /// It is a release whose group wasn't settled, so whether it may go isn't known.
+        Unsettled = "unsettled",
+        /// A requirement or eligibility predicate of its rule failed.
+        FactUnmet = "fact-unmet",
+        /// A requirement or eligibility predicate of its rule rests on a fact that isn't
+        /// known.
+        FactUnknown = "fact-unknown",
+        /// Its rule's operation doesn't fit what its integration found, such as a worktree
+        /// under `remove-files`.
+        SubjectMismatch = "subject-mismatch",
+        /// git tracks entries inside it, and a native command can't leave them out.
+        TrackedInsideNative = "tracked-inside-native",
     }
 }
 
@@ -453,9 +520,9 @@ pub(crate) fn starts_with(path: &Path, base: &Path) -> bool {
 /// A profile records it, and a profile made under another version is suspended whole
 /// (D-068). `kipple-core/tests/policy_version.rs` keeps, for each version, a digest of
 /// every verdict over every kind of fact and config hold, and fails unless the current
-/// pair is its newest row: a changed verdict passes only with this bumped and a row
-/// appended.
-pub const POLICY_VERSION: u32 = 1;
+/// pair is its newest row. A changed verdict bumps this and appends a row, and review holds
+/// rows to append-only: the test sees only the rows as they are.
+pub const POLICY_VERSION: u32 = 2;
 
 /// Everything the user configured that decides buckets (`docs/03-functional-spec.md` §6).
 ///
@@ -584,13 +651,53 @@ impl Policy {
 
 /// Every reason the facts make the finding ineligible. Unknown never makes it Review: it
 /// holds.
+/// Whether what `facts` proposes goes with what its integration says the finding is. A
+/// report or advice removes nothing, so anything goes with it.
+fn paired(facts: &Facts) -> bool {
+    match (&facts.proposal, &facts.supplied.subject) {
+        (Proposal::Report | Proposal::Advice, _)
+        | (Proposal::Remove(_), Subject::Plain)
+        | (Proposal::RemoveRelease(_), Subject::Release(_)) => true,
+        (Proposal::Native(kind), Subject::Semantic(semantic)) => {
+            *kind == NativeKind::NpmCacheClean && semantic.kind == *kind
+        }
+        (Proposal::Native(_), Subject::Worktree(_)) => {
+            replaces_own_git(&facts.proposal, &facts.supplied.subject, facts.integration)
+        }
+        (
+            Proposal::Remove(_),
+            Subject::Release(_) | Subject::Worktree(_) | Subject::Semantic(_),
+        )
+        | (
+            Proposal::RemoveRelease(_),
+            Subject::Plain | Subject::Worktree(_) | Subject::Semantic(_),
+        )
+        | (Proposal::Native(_), Subject::Plain | Subject::Release(_)) => false,
+    }
+}
+
+/// The one exception to tracked-file protection (04 §3.2), keyed three ways: git's own
+/// removal of one of its linked worktrees. Only that worktree's own `.git` stops counting.
+pub(crate) fn replaces_own_git(
+    proposal: &Proposal,
+    subject: &Subject,
+    integration: IntegrationId,
+) -> bool {
+    *proposal == Proposal::Native(NativeKind::GitWorktreeRemove)
+        && matches!(subject, Subject::Worktree(_))
+        && integration == IntegrationId::GIT
+}
+
 fn fact_holds(facts: &Facts) -> Vec<Hold> {
     match facts.proposal {
         Proposal::Report => return vec![Hold::ReportOnly],
         Proposal::Advice => return vec![Hold::Advice],
-        Proposal::Remove(_) => {}
+        Proposal::Remove(_) | Proposal::RemoveRelease(_) | Proposal::Native(_) => {}
     }
     let mut holds = Vec::new();
+    if !paired(facts) {
+        holds.push(Hold::SubjectMismatch);
+    }
     if !facts.layout_verified {
         holds.push(Hold::UnknownLayout);
     }
@@ -598,6 +705,11 @@ fn fact_holds(facts: &Facts) -> Vec<Hold> {
         holds.push(Hold::UnknownConsequence);
     }
     match facts.tracked {
+        Tracked::Asked { tracked, .. }
+            if tracked > 0 && matches!(facts.proposal, Proposal::Native(_)) =>
+        {
+            holds.push(Hold::TrackedInsideNative);
+        }
         Tracked::NoRepository | Tracked::Asked { .. } => {}
         Tracked::HoldsRepository { .. } => holds.push(Hold::HoldsRepository),
         Tracked::InsideRepository { .. } | Tracked::Unchecked(_) | Tracked::Unwalked(_) => {
@@ -611,6 +723,20 @@ fn fact_holds(facts: &Facts) -> Vec<Hold> {
     }
     if matches!(facts.modified, Modified::Unknown(_)) {
         holds.push(Hold::UnknownModified);
+    }
+    if matches!(facts.proposal, Proposal::RemoveRelease(_)) {
+        match facts.settlement {
+            Settlement::Unsettled => holds.push(Hold::Unsettled),
+            Settlement::Retained(_) => holds.push(Hold::Retained),
+            Settlement::Candidate => {}
+        }
+    }
+    let fell_short = |state| facts.unmet.iter().any(|unmet| unmet.state == state);
+    if fell_short(FactState::Failed) {
+        holds.push(Hold::FactUnmet);
+    }
+    if fell_short(FactState::Unknown) {
+        holds.push(Hold::FactUnknown);
     }
     holds
 }

@@ -75,6 +75,7 @@ impl Sizer for Sized {
             },
             modified: Some(SystemTime::UNIX_EPOCH),
             repository: None,
+            nested_repository: None,
         })
     }
 }
@@ -150,13 +151,12 @@ impl Integration for Venv {
             owner_files: &[],
             verified: &[],
             consequences: &[],
+            facts: &[],
+            state: &[],
+            evidences: &[ActivityEvidence::Interpreted {
+                runtimes: &["python*"],
+            }],
             revision: 1,
-        }
-    }
-
-    fn activity_evidence(&self) -> ActivityEvidence {
-        ActivityEvidence::Interpreted {
-            runtimes: &["python*"],
         }
     }
 

@@ -12,14 +12,15 @@ use std::time::SystemTime;
 
 use kipple_core::{
     Activity, ActivityEvidence, ActivityGap, Anchor, Apparent, CancelToken, Capabilities, Category,
-    Clock, CommandLines, Completeness, Consequence, Cost, DirAccess, DirEntryMeta, Engine,
+    Claim, Clock, CommandLines, Completeness, Consequence, Cost, DirAccess, DirEntryMeta, Engine,
     EntryKind, EntryMeta, EnvPath, EventChannel, Evidence, FileIdentity, FileSystem, FindingSink,
     FrozenTree, FsProbe, GitGap, Integration, IntegrationDescriptor, IntegrationError,
     IntegrationId, Inventory, Lens, Measurement, Method, MountNamespace, NodeId, Observer,
     Operation, Platform, Ports, ProbeError, Probed, ProcessOutcome, ProcessOwner, ProcessProbe,
-    ProcessRecord, ProcessSnapshot, Recovery, ResolvedRoot, RootLink, RootSource, Roots, Rule,
-    RuleId, RuleText, ScanContext, ScanReport, ScanRequest, Seen, Selector, Sizer, SpaceEstimate,
-    SymbolicRoot, TrackedQuery, Unread, UserId, census, event_channel,
+    ProcessRecord, ProcessSnapshot, Program, Recovery, Rescan as _, ResolvedRoot, RootLink,
+    RootSource, Roots, Rule, RuleId, RuleText, ScanContext, ScanReport, ScanRequest, Seen,
+    Selector, Sizer, SpaceEstimate, Supplied, SymbolicRoot, TrackedQuery, Unread, UnresolvedRoot,
+    UserId, census, event_channel,
 };
 
 /// `path` as the host takes it: one starting with `/` is made absolute, since Windows takes
@@ -55,6 +56,22 @@ const NODE: ActivityEvidence = ActivityEvidence::Interpreted {
     runtimes: &["node", "bun", "deno"],
 };
 const CARGO: ActivityEvidence = ActivityEvidence::BuiltExecutables;
+const SCOPED: ActivityEvidence = ActivityEvidence::ScopedPaths;
+const RELEASES: ActivityEvidence = ActivityEvidence::ReleaseStore {
+    names: &[Program::Exact("codex"), Program::Prefix("codex-")],
+};
+const NPM: ActivityEvidence = ActivityEvidence::ToolRunning {
+    programs: &[Program::Exact("npm"), Program::Exact("npx")],
+    scripts: &["npm-cli.js", "npx-cli.js"],
+    runtimes: &["node", "tsx"],
+    stores: &[SymbolicRoot::NpmCache],
+};
+
+/// A release in a store, and a tool's cache, both in the home directory.
+const RELEASE: &str = "/home/u/code/store/releases/0.166.0";
+const TOOL_CACHE: &str = "/home/u/code/.npm/_cacache";
+/// npm's cache, as a store of the [`NPM`] evidence.
+const NPM_STORE: &str = "/home/u/.npm";
 
 /// A disk where every path is a directory with an identity derived from where it really
 /// is: a path below a link is read through the link, as the OS does for every component
@@ -173,6 +190,7 @@ impl Sizer for CompleteSizer {
             },
             modified: Some(SystemTime::UNIX_EPOCH),
             repository: None,
+            nested_repository: None,
         })
     }
 }
@@ -199,7 +217,10 @@ impl ProcessProbe for Snapshot {
 /// holds it.
 #[derive(Debug)]
 struct Artifact {
-    evidence: ActivityEvidence,
+    /// What its integration declares.
+    declared: &'static [ActivityEvidence],
+    /// What the finding asks to be judged by.
+    judged_by: ActivityEvidence,
     path: PathBuf,
 }
 
@@ -238,12 +259,11 @@ impl Integration for Artifact {
             owner_files: &[],
             verified: &[],
             consequences: &[],
+            facts: &[],
+            state: &[],
+            evidences: self.declared,
             revision: 1,
         }
-    }
-
-    fn activity_evidence(&self) -> ActivityEvidence {
-        self.evidence
     }
 
     fn discover(
@@ -260,7 +280,15 @@ impl Integration for Artifact {
             loss: &[],
             cost: Cost::Low,
         };
-        sink.add(&rule(), &self.path, evidence, Some(consequence))
+        let claim = Claim {
+            evidence,
+            consequence: Some(consequence),
+        };
+        let supplied = Supplied {
+            activity: self.judged_by,
+            ..Supplied::default()
+        };
+        sink.add_supplied(&rule(), &self.path, claim, supplied)
     }
 }
 
@@ -272,6 +300,8 @@ struct Host {
     observer: Observer,
     inventory: Inventory,
     processes: Vec<ProcessRecord>,
+    /// Where npm's cache is, when this host has one.
+    npm_cache: Option<Result<&'static str, UnresolvedRoot>>,
 }
 
 impl Host {
@@ -288,6 +318,7 @@ impl Host {
             },
             inventory: Inventory::Complete,
             processes,
+            npm_cache: None,
         }
     }
 
@@ -317,15 +348,21 @@ impl Host {
             )
         };
         roots.add(SymbolicRoot::ProjectRoots, Ok(linked));
+        if let Some(cache) = &self.npm_cache {
+            let cache = cache.clone().map(|path| {
+                ResolvedRoot::new(SymbolicRoot::NpmCache, abs(path), RootSource::Fixed)
+            });
+            roots.insert(SymbolicRoot::NpmCache, cache);
+        }
         roots
     }
 
+    /// An engine that finds `artifact` on this host.
     #[expect(
         clippy::unwrap_used,
-        clippy::panic,
         reason = "a scan that can't be set up fails the test"
     )]
-    fn scan(&self, evidence: ActivityEvidence, path: &str) -> (Activity, ScanReport) {
+    fn engine(&self, artifact: Artifact) -> Engine {
         let ports = Ports {
             fs: Box::new(self.disk.clone()),
             sizer: Box::new(CompleteSizer),
@@ -337,20 +374,27 @@ impl Host {
             clock: Box::new(Epoch),
             tracked: Box::new(NoGit),
         };
-        let artifact = Artifact {
-            evidence,
-            path: abs(path),
-        };
-        let engine = Engine::new(ports, vec![Box::new(artifact)], vec![rule()]).unwrap();
-        let request = ScanRequest {
+        Engine::new(ports, vec![Box::new(artifact)], vec![rule()]).unwrap()
+    }
+
+    fn request(&self) -> ScanRequest {
+        ScanRequest {
             roots: self.roots(),
             lens: None,
             exclude: Vec::new(),
-        };
+        }
+    }
+
+    #[expect(
+        clippy::unwrap_used,
+        clippy::panic,
+        reason = "a scan that can't be set up fails the test"
+    )]
+    fn scan_with(&self, engine: &Engine) -> (Activity, ScanReport) {
         let cancel = CancelToken::new();
         let EventChannel { tx, rx } = event_channel(1024, &cancel);
         let drain = std::thread::spawn(move || rx.into_iter().count());
-        let report = engine.scan(&request, &tx, &cancel);
+        let report = engine.scan(&self.request(), &tx, &cancel);
         drop(tx);
         drain.join().unwrap();
         let [finding] = report.findings.as_slice() else {
@@ -358,6 +402,15 @@ impl Host {
         };
         let activity = finding.facts.clone().unwrap().activity;
         (activity, report)
+    }
+
+    fn scan(&self, evidence: ActivityEvidence, path: &str) -> (Activity, ScanReport) {
+        let artifact = Artifact {
+            declared: Vec::leak(vec![evidence]),
+            judged_by: evidence,
+            path: abs(path),
+        };
+        self.scan_with(&self.engine(artifact))
     }
 
     fn activity(&self, evidence: ActivityEvidence, path: &str) -> Activity {
@@ -1437,4 +1490,322 @@ impl TrackedQuery for NoGit {
     ) -> Result<Vec<NodeId>, GitGap> {
         Err(GitGap::Unsupported)
     }
+}
+
+/// A real Linux desktop as an unprivileged kipple sees it: root's daemons refuse every
+/// `/proc` read but their command line, and so do the user's own non-dumpable session
+/// programs.
+fn session_processes() -> Vec<ProcessRecord> {
+    let me = || ProcessOwner::CurrentUser;
+    vec![
+        uninspectable(1, ProcessOwner::Root, &["/sbin/init"]),
+        uninspectable(
+            310,
+            ProcessOwner::Root,
+            &["/usr/lib/systemd/systemd-journald"],
+        ),
+        uninspectable(
+            644,
+            ProcessOwner::Root,
+            &["/usr/bin/dbus-daemon", "--system"],
+        ),
+        uninspectable(1201, me(), &["/usr/lib/systemd/systemd", "--user"]),
+        uninspectable(1202, me(), &["(sd-pam)"]),
+        uninspectable(
+            1340,
+            me(),
+            &["/usr/bin/ssh-agent", "-D", "-a", "/run/user/1000/agent"],
+        ),
+        inspected(2001, me(), "/usr/bin/zsh"),
+    ]
+}
+
+const fn idle_with(activity: &Activity) -> Option<(usize, usize)> {
+    if let Activity::IdleExceptSystem {
+        unchecked,
+        by_command_line,
+    } = activity
+    {
+        Some((*unchecked, *by_command_line))
+    } else {
+        None
+    }
+}
+
+/// Catches a finding that asks for evidence its integration never declared, and never
+/// went into the digest, being judged by it.
+#[test]
+fn undeclared_evidence_is_unknown() {
+    let host = Host::new(session_processes());
+    let artifact = Artifact {
+        declared: &[ActivityEvidence::Everything],
+        judged_by: SCOPED,
+        path: abs(VENV),
+    };
+
+    let (activity, _) = host.scan_with(&host.engine(artifact));
+
+    assert!(
+        matches!(activity, Activity::Unknown(ActivityGap::Unsupported)),
+        "expected undeclared evidence to be unsupported, got {activity:?}"
+    );
+}
+
+/// Catches `ScopedPaths` behaving as `Everything`, which can't be idle on a real host, so
+/// a rule using it would ship dead.
+#[test]
+fn uninspectable_root_processes_are_a_notice_under_scoped_paths() {
+    let host = Host::new(session_processes());
+
+    assert_eq!(idle_with(&host.activity(SCOPED, VENV)), Some((3, 3)));
+    assert!(
+        is_unknown(&host.activity(ActivityEvidence::Everything, VENV)),
+        "`Everything` counts every uninspected process, which is why `ScopedPaths` exists"
+    );
+}
+
+/// Catches `ScopedPaths` excusing processes for a subject outside home, where nothing
+/// says other users or root can't be using it.
+#[test]
+fn subject_outside_home_stays_blocked() {
+    let host = Host::new(session_processes());
+
+    for evidence in [SCOPED, RELEASES, NPM] {
+        let activity = host.activity(evidence, "/srv/code/app/store");
+        assert!(
+            matches!(activity, Activity::Unknown(ActivityGap::Uninspected(_))),
+            "expected every uninspected process to count outside home, got {activity:?}"
+        );
+    }
+}
+
+/// Catches D-052's excuse covering the tool itself, or a process whose command line can't
+/// clear it.
+#[test]
+fn listed_or_unplaced_current_user_process_blocks_the_group() {
+    let me = || ProcessOwner::CurrentUser;
+    let hidden = {
+        let mut process = uninspectable(7, me(), &[]);
+        process.argv = Err(failed());
+        process
+    };
+    let cases = [
+        (
+            "a listed name",
+            RELEASES,
+            RELEASE,
+            uninspectable(7, me(), &["/opt/codex"]),
+        ),
+        (
+            "a listed prefix",
+            RELEASES,
+            RELEASE,
+            uninspectable(7, me(), &["/opt/codex-app"]),
+        ),
+        (
+            "relative",
+            RELEASES,
+            RELEASE,
+            uninspectable(7, me(), &["./bin/x"]),
+        ),
+        ("unread", RELEASES, RELEASE, hidden.clone()),
+        (
+            "a listed runtime",
+            NPM,
+            TOOL_CACHE,
+            uninspectable(7, me(), &["/usr/bin/tsx", "x"]),
+        ),
+        (
+            "relative",
+            NPM,
+            TOOL_CACHE,
+            uninspectable(7, me(), &["./bin/x"]),
+        ),
+        ("unread", NPM, TOOL_CACHE, hidden),
+    ];
+    for (name, evidence, path, process) in cases {
+        let activity = Host::new(vec![process]).activity(evidence, path);
+        assert!(
+            matches!(activity, Activity::Unknown(ActivityGap::Uninspected(1))),
+            "{name} under {evidence:?}: {activity:?}"
+        );
+    }
+}
+
+/// Catches `ReleaseStore` counting every uninspected process of the user, which on any
+/// systemd host blocks every release forever.
+#[test]
+fn user_session_manager_does_not_block_a_release() {
+    let host = Host::new(session_processes());
+
+    assert_eq!(idle_with(&host.activity(RELEASES, RELEASE)), Some((3, 3)));
+}
+
+/// Catches `ToolRunning` counting a user session the way it counts the tool, which would
+/// hold the npm cache forever.
+#[test]
+fn user_session_manager_does_not_block_the_npm_cache() {
+    let host = Host::new(session_processes());
+
+    assert_eq!(idle_with(&host.activity(NPM, TOOL_CACHE)), Some((3, 3)));
+}
+
+/// Catches a root process being left out when upstream's own rule says a process of that
+/// name blocks, while any other root process stays a notice, and a zombie blocks nothing.
+#[test]
+fn uninspectable_root_process_with_a_listed_name_blocks() {
+    let listed = uninspectable(9, ProcessOwner::Root, &["/usr/local/bin/codex"]);
+    let exited = ProcessRecord::new(11, ProcessOutcome::Exited);
+    let other = uninspectable(10, ProcessOwner::Root, &["/usr/sbin/sshd"]);
+
+    let activity = Host::new(vec![listed]).activity(RELEASES, RELEASE);
+    assert!(
+        matches!(activity, Activity::Unknown(ActivityGap::Uninspected(1))),
+        "expected the listed root process to block, got {activity:?}"
+    );
+    let rest = Host::new(vec![other, exited]).activity(RELEASES, RELEASE);
+    assert_eq!(idle_with(&rest), Some((1, 0)));
+}
+
+/// Catches `BuiltExecutables` taking on `ReleaseStore`'s rule: Cargo has no names to list,
+/// and its findings would stop being idle on a desktop.
+#[test]
+fn cargo_keeps_its_command_line_excuse() {
+    let cargo = uninspectable(7, ProcessOwner::CurrentUser, &["/usr/bin/cargo", "build"]);
+
+    assert_eq!(
+        idle_with(&Host::new(vec![cargo]).activity(CARGO, TARGET)),
+        Some((0, 1))
+    );
+}
+
+/// Catches a name holding a process kipple could read: only its executable says whether it
+/// runs from the release, so a `codex` from elsewhere doesn't stop anything.
+#[test]
+fn a_listed_name_never_holds_a_release_from_an_inspected_process() {
+    let codex = inspected(7, ProcessOwner::CurrentUser, "/usr/bin/codex");
+
+    assert!(
+        matches!(
+            Host::new(vec![codex]).activity(RELEASES, RELEASE),
+            Activity::Idle
+        ),
+        "expected a codex running from elsewhere to leave the release idle"
+    );
+}
+
+/// Catches each way a tool that leaves no executable to match can be running.
+#[test]
+fn a_tool_runs_by_its_name_its_script_or_a_path_in_its_store() {
+    let me = || ProcessOwner::CurrentUser;
+    let node = |argv: &[&str]| ProcessRecord {
+        argv: Ok(os(argv)),
+        ..inspected(7, me(), "/usr/bin/node")
+    };
+    let working_in_store = ProcessRecord {
+        cwd: Ok(abs("/home/u/.npm/_logs")),
+        ..inspected(7, me(), "/usr/bin/zsh")
+    };
+    let through_the_environment = ProcessRecord {
+        env_paths: Ok(vec![EnvPath {
+            var: OsString::from("npm_config_cache"),
+            path: abs("/home/u/tmp/../.npm/_cacache"),
+        }]),
+        ..inspected(7, me(), "/usr/bin/zsh")
+    };
+    let subject = abs(TOOL_CACHE);
+    let cases = [
+        ("name", inspected(7, me(), "/usr/bin/npm"), subject.clone()),
+        (
+            "bare script",
+            node(&["node", "npm-cli.js"]),
+            subject.clone(),
+        ),
+        (
+            "script path",
+            node(&["node", "/usr/lib/npm-cli.js"]),
+            subject,
+        ),
+        ("store", working_in_store, abs("/home/u/.npm/_logs")),
+        (
+            "environment",
+            through_the_environment,
+            abs("/home/u/tmp/../.npm/_cacache"),
+        ),
+    ];
+    for (name, process, path) in cases {
+        let mut host = Host::new(vec![process]);
+        host.npm_cache = Some(Ok(NPM_STORE));
+        assert_eq!(
+            seen(&host.activity(NPM, TOOL_CACHE)),
+            Some(&Seen::Runtime(path)),
+            "{name}"
+        );
+    }
+}
+
+/// Catches a runtime that isn't running the tool holding it: node runs everything, so its
+/// name alone would hold the cache whenever any node program runs.
+#[test]
+fn a_runtime_running_something_else_leaves_a_tool_idle() {
+    let node = ProcessRecord {
+        argv: Ok(os(&["node", "server.js"])),
+        ..inspected(7, ProcessOwner::CurrentUser, "/usr/bin/node")
+    };
+
+    assert!(
+        matches!(
+            Host::new(vec![node]).activity(NPM, TOOL_CACHE),
+            Activity::Idle
+        ),
+        "expected node running another program to leave the cache idle"
+    );
+}
+
+/// Catches a store with no path being skipped: a process using it can't be ruled out.
+#[test]
+fn a_store_that_cant_be_located_leaves_a_tool_unknown() {
+    let mut host = Host::new(Vec::new());
+    assert!(
+        matches!(host.activity(NPM, TOOL_CACHE), Activity::Idle),
+        "a root this platform doesn't have is no store"
+    );
+
+    host.npm_cache = Some(Err(UnresolvedRoot::NotSet {
+        var: "NPM_CONFIG_CACHE",
+    }));
+
+    assert!(
+        matches!(
+            host.activity(NPM, TOOL_CACHE),
+            Activity::Unknown(ActivityGap::UnresolvedStore(SymbolicRoot::NpmCache))
+        ),
+        "expected the store with no path to leave activity unknown"
+    );
+}
+
+/// Catches apply judging a finding by its integration's first evidence instead of the one
+/// the scan judged it by, which could read a running tool as idle at the last check.
+#[test]
+fn a_rescan_judges_a_finding_by_the_evidence_it_chose() {
+    let host = Host::new(vec![inspected(
+        7,
+        ProcessOwner::CurrentUser,
+        "/usr/bin/npm",
+    )]);
+    let engine = host.engine(Artifact {
+        declared: &[SCOPED, NPM],
+        judged_by: NPM,
+        path: abs(TOOL_CACHE),
+    });
+    let (_, report) = host.scan_with(&engine);
+    let request = host.request();
+
+    let finding = report.findings.first();
+    let activity = finding.map(|finding| engine.rescan(&request).activity(&report, finding));
+
+    assert_eq!(
+        activity.as_ref().and_then(seen),
+        Some(&Seen::Runtime(abs(TOOL_CACHE)))
+    );
 }

@@ -1,22 +1,29 @@
 //! The golden of what [`Policy::verdict`] decides (spec M3c pinned 14): a profile made
 //! under one classification is suspended under another only when [`POLICY_VERSION`]
 //! changes, so the version must change exactly when a verdict does. The golden is a
-//! history, so a changed verdict can't pass by its digest being pasted over the old one.
+//! history: a changed verdict fails against its version's row, and review holds rows to
+//! append-only, since the test sees only the rows as they are.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use kipple_core::{
-    Activity, ActivityGap, Consequence, Cost, Digest, Facts, FileIdentity, GitGap, HeldPath, Level,
-    Lineage, Loss, Method, Modified, POLICY_VERSION, Policy, ProbeError, Proposal, Recovery,
-    RuleId, RuleSettings, Seen, Tracked, WalkGap,
+    Activity, ActivityGap, AgentLabel, Checkout, Clause, Consequence, Cost, Digest, FactState,
+    Facts, FileIdentity, GitGap, HeldPath, IntegrationId, Level, Lineage, Loss, Method, Modified,
+    NativeKind, POLICY_VERSION, Policy, ProbeError, Proposal, Recovery, Registration,
+    RegistrationState, ReleaseFacts, ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion,
+    Retained, RuleId, RuleSettings, Seen, SemanticFacts, Settlement, Subject, Supplied, ToolGap,
+    Tracked, Unmet, WalkGap, WorktreeFacts,
 };
 
 /// Every classification there has been, oldest first: its version and the digest of
 /// every verdict below. A change to the classification appends a row with the next
-/// version; a row is never edited, so pasting a new digest over the current one fails.
-const HISTORY: &[(u32, &str)] = &[(1, "8465c62ae444a033bfb801d45aca1aed")];
+/// version, and review holds rows to append-only: the test sees only the rows as they are.
+const HISTORY: &[(u32, &str)] = &[
+    (1, "8465c62ae444a033bfb801d45aca1aed"),
+    (2, "85fff6351399322d17e4f1b8ce829ab6"),
+];
 
 const DAY: u64 = 24 * 60 * 60;
 
@@ -71,7 +78,137 @@ fn safe() -> Facts {
         modified: Modified::Ago(Duration::from_secs(400 * DAY)),
         recent_days: None,
         lineage: Lineage(vec![Some(id(10)), Some(id(3)), Some(id(1))]),
+        supplied: Supplied::default(),
+        unmet: Vec::new(),
+        settlement: Settlement::Unsettled,
+        integration: IntegrationId("test"),
     }
+}
+
+const fn unmet(state: FactState) -> Unmet {
+    Unmet {
+        fact: "layout",
+        clause: Clause::Eligibility,
+        state,
+    }
+}
+
+fn release() -> Subject {
+    Subject::Release(ReleaseFacts {
+        group: ReleaseGroup {
+            component: "cli".to_owned(),
+            target: "any".to_owned(),
+        },
+        version: ReleaseVersion("1.0.0".to_owned()),
+        role: ReleaseRole::Installed,
+        files: Vec::new(),
+        locks: Vec::new(),
+        state: ReleaseState::Sound,
+    })
+}
+
+fn worktree() -> Subject {
+    Subject::Worktree(Box::new(WorktreeFacts {
+        registration: Registration {
+            path: at("p"),
+            head: None,
+            checkout: Checkout::Detached,
+            locked: None,
+            prunable: false,
+            bare: false,
+        },
+        state: RegistrationState::RegisteredPresent,
+        repository: at("r"),
+        admin: None,
+        witness: Err(GitGap::Unsupported),
+        tool: Err(ToolGap::Missing),
+        agent: AgentLabel::Unknown,
+    }))
+}
+
+/// Facts of git's own removal of a worktree.
+fn worktree_removal(facts: &mut Facts) {
+    facts.proposal = Proposal::Native(NativeKind::GitWorktreeRemove);
+    facts.supplied.subject = worktree();
+    facts.integration = IntegrationId::GIT;
+}
+
+const fn cache_clean() -> Subject {
+    Subject::Semantic(SemanticFacts {
+        kind: NativeKind::NpmCacheClean,
+        tool: Err(ToolGap::Missing),
+    })
+}
+
+/// Each way a predicate, a settlement or a subject can differ from [`safe`], named.
+fn predicate_or_subject_each() -> Vec<(String, Facts)> {
+    let mut cases = Vec::new();
+    let mut with = |name: &str, change: &dyn Fn(&mut Facts)| {
+        let mut facts = safe();
+        change(&mut facts);
+        cases.push((name.to_owned(), facts));
+    };
+    with("fact-failed", &|f| f.unmet = vec![unmet(FactState::Failed)]);
+    with("fact-unknown", &|f| {
+        f.unmet = vec![unmet(FactState::Unknown)];
+    });
+    with("release-unsettled", &|f| {
+        f.proposal = Proposal::RemoveRelease(vec![Method::Delete]);
+        f.supplied.subject = release();
+    });
+    with("release-candidate", &|f| {
+        f.proposal = Proposal::RemoveRelease(vec![Method::Delete]);
+        f.supplied.subject = release();
+        f.settlement = Settlement::Candidate;
+    });
+    with("release-retained", &|f| {
+        f.proposal = Proposal::RemoveRelease(vec![Method::Delete]);
+        f.supplied.subject = release();
+        f.settlement = Settlement::Retained(Retained::Previous);
+    });
+    with("release-without-subject", &|f| {
+        f.proposal = Proposal::RemoveRelease(vec![Method::Delete]);
+        f.settlement = Settlement::Candidate;
+    });
+    with("release-under-remove", &|f| {
+        f.supplied.subject = release();
+    });
+    with("native-without-subject", &|f| {
+        f.proposal = Proposal::Native(NativeKind::NpmCacheClean);
+    });
+    with("native-cache", &|f| {
+        f.proposal = Proposal::Native(NativeKind::NpmCacheClean);
+        f.supplied.subject = cache_clean();
+    });
+    with("native-cache-tracked", &|f| {
+        f.proposal = Proposal::Native(NativeKind::NpmCacheClean);
+        f.supplied.subject = cache_clean();
+        f.tracked = Tracked::Asked {
+            work_tree: at("p"),
+            tracked: 1,
+        };
+    });
+    with("worktree", &worktree_removal);
+    with("worktree-of-another-integration", &|f| {
+        worktree_removal(f);
+        f.integration = IntegrationId("test");
+    });
+    with("worktree-tracked", &|f| {
+        worktree_removal(f);
+        f.tracked = Tracked::Asked {
+            work_tree: at("p"),
+            tracked: 1,
+        };
+    });
+    with("worktree-under-remove", &|f| {
+        worktree_removal(f);
+        f.proposal = Proposal::Remove(vec![Method::Delete]);
+    });
+    with("worktree-removal-of-a-plain-item", &|f| {
+        worktree_removal(f);
+        f.supplied.subject = Subject::Plain;
+    });
+    cases
 }
 
 /// Each way a single fact can differ from [`safe`], named.
@@ -252,6 +389,7 @@ fn the_classification_matches_its_version() {
     let path = at("p/target");
     let mut lines = String::new();
     let mut cases = one_fact_each();
+    cases.extend(predicate_or_subject_each());
     cases.extend(in_use_or_aged_each());
     cases.extend(consequences());
     for (policy_name, policy) in policies() {
