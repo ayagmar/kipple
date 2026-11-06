@@ -364,6 +364,14 @@ struct History {
     previous: String,
 }
 
+/// A link that reads as holding `target`, a path below the tree. Windows may fold `..` out of
+/// a target as it makes the link, so a test of one can't build it there.
+#[derive(Debug)]
+pub(crate) struct StoredLink {
+    pub(crate) link: String,
+    pub(crate) target: String,
+}
+
 /// A host to scan: the tree, and what is scripted over it.
 #[derive(Debug)]
 pub(crate) struct Scene {
@@ -377,9 +385,8 @@ pub(crate) struct Scene {
     pub(crate) odd: Vec<String>,
     /// Paths in the tree that are mounts.
     pub(crate) mounts: Vec<String>,
-    /// A link in the tree, and the path below the tree it reads as holding. Windows may fold
-    /// `..` out of a target as it makes the link, so a test of one can't build it there.
-    pub(crate) stored: Vec<(String, String)>,
+    /// Links that read as holding what the test says.
+    pub(crate) stored: Vec<StoredLink>,
     /// Which OS's rules apply.
     pub(crate) platform: Platform,
     /// Paths in the tree that a process of the user runs from.
@@ -470,7 +477,7 @@ impl Scene {
             stored: self
                 .stored
                 .iter()
-                .map(|(link, target)| (root.join(link), root.join(target)))
+                .map(|stored| (root.join(&stored.link), root.join(&stored.target)))
                 .collect(),
             home: root.join("home"),
             opened: Arc::default(),

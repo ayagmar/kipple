@@ -22,7 +22,7 @@ mod host;
 
 use std::fs;
 
-use host::{DAEMON, HOME, MUSL, STANDALONE, Scan, Scene, at, component, name, release};
+use host::{DAEMON, HOME, MUSL, STANDALONE, Scan, Scene, StoredLink, at, component, name, release};
 use kipple_core::{
     ActivityEvidence, Evidence, FactValue, GroupGap, Hold, IntegrationId, Inventory, Omission,
     OwnerStatus, Platform, Policy, Proposal, ReleaseRole, ReleaseState, UnresolvedRoot, Verdict,
@@ -1213,7 +1213,10 @@ fn selection_must_land_on_a_signed_release() {
         .tree
         .link(&current, &selected, Holds::AbsoluteInTree);
     let through = at(&format!("packages/standalone/x/../releases/{}", name(V166)));
-    climbing.stored.push((current.clone(), through));
+    climbing.stored.push(StoredLink {
+        link: current.clone(),
+        target: through,
+    });
 
     for (case, scene) in [
         ("missing", missing),
