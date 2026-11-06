@@ -221,6 +221,11 @@ pub(crate) fn write_path(
     for evidence in &shown.evidence {
         let line = escaped(&evidence_line(evidence));
         writeln!(out, "  {} {line}", label(ink, "Evidence"))?;
+        if let EvidenceOut::Worktree { agent } = evidence
+            && let Some(sweep) = human::worktree::sweep(*agent)
+        {
+            writeln!(out, "  {} {}", label(ink, "Its own sweep"), escaped(sweep))?;
+        }
     }
     if let Some(verdict) = finding.verdict(policy) {
         let reasons = human::reasons_in_full(&verdict);
