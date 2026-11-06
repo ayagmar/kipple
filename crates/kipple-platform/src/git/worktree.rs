@@ -179,7 +179,7 @@ impl Links {
         else {
             return invalid;
         };
-        if !same_file(&admin.join(back), &gitfile)? {
+        if !same_file(&admin.join(back), &gitfile)? || !holds_record(&admin, registration)? {
             return invalid;
         }
         let common = admin.join(common);
@@ -191,6 +191,29 @@ impl Links {
             common,
         }))
     }
+}
+
+/// Whether the admin directory `admin` is the one `registration` was printed from: its `HEAD`
+/// names the record's branch, or its commit when it has none. A record with neither says
+/// nothing to compare, and a reftable `HEAD` is a stub whose rows stay unknown anyway.
+fn holds_record(admin: &Path, registration: &Registration) -> Result<bool, GitGap> {
+    if registration.checkout == Checkout::Unnamed || exists(&admin.join("reftable"))? {
+        return Ok(true);
+    }
+    let Some(head) = text_of(&admin.join("HEAD"))? else {
+        return Ok(false);
+    };
+    let head = head.strip_suffix(b"\n").unwrap_or(&head);
+    Ok(match &registration.checkout {
+        Checkout::Branch(branch) => head
+            .strip_prefix(b"ref: refs/heads/")
+            .is_some_and(|name| lossy(name) == *branch),
+        Checkout::Detached => registration
+            .head
+            .as_ref()
+            .is_some_and(|commit| commit.0.as_bytes() == head),
+        Checkout::Unnamed => true,
+    })
 }
 
 /// One worktree being asked about.

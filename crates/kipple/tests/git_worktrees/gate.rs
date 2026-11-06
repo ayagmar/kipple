@@ -10,9 +10,9 @@ use std::process::{Command, Output};
 
 use kipple_adapters::builtin;
 use kipple_core::{
-    CancelToken, Engine, EventChannel, FactValue, Finding, Inventory, Observer, Ports, ProbeError,
-    ProcessProbe, ProcessSnapshot, RegistrationState, Roots, ScanReport, ScanRequest, SymbolicRoot,
-    event_channel,
+    CancelToken, Checkout, Engine, EventChannel, FactValue, Finding, Inventory, Observer, Ports,
+    ProbeError, ProcessProbe, ProcessSnapshot, Registration, RegistrationState, Roots, ScanReport,
+    ScanRequest, SymbolicRoot, WorktreeQuery as _, event_channel,
 };
 use kipple_platform::{
     Environment, GitQuery, NoFollowFs, PathTools, SystemClock, Walker, resolve_roots,
@@ -762,6 +762,88 @@ fn a_gitdir_at_another_worktree_is_invalid() {
     assert_eq!(
         scan.fact("registration_state"),
         FactValue::Enum(RegistrationState::RegisteredInvalid.name())
+    );
+}
+
+/// Has the registration of `projects/<name>` print `projects/<target>` instead, in git's own
+/// spelling of it, which is what makes two records print one path on every system.
+fn registers_elsewhere(repo: &Repo, name: &str, target: &str) {
+    let admins = repo.main.join(".git/worktrees");
+    let names_target = admins.join(target).join("gitdir");
+    fs::copy(names_target, admins.join(name).join("gitdir")).unwrap();
+}
+
+/// How many git findings the scan holds.
+fn git_findings(scan: &Scan) -> usize {
+    let findings = scan.0.findings.iter();
+    findings.filter(|f| f.integration.0 == "git").count()
+}
+
+/// Catches a registration read from the worktree its `gitdir` names: both records print one
+/// path, whose rows read clear, while the real checkout and its unsaved file have nothing
+/// that says so. Git lists by admin name, so both orders are run.
+#[test]
+fn a_gitdir_naming_another_worktree_is_never_read_as_it() {
+    for [name, target] in [["wt", "other"], ["other", "wt"]] {
+        let repo = Repo::new();
+        repo.git(&["worktree", "add", "-q", "-b", "other", "../other"]);
+        write(&repo.projects().join(name).join("unsaved.txt"), b"work\n");
+        registers_elsewhere(&repo, name, target);
+
+        let scan = repo.scan();
+
+        assert_eq!(
+            scan.fact_at(target, "registration_state"),
+            FactValue::Enum(RegistrationState::RegisteredInvalid.name()),
+            "{name} names {target}"
+        );
+        assert_eq!(
+            scan.fact_at(target, "worktree.config_gate"),
+            FactValue::Unknown,
+            "nothing was asked of {target}"
+        );
+        assert_eq!(
+            scan.fact_at(name, "registration_state"),
+            FactValue::Enum(RegistrationState::PresentUnregistered.name()),
+            "{name} names {target}"
+        );
+        assert_eq!(git_findings(&scan), 2, "{name} names {target}");
+    }
+}
+
+/// Catches rows read from an admin directory that isn't the record's: `inspect` starts from
+/// the printed path, so a record of one worktree could borrow another's clear rows, and the
+/// witness would join its head to the other's admin directory.
+#[test]
+fn a_record_of_another_admin_directory_is_invalid() {
+    let repo = Repo::new();
+    let env = repo.env();
+    let cancel = CancelToken::new();
+    let query = GitQuery::new(&env);
+    let records = query.list(&repo.main, &cancel).unwrap();
+    let record = records.last().unwrap();
+    let invalid = Ok(RegistrationState::RegisteredInvalid);
+
+    let on_another_branch = Registration {
+        checkout: Checkout::Branch("other".to_owned()),
+        ..record.clone()
+    };
+    let at_another_commit = Registration {
+        checkout: Checkout::Detached,
+        ..record.clone()
+    };
+
+    assert_eq!(
+        query.inspect(record, &cancel).registration,
+        Ok(RegistrationState::RegisteredPresent)
+    );
+    assert_eq!(
+        query.inspect(&on_another_branch, &cancel).registration,
+        invalid
+    );
+    assert_eq!(
+        query.inspect(&at_another_commit, &cancel).registration,
+        invalid
     );
 }
 

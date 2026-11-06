@@ -1,6 +1,6 @@
-//! Git worktrees of any agent (`docs/06-adapters-and-rules.md` §4). Each registration of a
-//! repository the walks reach gets exactly one finding, and so does each checkout no
-//! repository lists. Every rule here reports, so this only supplies facts: a fact git
+//! Git worktrees of any agent (`docs/06-adapters-and-rules.md` §4). Each path the repositories
+//! the walks reach list gets exactly one finding, and so does each checkout none of them
+//! lists. Every rule here reports, so this only supplies facts: a fact git
 //! couldn't prove is unknown, and the host decides what that holds.
 //!
 //! A worktree's repository can lie outside every root it may read, so what git says comes
@@ -216,6 +216,12 @@ enum Placed {
     Unknown(GitGap),
 }
 
+/// A record of a linked worktree, with the main worktree of the repository that printed it.
+struct Listing {
+    main: Registration,
+    registration: Registration,
+}
+
 /// The rules each kind of finding goes to on this platform.
 struct Rules<'rules> {
     /// Registered and present, inside an opened root: only where removal can ship.
@@ -247,6 +253,9 @@ struct Discovery<'run, 'context, 'findings> {
     tool: Result<ResolvedTool, ToolGap>,
     /// Every path some repository lists.
     listed: BTreeSet<PathBuf>,
+    /// The records of each linked path, read once every repository has spoken, since the
+    /// records of one path can come from several.
+    pending: BTreeMap<PathBuf, Vec<Listing>>,
     /// Each main worktree already gone through, which another of its worktrees lists again.
     mains: BTreeSet<PathBuf>,
     /// The common directories git couldn't list, each reported once.
@@ -268,6 +277,7 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
             rules: Rules::of(cx),
             tool: cx.tool(NativeTool::Git),
             listed: BTreeSet::new(),
+            pending: BTreeMap::new(),
             mains: BTreeSet::new(),
             failed: BTreeSet::new(),
             unconfirmed: Vec::new(),
@@ -313,7 +323,10 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
         }
         let listed = self.cx.worktrees().list(dir, self.cx.cancel_token());
         match listed {
-            Ok(registrations) => self.registrations(&registrations),
+            Ok(registrations) => {
+                self.registrations(&registrations);
+                Ok(())
+            }
             Err(_) if self.cx.is_cancelled() => Err(IntegrationError::Stopped),
             // What its `.git` names is gone, which the platform can see past the roots.
             Err(GitGap::Unplaced) => {
@@ -328,35 +341,60 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
         }
     }
 
-    /// Adds a finding for each linked worktree of a repository. The first record is its
-    /// main worktree, which is never one.
-    fn registrations(&mut self, registrations: &[Registration]) -> Result<(), IntegrationError> {
+    /// Keeps each linked worktree of a repository for [`Self::settle`]. The first record is
+    /// its main worktree, which is never one.
+    fn registrations(&mut self, registrations: &[Registration]) {
         let Some((main, linked)) = registrations.split_first() else {
-            return Ok(());
+            return;
         };
         self.listed
             .extend(registrations.iter().map(|r| r.path.clone()));
         if !self.mains.insert(main.path.clone()) {
-            return Ok(());
+            return;
         }
         for registration in linked {
-            self.registered(main, registration)?;
+            let listings = self.pending.entry(registration.path.clone()).or_default();
+            listings.push(Listing {
+                main: main.clone(),
+                registration: registration.clone(),
+            });
+        }
+    }
+
+    /// Adds the one finding of each path the repositories list.
+    fn settle(&mut self) -> Result<(), IntegrationError> {
+        while let Some((_, listings)) = self.pending.pop_first() {
+            if self.cx.is_cancelled() {
+                return Err(IntegrationError::Stopped);
+            }
+            self.settled(&listings)?;
         }
         Ok(())
     }
 
-    fn registered(
-        &mut self,
-        main: &Registration,
-        registration: &Registration,
-    ) -> Result<(), IntegrationError> {
-        if self.cx.is_cancelled() {
-            return Err(IntegrationError::Stopped);
-        }
+    /// Adds the finding of a path with these records. Two records of one path can't both
+    /// describe it, and `inspect` starts from the path, so nothing asked there would say
+    /// which one does.
+    fn settled(&mut self, listings: &[Listing]) -> Result<(), IntegrationError> {
+        let [listing] = listings else {
+            let Some(listing) = listings.first() else {
+                return Ok(());
+            };
+            return self.registered(listing, invalid());
+        };
         let state = self
             .cx
             .worktrees()
-            .inspect(registration, self.cx.cancel_token());
+            .inspect(&listing.registration, self.cx.cancel_token());
+        self.registered(listing, state)
+    }
+
+    fn registered(
+        &mut self,
+        listing: &Listing,
+        state: WorktreeState,
+    ) -> Result<(), IntegrationError> {
+        let Listing { main, registration } = listing;
         let agent = label(self.cx, &registration.path);
         let values = facts(main, registration, &state, &self.tool);
         let advice = self.advice(&state);
@@ -431,6 +469,7 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
 
     /// Reports each checkout no repository lists, now that all have been asked.
     fn finish(mut self) -> Result<(), IntegrationError> {
+        self.settle()?;
         // A repository that moved still lists its checkouts, whose links now lead nowhere:
         // those have their registration's finding.
         for dir in std::mem::take(&mut self.broken) {
@@ -509,6 +548,14 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
             consequence: None,
         };
         self.sink.add_supplied(rule, dir, claim, supplied)
+    }
+}
+
+/// What is known of a registration nothing could be asked about.
+fn invalid() -> WorktreeState {
+    WorktreeState {
+        registration: Ok(RegistrationState::RegisteredInvalid),
+        ..WorktreeState::unknown(GitGap::Failed)
     }
 }
 
