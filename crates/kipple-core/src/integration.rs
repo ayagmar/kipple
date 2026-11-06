@@ -11,16 +11,18 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::cancel::CancelToken;
+use crate::capability::NativeTool;
 use crate::discovery::{RepositoryDir, Walk, WalkPlan, WalkStop, Walks};
 use crate::engine::{Finding, FindingId, Found, Reading};
 use crate::event::{EventTx, ScanEvent, Stopped};
+use crate::native::{ResolvedTool, ToolGap, ToolResolver};
 use crate::policy::Consequence;
 use crate::probe::{DirEntryMeta, EntryKind, EntryMeta, FsProbe, ProbeError};
 use crate::protect::{OwnerStatus, StateDeclaration};
 use crate::root::{ResolvedRoot, SymbolicRoot};
 use crate::rule::{FactSpec, Lens, Operation, Platform, Rule, Selector};
 use crate::supplied::{AdviceId, Claim, Supplied};
-use crate::worktree::AgentLabel;
+use crate::worktree::{AgentLabel, WorktreeQuery};
 
 /// A built-in integration's ID, such as `cargo`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -237,6 +239,22 @@ pub trait Integration: fmt::Debug + Send + Sync {
         cx: &ScanContext<'_>,
         sink: &mut FindingSink<'_>,
     ) -> Result<(), IntegrationError>;
+
+    /// Reads again what `finding` of an apply's scan rests on, right before it runs, and
+    /// says what it supplies now. `None` means the scan's facts stand, which apply refuses
+    /// for anything but a [`Plain`](crate::Subject::Plain) finding, so a forgotten override
+    /// can't pass mid-run. A failure holds the item.
+    ///
+    /// # Errors
+    /// When what it rests on can't be read.
+    fn revisit(
+        &self,
+        cx: &ScanContext<'_>,
+        finding: &Finding,
+    ) -> Result<Option<Supplied>, IntegrationError> {
+        let _ = (cx, finding);
+        Ok(None)
+    }
 }
 
 /// The read-only view an integration gets during a scan.
@@ -245,6 +263,8 @@ pub struct ScanContext<'scan> {
     pub(crate) roots: &'scan [ResolvedRoot],
     pub(crate) rules: &'scan [Rule],
     pub(crate) fs: &'scan dyn FsProbe,
+    pub(crate) tools: &'scan dyn ToolResolver,
+    pub(crate) worktrees: &'scan dyn WorktreeQuery,
     pub(crate) cancel: &'scan CancelToken,
     pub(crate) plan: &'scan WalkPlan,
     pub(crate) walks: &'scan Walks,
@@ -303,6 +323,37 @@ impl ScanContext<'_> {
     /// read.
     pub fn read_file(&self, path: &Path, limit: u64) -> Result<Vec<u8>, ProbeError> {
         self.fs.read_file(&self.confined(path)?, limit)
+    }
+
+    /// Where the link at `path` points, exactly as it is stored.
+    ///
+    /// # Errors
+    /// When `path` is outside the integration's roots, isn't a link or can't be read.
+    pub fn read_link(&self, path: &Path) -> Result<PathBuf, ProbeError> {
+        self.fs.read_link(&self.confined(path)?)
+    }
+
+    /// What the OS says of the link at `path` itself ([`FsProbe::link_stamp`]).
+    ///
+    /// # Errors
+    /// When `path` is outside the integration's roots, isn't a link, can't be read, or the
+    /// OS has no such stamp.
+    pub fn link_stamp(&self, path: &Path) -> Result<String, ProbeError> {
+        self.fs.link_stamp(&self.confined(path)?)
+    }
+
+    /// Asks git about a repository's worktrees.
+    #[must_use]
+    pub const fn worktrees(&self) -> &dyn WorktreeQuery {
+        self.worktrees
+    }
+
+    /// `tool` as this machine has it now.
+    ///
+    /// # Errors
+    /// When it can't be used, and why.
+    pub fn tool(&self, tool: NativeTool) -> Result<ResolvedTool, ToolGap> {
+        self.tools.resolve(tool)
     }
 
     /// Where the shared walk of each path of `root` stopped: at every candidate artifact

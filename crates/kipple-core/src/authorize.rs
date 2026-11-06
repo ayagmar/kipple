@@ -20,11 +20,13 @@
 #[cfg(test)]
 mod tests;
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use crate::digest::Digest;
 use crate::frozen::{FrozenTree, Mark, Marks, NodeId};
 use crate::mutation::{FileSystemClass, Freeze};
+use crate::native::NativeSpec;
 use crate::outcome::{LeftReason, Skip, Tally};
 use crate::plan::{Anchor, ItemId, Judgement, Plan, PlanEntry, Standing};
 use crate::policy::{Proposal, Verdict};
@@ -192,6 +194,74 @@ impl TrashOp {
         })
     }
 }
+
+/// An authorized native command. Only a [`NativeRunner`](crate::NativeRunner) runs it, and
+/// only revalidation makes one.
+#[derive(Debug)]
+pub struct NativeOp {
+    target: Authorized,
+    spec: NativeSpec,
+    repository: Option<PathBuf>,
+    admin: Option<PathBuf>,
+}
+
+impl NativeOp {
+    /// What it was reviewed as acting on.
+    #[must_use]
+    pub const fn target(&self) -> &Authorized {
+        &self.target
+    }
+
+    /// The command, the tool that runs it and its scope.
+    #[must_use]
+    pub const fn spec(&self) -> &NativeSpec {
+        &self.spec
+    }
+
+    /// For a worktree, its repository's main worktree: the checkout is gone after the run,
+    /// and the command holds only identities.
+    #[must_use]
+    pub fn repository(&self) -> Option<&Path> {
+        self.repository.as_deref()
+    }
+
+    /// For a worktree, its admin directory, which the final check ties to the witness.
+    #[must_use]
+    pub fn admin(&self) -> Option<&Path> {
+        self.admin.as_deref()
+    }
+
+    /// A native command over what `target` authorizes, made without a plan, a review or
+    /// revalidation. Only for the platform's native tests of its runner. Only under the
+    /// `platform-tests` feature, as [`DeleteOp::for_platform_tests`].
+    #[cfg(feature = "platform-tests")]
+    #[must_use]
+    pub fn for_platform_tests(
+        target: DeleteOp,
+        spec: NativeSpec,
+        repository: Option<PathBuf>,
+        admin: Option<PathBuf>,
+    ) -> Self {
+        Self {
+            target: target.0,
+            spec,
+            repository,
+            admin,
+        }
+    }
+}
+
+/// ```compile_fail,E0451
+/// // A frontend can't make a native command run: only revalidation makes the operation.
+/// fn forge(
+///     target: kipple_core::Authorized,
+///     spec: kipple_core::NativeSpec,
+/// ) -> kipple_core::NativeOp {
+///     kipple_core::NativeOp { target, spec, repository: None, admin: None }
+/// }
+/// ```
+#[cfg(doctest)]
+pub struct NativeOpCompileFail;
 
 /// An operation revalidation authorized.
 #[derive(Debug)]

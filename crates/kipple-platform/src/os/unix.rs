@@ -18,7 +18,8 @@ use kipple_core::{
 };
 
 use crate::environment::Environment;
-use crate::os::HardLink;
+use crate::executor::sys;
+use crate::os::{FD_DIR, HardLink};
 use crate::roots::{absolute, under};
 
 /// kipple's own directories: under the XDG roots on Linux and macOS alike (D-015).
@@ -35,6 +36,24 @@ const XDG: [(SymbolicRoot, &str, &str); 4] = [
     (SymbolicRoot::XdgData, "XDG_DATA_HOME", ".local/share"),
     (SymbolicRoot::XdgState, "XDG_STATE_HOME", ".local/state"),
 ];
+
+/// What `lstat` says of the link at `path` itself: `<st_dev> <st_ino>
+/// <ctime_sec>.<ctime_nsec>`. Anything but a link is an error.
+pub(crate) fn link_stamp(path: &Path) -> io::Result<String> {
+    let meta = fs::symlink_metadata(path)?;
+    if !meta.file_type().is_symlink() {
+        return Err(io::ErrorKind::InvalidInput.into());
+    }
+    let (device, inode) = (meta.dev(), meta.ino());
+    let (seconds, nanos) = (meta.ctime(), meta.ctime_nsec());
+    Ok(format!("{device} {inode} {seconds}.{nanos:09}"))
+}
+
+/// A path that names `dir` in whichever process resolves it, however its ancestors have
+/// moved, where this OS has one. A child resolves it as it starts, with `dir` still open.
+pub(crate) fn working_dir(dir: &sys::Dir) -> Option<PathBuf> {
+    FD_DIR.map(|fds| Path::new(fds).join(dir.fd().to_string()))
+}
 
 pub(crate) fn raw_bytes(text: &OsStr) -> Vec<u8> {
     text.as_bytes().to_vec()

@@ -178,6 +178,8 @@ pub(crate) fn scan_built(temp: tempfile::TempDir) -> Scanned {
         processes: Box::new(NoProcesses),
         clock: Box::new(Epoch),
         tracked: Box::new(NoGit),
+        tools: Box::new(kipple_core::Unavailable),
+        worktrees: Box::new(kipple_core::Unavailable),
     };
     let engine = Engine::new(ports, builtin::integrations(), rules).unwrap();
     let cancel = CancelToken::new();

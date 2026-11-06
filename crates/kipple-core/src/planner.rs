@@ -22,14 +22,17 @@ use crate::cancel::CancelToken;
 use crate::engine::{FindingId, ScanReport};
 use crate::frozen::{FrozenTree, Mark, NodeId};
 use crate::mutation::{Executor, FileSystemClass, Freezer, LocalFileSystem};
+use crate::native::NativeRunner;
 use crate::outcome::{ApplyError, ErrorCode, Skip, Stop};
 use crate::plan::{ItemId, MethodChoice, Plan, PlanEntry, Selection, Standing};
 use crate::policy::{Hold, Policy, Tracked, Verdict};
 use crate::probe::EntryKind;
 use crate::protect::Protections;
 use crate::rule::{Method, Rule, RuleId};
+use crate::store_lock::StoreLocks;
 use crate::tracked::{GitGap, TrackedQuery, holds_repository};
 use crate::trash::TrashBackend;
+use crate::worktree::WorktreeQuery;
 
 /// What decides how a finding is judged and removed now.
 ///
@@ -97,6 +100,12 @@ pub struct MutationPorts<'ports> {
     pub trash: &'ports dyn TrashBackend,
     /// Asks git which entries of a frozen tree it tracks.
     pub tracked: &'ports dyn TrackedQuery,
+    /// Starts a tool's own command.
+    pub runner: &'ports dyn NativeRunner,
+    /// Takes a tool's own locks for one removal.
+    pub locks: &'ports dyn StoreLocks,
+    /// Asks git what it lists now, after a removal.
+    pub worktrees: &'ports dyn WorktreeQuery,
 }
 
 /// What to plan.

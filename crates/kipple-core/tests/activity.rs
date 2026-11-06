@@ -372,6 +372,8 @@ impl Host {
             })),
             clock: Box::new(Epoch),
             tracked: Box::new(NoGit),
+            tools: Box::new(kipple_core::Unavailable),
+            worktrees: Box::new(kipple_core::Unavailable),
         };
         Engine::new(ports, vec![Box::new(artifact)], vec![rule()]).unwrap()
     }

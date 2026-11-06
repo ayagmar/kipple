@@ -32,7 +32,7 @@ use kipple_core::{
     Policy, Proposal, Protection, Protections, Receipt, Recovery, RelPath, Rule, RuleId,
     RuleSettings, RuleText, ScanOutcome, ScanReport, Scope, Selection, Selector, Skip,
     SpaceEstimate, Stamp, Standing, StateDeclaration, StateRoot, Status, Stop, SymbolicRoot,
-    Tracked, Unjudged, Unresolved, Unsupported, apply, plan, reconcile,
+    Tracked, Unavailable, Unjudged, Unresolved, Unsupported, apply, plan, reconcile,
 };
 use kipple_core::{ApplyPorts, Depth, Reconciled, Recorders, RunRead, StoredRun, read_run};
 use kipple_core::{
@@ -272,6 +272,9 @@ const fn ports(world: &World) -> MutationPorts<'_> {
         executor: world,
         trash: world,
         tracked: world,
+        runner: &Unavailable,
+        locks: &Unavailable,
+        worktrees: &Unavailable,
     }
 }
 
@@ -1001,6 +1004,9 @@ fn a_cancel_during_reconciliation_leaves_the_item_pending() {
         executor: &world,
         trash: &world,
         tracked: &world,
+        runner: &Unavailable,
+        locks: &Unavailable,
+        worktrees: &Unavailable,
     };
     let mut journal = world.recorder();
     let run = stored(&world, &planned.plan);
@@ -2010,8 +2016,12 @@ fn check_reconciled(seed: u64, world: &World, case: &Case) {
     assert_eq!(state.order_problem(), None, "seed {seed}");
 }
 
+#[path = "apply/native.rs"]
+mod native;
 #[path = "apply/profile.rs"]
 mod profile;
+#[path = "apply/releases.rs"]
+mod releases;
 #[path = "apply/replan.rs"]
 mod replan;
 #[path = "apply/runs.rs"]

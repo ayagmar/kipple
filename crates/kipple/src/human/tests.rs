@@ -200,6 +200,8 @@ fn a_secret_in_a_process_title_never_reaches_json_or_the_detail_lines() {
             tracked: Box::new(kipple_platform::GitQuery::new(
                 &kipple_platform::Environment::default(),
             )),
+            tools: Box::new(kipple_core::Unavailable),
+            worktrees: Box::new(kipple_core::Unavailable),
         };
         let engine = Engine::new(ports, vec![Box::new(Venv(venv.clone()))], vec![rule()]).unwrap();
         let mut roots = Roots::default();

@@ -105,6 +105,7 @@ mod run;
 mod session;
 mod size;
 mod store;
+mod store_lock;
 mod suggest;
 mod supplied;
 mod tracked;
@@ -115,7 +116,9 @@ pub use activity::{ProcessCensus, census};
 pub use apply::{
     ApplyPorts, ApplyRequest, ItemEvent, ItemSink, Reconciled, Recorders, apply, reconcile,
 };
-pub use authorize::{Authorization, Authorized, AuthorizedOp, DeleteOp, ReviewedPlan, TrashOp};
+pub use authorize::{
+    Authorization, Authorized, AuthorizedOp, DeleteOp, NativeOp, ReviewedPlan, TrashOp,
+};
 pub use cancel::{CancelToken, Waited};
 pub use capability::{NativeTool, ToolError, ToolStatus, ToolVersion};
 pub use digest::Digest;
@@ -139,7 +142,11 @@ pub use journal::{Intent, Journal, Record, RestoreResult};
 pub use mutation::{
     EffectSink, Executor, FileSystemClass, Finish, Freeze, Freezer, LocalFileSystem, Unsupported,
 };
-pub use native::{NativeKind, ResolvedTool, SemanticFacts, ToolFile, ToolGap};
+pub use native::{
+    GIT_ISOLATION, NativeArg, NativeCommand, NativeEnd, NativeExit, NativeKind, NativeRunner,
+    NativeSpec, NativeStatus, Postcondition, ResolvedTool, SemanticFacts, ToolFile, ToolGap,
+    ToolResolver, Unavailable,
+};
 pub use outcome::{
     ApplyError, Effect, ErrorCode, Found, Freed, ItemOutcome, Left, LeftCount, LeftReason, OsError,
     OsErrorKind, Receipt, ReceiptItem, Removed, SAMPLE, Skip, Status, Stop, Tally, Totals, Trashed,
@@ -196,10 +203,12 @@ pub use size::{Allocated, Apparent, Completeness, Measurement, SpaceEstimate};
 pub use store::{
     HEADER_LIMIT, JOURNAL_LIMIT, LOCK_WAIT, LockState, Locked, RunId, RunStore, StoreRefusal,
 };
+pub use store_lock::{HeldLocks, LockGap, StoreLocks};
 pub use suggest::{Suggestion, is_within, suggest};
 pub use supplied::{AdviceId, Claim, FactValue, Subject, Supplied};
 pub use tracked::{GitGap, TrackedQuery};
 pub use trash::{Forgotten, RestoreRequest, SlotState, TrashBackend, TrashDir, TrashSlot};
 pub use worktree::{
-    AgentLabel, Checkout, ObjectId, Registration, RegistrationState, WorktreeFacts, WorktreeWitness,
+    AgentLabel, Checkout, ConfigClass, ConfigGate, ObjectId, Registration, RegistrationState,
+    WorktreeFacts, WorktreePlace, WorktreeQuery, WorktreeState, WorktreeWitness,
 };

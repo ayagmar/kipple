@@ -207,6 +207,8 @@ fn ports(fs: FakeFs, sizer: FakeSizer) -> Ports {
         processes: Box::new(no_processes()),
         clock: Box::new(FixedClock),
         tracked: Box::new(FakeGit(Err(GitGap::Unsupported))),
+        tools: Box::new(kipple_core::Unavailable),
+        worktrees: Box::new(kipple_core::Unavailable),
     }
 }
 

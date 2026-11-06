@@ -15,9 +15,12 @@ use kipple_core::{
     SymbolicRoot, Unread,
 };
 
+/// No mechanism is pinned here yet, so a command can't start from a checked directory.
+pub(crate) const FD_DIR: Option<&str> = None;
+
 pub(crate) use super::unix::{
     INHERITED_VARS, KIPPLE_DIRS, allocated, device, dir_access, env_name_matches, hard_link,
-    identity, is_executable, physical, raw_bytes,
+    identity, is_executable, link_stamp, physical, raw_bytes, working_dir,
 };
 use super::unix::{env_paths, nul_separated, owner, path_args, unread, xdg_roots};
 use crate::environment::Environment;

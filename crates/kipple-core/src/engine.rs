@@ -26,6 +26,7 @@ use crate::integration::{
     Advice, Evidence, FindingSink, Integration, IntegrationDescriptor, IntegrationError,
     IntegrationId, ScanContext,
 };
+use crate::native::ToolResolver;
 use crate::policy::{
     Activity, ActivityGap, Consequence, Facts, HeldPath, Lineage, Modified, Policy, Proposal,
     Tracked, Verdict, WalkGap, replaces_own_git,
@@ -39,6 +40,7 @@ use crate::rule::{Category, Lens, Operation, Rule, RuleId};
 use crate::size::{Completeness, Measurement, SpaceEstimate};
 use crate::supplied::{AdviceId, Subject, Supplied};
 use crate::tracked::{GitGap, TrackedQuery};
+use crate::worktree::WorktreeQuery;
 
 /// A finding's ID within one scan. IDs are references, never authorization.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -277,6 +279,10 @@ pub struct Ports {
     pub clock: Box<dyn Clock>,
     /// Asks git what it tracks inside a finding in a repository.
     pub tracked: Box<dyn TrackedQuery>,
+    /// Finds the native tools an integration names.
+    pub tools: Box<dyn ToolResolver>,
+    /// Asks git about a repository's worktrees.
+    pub worktrees: Box<dyn WorktreeQuery>,
 }
 
 /// Runs scans over the registered integrations, through the injected ports.
@@ -470,6 +476,8 @@ impl Engine {
             roots: &opened,
             rules: &registered.rules,
             fs: self.ports.fs.as_ref(),
+            tools: self.ports.tools.as_ref(),
+            worktrees: self.ports.worktrees.as_ref(),
             cancel: shared.cancel,
             plan: &self.plan,
             walks: shared.walks,
