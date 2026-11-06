@@ -22,6 +22,7 @@ use crate::plan::{
 };
 use crate::policy::{Caution, Hold, Level, Proposal, Verdict};
 use crate::probe::{EntryKind, FileIdentity};
+use crate::profile::ProfileGrant;
 use crate::root::SymbolicRoot;
 use crate::rule::{Method, RuleId};
 use crate::tracked::{GitGap, OwnGit};
@@ -523,6 +524,14 @@ fn only_a_person_authorizes_a_native_item_and_none_runs_yet() {
     let (item, now) = npm(tree(1));
     let automated = admit_now(&item, Some(Authorization::SafeOnly), now).unwrap_err();
     assert_eq!(automated, Skip::SemanticNotReviewed);
+
+    let (granted, at_apply) = npm(tree(1));
+    let grant = Authorization::Profile(ProfileGrant::for_core_tests());
+    assert_eq!(
+        admit_now(&granted, Some(grant), at_apply).unwrap_err(),
+        Skip::SemanticNotReviewed,
+        "a profile recorded no review of a command, whatever it grants"
+    );
 
     assert_eq!(
         refused(npm(tree(1))),

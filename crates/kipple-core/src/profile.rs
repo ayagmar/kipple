@@ -599,6 +599,15 @@ struct Granted {
 }
 
 impl ProfileGrant {
+    /// A grant of nothing, for tests of what comes before [`ProfileGrant::admits`].
+    #[cfg(test)]
+    pub(crate) const fn for_core_tests() -> Self {
+        Self {
+            policy: Digest(0),
+            rules: BTreeMap::new(),
+        }
+    }
+
     /// Whether `entry` is within the grant: its rule is an active entry's, judged under
     /// the policy and the rule the grant was checked against, removed by the frozen
     /// method, below one of the entry's frozen roots with the identity it had then.
