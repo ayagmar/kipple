@@ -474,6 +474,10 @@ pub(crate) fn facts(finding: &Finding, policy: &Policy) -> Vec<Fact> {
     if matches!(facts.proposal, Proposal::Report | Proposal::Advice) {
         return lines;
     }
+    if matches!(facts.proposal, Proposal::RemoveRelease(_)) {
+        let settled = retained::settlement(facts.settlement);
+        lines.push(Fact::new("Retention", settled));
+    }
     lines.extend(facts.unmet.iter().map(unmet));
     lines.push(Fact::new("Git", tracked(&facts.tracked)));
     lines.push(Fact::new("In use", activity(&facts.activity)));
@@ -674,6 +678,7 @@ fn idle_except(unchecked: usize, by_command_line: usize) -> String {
 pub(crate) mod outcome;
 pub(crate) mod profile;
 pub(crate) mod receipt;
+pub(crate) mod retained;
 pub(crate) mod review;
 #[cfg(test)]
 mod tests;

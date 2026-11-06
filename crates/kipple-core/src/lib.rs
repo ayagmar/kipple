@@ -98,6 +98,7 @@ mod probe;
 mod process;
 pub mod profile;
 mod protect;
+mod retention;
 mod root;
 mod rule;
 mod run;
@@ -168,6 +169,10 @@ pub use process::{
 pub use protect::{
     Area, OpenArea, OwnerStatus, Owners, ProtectedEntry, Protection, Protections, StateDeclaration,
     StateRoot, Unresolved,
+};
+pub use retention::{
+    GroupGap, ReleaseFacts, ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion, ReleaseView,
+    Retained, Settlement, settle,
 };
 pub use root::{
     LinkProblem, Resolution, ResolvedRoot, RootLink, RootSource, Roots, SettingProblem,

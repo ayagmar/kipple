@@ -73,6 +73,7 @@ fn safe() -> Facts {
         lineage: Lineage(vec![Some(id(10)), Some(id(3)), Some(id(1))]),
         supplied: kipple_core::Supplied::default(),
         unmet: Vec::new(),
+        settlement: kipple_core::Settlement::Unsettled,
     }
 }
 

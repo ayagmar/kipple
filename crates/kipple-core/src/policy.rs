@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use crate::native::NativeKind;
 use crate::probe::{FileIdentity, ProbeError};
+use crate::retention::Settlement;
 use crate::root::SymbolicRoot;
 use crate::rule::{Method, RuleId};
 use crate::supplied::Supplied;
@@ -285,6 +286,8 @@ pub struct Facts {
     pub supplied: Supplied,
     /// The predicates of its rule it doesn't satisfy.
     pub unmet: Vec<Unmet>,
+    /// What retention decided, for a release.
+    pub settlement: Settlement,
 }
 
 /// A predicate of a rule that a finding doesn't satisfy.
@@ -672,6 +675,13 @@ fn fact_holds(facts: &Facts) -> Vec<Hold> {
     }
     if matches!(facts.modified, Modified::Unknown(_)) {
         holds.push(Hold::UnknownModified);
+    }
+    if matches!(facts.proposal, Proposal::RemoveRelease(_)) {
+        match facts.settlement {
+            Settlement::Unsettled => holds.push(Hold::Unsettled),
+            Settlement::Retained(_) => holds.push(Hold::Retained),
+            Settlement::Candidate => {}
+        }
     }
     let fell_short = |state| facts.unmet.iter().any(|unmet| unmet.state == state);
     if fell_short(FactState::Failed) {

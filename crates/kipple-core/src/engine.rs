@@ -31,6 +31,7 @@ use crate::policy::{
 use crate::probe::{Clock, EntryKind, EntryMeta, FileIdentity, FsProbe, ProbeError, Sizer};
 use crate::process::ProcessProbe;
 use crate::protect::{OwnerStatus, Owners};
+use crate::retention::Settlement;
 use crate::root::{ResolvedRoot, Roots, SymbolicRoot, UnresolvedRoot};
 use crate::rule::{Category, Lens, Operation, Rule, RuleId};
 use crate::size::{Completeness, Measurement, SpaceEstimate};
@@ -685,6 +686,7 @@ impl Engine {
             lineage,
             supplied: found.supplied.clone(),
             unmet: Vec::new(),
+            settlement: Settlement::Unsettled,
         };
         if let Some(rule) = rule {
             let finding = Evaluated {

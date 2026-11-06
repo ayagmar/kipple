@@ -10,7 +10,7 @@ use std::time::Duration;
 use kipple_core::{
     Activity, ActivityGap, Bucket, Caution, Consequence, Cost, Facts, FileIdentity, GitGap,
     HeldPath, Hold, Level, Lineage, Loss, Method, Modified, Policy, ProbeError, Proposal, Recovery,
-    RuleId, RuleSettings, Seen, Tracked, Verdict, WalkGap,
+    Retained, RuleId, RuleSettings, Seen, Settlement, Supplied, Tracked, Verdict, WalkGap,
 };
 
 const DAY: Duration = Duration::from_hours(24);
@@ -31,8 +31,9 @@ fn build_output() -> Facts {
         modified: Modified::Ago(41 * DAY),
         recent_days: None,
         lineage: Lineage::default(),
-        supplied: kipple_core::Supplied::default(),
+        supplied: Supplied::default(),
         unmet: Vec::new(),
+        settlement: Settlement::Unsettled,
     }
 }
 
@@ -680,4 +681,37 @@ fn a_configured_recent_window_only_lengthens_the_effective_one() {
         with(10).recent_window_days(&cargo(), &aged(0, Some(20))),
         20
     );
+}
+
+/// Catches a path that skips settle removing a release, because a missing decision read as
+/// no objection (04 §2a).
+#[test]
+fn unsettled_release_holds() {
+    let holds = |settlement, level| {
+        let release = Facts {
+            proposal: Proposal::RemoveRelease(vec![Method::Delete]),
+            settlement,
+            ..build_output()
+        };
+        match classify(&release, level) {
+            Verdict::Protected(holds) => holds,
+            Verdict::Safe | Verdict::Review(_) => Vec::new(),
+        }
+    };
+
+    for level in Level::ALL.iter().copied() {
+        assert_eq!(holds(Settlement::Unsettled, level), [Hold::Unsettled]);
+        let kept = Settlement::Retained(Retained::Previous);
+        assert_eq!(holds(kept, level), [Hold::Retained]);
+        assert_eq!(holds(Settlement::Candidate, level), []);
+    }
+}
+
+/// Catches settlement leaking into removals that have nothing to settle.
+#[test]
+fn only_a_release_removal_waits_for_settlement() {
+    let plain = build_output();
+
+    assert_eq!(plain.settlement, Settlement::Unsettled);
+    assert_eq!(balanced(&plain), Verdict::Safe);
 }
