@@ -381,6 +381,7 @@ impl From<&Activity> for ActivityOut {
             Activity::Unknown(ActivityGap::Partial(_)) => unknown("partial"),
             Activity::Unknown(ActivityGap::Uninspected(_)) => unknown("uninspected"),
             Activity::Unknown(ActivityGap::Unsupported) => unknown("unsupported"),
+            Activity::Unknown(ActivityGap::UnresolvedStore(_)) => unknown("unresolved-store"),
         }
     }
 }

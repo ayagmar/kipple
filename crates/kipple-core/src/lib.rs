@@ -132,7 +132,7 @@ pub use frozen::{
 pub use imported::{Dropped, DroppedItem, ImportedPlan, ReplanRequest, Replanned, replan};
 pub use integration::{
     ActivityEvidence, Advice, Evidence, FindingSink, Integration, IntegrationDescriptor,
-    IntegrationError, IntegrationId, IntegrationSelector, ScanContext,
+    IntegrationError, IntegrationId, IntegrationSelector, Program, ScanContext,
 };
 pub use journal::{Intent, Journal, Record, RestoreResult};
 pub use mutation::{

@@ -87,6 +87,14 @@ impl IntegrationDescriptor {
             .copied()
             .unwrap_or(ActivityEvidence::Everything)
     }
+
+    /// Whether a finding of this integration may be judged by `evidence`: one it lists, or
+    /// [`Everything`](ActivityEvidence::Everything) when it lists none.
+    #[must_use]
+    pub fn declares(&self, evidence: ActivityEvidence) -> bool {
+        self.evidences.contains(&evidence)
+            || (self.evidences.is_empty() && evidence == ActivityEvidence::Everything)
+    }
 }
 
 /// What can show one of an integration's findings in use (`docs/04-safety-model.md` §4,
@@ -111,6 +119,52 @@ pub enum ActivityEvidence {
         /// any ending, as in `python*`.
         runtimes: &'static [&'static str],
     },
+    /// Files a tool keeps outside any project, such as a worktree or a log: every path a
+    /// process shows. Root, `SYSTEM` and other users' processes are counted only as D-050
+    /// says, and outside the home directory every process counts.
+    ScopedPaths,
+    /// A store of a tool's own releases: the executable a process runs. Stricter than
+    /// [`BuiltExecutables`](Self::BuiltExecutables): a process kipple can't inspect blocks
+    /// when it goes by one of `names`, whoever owns it, and a current user's named so
+    /// keeps no excuse. A name never holds a process kipple could inspect.
+    ReleaseStore {
+        /// What the tool's own processes are called.
+        names: &'static [Program],
+    },
+    /// A tool whose runs leave no executable to match, such as npm under node: a process
+    /// with a listed name, naming a listed script, or showing any path at or in the finding
+    /// or a store, its environment's read lexically. A current user's process kipple can't
+    /// inspect keeps D-052's excuse unless `programs` or `runtimes` list it. A name adds a
+    /// hold and never proves idle.
+    ToolRunning {
+        /// What the tool's own processes are called.
+        programs: &'static [Program],
+        /// The file names of the scripts that run it.
+        scripts: &'static [&'static str],
+        /// The runtimes that run those scripts, as in [`Interpreted`](Self::Interpreted).
+        runtimes: &'static [&'static str],
+        /// The roots a run of the tool works in. One with no path leaves activity unknown.
+        stores: &'static [SymbolicRoot],
+    },
+}
+
+/// A program name, compared ignoring case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Program {
+    /// Exactly this name.
+    Exact(&'static str),
+    /// Any name starting with this.
+    Prefix(&'static str),
+}
+
+impl Program {
+    /// Whether `name`, in lowercase, is this program.
+    pub(crate) fn matches(self, name: &str) -> bool {
+        match self {
+            Self::Exact(exact) => name == exact.to_lowercase(),
+            Self::Prefix(prefix) => name.starts_with(&prefix.to_lowercase()),
+        }
+    }
 }
 
 /// A selector an integration publishes, with what it selects.

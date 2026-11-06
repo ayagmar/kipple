@@ -15,7 +15,7 @@ use std::sync::atomic::AtomicU64;
 use std::sync::{Mutex, PoisonError};
 use std::thread;
 
-use crate::activity::{Processes, Scope, Subject};
+use crate::activity::{ActivitySubject, Processes, Scope};
 use crate::cancel::CancelToken;
 use crate::discovery::{WalkPlan, Walks};
 use crate::event::{EventTx, ScanEvent, Stopped};
@@ -658,11 +658,13 @@ impl Engine {
             fs: self.ports.fs.as_ref(),
             identities: shared.identities,
             home: shared.home,
+            roots: shared.roots,
         };
-        let subject = Subject {
+        let subject = ActivitySubject {
             path,
             lineage: &lineage,
-            evidence: owner.registered.descriptor.evidence(),
+            owner: &owner.registered.descriptor,
+            evidence: found.supplied.activity,
             project: &owner.project(&found.finding),
         };
         let processes = self.ports.processes.as_ref();

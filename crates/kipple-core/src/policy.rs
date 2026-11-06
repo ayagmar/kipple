@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use crate::native::NativeKind;
 use crate::probe::{FileIdentity, ProbeError};
+use crate::root::SymbolicRoot;
 use crate::rule::{Method, RuleId};
 use crate::supplied::Supplied;
 use crate::tracked::GitGap;
@@ -224,7 +225,9 @@ pub enum Seen {
     /// It has this file inside the finding mapped into its memory.
     MappedFile(PathBuf),
     /// It is the finding's runtime, and works in the finding's project at this directory
-    /// or names this path there in its arguments or environment.
+    /// or names this path there in its arguments or environment; or it is the tool behind
+    /// a finding judged by [`ToolRunning`](crate::ActivityEvidence::ToolRunning), by its
+    /// name or at this path.
     Runtime(PathBuf),
 }
 
@@ -238,8 +241,11 @@ pub enum ActivityGap {
     /// This many processes that count couldn't be inspected: some path they could show
     /// couldn't be read, or they see files through another mount namespace or root.
     Uninspected(usize),
-    /// The OS doesn't show the paths of running programs that the finding's layout needs.
+    /// The OS doesn't show the paths of running programs that the finding's layout needs,
+    /// or its integration doesn't declare the evidence it asked to be judged by.
     Unsupported,
+    /// A store its tool runs in has no path, so a process using it can't be ruled out.
+    UnresolvedStore(SymbolicRoot),
 }
 
 /// How long ago something inside the finding last changed.

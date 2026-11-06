@@ -14,7 +14,9 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use crate::digest::{Digest, Hasher};
-use crate::integration::{ActivityEvidence, Integration, IntegrationDescriptor, IntegrationId};
+use crate::integration::{
+    ActivityEvidence, Integration, IntegrationDescriptor, IntegrationId, Program,
+};
 use crate::policy::Consequence;
 use crate::protect::{Area, OpenArea, ProtectedEntry, StateDeclaration, Unresolved};
 use crate::rule::{Bounds, FactKind, FactSpec, Name, Operation, Predicate, Rule, Selector, Test};
@@ -231,7 +233,37 @@ fn evidence_into(canon: &mut Canon, evidence: &ActivityEvidence) {
         ActivityEvidence::Everything => canon.text("everything"),
         ActivityEvidence::BuiltExecutables => canon.text("built-executables"),
         ActivityEvidence::Interpreted { runtimes } => canon.text("interpreted").texts(runtimes),
+        ActivityEvidence::ScopedPaths => canon.text("scoped-paths"),
+        ActivityEvidence::ReleaseStore { names } => {
+            canon.text("release-store");
+            programs_into(canon, names);
+            canon
+        }
+        ActivityEvidence::ToolRunning {
+            programs,
+            scripts,
+            runtimes,
+            stores,
+        } => {
+            canon.text("tool-running");
+            programs_into(canon, programs);
+            canon.texts(scripts).texts(runtimes).count(stores.len());
+            for store in *stores {
+                canon.text(store.name());
+            }
+            canon
+        }
     };
+}
+
+fn programs_into(canon: &mut Canon, programs: &[Program]) {
+    canon.count(programs.len());
+    for program in programs {
+        match program {
+            Program::Exact(name) => canon.text("exact").text(name),
+            Program::Prefix(name) => canon.text("prefix").text(name),
+        };
+    }
 }
 
 fn selector_into(canon: &mut Canon, selector: &Selector) {

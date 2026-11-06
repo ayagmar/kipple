@@ -7,11 +7,10 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use super::{Engine, Finding, Identities, ScanReport, ScanRequest, project_dir};
-use crate::activity::{Processes, Scope, Subject};
+use crate::activity::{ActivitySubject, Processes, Scope};
 use crate::cancel::CancelToken;
 use crate::event::event_channel;
 use crate::policy::{Activity, ActivityGap};
-use crate::probe::FileIdentity;
 
 /// How long one process snapshot serves the items after the first that used it.
 pub const FRESH: Duration = Duration::from_secs(1);
@@ -64,7 +63,7 @@ impl Engine {
     fn activity_now(
         &self,
         fresh: &Fresh,
-        home: Option<FileIdentity>,
+        request: &ScanRequest,
         scan: &ScanReport,
         finding: &Finding,
     ) -> Activity {
@@ -81,7 +80,8 @@ impl Engine {
         let scope = Scope {
             fs: self.ports.fs.as_ref(),
             identities: &fresh.identities,
-            home,
+            home: self.home(&request.roots),
+            roots: &request.roots,
         };
         let roots = scan
             .integrations
@@ -90,10 +90,11 @@ impl Engine {
             .flat_map(|report| &report.opened)
             .map(|opened| opened.path.as_path());
         let project = project_dir(finding, roots);
-        let subject = Subject {
+        let subject = ActivitySubject {
             path: &finding.path,
             lineage: &facts.lineage,
-            evidence: registered.descriptor.evidence(),
+            owner: &registered.descriptor,
+            evidence: facts.supplied.activity,
             project: &project,
         };
         fresh
@@ -131,8 +132,7 @@ impl Rescan for EngineRescan<'_> {
         fresh
             .as_ref()
             .map_or(Activity::Unknown(ActivityGap::Unsupported), |fresh| {
-                let home = self.engine.home(&self.request.roots);
-                self.engine.activity_now(fresh, home, scan, finding)
+                self.engine.activity_now(fresh, self.request, scan, finding)
             })
     }
 }

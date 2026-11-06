@@ -4,7 +4,7 @@
 use kipple_core::format::{integration_digest, rule_digest};
 use kipple_core::{
     ActivityEvidence, Category, FactKind, FactSpec, GroupKey, IntegrationDescriptor, IntegrationId,
-    Lens, Method, Operation, Platform, Retention, Rule, RuleId, RuleText, Selector,
+    Lens, Method, Operation, Platform, Program, Retention, Rule, RuleId, RuleText, Selector,
     StateDeclaration, SymbolicRoot, Unresolved,
 };
 
@@ -71,6 +71,27 @@ fn evidences_are_in_the_integration_digest() {
         ..DESCRIPTOR
     };
     assert_ne!(integration_digest(&DESCRIPTOR), integration_digest(&more));
+    let names = |names| IntegrationDescriptor {
+        evidences: Vec::leak(vec![ActivityEvidence::ReleaseStore { names }]),
+        ..DESCRIPTOR
+    };
+    assert_ne!(
+        integration_digest(&names(&[Program::Exact("codex")])),
+        integration_digest(&names(&[Program::Prefix("codex")]))
+    );
+    let stores = |stores| IntegrationDescriptor {
+        evidences: Vec::leak(vec![ActivityEvidence::ToolRunning {
+            programs: &[],
+            scripts: &[],
+            runtimes: &[],
+            stores,
+        }]),
+        ..DESCRIPTOR
+    };
+    assert_ne!(
+        integration_digest(&stores(&[])),
+        integration_digest(&stores(&[SymbolicRoot::NpmCache]))
+    );
 }
 
 // Catches a change to what a tool's state protects, or to the facts its rules test, leaving

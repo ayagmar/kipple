@@ -605,6 +605,9 @@ pub(crate) fn activity(activity: &Activity) -> String {
             "this OS doesn't show which paths running programs use, beyond their executable"
                 .to_owned()
         }
+        Activity::Unknown(ActivityGap::UnresolvedStore(store)) => {
+            format!("{store} couldn't be located, so a program using it can't be ruled out")
+        }
     }
 }
 
@@ -616,7 +619,7 @@ fn in_use(pid: u32, seen: &Seen) -> String {
         Seen::Argument(path) => ("was started with", path),
         Seen::Environment(path) => ("has in its environment", path),
         Seen::MappedFile(path) => ("has loaded", path),
-        Seen::Runtime(path) => ("is its runtime and uses its project at", path),
+        Seen::Runtime(path) => ("is its tool or runtime, at", path),
     };
     format!(
         "process {pid} {how} {}",
