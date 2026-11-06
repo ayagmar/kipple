@@ -482,7 +482,7 @@ fn is_number(text: &str) -> bool {
     !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
 }
 
-/// What a release's manifest says. Upstream ignores `layoutVersion`, but only 1 was read.
+/// What a release's manifest says.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct Manifest {
     version: String,
@@ -490,19 +490,46 @@ struct Manifest {
     entrypoint: String,
 }
 
-impl Manifest {
-    /// `bytes` as a manifest of the one layout kipple knows, `None` otherwise. `execServer`
-    /// is absent before 0.166.0, so nothing depends on it.
-    fn parse(bytes: &[u8]) -> Option<Self> {
-        let document: Json = serde_json::from_slice(bytes).ok()?;
-        let manifest = document.as_object()?;
-        let text = |key: &str| manifest.get(key)?.as_str().map(str::to_owned);
-        (manifest.get("layoutVersion")?.as_u64()? == 1).then_some(())?;
-        Some(Self {
-            version: text("version")?,
-            target: text("target")?,
-            entrypoint: text("entrypoint")?,
+/// What a `codex-package.json` turned out to be. Upstream ignores `layoutVersion`, but only
+/// 1 was read.
+#[derive(Debug)]
+enum ManifestRead {
+    /// A manifest of the one layout kipple knows.
+    Usable(Manifest),
+    /// One stating another layout, which says nothing else kipple can read.
+    OtherLayout,
+    /// None there, or nothing that can be taken for one.
+    Unusable,
+}
+
+impl ManifestRead {
+    /// What `bytes` are. `execServer` is absent before 0.166.0, so nothing depends on it.
+    fn parse(bytes: &[u8]) -> Self {
+        let document = serde_json::from_slice::<Json>(bytes).ok();
+        let manifest = document.as_ref().and_then(Json::as_object);
+        let Some(layout) = manifest.and_then(|manifest| manifest.get("layoutVersion")) else {
+            return Self::Unusable;
+        };
+        if layout.as_u64() != Some(1) {
+            return Self::OtherLayout;
+        }
+        let text = |key: &str| manifest?.get(key)?.as_str().map(str::to_owned);
+        let fields = (text("version"), text("target"), text("entrypoint"));
+        let (Some(version), Some(target), Some(entrypoint)) = fields else {
+            return Self::Unusable;
+        };
+        Self::Usable(Manifest {
+            version,
+            target,
+            entrypoint,
         })
+    }
+
+    fn usable(self) -> Option<Manifest> {
+        match self {
+            Self::Usable(manifest) => Some(manifest),
+            Self::OtherLayout | Self::Unusable => None,
+        }
     }
 }
 
@@ -558,6 +585,8 @@ enum Entry {
     Retired(Retired),
     /// Anything else: kept and reported, and it blocks nothing.
     Kept(PathBuf),
+    /// A release of a layout nobody read, which makes the store that holds it unknown.
+    OtherLayout(PathBuf),
     /// One that couldn't be read, so it might be anything.
     Unread(PathBuf),
 }
@@ -568,7 +597,7 @@ impl Entry {
         match self {
             Self::Unread(_) => true,
             Self::Retired(retired) => !retired.whole,
-            Self::Published(_) | Self::Local(_) | Self::Kept(_) => false,
+            Self::Published(_) | Self::Local(_) | Self::Kept(_) | Self::OtherLayout(_) => false,
         }
     }
 }
@@ -619,11 +648,12 @@ fn walk(cx: &ScanContext<'_>, top: &Path, mount: Option<u64>) -> Result<Walked, 
     Ok(walked)
 }
 
-/// What `dir`'s manifest says, `None` when it has no usable one.
-fn read_manifest(cx: &ScanContext<'_>, dir: &Path) -> Result<Option<Manifest>, ProbeError> {
+/// What `dir`'s manifest is.
+fn read_manifest(cx: &ScanContext<'_>, dir: &Path) -> Result<ManifestRead, ProbeError> {
     match whole(cx, &dir.join(MANIFEST), MANIFEST_LIMIT) {
-        Ok(bytes) => Ok(bytes.as_deref().and_then(Manifest::parse)),
-        Err(error) if is_absent(&error) => Ok(None),
+        Ok(Some(bytes)) => Ok(ManifestRead::parse(&bytes)),
+        Ok(None) => Ok(ManifestRead::Unusable),
+        Err(error) if is_absent(&error) => Ok(ManifestRead::Unusable),
         Err(error) => Err(error),
     }
 }
@@ -641,7 +671,8 @@ fn inspect(
         return Ok(Entry::Kept(path));
     };
     let manifest = match read_manifest(cx, &path) {
-        Ok(Some(manifest)) if named.agrees_with(&manifest) => manifest,
+        Ok(ManifestRead::Usable(manifest)) if named.agrees_with(&manifest) => manifest,
+        Ok(ManifestRead::OtherLayout) => return Ok(Entry::OtherLayout(path)),
         Ok(_) => return Ok(Entry::Kept(path)),
         Err(_) => return Ok(Entry::Unread(path)),
     };
@@ -696,10 +727,13 @@ fn read_retired(
         Err(stopped) => return Err(stopped),
     };
     let manifest = read_manifest(cx, &path.join("release"));
+    if matches!(manifest, Ok(ManifestRead::OtherLayout)) {
+        return Ok(Entry::OtherLayout(path));
+    }
     Ok(Entry::Retired(Retired {
         whole: listed && manifest.is_ok(),
         path,
-        manifest: manifest.ok().flatten(),
+        manifest: manifest.ok().and_then(ManifestRead::usable),
         files,
     }))
 }
@@ -908,7 +942,7 @@ impl Component {
     fn releases(&self) -> impl Iterator<Item = &Release> {
         self.entries.iter().filter_map(|entry| match entry {
             Entry::Published(release) | Entry::Local(release) => Some(release),
-            Entry::Retired(_) | Entry::Kept(_) | Entry::Unread(_) => None,
+            Entry::Retired(_) | Entry::Kept(_) | Entry::OtherLayout(_) | Entry::Unread(_) => None,
         })
     }
 
@@ -920,11 +954,16 @@ impl Component {
             .map(|release| release.version.as_str())
     }
 
+    /// Whether all that it was seen to hold is of the one layout kipple read.
+    fn is_known_layout(&self) -> bool {
+        let other = |entry: &Entry| matches!(entry, Entry::OtherLayout(_));
+        self.listed && self.strays.is_empty() && !self.entries.iter().any(other)
+    }
+
     /// Whether it is what upstream leaves: only what upstream writes, and a selection. What
-    /// couldn't be listed or read may be anything, so it can't be called that.
+    /// couldn't be read may be anything, so it can't be called that.
     fn is_well_formed(&self) -> bool {
-        self.listed
-            && self.strays.is_empty()
+        self.is_known_layout()
             && self.active.is_some()
             && !self.entries.iter().any(Entry::is_unread)
     }
@@ -1089,10 +1128,7 @@ impl Store {
     /// stays one, blocked, so that retention sees the whole group.
     fn is_readable(&self) -> bool {
         self.strays.is_empty()
-            && self
-                .components
-                .iter()
-                .all(|c| c.listed && c.strays.is_empty())
+            && self.components.iter().all(Component::is_known_layout)
             && self.version_supported() != FactValue::Enum("unsupported")
     }
 
@@ -1386,7 +1422,7 @@ impl Home {
                 };
                 self.report(cx, sink, RELEASE_ENTRIES, found)
             }
-            Entry::Kept(path) | Entry::Unread(path) => {
+            Entry::Kept(path) | Entry::OtherLayout(path) | Entry::Unread(path) => {
                 self.report(cx, sink, RELEASE_ENTRIES, Reported::unknown(path))
             }
         }

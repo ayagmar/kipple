@@ -227,6 +227,51 @@ fn unknown_layout_is_no_signature() {
     }
 }
 
+/// Catches a release of a layout nobody read leaving the store open because it isn't the one
+/// selected: a later version of the layout was installed here, so what the store is isn't
+/// known. S5's row 13 over its row 4, since unknown means blocked.
+#[test]
+fn another_layout_version_makes_the_store_unknown() {
+    let other = "\"layoutVersion\": 2";
+    let unselected = with_manifest("\"layoutVersion\": 1", other);
+    let mut bare = verified();
+    let dir = at(&damaged());
+    codex_v0_166_0::release(&mut bare.tree, &dir, "0.163.0", MUSL);
+    bare.tree.file(
+        &format!("{dir}/codex-package.json"),
+        format!("{{{other}}}").as_bytes(),
+    );
+    let retired = release(STANDALONE, ".retired.AbCdEfGh");
+    let mut set_aside = verified();
+    set_aside.tree.file(
+        &at(&format!("{retired}/release/codex-package.json")),
+        codex_v0_166_0::manifest("0.163.0", MUSL, "bin/codex")
+            .replace("\"layoutVersion\": 1", other)
+            .as_bytes(),
+    );
+
+    for (case, mut scene, path) in [
+        ("an unselected release", unselected, damaged()),
+        ("nothing else it can be read for", bare, damaged()),
+        ("a release set aside", set_aside, retired),
+    ] {
+        scene
+            .tree
+            .file(&at(TUI_LOG), b"old\n")
+            .file(&at(CATALOG), b"{}");
+
+        let scan = scene.scan();
+
+        assert_eq!(scan.rule(&path), "release-inventory", "{case}");
+        only_reported_unknown(&scan);
+        assert!(
+            !scan.rows().iter().any(|row| row.starts_with("stale-")),
+            "{case}: nothing is a release: {:#?}",
+            scan.rows()
+        );
+    }
+}
+
 /// Catches a directory of the store that can't be listed passing for one with nothing unknown
 /// in it: it can hide a stray and every install marker while `current` and the releases still
 /// answer, and the removing rules would run on a layout nobody saw.
@@ -486,7 +531,7 @@ fn empty_previous_is_a_valid_history() {
 /// replaced by `to`.
 fn with_manifest(from: &str, to: &str) -> Scene {
     let mut scene = verified();
-    let manifest = codex_v0_166_0::manifest(V165, MUSL, "bin/codex").replace(from, to);
+    let manifest = codex_v0_166_0::manifest("0.163.0", MUSL, "bin/codex").replace(from, to);
     let dir = at(&release(STANDALONE, &name("0.163.0")));
     codex_v0_166_0::release(&mut scene.tree, &dir, "0.163.0", MUSL);
     scene
@@ -584,7 +629,7 @@ fn manifest_cases() -> Vec<(&'static str, Scene)> {
     vec![
         (
             "a manifest of another version",
-            with_manifest("\"0.165.0\"", "\"0.162.0\""),
+            with_manifest("\"0.163.0\"", "\"0.162.0\""),
         ),
         (
             "a manifest of another target",
@@ -594,10 +639,6 @@ fn manifest_cases() -> Vec<(&'static str, Scene)> {
         (
             "another entrypoint",
             with_manifest("\"bin/codex\"", "\"bin/other\""),
-        ),
-        (
-            "an unknown layout version",
-            with_manifest("\"layoutVersion\": 1", "\"layoutVersion\": 2"),
         ),
     ]
 }
@@ -1486,6 +1527,14 @@ fn valid_manifest(bytes: &[u8], version: &str) -> bool {
         && document["entrypoint"].as_str() == Some("bin/codex")
 }
 
+/// Whether `bytes` states a layout other than the one kipple read.
+fn other_layout(bytes: &[u8]) -> bool {
+    serde_json::from_slice::<serde_json::Value>(bytes)
+        .ok()
+        .and_then(|document| document.get("layoutVersion").cloned())
+        .is_some_and(|layout| layout.as_u64() != Some(1))
+}
+
 /// Catches a near-miss manifest signing a release, or a parser that panics on a file a crash
 /// cut short: only a document stating exactly what the name says makes it a release.
 #[test]
@@ -1501,6 +1550,10 @@ fn manifest_survives_generated_input() {
 
         let scan = built.scan();
 
+        if other_layout(&bytes) {
+            assert_eq!(scan.rule(ACTIVE), "release-inventory", "{bytes:?}");
+            continue;
+        }
         if valid_manifest(&bytes, V164) {
             signed += 1;
             assert_eq!(scan.rule(OLD), "stale-releases", "{bytes:?}");
