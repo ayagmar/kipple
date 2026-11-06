@@ -185,7 +185,7 @@ impl FsProbe for TempFs {
 
     fn read_dir(&self, dir: &Path) -> Result<Vec<DirEntryMeta>, ProbeError> {
         let read = || -> io::Result<Vec<DirEntryMeta>> {
-            fs::read_dir(dir)?
+            fs::read_dir(self.found(dir))?
                 .map(|entry| {
                     let entry = entry?;
                     Ok(DirEntryMeta {

@@ -6,7 +6,7 @@ use kipple_core::{
 };
 
 use super::claude_v2_1_318::{self as fixture, CLOSED_SESSION, OPEN_SESSION, VERSION, marker};
-use super::host::{DAY, Generated, GitBelowFile, Host, Scan, running, sealed};
+use super::host::{DAY, Generated, GitBelowFile, Host, Names, Scan, running, sealed};
 use super::tree::{FixtureTree, Holds};
 
 const LOGS: &str = "builtin.claude-code.closed-debug-logs";
@@ -308,6 +308,25 @@ fn unknown_debug_name_is_kept() {
         assert_eq!(scan.finding(name).rule.0, STORE);
         assert_eq!(scan.holds(name), [Hold::Advice]);
     }
+}
+
+/// Catches a directory the rule doesn't name reaching it on a disk that folds case: the probe
+/// of `debug` lands on `DEBUG`, and its logs come out under the lowercase path the host's
+/// area opens.
+#[test]
+fn a_debug_directory_in_another_case_is_not_read() {
+    let mut tree = FixtureTree::new();
+    tree.file(&format!("{CONFIG}/settings.json"), b"{}\n")
+        .dir(&format!("{CONFIG}/sessions"))
+        .file(
+            &format!("{CONFIG}/DEBUG/{CLOSED_SESSION}.txt"),
+            b"not claude's\n",
+        );
+    fixture::install(&mut tree, "home", VERSION);
+    let mut host = Host::new(tree);
+    host.names = Names::Folded;
+
+    assert_eq!(host.scan().found(LOGS), [""; 0]);
 }
 
 /// Catches a link named like a log being taken for one: removing it says nothing about where

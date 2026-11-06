@@ -624,8 +624,14 @@ fn report(
 }
 
 /// Adds everything in `debug/`. No directory is no finding: none has run with debug logging.
-/// One that can't be listed is reported whole, since it could hold anything.
+/// One that can't be listed is reported whole, since it could hold anything. Its name is
+/// matched against the listing: on a disk that folds case, a probe of the literal name would
+/// land on a directory this doesn't name, and report it under a path the host's area opens.
 fn add_debug_entries(at: At<'_, '_>, sink: &mut FindingSink<'_>) -> Result<(), IntegrationError> {
+    let listed = at.cx.read_dir(at.store.path)?;
+    if !listed.iter().any(|entry| entry.name == "debug") {
+        return Ok(());
+    }
     let debug = at.store.path.join("debug");
     match listing(at.cx, &debug) {
         Listing::Absent => Ok(()),
