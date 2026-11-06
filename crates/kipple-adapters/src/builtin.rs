@@ -1,6 +1,6 @@
 //! The built-in integrations and the rule packs shipped in the binary.
 
-use kipple_core::{Integration, IntegrationDescriptor, Pack};
+use kipple_core::{Integration, IntegrationDescriptor, IntegrationId, Pack};
 
 use crate::integrations::{
     Cargo, ClaudeCode, Codex, Cursor, Git, Journald, Node, Npm, Pacman, Pi, Python, Trash,
@@ -8,6 +8,11 @@ use crate::integrations::{
 use crate::pack::{self, Catalog, Origin, PackError};
 
 pub use crate::integrations::{Anomaly, Unregistered, registration_advice};
+
+/// Integrations that give advice with no verified layout behind them. They report and find
+/// nothing. Every other integration reports only once `verified` names what it was built
+/// against.
+pub const ADVICE_ONLY: &[IntegrationId] = &[IntegrationId("claude-code")];
 
 /// The built-in rule packs, from `rules/` in the repository, by file name.
 pub const PACKS: &[(&str, &str)] = &[

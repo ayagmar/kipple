@@ -1,6 +1,7 @@
 //! The support matrix the docs site renders (`docs/09-site-and-docs.md` §6): each
 //! integration, where it runs, and what it does there.
 
+use kipple_adapters::builtin::ADVICE_ONLY;
 use kipple_core::{IntegrationDescriptor, Operation, Platform};
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -104,11 +105,13 @@ fn support(builtin: &Builtin, descriptor: &IntegrationDescriptor) -> SupportOut 
                     .filter(|found| found.rule.platforms.contains(&platform))
                     .collect();
                 let removes = |found: &BuiltinRule<'_>| found.rule.operation != Operation::Report;
+                // A rule proves nothing by itself: a stub has its rules and finds nothing
+                // until `verified` names the layout it was built against.
+                let built = !descriptor.verified.is_empty();
                 PlatformSupport {
                     platform: platform.name(),
-                    // Advice alone, as for Claude Code, finds nothing.
-                    discover: supported && !here.is_empty(),
-                    report: supported,
+                    discover: supported && built && !here.is_empty(),
+                    report: supported && (built || ADVICE_ONLY.contains(&descriptor.id)),
                     mutate: supported && here.iter().any(removes),
                 }
             })

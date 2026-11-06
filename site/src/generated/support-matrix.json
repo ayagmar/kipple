@@ -78,19 +78,19 @@
       "platforms": [
         {
           "platform": "linux",
-          "discover": true,
+          "discover": false,
           "report": true,
           "mutate": false
         },
         {
           "platform": "macos",
-          "discover": true,
+          "discover": false,
           "report": true,
           "mutate": false
         },
         {
           "platform": "windows",
-          "discover": true,
+          "discover": false,
           "report": true,
           "mutate": false
         }
@@ -131,20 +131,20 @@
       "platforms": [
         {
           "platform": "linux",
-          "discover": true,
-          "report": true,
+          "discover": false,
+          "report": false,
           "mutate": false
         },
         {
           "platform": "macos",
-          "discover": true,
-          "report": true,
+          "discover": false,
+          "report": false,
           "mutate": false
         },
         {
           "platform": "windows",
-          "discover": true,
-          "report": true,
+          "discover": false,
+          "report": false,
           "mutate": false
         }
       ]
@@ -184,19 +184,19 @@
         {
           "platform": "linux",
           "discover": false,
-          "report": true,
+          "report": false,
           "mutate": false
         },
         {
           "platform": "macos",
           "discover": false,
-          "report": true,
+          "report": false,
           "mutate": false
         },
         {
           "platform": "windows",
-          "discover": true,
-          "report": true,
+          "discover": false,
+          "report": false,
           "mutate": false
         }
       ]
@@ -216,20 +216,20 @@
       "platforms": [
         {
           "platform": "linux",
-          "discover": true,
-          "report": true,
+          "discover": false,
+          "report": false,
           "mutate": false
         },
         {
           "platform": "macos",
-          "discover": true,
-          "report": true,
+          "discover": false,
+          "report": false,
           "mutate": false
         },
         {
           "platform": "windows",
-          "discover": true,
-          "report": true,
+          "discover": false,
+          "report": false,
           "mutate": false
         }
       ]
@@ -329,20 +329,20 @@
       "platforms": [
         {
           "platform": "linux",
-          "discover": true,
-          "report": true,
+          "discover": false,
+          "report": false,
           "mutate": false
         },
         {
           "platform": "macos",
-          "discover": true,
-          "report": true,
+          "discover": false,
+          "report": false,
           "mutate": false
         },
         {
           "platform": "windows",
-          "discover": true,
-          "report": true,
+          "discover": false,
+          "report": false,
           "mutate": false
         }
       ]
@@ -412,20 +412,20 @@
       "platforms": [
         {
           "platform": "linux",
-          "discover": true,
-          "report": true,
+          "discover": false,
+          "report": false,
           "mutate": false
         },
         {
           "platform": "macos",
-          "discover": true,
-          "report": true,
+          "discover": false,
+          "report": false,
           "mutate": false
         },
         {
           "platform": "windows",
-          "discover": true,
-          "report": true,
+          "discover": false,
+          "report": false,
           "mutate": false
         }
       ]

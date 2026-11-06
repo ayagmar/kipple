@@ -78,3 +78,25 @@ fn the_support_matrix_says_mutate_only_where_a_rule_removes() {
     assert_eq!(on_linux("cargo"), json!(true));
     assert_eq!(on_linux("pacman"), json!(false));
 }
+
+/// Each platform's `discover` and `report` for `id`.
+fn claims(support: &Value, id: &str) -> Vec<(bool, bool)> {
+    let platforms = integration(support, id)["platforms"].as_array().unwrap();
+    let claim = |p: &Value| (p["discover"] == true, p["report"] == true);
+    platforms.iter().map(claim).collect()
+}
+
+/// Catches the site saying kipple finds what it doesn't: a stub's pack gives it rules, and a
+/// rule proves nothing about whether its integration can find anything yet.
+#[test]
+fn the_support_matrix_claims_nothing_for_an_integration_that_finds_nothing() {
+    let builtin = Builtin::load().unwrap();
+
+    let support = matrix(&builtin);
+
+    for stub in ["codex", "cursor", "git", "npm", "pi"] {
+        assert_eq!(claims(&support, stub), [(false, false); 3], "{stub}");
+    }
+    assert_eq!(claims(&support, "claude-code"), [(false, true); 3]);
+    assert_eq!(claims(&support, "cargo"), [(true, true); 3]);
+}
