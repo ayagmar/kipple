@@ -893,7 +893,8 @@ fn advice(setting: &str) -> Advice {
              30 and the minimum 1; 0 fails validation. Managed settings, and project or \
              command-line settings, override the user setting, and kipple doesn't read them. \
              It never deletes auto memory files (versions before v2.1.228 could delete old \
-             files below a memory directory) and leaves history.jsonl. Since v2.1.248 it keeps \
+             files below a memory directory) and leaves history.jsonl, except \
+             under a HIPAA setting. Since v2.1.248 it keeps \
              Claude Desktop and Cowork transcripts unless desktopSessionCleanupPeriodDays is \
              set, which deletes only past both limits, and a managed cleanupPeriodDays or \
              HIPAA setting overrides that. claude -p --bare doesn't sweep, and when it can't \

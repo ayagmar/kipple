@@ -716,7 +716,7 @@ fn advice_states_the_checked_exceptions() {
         "Managed settings",
         "never deletes auto memory files",
         "v2.1.228",
-        "leaves history.jsonl",
+        "leaves history.jsonl, except under a HIPAA setting",
         "desktopSessionCleanupPeriodDays",
         "claude -p --bare doesn't sweep",
         "pauses the sweep",
