@@ -158,7 +158,7 @@ Verify:
 
 M7 adds no features. It gets what M0 to M6 built ready to ship: shared logic moves into a library crate, each fact gets one owner, weak spots are hardened, tests that can't fail go, and speed and CI get budgets measured at M7. Nothing in M7 may weaken a check in [04-safety-model.md](04-safety-model.md).
 
-Nothing is released yet, so a format M7 changes is changed in place: its schema, baseline and samples are regenerated in the commit that changes it, with the reason in the commit message, and the one reader reads only the current shape. No version bump, second reader or migration. A file from an earlier build is refused with a message, never half-read.
+Nothing is released yet, so a format M7 changes is changed in place: its schema, baseline and samples are regenerated in the commit that changes it, with the reason in the commit message, and the one reader reads only the current shape. No version bump, second reader or migration. A file from an earlier build is refused with a message, never half-read. `check-compat --refresh` never replaces a baseline the schema breaks, so for a break the format's `schema.json` is removed first and then refreshed; `AGENTS.md` 18 and 08 §8 say so in the first commit that does it.
 
 Build:
 - the library split: a fifth crate, `kipple-app`, between the library crates and the frontends. It holds what both frontends need: config loading, validation and editing; `Machine` and the built-in setup; the keep, level and project-root actions with the rescan they start; the project-root search; the level totals; the scan notices; `human` and the JSON model. The binary keeps clap, the TUI, themes, prompts and rendering, so it has only its views and keys, and no setting or total is worked out in two places
@@ -181,9 +181,9 @@ Build:
   - the Windows walker counts a mount point as skipped, as Linux does
   - typed errors replace `Result<_, String>` on public functions, and items only tests use leave the public surface
   - a retention rule, so a mutating command stops reading nearly every run ever kept. Past a set age a run is dropped, under the run lock, only when every item has ended, no item can still be restored from the trash, and none is stranded or indeterminate. A run that is unreadable, or that can't be judged, stays. 04 §8a and D-065, which keep runs until the user removes them, change with it
-  - frozen profile roots survive a reboot that renumbers devices: a root is held by a stable file system ID from the platform (UUID or equivalent) with its inode or file ID, never by the inode alone. A root with no such ID stays suspended. `kipple.profile/v1` changes in place and its baseline is refreshed; a profile made before is refused with a message to recreate it. A run's anchors keep `FileIdentity`. 04 §3.4, §8a and §11 (a disk clone keeps the ID) and D-068 change with it
+  - frozen profile roots survive a reboot that renumbers devices: a root is held by a stable ID of the volume it lives on, down to the subvolume or dataset (on btrfs the subvolume's UUID, since every subvolume shares the file system's UUID and its root is inode 256), with its inode or file ID, never by the inode alone. A root with no ID that fine stays suspended. `kipple.profile/v1` changes in place and its baseline is refreshed; a profile made before is refused with a message to recreate it. A run's anchors keep `FileIdentity`. 04 §3.4, §8a and §11 (a disk clone keeps the ID) and D-068 change with it
   - a profile run notices a grant whose rule left the config, and changed retention advice, and each suspends or skips. The advice is a new field in the same in-place change, so D-068 and 03 J6, which say a profile has no retention field, change too
-  - golden history lines can only be appended: the gate compares each `HISTORY` table with the first parent of `HEAD`, a missing parent fails it, and the `check` job checks out with `fetch-depth: 2`
+  - golden history lines can only be appended: the gate compares each `HISTORY` table with the first parent of `HEAD`, a missing parent fails it, and every job that runs the gate, the release workflow's included, checks out with `fetch-depth: 2`
   - clippy's `undocumented_unsafe_blocks` is on, and `crates/kipple-platform/UNSAFE.md` lists each `unsafe` block with its invariant and its test, or a stated reason
 - tests:
   - delete four tests that can't fail for a realistic bug: the compile-time `Send` checks `a_prepared_clean_can_go_to_a_worker` and `a_machine_can_go_to_a_worker`, and the colour copies `help_at_160_by_48_in_colour` and `settings_at_160_by_48_in_colour`. `the_bucket_home_at_160_by_48_in_colour` stays as the smoke test
@@ -207,7 +207,7 @@ Build:
   - `timeout-minutes` on every job
   - format and typos checked before anything compiles
   - `verify-demo` stops repeating what the gate already ran, keeping the `test-roots` tests on all three OSes
-  - per-test times uploaded from every run, a 30 s limit on each default test in `.config/nextest.toml`, and a binary size step that fails past the budget
+  - per-test times uploaded from every run, a 30 s limit on each default test in `.config/nextest.toml`, with the generated-sequence tests under their own limit, set once they are measured on Windows, and a binary size step that fails past the budget
   - grouped dependabot updates
   - `check-style` reads macro bodies, and `check-docs` reads the site tapes
 
@@ -227,7 +227,7 @@ Verify:
   - a planted oversized plan is refused, and a plan over the limit is refused before its run is stored
   - a native Windows test: a volume mounted inside a finding counts as skipped and holds the finding
   - over generated sequences with restarts and failed store calls, retention never drops a run that is unfinished, unreadable, stranded, indeterminate or still restorable from the trash, and `restore` still finds every item it could restore before
-  - a different file system at the same path with the same inode suspends, a root with no stable ID stays suspended, the same file system under a new device number holds, and a profile from an earlier build is refused with the message
+  - a different file system at the same path with the same inode suspends, a second subvolume of the same btrfs file system at the same path with the same inode suspends, a root with no stable ID stays suspended, the same file system under a new device number holds, and a profile from an earlier build is refused with the message
   - a removed grant's rule and changed retention advice each suspend or skip, and neither widens
   - the gate fails on a fixture that edits a golden history line and passes on one that appends
 - Faster answers stay the same answers:
