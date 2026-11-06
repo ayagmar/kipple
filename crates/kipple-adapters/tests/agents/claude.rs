@@ -198,6 +198,19 @@ fn marker_without_session_id_blocks() {
     }
 }
 
+/// Catches a marker going unread because of its extension's case: what a folding disk keeps
+/// is whatever case wrote it first, and an unread marker reads as a closed session.
+#[test]
+fn a_marker_in_another_case_still_counts() {
+    let mut tree = no_sessions();
+    tree.file(
+        &format!("{CONFIG}/sessions/7.JSON"),
+        marker(CLOSED_SESSION).as_bytes(),
+    );
+
+    assert_eq!(scan(tree).fact(&closed_log(), "session_closed"), OPEN);
+}
+
 /// Catches an empty `sessions/` blocking forever: with nothing running that is every
 /// machine's state, and its logs are closed.
 #[test]

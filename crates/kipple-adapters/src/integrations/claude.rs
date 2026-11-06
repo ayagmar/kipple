@@ -514,12 +514,19 @@ fn open_sessions(cx: &ScanContext<'_>, config: &Path) -> Option<BTreeSet<String>
     };
     entries
         .iter()
-        .filter(|entry| Path::new(&entry.name).extension() == Some(OsStr::new("json")))
+        .filter(|entry| is_marker(&entry.name))
         .map(|marker| {
             let bytes = cx.read_file(&dir.join(&marker.name), MARKER_LIMIT).ok()?;
             session_id(&bytes)
         })
         .collect()
+}
+
+/// Whether `name` is a marker's. Any case counts: an unread marker reads as a closed session.
+fn is_marker(name: &OsStr) -> bool {
+    Path::new(name)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
 }
 
 /// The `sessionId` of a marker, in lowercase, and nothing else of it.
