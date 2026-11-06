@@ -1157,6 +1157,62 @@ fn git_answers_for_a_finding_inside_a_repository_and_nothing_else_is_asked() {
     );
 }
 
+/// Catches a finding that is a file being held for unknown git, because the OS answers
+/// `ENOTDIR` for a `.git` below it, and the fix for that hiding a repository above the file
+/// or a probe that failed: only "not a directory" says nothing is there.
+#[test]
+fn a_file_finding_holds_no_repository_and_git_still_answers_for_one_above_it() {
+    let not_a_directory = |file: &str| {
+        let git = Path::new(file).join(".git");
+        (git, Err(io::ErrorKind::NotADirectory))
+    };
+    let mut fs = git_fs();
+    fs.entries.extend([
+        not_a_directory("/found/plain/app.log"),
+        not_a_directory("/found/repo/app.log"),
+        (
+            PathBuf::from("/found/plain/denied.log/.git"),
+            Err(io::ErrorKind::PermissionDenied),
+        ),
+    ]);
+    let ports = Ports {
+        tracked: Box::new(FakeGit(Ok(1))),
+        ..ports(fs, FakeSizer::default())
+    };
+    let proposer = Proposer {
+        paths: &[
+            "/found/plain/app.log",
+            "/found/repo/app.log",
+            "/found/plain/denied.log",
+        ],
+    };
+
+    let found = facts(ports, proposer);
+
+    let tracked = |path: &str| &found[Path::new(path)].tracked;
+    assert!(
+        matches!(tracked("/found/plain/app.log"), Tracked::NoRepository),
+        "a file with no repository above it has none, got {:?}",
+        tracked("/found/plain/app.log")
+    );
+    assert!(
+        matches!(
+            tracked("/found/repo/app.log"),
+            Tracked::Asked { work_tree, tracked: 1 } if work_tree == Path::new("/found/repo")
+        ),
+        "a file inside a repository carries git's answer, got {:?}",
+        tracked("/found/repo/app.log")
+    );
+    assert!(
+        matches!(
+            tracked("/found/plain/denied.log"),
+            Tracked::Unchecked(error) if error.io_kind() == Some(io::ErrorKind::PermissionDenied)
+        ),
+        "a probe that failed leaves tracking unchecked, got {:?}",
+        tracked("/found/plain/denied.log")
+    );
+}
+
 /// A process the probe identified as running `path`.
 fn identified(pid: u32, path: &str) -> ProcessRecord {
     let outcome = ProcessOutcome::Identified {
