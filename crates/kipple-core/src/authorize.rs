@@ -56,15 +56,31 @@ pub enum Authorization {
 ///     kipple_core::ReviewedPlan(digest)
 /// }
 /// ```
+///
+/// ```compile_fail,E0624
+/// // Nor by naming a plan it never showed.
+/// fn forge(plan: &kipple_core::Plan) -> kipple_core::ReviewedPlan {
+///     kipple_core::ReviewedPlan::of(plan)
+/// }
+/// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReviewedPlan(Digest);
 
 impl ReviewedPlan {
-    /// `plan`, as shown. Only for driving [`apply`](crate::apply) directly: `clean`
-    /// makes it from the plan it prepared ([`Confirmed::Person`](crate::Confirmed)).
+    /// `plan`, as shown: `clean` makes it from the plan it prepared
+    /// ([`Confirmed::Person`](crate::Confirmed)).
     #[must_use]
-    pub const fn of(plan: &Plan) -> Self {
+    pub(crate) const fn of(plan: &Plan) -> Self {
         Self(plan.digest())
+    }
+
+    /// `plan`, as if a person saw it. Only for the core's own tests, which drive
+    /// [`apply`](crate::apply) directly with no frontend to show it. Only under the
+    /// `platform-tests` feature, as [`DeleteOp::for_platform_tests`].
+    #[cfg(feature = "platform-tests")]
+    #[must_use]
+    pub const fn for_core_tests(plan: &Plan) -> Self {
+        Self::of(plan)
     }
 }
 

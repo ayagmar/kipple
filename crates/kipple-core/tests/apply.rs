@@ -347,7 +347,7 @@ fn plan_some(scan: &ScanReport, ids: &[u64], config: &Config, world: &World) -> 
 }
 
 const fn reviewed(plan: &Plan) -> Authorization {
-    Authorization::Reviewed(kipple_core::ReviewedPlan::of(plan))
+    Authorization::Reviewed(kipple_core::ReviewedPlan::for_core_tests(plan))
 }
 
 fn run(plan: &Plan, rescan: &ScanReport, config: &Config, world: &World) -> Receipt {

@@ -10,8 +10,9 @@ publish.workspace = true
 
 [features]
 # `DeleteOp::for_platform_tests` and `TrashOp::for_platform_tests`, for the platform's
-# native executor and trash tests. Only ever a dev-dependency feature: `cargo xtask
-# check-arch` fails on any other use.
+# native executor and trash tests, and `ReviewedPlan::for_core_tests`, for this crate's
+# apply tests. Only ever a dev-dependency feature: `cargo xtask check-arch` fails on any
+# other use.
 platform-tests = []
 
 [dependencies]
@@ -20,6 +21,11 @@ schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+
+# `kipple-platform`'s dev-dependency turns the feature on in a workspace test run.
+[[test]]
+name = "apply"
+required-features = ["platform-tests"]
 
 [lints]
 workspace = true
