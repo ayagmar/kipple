@@ -106,12 +106,23 @@ pub(crate) enum GitBelowFile {
     Absent,
 }
 
+/// How the disk treats a name's case.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Names {
+    /// As the temp directory's file system does. Linux keeps case apart.
+    AsTheDiskDoes,
+    /// Looking up a name finds an entry that differs only by case, as macOS and Windows do
+    /// by default, so a suite run on Linux meets what they would answer.
+    Folded,
+}
+
 /// The real file system, with each path's identity derived from it, as a host with no links
 /// above the tree has.
 #[derive(Debug)]
 struct TempFs {
     reads: Reads,
     git_below_file: GitBelowFile,
+    names: Names,
 }
 
 impl TempFs {
@@ -126,6 +137,30 @@ impl TempFs {
             GitBelowFile::Absent => io::ErrorKind::NotFound,
         })
     }
+
+    /// The entry a lookup of `path` lands on.
+    fn found(&self, path: &Path) -> PathBuf {
+        let folded = || {
+            let name = path.file_name()?.to_str()?.to_lowercase();
+            let entries = fs::read_dir(path.parent()?).ok()?;
+            let same = |entry: &fs::DirEntry| {
+                entry
+                    .file_name()
+                    .to_str()?
+                    .to_lowercase()
+                    .eq(&name)
+                    .then_some(())
+            };
+            entries
+                .flatten()
+                .find(|entry| same(entry).is_some())
+                .map(|entry| entry.path())
+        };
+        let fold = self.names == Names::Folded;
+        fold.then(folded)
+            .flatten()
+            .unwrap_or_else(|| path.to_owned())
+    }
 }
 
 impl FsProbe for TempFs {
@@ -133,7 +168,7 @@ impl FsProbe for TempFs {
         if let Some(kind) = self.git_below_file(path) {
             return Err(ProbeError::io(path, kind.into()));
         }
-        let meta = fs::symlink_metadata(path).map_err(|e| ProbeError::io(path, e))?;
+        let meta = fs::symlink_metadata(self.found(path)).map_err(|e| ProbeError::io(path, e))?;
         Ok(EntryMeta {
             kind: kind(meta.file_type()),
             identity: Some(identity(path)),
@@ -349,6 +384,7 @@ pub(crate) struct Host {
     /// Which OS's rules run.
     pub(crate) platform: Platform,
     pub(crate) git_below_file: GitBelowFile,
+    pub(crate) names: Names,
     roots: BTreeMap<SymbolicRoot, Vec<String>>,
     unresolved: Vec<SymbolicRoot>,
 }
@@ -377,6 +413,7 @@ impl Host {
             },
             platform: Platform::Linux,
             git_below_file: GitBelowFile::Absent,
+            names: Names::AsTheDiskDoes,
             roots,
             unresolved: Vec::new(),
         }
@@ -425,6 +462,7 @@ impl Host {
         let fs = TempFs {
             reads: Arc::clone(&reads),
             git_below_file: self.git_below_file,
+            names: self.names,
         };
         let engine = engine(self.platform, self.now, &shown, fs);
         let cancel = CancelToken::new();

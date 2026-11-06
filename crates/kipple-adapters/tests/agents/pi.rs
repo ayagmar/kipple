@@ -7,7 +7,7 @@ use kipple_core::{
     Proposal, Protection, SymbolicRoot, Unread, Verdict,
 };
 
-use super::host::{DAY, Generated, Host, Scan, running};
+use super::host::{DAY, Generated, Host, Names, Scan, running};
 use super::pi_v1_5_0::{self as fixture, MARKER, VERSION};
 use super::tree::{FixtureTree, Holds};
 
@@ -285,6 +285,26 @@ fn third_party_log_beside_the_store_is_no_candidate() {
     );
     assert_eq!(
         scan.protection("home/.pi/logs/superpowers-plus.log", PI),
+        Some(Protection::Subresource)
+    );
+}
+
+/// Catches a name the rule doesn't list reaching it on a disk that folds case: the probe of
+/// `pi-debug.log` lands on this file, and the lowercase path it reports is one the host's
+/// exact area opens. Pinned 35 names literal names.
+#[test]
+fn a_log_in_another_case_is_no_candidate() {
+    let mut tree = FixtureTree::new();
+    fixture::install(&mut tree, AGENT, VERSION);
+    tree.file(&at("PI-DEBUG.LOG"), b"not pi's\n");
+    let mut host = Host::new(tree);
+    host.names = Names::Folded;
+
+    let scan = host.scan();
+
+    assert_eq!(scan.found(LOGS), [""; 0]);
+    assert_eq!(
+        scan.protection(&at("PI-DEBUG.LOG"), PI),
         Some(Protection::Subresource)
     );
 }

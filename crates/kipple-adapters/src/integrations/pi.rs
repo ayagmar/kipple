@@ -430,14 +430,18 @@ fn kind_of(cx: &ScanContext<'_>, path: &Path) -> Result<Option<EntryKind>, Probe
 
 /// Adds each log that is a regular file: under the removing rule where it runs, and under the
 /// inventory where it doesn't. A link or a directory of one of these names is none of Pi's.
+/// Each is matched against the listing: on a disk that folds case, probing the literal name
+/// would land on a file the rule doesn't name, under a path the host's exact area opens.
 fn add_logs(
     cx: &ScanContext<'_>,
     sink: &mut FindingSink<'_>,
     agent: &Path,
 ) -> Result<(), IntegrationError> {
+    let entries = cx.read_dir(agent)?;
     for name in LOGS {
         let path = agent.join(name);
-        if kind_of(cx, &path)? != Some(EntryKind::File) {
+        let is_log = |entry: &DirEntryMeta| entry.name == *name && entry.kind == EntryKind::File;
+        if !entries.iter().any(is_log) {
             continue;
         }
         let Some(rule) = rule_of(cx, CLOSED_LOGS) else {
