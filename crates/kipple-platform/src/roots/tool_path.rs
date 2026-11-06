@@ -1,9 +1,10 @@
 //! What an agent means by a path it was given, tool by tool. Decoding a value differently
 //! from its tool names the wrong directory with no error, so the real store stays open, or
 //! refuses a setup the tool accepts. Codex's rules are `AbsolutePathBuf`'s, Pi's are
-//! `normalizePath`'s. The platform is a parameter so every OS's rules are tested on every OS.
+//! `normalizePath`'s. A value is decoded exactly that way or refused, which holds. The
+//! platform is a parameter so every OS's rules are tested on every OS.
 
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use kipple_core::Platform;
 
@@ -52,6 +53,24 @@ impl Tool {
     }
 }
 
+/// `path` with `.` and `..` folded by text, as both tools fold them: `..` drops the name
+/// before it, whether that name exists or is a link.
+pub(super) fn folded(path: &Path) -> PathBuf {
+    let mut folded = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                folded.pop();
+            }
+            Component::Prefix(_) | Component::RootDir | Component::Normal(_) => {
+                folded.push(component.as_os_str());
+            }
+        }
+    }
+    folded
+}
+
 /// A Git Bash, MSYS, Cygwin or WSL drive path in the form Windows reads: `/c/x`,
 /// `/cygdrive/c/x` and `/mnt/c/x` are `C:\x`.
 fn shell_path(text: &str, platform: Platform) -> Option<String> {
@@ -83,11 +102,17 @@ fn drive_path(text: &str) -> Option<String> {
     })
 }
 
-/// The path a `file://` URL names, as Node's `fileURLToPath` gives it. What it refuses is
-/// `None`: another host outside Windows, an encoded separator, bad percent-encoding, and on
-/// Windows a local path with no drive.
+/// The path a `file://` URL names, as Node's `fileURLToPath` gives it, with its dot segments
+/// still to fold. The URL parser Node runs first drops or rewrites what is refused here, so
+/// reading those forms as text would name another directory: a backslash, a tab, a line
+/// break and white space at the end. Also refused, as `fileURLToPath` refuses them: another
+/// host outside Windows, an encoded separator, bad percent-encoding, and on Windows a local
+/// path with no drive.
 fn file_url(text: &str, platform: Platform) -> Option<String> {
     let rest = text.strip_prefix("file://")?;
+    if text.contains(['\\', '\t', '\r', '\n']) || text.ends_with(|c| c <= ' ') {
+        return None;
+    }
     let rest = rest.split(['?', '#']).next()?;
     let (host, path) = rest.split_once('/').unwrap_or((rest, ""));
     let host = if host.eq_ignore_ascii_case("localhost") {
@@ -101,12 +126,19 @@ fn file_url(text: &str, platform: Platform) -> Option<String> {
     }
     let path = path.replace('/', "\\");
     if !host.is_empty() {
-        return Some(format!(r"\\{host}\{path}"));
+        return plain_host(host).then(|| format!(r"\\{host}\{path}"));
     }
     let [letter, b':', b'\\', ..] = path.as_bytes() else {
         return None;
     };
     letter.is_ascii_alphabetic().then_some(path)
+}
+
+/// Whether the URL parser keeps `host` as it is written. A drive (`C:`, `C|`), an escape or
+/// a number it reads as an address would come out as something else.
+fn plain_host(host: &str) -> bool {
+    let name = |byte: u8| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'.';
+    host.starts_with(|c: char| c.is_ascii_alphabetic()) && host.bytes().all(name)
 }
 
 /// `text` with its `%` escapes read, `None` if one is malformed, isn't UTF-8 or encodes a
@@ -136,7 +168,7 @@ mod tests {
 
     use kipple_core::Platform;
 
-    use super::Tool;
+    use super::{Tool, folded};
 
     const LINUX: Platform = Platform::Linux;
     const WINDOWS: Platform = Platform::Windows;
@@ -179,6 +211,24 @@ mod tests {
             (Tool::Pi, LINUX, "file:///a%zz", "file:///a%zz"),
             (Tool::Pi, LINUX, "file:///a%ff", "file:///a%ff"),
             (Tool::Pi, LINUX, "/c/x", "/c/x"),
+            (Tool::Pi, LINUX, "file:///a/../b", "/b"),
+            (Tool::Pi, LINUX, "file:///a/%2e%2e/b", "/b"),
+            (Tool::Pi, LINUX, "file:///a/%2E./b", "/b"),
+            (Tool::Pi, LINUX, "file:///a/%2e/b", "/a/b"),
+            (Tool::Pi, LINUX, "file:///a/./b", "/a/b"),
+            (Tool::Pi, LINUX, r"file:///a\b", r"file:///a\b"),
+            (Tool::Pi, LINUX, "file:///a\tb", "file:///a\tb"),
+            (Tool::Pi, LINUX, "file:///a\nb", "file:///a\nb"),
+            (Tool::Pi, LINUX, "file:///a\rb", "file:///a\rb"),
+            (Tool::Pi, LINUX, "file:///a ", "file:///a "),
+            (Tool::Pi, LINUX, "file:///a?q ", "file:///a?q "),
+            (Tool::Pi, LINUX, " file:///a", " file:///a"),
+            (Tool::Pi, LINUX, "file:///a b", "/a b"),
+            (Tool::Pi, WINDOWS, "file://C:/x", "file://C:/x"),
+            (Tool::Pi, WINDOWS, "file://C|/x", "file://C|/x"),
+            (Tool::Pi, WINDOWS, "file://a%62/x", "file://a%62/x"),
+            (Tool::Pi, WINDOWS, "file://1.1/x", "file://1.1/x"),
+            (Tool::Pi, WINDOWS, r"file:///C:\a", r"file:///C:\a"),
             (Tool::Pi, WINDOWS, "file:///C:/a/b", r"C:\a\b"),
             (
                 Tool::Pi,
@@ -199,7 +249,7 @@ mod tests {
         ];
 
         for (tool, platform, text, expected) in rows {
-            let found = tool.plain(text, platform);
+            let found = folded(&tool.plain(text, platform));
             let expected = PathBuf::from(expected);
             assert_eq!(found, expected, "{tool:?} on {platform:?} for {text:?}");
         }
