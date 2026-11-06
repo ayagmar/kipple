@@ -83,6 +83,8 @@ struct Disk {
     odd: Vec<PathBuf>,
     /// Directories that are mounts: they and everything below them are another volume.
     mounts: Vec<PathBuf>,
+    /// Links that read as holding the second path, and not what the OS made of it.
+    stored: Vec<(PathBuf, PathBuf)>,
     /// The home directory, which only its user may enter.
     home: PathBuf,
     /// Every file that was opened, in order.
@@ -193,6 +195,10 @@ impl FsProbe for Disk {
 
     fn read_link(&self, path: &Path) -> Result<PathBuf, ProbeError> {
         self.check(path)?;
+        let stored = self.stored.iter().find(|(link, _)| link == path);
+        if let Some((_, target)) = stored {
+            return Ok(target.clone());
+        }
         fs::read_link(path).map_err(|e| ProbeError::io(path, e))
     }
 
@@ -266,8 +272,20 @@ fn denied() -> Unread {
     Unread::Failed(Arc::new(io::ErrorKind::PermissionDenied.into()))
 }
 
+/// `path` as the host takes it: one starting with `/` is made absolute, since Windows takes
+/// a path without a drive as relative, and a process's command line only says where it runs
+/// from when its program is absolute. Anything else is kept as it is.
+fn abs(path: &str) -> PathBuf {
+    if path.starts_with('/') && !Path::new("/").is_absolute() {
+        PathBuf::from(format!("C:{path}"))
+    } else {
+        PathBuf::from(path)
+    }
+}
+
 fn argv(values: &[&str]) -> Vec<OsString> {
-    values.iter().map(OsString::from).collect()
+    let value = |value: &&str| abs(value).into_os_string();
+    values.iter().map(value).collect()
 }
 
 /// A process of `owner` that couldn't be inspected, as Linux shows another user's.
@@ -299,7 +317,7 @@ fn inspected(pid: u32, executable: &Path, root_dir: FileIdentity) -> ProcessReco
     let name = executable.file_name().unwrap_or_default().to_owned();
     ProcessRecord {
         owner: ProcessOwner::CurrentUser,
-        cwd: Ok(PathBuf::from("/")),
+        cwd: Ok(abs("/")),
         argv: Ok(vec![name]),
         env_paths: Ok(Vec::new()),
         mapped_files: Ok(Vec::new()),
@@ -347,6 +365,9 @@ pub(crate) struct Scene {
     pub(crate) odd: Vec<String>,
     /// Paths in the tree that are mounts.
     pub(crate) mounts: Vec<String>,
+    /// A link in the tree, and the path below the tree it reads as holding. Windows may fold
+    /// `..` out of a target as it makes the link, so a test of one can't build it there.
+    pub(crate) stored: Vec<(String, String)>,
     /// Which OS's rules apply.
     pub(crate) platform: Platform,
     /// Paths in the tree that a process of the user runs from.
@@ -368,6 +389,7 @@ impl Scene {
             denied: Vec::new(),
             odd: Vec::new(),
             mounts: Vec::new(),
+            stored: Vec::new(),
             platform: Platform::Linux,
             running: Vec::new(),
             inventory: Inventory::Complete,
@@ -431,6 +453,11 @@ impl Scene {
             denied: inside(&self.denied),
             odd: inside(&self.odd),
             mounts: inside(&self.mounts),
+            stored: self
+                .stored
+                .iter()
+                .map(|(link, target)| (root.join(link), root.join(target)))
+                .collect(),
             home: root.join("home"),
             opened: Arc::default(),
         };
@@ -501,7 +528,7 @@ impl Built {
     }
 
     fn snapshot(&self) -> ProcessSnapshot {
-        let root_dir = self.disk.identity(Path::new("/"));
+        let root_dir = self.disk.identity(&abs("/"));
         let shell = self.temp.path().join("usr/bin/zsh");
         let mut processes = session(&shell, root_dir);
         for (pid, path) in (3000..).zip(&self.running) {

@@ -800,7 +800,7 @@ fn stderr_logs_and_pid_files_never_candidates() {
     assert!(scan.closed(previous), "expected it to stay closed");
 }
 
-/// Sets `key` in each file of the home that can set it, one at a time.
+/// Each file of the home that can set `log_dir`, one at a time, with what it holds.
 fn config_layers() -> Vec<(&'static str, &'static [u8])> {
     let top: &[u8] = b"log_dir = \"logs\"\n";
     let table: &[u8] = b"[profiles.work]\nlog_dir = \"logs\"\n";
@@ -865,16 +865,18 @@ fn tui_log_eligible_only_with_log_dir_unset() {
 /// reported as such, whether the directory is outside every root or simply not there yet.
 #[test]
 fn a_log_dir_out_of_reach_is_reported_unread() {
+    let built = verified_with_files().build();
+    let home = built.home();
+    let outside = home.parent().unwrap().with_file_name("elsewhere");
     for (value, shown) in [
-        ("/var/log/codex", "var/log/codex"),
+        (outside.to_str().unwrap(), "elsewhere"),
         ("../logs", "../logs"),
         ("logs-not-there-yet", "logs-not-there-yet"),
     ] {
-        let mut scene = verified_with_files();
-        let config = format!("log_dir = \"{value}\"\n");
-        scene.tree.file(&at("config.toml"), config.as_bytes());
+        let config = format!("log_dir = '{value}'\n");
+        fs::write(home.join("config.toml"), config).unwrap();
 
-        let scan = scene.scan();
+        let scan = built.scan();
 
         let rows = scan.rows();
         let reported = rows.iter().filter(|row| row.contains(shown)).count();
@@ -977,7 +979,7 @@ fn catalog_name_must_match() {
     let dir = "cache/remote_plugin_catalog";
     let mut scene = verified_with_files();
     let others = [
-        "0123456789ABCDEF.json",
+        "ABCDEF0123456789.json",
         "0123456789abcde.json",
         "0123456789abcdef0.json",
         "0123456789abcdef.tmp",
@@ -1129,11 +1131,12 @@ fn selection_must_land_on_a_signed_release() {
     unsigned.tree.dir(&kept);
     unsigned.tree.link(&current, &kept, Holds::AbsoluteInTree);
     let mut climbing = base();
-    climbing.tree.link(
-        &current,
-        "/x/../releases/0.166.0-x86_64-unknown-linux-musl",
-        Holds::AsWritten,
-    );
+    let selected = at(&release(STANDALONE, &name(V166)));
+    climbing
+        .tree
+        .link(&current, &selected, Holds::AbsoluteInTree);
+    let through = at(&format!("packages/standalone/x/../releases/{}", name(V166)));
+    climbing.stored.push((current.clone(), through));
 
     for (case, scene) in [
         ("missing", missing),
