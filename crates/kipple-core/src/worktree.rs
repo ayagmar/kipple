@@ -219,6 +219,8 @@ pub trait WorktreeQuery: fmt::Debug + Send + Sync {
     ///
     /// # Errors
     /// When git couldn't answer in full: never "no worktrees".
+    /// [`GitGap::Unplaced`] says `<repository>/.git` is a file naming nothing that is there,
+    /// so there is no repository to ask.
     fn list(&self, repository: &Path, cancel: &CancelToken) -> Result<Vec<Registration>, GitGap>;
 
     /// What the worktree `registration` names is now.

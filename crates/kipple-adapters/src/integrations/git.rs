@@ -275,7 +275,7 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
             EntryKind::File => match git_file(self.cx, &dir) {
                 GitFile::Linked { common } => {
                     self.list(&dir, &common)?;
-                    if !self.failed.contains(&common) {
+                    if !self.failed.contains(&common) && !self.broken.contains(&dir) {
                         self.unconfirmed.push(dir);
                     }
                     Ok(())
@@ -302,6 +302,11 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
         match listed {
             Ok(registrations) => self.registrations(&registrations),
             Err(_) if self.cx.is_cancelled() => Err(IntegrationError::Stopped),
+            // What its `.git` names is gone, which the platform can see past the roots.
+            Err(GitGap::Unplaced) => {
+                self.broken.push(dir.to_owned());
+                Ok(())
+            }
             Err(gap) => {
                 self.failed.insert(common.to_owned());
                 self.sink.omit_worktrees(dir, gap);

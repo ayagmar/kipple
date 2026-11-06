@@ -61,6 +61,9 @@ impl GitQuery {
 
 impl WorktreeQuery for GitQuery {
     fn list(&self, repository: &Path, cancel: &CancelToken) -> Result<Vec<Registration>, GitGap> {
+        if link_is_gone(repository)? {
+            return Err(GitGap::Unplaced);
+        }
         let tail = ["worktree", "list", "--porcelain", "-z"];
         parse_list(&self.worktree_git()?.ask(repository, &tail, cancel)?)
     }
@@ -95,6 +98,19 @@ impl WorktreeQuery for GitQuery {
         }
         state
     }
+}
+
+/// Whether `<dir>/.git` is a file naming something that isn't there: git can only fail from
+/// there, and that failure says less than this does.
+fn link_is_gone(dir: &Path) -> Result<bool, GitGap> {
+    let gitfile = dir.join(".git");
+    if kind(&gitfile)? != Some(EntryKind::File) {
+        return Ok(false);
+    }
+    let Some(target) = text_of(&gitfile)?.and_then(|text| gitfile_target(&text)) else {
+        return Ok(false);
+    };
+    Ok(kind(&dir.join(target))?.is_none())
 }
 
 /// How many refs the admin directory `admin` holds.

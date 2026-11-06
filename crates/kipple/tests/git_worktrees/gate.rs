@@ -818,6 +818,32 @@ fn a_repository_moved_out_of_reach_leaves_its_worktree_unregistered() {
     );
 }
 
+/// Catches a checkout dropped when its lost repository lay outside every root: what its
+/// `.git` names can't be read through a root, so only the platform can say it is gone.
+#[test]
+fn a_checkout_whose_repository_lay_outside_every_root_is_unregistered() {
+    let repo = Repo::bare_bones(Refs::Files);
+    let outside = repo.temp.path().join("outside");
+    fs::create_dir(&outside).unwrap();
+    let away = outside.join("app");
+    let away_text = away.display().to_string();
+    repo.git(&["clone", "-q", ".", &away_text]);
+    repo.git_in(
+        &away,
+        &["worktree", "add", "-q", "-b", "far", "../../projects/far"],
+    );
+    rename(&away, &outside.join("gone"));
+
+    let scan = repo.scan();
+
+    assert_eq!(
+        scan.fact_at("far", "registration_state"),
+        FactValue::Enum(RegistrationState::PresentUnregistered.name())
+    );
+    let omissions = scan.0.integrations.iter().flat_map(|i| &i.omissions);
+    assert_eq!(omissions.count(), 0, "its one finding says what is known");
+}
+
 /// Catches a checkout found twice when its repository moved inside a root: the moved
 /// repository still lists it, so it has its registration's one finding, which disagrees
 /// with what is on disk.
