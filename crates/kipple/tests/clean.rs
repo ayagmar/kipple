@@ -16,6 +16,12 @@ mod bun_v1_4_2;
 mod cargo_v1_99_0;
 #[path = "../../kipple-adapters/tests/fixtures/claude-code/settings.rs"]
 mod claude_settings;
+#[path = "../../kipple-adapters/tests/fixtures/codex/demo.rs"]
+mod codex_demo;
+#[path = "../../kipple-adapters/tests/fixtures/codex/v0_165_0.rs"]
+mod codex_v0_165_0;
+#[path = "../../kipple-adapters/tests/fixtures/codex/v0_166_0.rs"]
+mod codex_v0_166_0;
 #[path = "../../kipple-adapters/tests/fixtures/demo_home.rs"]
 mod demo_home;
 #[path = "../../kipple-adapters/tests/fixtures/journald/v262.rs"]
@@ -53,6 +59,11 @@ use kipple_platform::{Environment, PLATFORM};
 use serde_json::Value;
 use tempfile::TempDir;
 
+// The demo's fixtures hold what other tests use too.
+const _: () = {
+    let _ = codex_v0_166_0::windows_release;
+};
+
 const TARGET: &str = "builtin.cargo.target";
 const ACME: &str = "home/projects/clients/acme/api/target";
 const RUST_APP: &str = "home/projects/rust-app/target";
@@ -87,6 +98,25 @@ impl Demo {
 
     fn at(&self, relative: &str) -> PathBuf {
         self.temp.path().join(relative)
+    }
+
+    /// Adds the Codex demo to the tree and its roots to the roots file, and says where its
+    /// home is.
+    fn with_codex(&self) -> PathBuf {
+        let root = self.temp.path();
+        let mut tree = tree::FixtureTree::new();
+        codex_demo::demo(&mut tree);
+        tree.build_in(root).unwrap();
+        codex_demo::selection_history(root, tree::FixtureTree::link_stamp).unwrap();
+        let home = root.join(codex_demo::HOME);
+        let mut file = fs::read_to_string(&self.roots).unwrap();
+        for name in ["codex.home", "codex.default-home"] {
+            writeln!(file, "{name} = {}", home.display()).unwrap();
+        }
+        let store = home.join("packages");
+        writeln!(file, "codex.release-store = {}", store.display()).unwrap();
+        fs::write(&self.roots, file).unwrap();
+        home
     }
 
     /// The environment a run sees: the roots file, and `PATH`, so git can be asked.
@@ -714,6 +744,48 @@ fn a_file_git_tracks_inside_a_target_stays() {
         "the build output beside it is gone"
     );
     assert!(!present(&demo.at(ACME)), "the other target is gone whole");
+}
+
+/// Catches a file a repository tracks being told as a clean that can only fail (04 §3.2): the
+/// scan can't tell, but the plan lists it as left out with the reason and holds no item for
+/// it, and `clean` ends as for any refused item, with the file in place. The rule is Linux's.
+#[test]
+fn a_file_a_repository_tracks_is_left_out_of_the_plan_with_the_reason() {
+    if PLATFORM != Platform::Linux {
+        return;
+    }
+    let demo = Demo::new();
+    let home = demo.with_codex();
+    let file = "cache/remote_plugin_catalog/0123456789abcdef.json";
+    git(&demo, &home, &["init", "-q"]);
+    git(&demo, &home, &["add", "-f", "--", file]);
+    let only = ["--only", "builtin.codex.plugin-catalog-cache"];
+    let reason = "a repository tracks it";
+
+    let scanned = demo.run(&["scan", "--json"]);
+    assert_eq!(scanned.code, ExitCode::SUCCESS, "{}", scanned.err);
+
+    let plan_file = demo.at("plan.json");
+    let plan_arg = plan_file.to_str().unwrap();
+    let planned = demo.run(&["plan", only[0], only[1], "-o", plan_arg]);
+    assert_eq!(planned.code, ExitCode::SUCCESS, "{}", planned.err);
+    assert!(planned.err.contains(reason), "{}", planned.err);
+    let plan = json(&fs::read_to_string(&plan_file).unwrap());
+    assert_eq!(items(&plan, "items").len(), 0, "{plan}");
+
+    let told = demo.run(&["clean", only[0], only[1], "--yes"]);
+    assert!(told.out.contains(reason), "{}", told.out);
+
+    let ran = demo.run(&["clean", only[0], only[1], "--yes", "--json"]);
+    assert_eq!(ran.code, ExitCode::from(3), "{}", ran.err);
+    let receipt = json(&ran.out);
+    let skips: Vec<&Value> = items(&receipt, "refused")
+        .iter()
+        .map(|refused| &refused["skip"]["skip"])
+        .collect();
+    assert_eq!(skips, ["tracked"], "{receipt}");
+    assert_eq!(items(&receipt, "items").len(), 0, "{receipt}");
+    assert!(present(&home.join(file)), "the tracked file stays");
 }
 
 /// Runs the host's git in `dir`, with a temporary home and no config of the user's.

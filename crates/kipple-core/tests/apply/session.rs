@@ -4,17 +4,17 @@
 use kipple_core::format::{decode_plan_file, encode_plan_file};
 use kipple_core::{
     Activity, ActivityGap, Answer, ApplyEvent, ApplyPorts, CancelToken, CleanRequest, Completeness,
-    Confirm, Consent, Depth, Digest, Ending, EventSink, Finished, GitGap, Hold, ItemEvent, ItemId,
-    ItemOutcome, Method, Reconciled, RestoreAsk, RestoreResult, Restoring, Review, RunRead,
-    ScanReport, Session, Skip, Status, StoreRefusal, Total, Tracked, read_run, run_clean,
-    run_restore,
+    Confirm, Consent, Depth, Digest, Ending, EventSink, FindingId, Finished, GitGap, Hold,
+    ItemEvent, ItemId, ItemOutcome, Method, Reconciled, RestoreAsk, RestoreResult, Restoring,
+    Review, RunRead, ScanReport, Session, Skip, Status, StoreRefusal, Total, Tracked, read_run,
+    run_clean, run_restore,
 };
 use kipple_core::{ApplyFile, Dropped, ImportedPlan, PlanMode, run_apply};
 
 use super::codec::TestCodec;
 use super::world::{Crash, Rescanned, World};
 use super::{
-    Config, everything, home, plan_all, ports, project, rel, rescanned, scan_of, world_of,
+    Config, everything, home, plan_all, ports, project, refusals, rel, rescanned, scan_of, world_of,
 };
 
 /// Answers every prompt with its answer, keeping the digest of each plan shown.
@@ -659,4 +659,33 @@ fn activity_and_git_are_asked_again_at_apply() {
         "what git tracks now stays"
     );
     assert!(!left.entries.contains_key(&rel("a")), "the rest goes");
+}
+
+/// Catches a finding a repository tracks whole being planned with every entry left out: it
+/// could only fail at apply, with a reason that says it changed. It is refused at plan, and
+/// the item beside it, which git tracks nothing in, is planned.
+#[test]
+fn a_finding_a_repository_tracks_whole_is_refused_at_plan() {
+    let mut machine = Machine::new(Method::Delete);
+    for finding in &mut machine.scan.findings {
+        finding.facts.as_mut().unwrap().tracked = Tracked::Asked {
+            work_tree: finding.path.parent().unwrap().to_owned(),
+            tracked: 1,
+        };
+    }
+    {
+        let mut state = machine.world.state();
+        state.git.insert(home("p0/target"), Ok(vec![rel("")]));
+        state.git.insert(home("p1/target"), Ok(Vec::new()));
+    }
+
+    let planned = plan_all(
+        &machine.scan,
+        &machine.config,
+        &machine.world,
+        PlanMode::SafeOnly,
+    );
+
+    assert_eq!(refusals(&planned), [(FindingId(0), Skip::Tracked)]);
+    assert_eq!(planned.plan.entries().len(), 1, "p1 is planned");
 }

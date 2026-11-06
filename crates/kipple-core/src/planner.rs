@@ -466,6 +466,9 @@ fn freeze(
         return Err(Skip::Freeze(ApplyError::new(code)));
     }
     let tracked = untracked(judged, &freeze.tree, ports, cancel)?;
+    if tracked.contains(&NodeId::TOP) {
+        return Err(Skip::Tracked);
+    }
     let mut entry = entry(judged, file_system, Arc::new(freeze.tree));
     leave_out(&mut entry, &tracked);
     Ok(entry)

@@ -54,6 +54,33 @@ fn an_unchanged_tree_is_removed_whole_and_nothing_else() {
     site.assert_outside_intact();
 }
 
+/// Catches a target that is one file: it has no entries of its own, so a delete that only
+/// walks what is below the target removes nothing, and one that takes its directory removes
+/// the sibling too.
+#[test]
+fn a_lone_file_is_removed_and_its_sibling_stays() {
+    let site = Site::new();
+    write(&site.at("cache/target.json"), b"target");
+    write(&site.at("cache/sibling.json"), b"beside the target");
+    let anchor = site.anchor("cache/target.json");
+    let frozen = freeze(&anchor);
+    assert_eq!(frozen.tree.entry_count(), 1, "the file alone");
+
+    let outcome = delete(&anchor, frozen.tree);
+
+    assert_eq!(outcome.status(), Status::Done, "{outcome:?}");
+    assert_eq!(removed(&outcome).names, 1);
+    assert!(
+        !present(&site.at("cache/target.json")),
+        "the file is gone: {outcome:?}"
+    );
+    assert!(
+        present(&site.at("cache/sibling.json")),
+        "its sibling stays: {outcome:?}"
+    );
+    site.assert_outside_intact();
+}
+
 /// Catches the root of a root's contents being removed (04 §3.2).
 #[test]
 fn a_roots_contents_go_and_the_root_stays() {

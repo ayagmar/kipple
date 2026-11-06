@@ -246,12 +246,351 @@
     {
       "id": "codex",
       "lens": "agents",
-      "verified": [],
-      "facts": [],
+      "verified": [
+        "Codex 0.165.0",
+        "Codex 0.166.0"
+      ],
+      "facts": [
+        {
+          "name": "layout",
+          "kind": "enum",
+          "values": [
+            "supported"
+          ],
+          "selector": null,
+          "meaning": "only known components, each selecting a release of a verified version"
+        },
+        {
+          "name": "codex.version_supported",
+          "kind": "enum",
+          "values": [
+            "supported",
+            "unsupported"
+          ],
+          "selector": null,
+          "meaning": "whether every selected release is a version kipple was verified against"
+        },
+        {
+          "name": "inventory",
+          "kind": "enum",
+          "values": [
+            "complete"
+          ],
+          "selector": "verified-release-directories",
+          "meaning": "every entry of the release's store could be read and classified"
+        },
+        {
+          "name": "installer_activity",
+          "kind": "enum",
+          "values": [
+            "idle",
+            "busy"
+          ],
+          "selector": "verified-release-directories",
+          "meaning": "whether the store holds a marker of an install in progress"
+        },
+        {
+          "name": "log_dir.configured",
+          "kind": "bool",
+          "selector": "codex-legacy-tui-log",
+          "meaning": "whether a config file in the Codex home sets `log_dir`; system-wide config isn't read"
+        },
+        {
+          "name": "tui_log.writer",
+          "kind": "enum",
+          "values": [
+            "none",
+            "possible"
+          ],
+          "selector": "codex-legacy-tui-log",
+          "meaning": "whether a selected release may still append to the log"
+        }
+      ],
       "protected": [
         {
           "root": "codex.home",
-          "entries": [],
+          "entries": [
+            {
+              "path": "packages/standalone/releases/.staging.",
+              "matches": "prefix"
+            },
+            {
+              "path": "packages/standalone/releases/.retired.",
+              "matches": "prefix"
+            },
+            {
+              "path": "packages/standalone/releases/local-",
+              "matches": "prefix"
+            },
+            {
+              "path": "packages/app-server-daemon/releases/.staging.",
+              "matches": "prefix"
+            },
+            {
+              "path": "packages/app-server-daemon/releases/.retired.",
+              "matches": "prefix"
+            },
+            {
+              "path": "packages/app-server-daemon/releases/local-",
+              "matches": "prefix"
+            },
+            {
+              "path": "packages/standalone/current",
+              "matches": "exact"
+            },
+            {
+              "path": "packages/standalone/selection-history",
+              "matches": "exact"
+            },
+            {
+              "path": "packages/standalone/auto-update-version",
+              "matches": "exact"
+            },
+            {
+              "path": "packages/standalone/install.lock",
+              "matches": "exact"
+            },
+            {
+              "path": "packages/standalone/install.lock.d",
+              "matches": "exact"
+            },
+            {
+              "path": "packages/standalone/install-lock-",
+              "matches": "prefix"
+            },
+            {
+              "path": "packages/standalone/.current.",
+              "matches": "prefix"
+            },
+            {
+              "path": "packages/app-server-daemon/current",
+              "matches": "exact"
+            },
+            {
+              "path": "packages/app-server-daemon/selection-history",
+              "matches": "exact"
+            },
+            {
+              "path": "packages/app-server-daemon/auto-update-version",
+              "matches": "exact"
+            },
+            {
+              "path": "packages/app-server-daemon/install.lock",
+              "matches": "exact"
+            },
+            {
+              "path": "packages/app-server-daemon/install.lock.d",
+              "matches": "exact"
+            },
+            {
+              "path": "packages/app-server-daemon/.migration-current",
+              "matches": "exact"
+            },
+            {
+              "path": "packages/app-server-daemon/install-lock-",
+              "matches": "prefix"
+            },
+            {
+              "path": "packages/app-server-daemon/.current.",
+              "matches": "prefix"
+            },
+            {
+              "path": "app-server-daemon",
+              "matches": "exact"
+            },
+            {
+              "path": "app-server-control",
+              "matches": "exact"
+            },
+            {
+              "path": "state_5.sqlite",
+              "matches": "prefix"
+            },
+            {
+              "path": "goals_1.sqlite",
+              "matches": "prefix"
+            },
+            {
+              "path": "memories_1.sqlite",
+              "matches": "prefix"
+            },
+            {
+              "path": "memories_v2_1.sqlite",
+              "matches": "prefix"
+            },
+            {
+              "path": "queue_1.sqlite",
+              "matches": "prefix"
+            },
+            {
+              "path": "thread_history_1.sqlite",
+              "matches": "prefix"
+            },
+            {
+              "path": "agent_message_board_1.sqlite",
+              "matches": "prefix"
+            },
+            {
+              "path": "message_board_",
+              "matches": "prefix"
+            },
+            {
+              "path": "db-backups",
+              "matches": "exact"
+            },
+            {
+              "path": "sqlite",
+              "matches": "exact"
+            },
+            {
+              "path": "version.json",
+              "matches": "exact"
+            },
+            {
+              "path": ".tmp",
+              "matches": "exact"
+            },
+            {
+              "path": "plugins",
+              "matches": "exact"
+            },
+            {
+              "path": "skills",
+              "matches": "exact"
+            },
+            {
+              "path": "rules",
+              "matches": "exact"
+            },
+            {
+              "path": "hooks.json",
+              "matches": "exact"
+            },
+            {
+              "path": "config.toml",
+              "matches": "exact"
+            },
+            {
+              "path": "requirements.toml",
+              "matches": "exact"
+            },
+            {
+              "path": "managed_config.toml",
+              "matches": "exact"
+            },
+            {
+              "path": "AGENTS.md",
+              "matches": "exact"
+            },
+            {
+              "path": "auth.json",
+              "matches": "exact"
+            },
+            {
+              "path": "auth.lock",
+              "matches": "exact"
+            },
+            {
+              "path": ".env",
+              "matches": "exact"
+            },
+            {
+              "path": "secrets",
+              "matches": "exact"
+            },
+            {
+              "path": ".sandbox",
+              "matches": "prefix"
+            },
+            {
+              "path": "cap_sid",
+              "matches": "exact"
+            },
+            {
+              "path": "installation_id",
+              "matches": "exact"
+            },
+            {
+              "path": "history.jsonl",
+              "matches": "exact"
+            },
+            {
+              "path": "sessions",
+              "matches": "exact"
+            },
+            {
+              "path": "archived_sessions",
+              "matches": "exact"
+            },
+            {
+              "path": "session_index.jsonl",
+              "matches": "prefix"
+            },
+            {
+              "path": "rollout-migrations",
+              "matches": "exact"
+            },
+            {
+              "path": "tui-thread-reference-capabilities",
+              "matches": "exact"
+            },
+            {
+              "path": "attachments",
+              "matches": "exact"
+            },
+            {
+              "path": "visualizations",
+              "matches": "exact"
+            },
+            {
+              "path": "generated_images",
+              "matches": "exact"
+            },
+            {
+              "path": "memories",
+              "matches": "exact"
+            },
+            {
+              "path": "memories_v2",
+              "matches": "exact"
+            },
+            {
+              "path": "memories_extensions",
+              "matches": "exact"
+            },
+            {
+              "path": "memories.lock",
+              "matches": "exact"
+            },
+            {
+              "path": "ambient-suggestions",
+              "matches": "exact"
+            },
+            {
+              "path": "code-review-plugin",
+              "matches": "exact"
+            },
+            {
+              "path": "computer-use",
+              "matches": "exact"
+            },
+            {
+              "path": "node_repl",
+              "matches": "exact"
+            },
+            {
+              "path": "project-metadata-locks",
+              "matches": "exact"
+            },
+            {
+              "path": "vendor_imports",
+              "matches": "exact"
+            },
+            {
+              "path": ".codex-global-state.json",
+              "matches": "prefix"
+            }
+          ],
           "delegates": []
         },
         {
@@ -267,7 +606,48 @@
           "delegates": []
         }
       ],
-      "open": [],
+      "open": [
+        {
+          "root": "codex.home",
+          "path": "packages/standalone/releases",
+          "reaches": "inside",
+          "integrations": [
+            "codex"
+          ]
+        },
+        {
+          "root": "codex.home",
+          "path": "packages/app-server-daemon/releases",
+          "reaches": "inside",
+          "integrations": [
+            "codex"
+          ]
+        },
+        {
+          "root": "codex.home",
+          "path": "log/codex-tui.log",
+          "reaches": "exact",
+          "integrations": [
+            "codex"
+          ]
+        },
+        {
+          "root": "codex.home",
+          "path": "cache/remote_plugin_catalog",
+          "reaches": "inside",
+          "integrations": [
+            "codex"
+          ]
+        },
+        {
+          "root": "codex.home",
+          "path": "worktrees",
+          "reaches": "inside",
+          "integrations": [
+            "git"
+          ]
+        }
+      ],
       "rules": [
         "builtin.codex.stale-releases",
         "builtin.codex.release-inventory",
@@ -278,20 +658,20 @@
       "platforms": [
         {
           "platform": "linux",
-          "discover": false,
-          "report": false,
-          "mutate": false
+          "discover": true,
+          "report": true,
+          "mutate": true
         },
         {
           "platform": "macos",
-          "discover": false,
-          "report": false,
+          "discover": true,
+          "report": true,
           "mutate": false
         },
         {
           "platform": "windows",
-          "discover": false,
-          "report": false,
+          "discover": true,
+          "report": true,
           "mutate": false
         }
       ]

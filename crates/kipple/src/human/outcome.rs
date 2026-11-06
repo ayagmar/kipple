@@ -61,6 +61,7 @@ pub(crate) fn skip(skip: &Skip) -> String {
         Skip::Conflict(_) => "it overlaps another item".to_owned(),
         Skip::TrashUnavailable(error) => format!("the trash can't take it: {}", error_text(error)),
         Skip::Git(gap) => format!("git couldn't say what it tracks in it: {}", git_gap(*gap)),
+        Skip::Tracked => "a repository tracks it".to_owned(),
         Skip::InstallerBusy(gap) => {
             format!("its tool may be installing: {}", lock_gap(*gap))
         }

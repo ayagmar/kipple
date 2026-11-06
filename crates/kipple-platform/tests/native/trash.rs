@@ -156,6 +156,37 @@ mod unix {
         site.assert_outside_intact();
     }
 
+    /// Catches a move that only knows directories: a lone file goes to the trash as itself,
+    /// beside nothing of its directory, and comes back to the name it had.
+    #[test]
+    fn a_lone_file_moves_to_the_trash_and_back() {
+        let site = Site::new();
+        let home = Home::new();
+        write(&site.at("cache/target.json"), b"target");
+        write(&site.at("cache/sibling.json"), b"stays");
+        let was = identity(&site.at("cache/target.json"));
+        let op = whole(&site.anchor("cache/target.json"));
+
+        let slot = trashed(&home.backend, &op);
+
+        assert!(!present(&site.at("cache/target.json")), "the file left");
+        assert_eq!(identity(&held(&slot)), was, "the trash holds the file");
+        assert!(present(&site.at("cache/sibling.json")), "its sibling stays");
+
+        home.backend
+            .restore(&request(&op, &slot), &CancelToken::new())
+            .unwrap();
+
+        assert_eq!(
+            identity(&site.at("cache/target.json")),
+            was,
+            "the file is back"
+        );
+        assert!(!present(&held(&slot)), "the slot is empty");
+        assert!(present(&site.at("cache/sibling.json")), "its sibling stays");
+        site.assert_outside_intact();
+    }
+
     /// Catches a freedesktop trash entry a file manager can't list or restore: the
     /// `.trashinfo` names the item's absolute path and when it was trashed.
     #[cfg(target_os = "linux")]

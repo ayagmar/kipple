@@ -279,6 +279,8 @@ pub enum Skip {
     /// It is inside a git repository, and git couldn't say in full which of its entries
     /// it tracks, or a `.git` lives inside it (D-066).
     Git(GitGap),
+    /// A repository tracks the item itself, so leaving out what git tracks leaves nothing.
+    Tracked,
     /// Its tool's own locks couldn't be held: an install may be running.
     InstallerBusy(LockGap),
     /// A tool's own command runs only for a person who saw it in review: never under
