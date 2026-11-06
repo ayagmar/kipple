@@ -206,6 +206,16 @@ enum GitFile {
     Other,
 }
 
+/// Where a checkout no repository lists by its name stands.
+enum Placed {
+    /// A repository lists it under another spelling.
+    Listed,
+    /// Its link is broken, or git places it elsewhere.
+    Moved,
+    /// git couldn't say.
+    Unknown(GitGap),
+}
+
 /// The rules each kind of finding goes to on this platform.
 struct Rules<'rules> {
     /// Registered and present, inside an opened root: only where removal can ship.
@@ -429,8 +439,14 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
             }
         }
         for dir in std::mem::take(&mut self.unconfirmed) {
-            if !self.listed.contains(&dir) && !self.listed_elsewhere(&dir) {
-                self.unregistered(&dir, Unregistered::Moved)?;
+            if self.listed.contains(&dir) {
+                continue;
+            }
+            match self.placed(&dir) {
+                _ if self.cx.is_cancelled() => return Err(IntegrationError::Stopped),
+                Placed::Listed => {}
+                Placed::Moved => self.unregistered(&dir, Unregistered::Moved)?,
+                Placed::Unknown(gap) => self.sink.omit_worktrees(&dir, gap),
             }
         }
         // A layout is supported once git has read one, and one it couldn't read says so.
@@ -440,9 +456,10 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
         Ok(())
     }
 
-    /// Whether the checkout at `dir` is one a repository lists under another spelling, as
-    /// it does below a link in a root's parents: git prints the path it resolved.
-    fn listed_elsewhere(&self, dir: &Path) -> bool {
+    /// Where the checkout at `dir` stands, which no repository lists by that name: one may
+    /// under another spelling, as below a link in a root's parents, since git prints the
+    /// path it resolved. It moved only if its link is broken or git places it elsewhere.
+    fn placed(&self, dir: &Path) -> Placed {
         let asked = Registration {
             path: dir.to_owned(),
             head: None,
@@ -452,9 +469,22 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
             bare: false,
         };
         let state = self.cx.worktrees().inspect(&asked, self.cx.cancel_token());
-        state
-            .place
-            .is_ok_and(|place| self.listed.contains(&place.top))
+        match (state.registration, state.place) {
+            (Err(gap), _) => Placed::Unknown(gap),
+            (Ok(RegistrationState::RegisteredPresent), Ok(place)) => {
+                if self.listed.contains(&place.top) {
+                    Placed::Listed
+                } else {
+                    Placed::Moved
+                }
+            }
+            (Ok(RegistrationState::RegisteredPresent), Err(gap))
+                if gap != GitGap::OtherWorkTree =>
+            {
+                Placed::Unknown(gap)
+            }
+            (Ok(_), _) => Placed::Moved,
+        }
     }
 
     /// Adds the finding of a checkout no repository lists. It is no [`WorktreeFacts`]: there

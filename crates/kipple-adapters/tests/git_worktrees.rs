@@ -559,6 +559,69 @@ fn relative_links_are_read() {
     );
 }
 
+/// Catches a question that failed reading as an answer: a `rev-parse` past its deadline says
+/// nothing of whether a repository lists a checkout, so "it moved" would be a false claim.
+#[test]
+fn a_failed_question_about_an_unlisted_checkout_is_an_omission() {
+    let tree = repository_with(&[CHECKOUT], |_| {});
+    let (main, path) = (tree.at(MAIN), tree.at(CHECKOUT));
+    let mut state = clean(&main, &path);
+    state.place = Err(GitGap::Failed);
+    let script = Script::repository(&main, &[])
+        .unlisted(&path, &main)
+        .state(&path, state);
+
+    let run = tree.scan(script);
+
+    assert_eq!(run.at(&path).len(), 0);
+    let omissions = run.report.integrations.iter().flat_map(|i| &i.omissions);
+    let about_it = omissions.filter(|omission| {
+        matches!(omission, Omission::GitInventory { repository, .. } if *repository == path)
+    });
+    assert_eq!(about_it.count(), 1);
+}
+
+/// Catches a cancel reading as an answer the same way, and `finish` going on past one.
+#[test]
+fn a_cancel_while_asking_about_an_unlisted_checkout_claims_nothing() {
+    let tree = repository_with(&[CHECKOUT], |_| {});
+    let (main, path) = (tree.at(MAIN), tree.at(CHECKOUT));
+    let mut state = clean(&main, &path);
+    state.place = Err(GitGap::Failed);
+    let script = Script::repository(&main, &[])
+        .unlisted(&path, &main)
+        .state(&path, state)
+        .cancels_at(&path);
+
+    let run = tree.scan(script);
+
+    assert_eq!(run.at(&path).len(), 0);
+    let omissions = run.report.integrations.iter().flat_map(|i| &i.omissions);
+    let git = omissions.filter(|o| matches!(o, Omission::GitInventory { .. }));
+    assert_eq!(git.count(), 0, "a cancel is no failure of git's");
+}
+
+/// Catches a checkout that is truly elsewhere going unsaid once failures hold: the link is
+/// broken, which is an answer, so it is reported as moved.
+#[test]
+fn a_checkout_whose_link_is_broken_is_unregistered() {
+    let tree = repository_with(&[CHECKOUT], |_| {});
+    let (main, path) = (tree.at(MAIN), tree.at(CHECKOUT));
+    let mut state = clean(&main, &path);
+    state.registration = Ok(RegistrationState::RegisteredInvalid);
+    state.place = Err(GitGap::Failed);
+    let script = Script::repository(&main, &[])
+        .unlisted(&path, &main)
+        .state(&path, state);
+
+    let run = tree.scan(script);
+
+    assert_eq!(
+        run.fact(&path, "registration_state"),
+        state_name(RegistrationState::PresentUnregistered)
+    );
+}
+
 /// Catches a label guessed from a name: `worktree-<name>` is a Claude habit, and a branch or
 /// directory with it elsewhere proves nothing.
 #[test]

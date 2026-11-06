@@ -205,6 +205,10 @@ pub(crate) struct Script {
     repositories: Vec<Vec<Registration>>,
     states: BTreeMap<PathBuf, WorktreeState>,
     list_fails: Option<GitGap>,
+    /// Checkouts git answers for from their repository without listing them.
+    unlisted: BTreeMap<PathBuf, PathBuf>,
+    /// Where an `inspect` cancels the scan.
+    cancels_at: Option<PathBuf>,
 }
 
 impl Script {
@@ -237,6 +241,18 @@ impl Script {
         self
     }
 
+    /// Has git answer from `path` for the repository at `main`, which doesn't list it.
+    pub(crate) fn unlisted(mut self, path: &Path, main: &Path) -> Self {
+        self.unlisted.insert(path.to_owned(), main.to_owned());
+        self
+    }
+
+    /// Cancels the scan when `path` is inspected.
+    pub(crate) fn cancels_at(mut self, path: &Path) -> Self {
+        self.cancels_at = Some(path.to_owned());
+        self
+    }
+
     /// Makes every `list` fail with `gap`.
     pub(crate) const fn list_fails(mut self, gap: GitGap) -> Self {
         self.list_fails = Some(gap);
@@ -249,15 +265,22 @@ impl WorktreeQuery for Script {
         if let Some(gap) = self.list_fails {
             return Err(gap);
         }
+        let asked = self
+            .unlisted
+            .get(repository)
+            .map_or(repository, PathBuf::as_path);
         self.repositories
             .iter()
-            .find(|records| records.iter().any(|record| record.path == repository))
+            .find(|records| records.iter().any(|record| record.path == asked))
             .cloned()
             .ok_or(GitGap::Failed)
     }
 
-    fn inspect(&self, registration: &Registration, _: &CancelToken) -> WorktreeState {
+    fn inspect(&self, registration: &Registration, cancel: &CancelToken) -> WorktreeState {
         let path = &registration.path;
+        if self.cancels_at.as_ref() == Some(path) {
+            cancel.cancel();
+        }
         self.states.get(path).cloned().unwrap_or_else(|| {
             let main = self
                 .repositories
