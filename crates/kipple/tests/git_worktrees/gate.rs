@@ -918,7 +918,7 @@ fn a_copy_never_stands_in_for_a_repository_outside_the_roots() {
 type Change = fn(&Repo);
 
 /// Each way a registration and a checkout can come to disagree, as a repository gets one.
-const DISAGREEMENTS: [(&str, Change); 6] = [
+const DISAGREEMENTS: [(&str, Change); 7] = [
     ("a copy", |repo| {
         copy_tree(&repo.main, &repo.projects().join("app-copy"));
     }),
@@ -934,6 +934,11 @@ const DISAGREEMENTS: [(&str, Change); 6] = [
     }),
     ("a moved checkout", |repo| {
         rename(&repo.checkout, &repo.projects().join("moved"));
+    }),
+    ("a locked checkout gone beside a copy", |repo| {
+        copy_tree(&repo.main, &repo.projects().join("a-copy"));
+        repo.git(&["worktree", "lock", "../wt"]);
+        remove_dir(&repo.checkout);
     }),
     (
         "a copy of a copy with a later worktree of its own",
@@ -1065,6 +1070,25 @@ fn rename(from: &Path, to: &Path) {
 #[test]
 fn a_locked_checkout_that_is_gone_stays_locked() {
     let repo = Repo::new();
+    repo.git(&["worktree", "lock", "../wt"]);
+    remove_dir(&repo.checkout);
+
+    let scan = repo.scan();
+
+    assert_eq!(scan.fact("worktree.locked"), FactValue::Bool(true));
+    assert_eq!(
+        scan.fact("registration_state"),
+        FactValue::Enum(RegistrationState::RegisteredMissing.name())
+    );
+}
+
+/// Catches a copy's unlocked record hiding the original's lock: nothing can be placed at a
+/// missing checkout, so nothing says which repository it belongs to, and a person is
+/// pointed at `prune` with no sign of the lock.
+#[test]
+fn a_lock_outlives_a_copy_that_has_none() {
+    let repo = Repo::new();
+    copy_tree(&repo.main, &repo.projects().join("a-copy"));
     repo.git(&["worktree", "lock", "../wt"]);
     remove_dir(&repo.checkout);
 

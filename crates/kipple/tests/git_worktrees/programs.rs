@@ -499,6 +499,32 @@ fn a_gate_over_config_git_refused_stays_unknown() {
     assert_eq!(scan.fact("worktree.config_gate"), FactValue::Unknown);
 }
 
+/// Catches the first record's state standing when records disagree and nothing can be
+/// placed: git fails, so the original's reads present with its rows unknown and a stale
+/// copy's reads invalid, and which one spoke would depend on how the two names sort.
+#[test]
+fn records_that_disagree_with_nothing_placed_read_invalid() {
+    for name in ["aaa-copy", "zzz-copy"] {
+        let repo = Repo::new();
+        copy_tree(&repo.main, &repo.projects().join(name));
+        repo.wt(&["switch", "-q", "-c", "later"]);
+        let bin = repo.temp.path().join("bin");
+        let text = format!(
+            "#!/bin/sh\ncase \"$*\" in\n*rev-parse*) exit 1 ;;\nesac\nexec '{}' \"$@\"\n",
+            real_git().display()
+        );
+        executable(&bin.join("git"), &text);
+
+        let scan = repo.scan_in(&repo.env_with(bin.into_os_string()));
+
+        assert_eq!(
+            scan.fact("registration_state"),
+            FactValue::Enum(RegistrationState::RegisteredInvalid.name()),
+            "beside {name}"
+        );
+    }
+}
+
 /// Catches `ls-files` ahead of the gate again: on a blocked gate nothing that can read the
 /// index runs. The clean repository shows the log would catch one.
 #[test]

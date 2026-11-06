@@ -394,11 +394,11 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
     /// does. From several repositories, only the checkout's own speaks: a copy of a
     /// repository lists what the original does, and the rows come from the original.
     fn settle_path(&mut self, path: &Path, listings: Vec<Listing>) -> Result<(), IntegrationError> {
-        let Some(first) = listings.first() else {
+        let Some(safest) = safest(&listings) else {
             return Ok(());
         };
         if printed_twice(&listings) {
-            return self.registered(first, invalid());
+            return self.registered(safest, invalid());
         }
         let worktrees = self.cx.worktrees();
         let cancel = self.cx.cancel_token();
@@ -408,8 +408,7 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
         let states: Vec<WorktreeState> = asked.collect();
         let placed = states.iter().find_map(|state| state.place.as_ref().ok());
         let Some(common) = placed.map(|place| place.common_dir.clone()) else {
-            let state = states.into_iter().next().unwrap_or_else(invalid);
-            return self.registered(first, state);
+            return self.registered(safest, agreed(states));
         };
         let owner = self.owner(path, &common);
         // Asking found its repository's own record of this path, which settles it with these.
@@ -429,7 +428,7 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
             Err(_) if self.cx.is_cancelled() => return Err(IntegrationError::Stopped),
             Err(gap) => WorktreeState::unknown(gap),
         };
-        self.registered(first, state)
+        self.registered(safest, state)
     }
 
     /// The main worktree of the repository whose common directory is `common`, by git's own
@@ -611,6 +610,23 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
             consequence: None,
         };
         self.sink.add_supplied(rule, dir, claim, supplied)
+    }
+}
+
+/// The record to speak for a path when nothing says whose it is: one with a lock, since a
+/// copy's record has none the original took after it.
+fn safest(listings: &[Listing]) -> Option<&Listing> {
+    let locked = listings.iter().find(|l| l.registration.locked.is_some());
+    locked.or_else(|| listings.first())
+}
+
+/// What `states`, none of which could be placed, say of one path: the state they share, and
+/// when they differ the one that promises nothing and advises no prune.
+fn agreed(states: Vec<WorktreeState>) -> WorktreeState {
+    let mut states = states.into_iter();
+    match states.next() {
+        Some(first) if states.all(|state| state == first) => first,
+        _ => invalid(),
     }
 }
 
