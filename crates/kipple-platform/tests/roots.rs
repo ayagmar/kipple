@@ -1132,6 +1132,47 @@ fn cursors_app_data_is_one_root_when_xdg_is_the_default() {
     );
 }
 
+/// Catches a linked `.claude.json` losing its closure: a dotfile manager links it to a file,
+/// and a root that wants a directory would turn that into an error, so neither the link nor
+/// the file it leads to is closed and every Claude finding is held for good.
+#[test]
+fn a_linked_claude_json_keeps_the_link_and_its_file_closed() {
+    let dir = home();
+    let home = dir.path().canonicalize().unwrap();
+    let file = home.join("dots/claude.json");
+    let link = home.join(".claude.json");
+    fs::create_dir(home.join("dots")).unwrap();
+    fs::write(&file, b"{}").unwrap();
+    symlink(&file, &link).unwrap();
+
+    let roots = roots(&[("HOME", text(&home))]);
+
+    assert_eq!(places(&roots, SymbolicRoot::ClaudeConfigFile), [link, file]);
+}
+
+/// Catches the file case swallowing the rest: a link that leads nowhere can't say what it
+/// closes, so it stays unknown, and a plain file stays one path.
+#[test]
+fn a_claude_json_that_leads_nowhere_stays_unknown() {
+    let dir = home();
+    let home = dir.path().canonicalize().unwrap();
+    let link = home.join(".claude.json");
+    let root = SymbolicRoot::ClaudeConfigFile;
+    symlink(home.join("gone"), &link).unwrap();
+
+    let dangling = roots(&[("HOME", text(&home))]);
+
+    let all = dangling.all(root);
+    assert!(matches!(all, [Err(_)]), "one unknown, found {all:?}");
+
+    let other = home.join("other");
+    fs::create_dir(&other).unwrap();
+    let plain = other.join(".claude.json");
+    fs::write(&plain, b"{}").unwrap();
+    let settled = roots(&[("HOME", text(&other))]);
+    assert_eq!(places(&settled, root), [plain]);
+}
+
 /// Catches the parsers' input reaching a panic through what a person left in a file: any
 /// input must end in a value, an unknown or nothing.
 #[test]

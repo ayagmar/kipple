@@ -700,14 +700,44 @@ pub(crate) fn absolute(
 ///
 /// The identity of the directory the link leads to is recorded so a scan can re-check
 /// it. Links below a root are never followed. A link that can't be followed, or doesn't
-/// lead to a directory, leaves its root unresolved.
+/// lead to a directory, leaves its root unresolved, except that `claude.config-file` is a
+/// file: a link to a file gives that root two paths, the link and the file.
 #[must_use]
 pub fn follow_root_links(roots: &Roots) -> Roots {
     let mut followed = Roots::default();
     for Resolution { root, resolved } in roots.iter() {
+        if let (SymbolicRoot::ClaudeConfigFile, Ok(configured)) = (root, resolved)
+            && let Some(target) = file_behind(configured)
+        {
+            followed.add(root, Ok(configured.clone()));
+            followed.add(root, Ok(target));
+            continue;
+        }
         followed.add(root, resolved.clone().and_then(follow_link));
     }
     followed
+}
+
+/// Where `resolved` leads when it is a link to a regular file, for a root that is a file.
+/// The link and the file are both what must stay closed, and neither is ever opened as a
+/// directory, so no identity is kept. A link that leads anywhere else is [`follow_link`]'s.
+fn file_behind(resolved: &ResolvedRoot) -> Option<ResolvedRoot> {
+    let configured = exact(&resolved.path);
+    if !fs::symlink_metadata(&configured)
+        .ok()?
+        .file_type()
+        .is_symlink()
+    {
+        return None;
+    }
+    let target = os::physical(&configured).ok()?;
+    fs::symlink_metadata(&target)
+        .ok()?
+        .is_file()
+        .then(|| ResolvedRoot {
+            path: target,
+            ..resolved.clone()
+        })
 }
 
 fn follow_link(resolved: ResolvedRoot) -> Result<ResolvedRoot, UnresolvedRoot> {
