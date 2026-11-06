@@ -331,19 +331,19 @@
         {
           "platform": "linux",
           "discover": false,
-          "report": false,
+          "report": true,
           "mutate": false
         },
         {
           "platform": "macos",
           "discover": false,
-          "report": false,
+          "report": true,
           "mutate": false
         },
         {
           "platform": "windows",
           "discover": false,
-          "report": false,
+          "report": true,
           "mutate": false
         }
       ]

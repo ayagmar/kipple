@@ -1,4 +1,4 @@
-//! Claude Code and Pi against upstream layouts built with `FixtureTree`, through the
+//! Claude Code, Pi and Cursor against upstream layouts built with `FixtureTree`, through the
 //! real engine with injected roots, time and processes (`docs/06-adapters-and-rules.md` §5,
 //! §7). Each row of S5's negative cases is a test here, named for what it keeps from going
 //! wrong; the file an upstream layout comes from says which version it is.
@@ -19,5 +19,7 @@ const _: () = {
 
 #[path = "agents/claude.rs"]
 mod claude;
+#[path = "agents/cursor.rs"]
+mod cursor;
 #[path = "agents/pi.rs"]
 mod pi;
