@@ -77,6 +77,13 @@ impl WorktreeQuery for GitQuery {
                     ..WorktreeState::unknown(GitGap::Failed)
                 };
             }
+            Ok(Seen::Left) => {
+                return WorktreeState {
+                    registration: Ok(RegistrationState::RegisteredInvalid),
+                    place: Err(GitGap::Unplaced),
+                    ..WorktreeState::unknown(GitGap::Failed)
+                };
+            }
             Err(gap) => return WorktreeState::unknown(gap),
         };
         let git = self.worktree_git();
@@ -140,6 +147,8 @@ enum Seen {
     Linked(Links),
     /// They don't, for this reason. Nothing may ask git from there.
     Other(RegistrationState),
+    /// The admin directory still names where the checkout was, and nothing is there.
+    Left,
 }
 
 /// The files that tie a checkout to its repository.
@@ -179,7 +188,11 @@ impl Links {
         else {
             return invalid;
         };
-        if !same_file(&admin.join(back), &gitfile)? || !holds_record(&admin, registration)? {
+        let back = admin.join(back);
+        if !exists(&back)? {
+            return Ok(Seen::Left);
+        }
+        if !same_file(&back, &gitfile)? || !holds_record(&admin, registration)? {
             return invalid;
         }
         let common = admin.join(common);

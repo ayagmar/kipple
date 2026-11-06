@@ -158,7 +158,8 @@ pub enum ConfigGate {
 /// holds the worktree.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorktreeState {
-    /// Where git places it.
+    /// Where git places it. [`GitGap::Unplaced`] says the registration its `.git` leads to
+    /// names a checkout that isn't there, so this one moved rather than being a copy.
     pub place: Result<WorktreePlace, GitGap>,
     /// How its registration and its checkout relate.
     pub registration: Result<RegistrationState, GitGap>,

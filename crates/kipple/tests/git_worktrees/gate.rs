@@ -955,6 +955,57 @@ fn no_path_has_two_findings() {
     }
 }
 
+/// Every snippet the scan advises.
+fn snippets(scan: &Scan) -> Vec<&str> {
+    let advice = scan.0.integrations.iter().flat_map(|i| &i.advice);
+    let snippets = advice.flat_map(|advice| &advice.snippets);
+    snippets.map(String::as_str).collect()
+}
+
+/// Catches `repair` advised in a copy of a live worktree: run there, it takes the
+/// registration from the original, whose checkout git then no longer knows.
+#[test]
+fn a_copy_of_a_live_worktree_is_never_told_to_repair() {
+    let repo = Repo::new();
+    copy_tree(&repo.checkout, &repo.projects().join("wt-copy"));
+
+    let scan = repo.scan();
+
+    assert_eq!(
+        scan.fact_at("wt-copy", "registration_state"),
+        FactValue::Enum(RegistrationState::PresentUnregistered.name())
+    );
+    assert_eq!(
+        scan.fact("registration_state"),
+        FactValue::Enum(RegistrationState::RegisteredPresent.name())
+    );
+    assert_eq!(snippets(&scan), [] as [&str; 0]);
+}
+
+/// Catches `repair` withheld from a checkout that really moved, because what its registration
+/// names lay past the roots: only the platform can read that, and it says it is gone.
+#[test]
+fn a_checkout_that_moved_is_told_to_repair_wherever_its_repository_is() {
+    let repo = Repo::new();
+    let outside = repo.temp.path().join("outside/app");
+    fs::create_dir_all(outside.parent().unwrap()).unwrap();
+    rename(&repo.main, &outside);
+    repo.git_in(&outside, &["worktree", "repair", "../../projects/wt"]);
+    rename(&repo.checkout, &repo.projects().join("moved"));
+
+    let scan = repo.scan();
+
+    assert_eq!(
+        scan.fact_at("moved", "registration_state"),
+        FactValue::Enum(RegistrationState::PresentUnregistered.name())
+    );
+    assert!(
+        snippets(&scan).contains(&"git worktree repair"),
+        "repair is advised: {:?}",
+        snippets(&scan)
+    );
+}
+
 /// Catches a `.git` that is a link followed to a file elsewhere: a checkout's own `.git`
 /// is a plain file, so one that isn't proves nothing.
 #[cfg(unix)]

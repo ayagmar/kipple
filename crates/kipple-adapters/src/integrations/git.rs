@@ -210,8 +210,10 @@ enum GitFile {
 enum Placed {
     /// A repository lists it under another spelling.
     Listed,
-    /// Its link is broken, or git places it elsewhere.
+    /// Its registration still names where it was, and nothing is there.
     Moved,
+    /// Its link is broken, or git places it elsewhere, and nothing says it moved.
+    Claimed,
     /// git couldn't say.
     Unknown(GitGap),
 }
@@ -535,6 +537,7 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
                 _ if self.cx.is_cancelled() => return Err(IntegrationError::Stopped),
                 Placed::Listed => {}
                 Placed::Moved => self.unregistered(&dir, Unregistered::Moved)?,
+                Placed::Claimed => self.unregistered(&dir, Unregistered::Claimed)?,
                 Placed::Unknown(gap) => self.sink.omit_worktrees(&dir, gap),
             }
         }
@@ -547,7 +550,9 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
 
     /// Where the checkout at `dir` stands, which no repository lists by that name: one may
     /// under another spelling, as below a link in a root's parents, since git prints the
-    /// path it resolved. It moved only if its link is broken or git places it elsewhere.
+    /// path it resolved. It isn't listed only if its link is broken or git places it
+    /// elsewhere, and it moved only if the platform, which reads past the roots, says what
+    /// its registration names is gone: a copy's names the original, still there.
     fn placed(&self, dir: &Path) -> Placed {
         let asked = Registration {
             path: dir.to_owned(),
@@ -564,7 +569,7 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
                 if self.listed.contains(&place.top) {
                     Placed::Listed
                 } else {
-                    Placed::Moved
+                    Placed::Claimed
                 }
             }
             (Ok(RegistrationState::RegisteredPresent), Err(gap))
@@ -572,7 +577,8 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
             {
                 Placed::Unknown(gap)
             }
-            (Ok(_), _) => Placed::Moved,
+            (Ok(_), Err(GitGap::Unplaced)) => Placed::Moved,
+            (Ok(_), _) => Placed::Claimed,
         }
     }
 
@@ -847,8 +853,11 @@ fn version(text: &str) -> Option<ToolVersion> {
 /// What is wrong with a checkout no repository lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Unregistered {
-    /// Its `gitdir` still leads to an admin directory, so the checkout moved.
+    /// Its `.git` leads to a registration that names where it was, and nothing is there.
     Moved,
+    /// Its `.git` leads to a registration that doesn't name it, and nothing says it moved:
+    /// the registration may belong to a checkout still there, which this may be a copy of.
+    Claimed,
     /// Its `gitdir` leads nowhere.
     TargetGone,
 }
@@ -890,6 +899,15 @@ pub fn registration_advice(anomaly: Anomaly<'_>) -> Advice {
                 path.display()
             ),
             vec!["git worktree repair".to_owned()],
+        ),
+        Anomaly::Unregistered(_, Unregistered::Claimed) => (
+            "A checkout git lists under another directory",
+            "This checkout's `.git` file leads to a registration that doesn't name it, so it may \
+             be a copy of a worktree that is still there. Review it by hand: it may hold work \
+             found nowhere else, and `git worktree repair` here can take the registration from \
+             the other directory."
+                .to_owned(),
+            Vec::new(),
         ),
         Anomaly::Unregistered(_, Unregistered::TargetGone) => (
             "A checkout that lost its repository",
