@@ -2,20 +2,41 @@
 //! runner, from a checked directory, never through a shell. Until a native operation is
 //! implemented here, every start is refused, so nothing runs.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 
 use kipple_core::{ApplyError, ErrorCode, NativeArg, NativeExit, NativeOp, NativeRunner};
 
 use crate::environment::Environment;
+use crate::runner::Var;
 
 /// A file that is always empty and that no one can replace: the global config, the
 /// hooks directory and, on Linux and macOS, the XDG config directory all point here, so
 /// git finds nothing in them.
 #[cfg(unix)]
-pub(crate) const NULL_DEVICE: &str = "/dev/null";
+const NULL_DEVICE: &str = "/dev/null";
 #[cfg(windows)]
-pub(crate) const NULL_DEVICE: &str = "NUL";
+const NULL_DEVICE: &str = "NUL";
+
+/// The variables git gets beside the runner's, for a query and a removal alike: no system
+/// or global config, no XDG config directory, no optional locks and no pager.
+pub(crate) fn git_isolation() -> Vec<Var<'static>> {
+    let var = |name, value| Var {
+        name,
+        value: OsStr::new(value),
+    };
+    let mut vars = vec![
+        var("GIT_CONFIG_NOSYSTEM", "1"),
+        var("GIT_CONFIG_GLOBAL", NULL_DEVICE),
+        var("GIT_OPTIONAL_LOCKS", "0"),
+        var("GIT_PAGER", "cat"),
+    ];
+    // Windows has no directory that can't hold a file: its XDG directory stays unset, as
+    // `HOME` is, so git looks for none.
+    #[cfg(unix)]
+    vars.push(var("XDG_CONFIG_HOME", NULL_DEVICE));
+    vars
+}
 
 /// `args` as a process gets them, with `data` for kipple's own paths. `None` when one
 /// needs `data` and there is none, so nothing runs without its boundary.

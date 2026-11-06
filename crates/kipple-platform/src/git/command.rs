@@ -13,7 +13,7 @@ use kipple_core::{
 
 use crate::capabilities;
 use crate::environment::Environment;
-use crate::native::{NULL_DEVICE, rendered};
+use crate::native::{git_isolation, rendered};
 use crate::os;
 use crate::runner::{self, Invocation, Output, Var};
 
@@ -114,15 +114,20 @@ impl Git {
         }
         let isolation_args = rendered(GIT_ISOLATION, None).ok_or(GitGap::Failed)?;
         let mut args = vec![OsStr::new("-C"), dir.as_os_str()];
+        let mut vars = git_isolation();
         if matching == Matching::Exact {
             args.push(OsStr::new("--literal-pathspecs"));
+            vars.push(Var {
+                name: "GIT_LITERAL_PATHSPECS",
+                value: OsStr::new("1"),
+            });
         }
         args.extend(isolation_args.iter().map(OsString::as_os_str));
         args.extend(tail);
         let invocation = Invocation {
             program: &self.path,
             args: &args,
-            vars: &isolation(matching),
+            vars: &vars,
             deadline: DEADLINE,
             limit: OUTPUT_LIMIT,
             cancel: Some(cancel),
@@ -137,29 +142,6 @@ impl Git {
         }
         Ok(output)
     }
-}
-
-/// The variables git gets beside the runner's: no system or global config, no XDG config
-/// directory, no optional locks, no pager, and literal pathspecs where they are exact.
-fn isolation(matching: Matching) -> Vec<Var<'static>> {
-    let var = |name, value| Var {
-        name,
-        value: OsStr::new(value),
-    };
-    let mut vars = vec![
-        var("GIT_CONFIG_NOSYSTEM", "1"),
-        var("GIT_CONFIG_GLOBAL", NULL_DEVICE),
-        var("GIT_OPTIONAL_LOCKS", "0"),
-        var("GIT_PAGER", "cat"),
-    ];
-    // Windows has no directory that can't hold a file: its XDG directory stays unset, as
-    // `HOME` is, so git looks for none.
-    #[cfg(unix)]
-    vars.push(var("XDG_CONFIG_HOME", NULL_DEVICE));
-    if matching == Matching::Exact {
-        vars.push(var("GIT_LITERAL_PATHSPECS", "1"));
-    }
-    vars
 }
 
 /// One pathspec, and how git is to match it.
