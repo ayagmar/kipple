@@ -7,9 +7,11 @@
 //! A repository's own config can name a program that `status` runs, and no override reaches
 //! all of them. So `inspect` asks in a fixed order. It reads the registration's files first,
 //! and stops there unless the checkout is what its registration says: from a directory with
-//! no `.git`, git would answer for the repository above it. Then the config's names, never
-//! its values, because a value can hold a credential. No command that can read an object
-//! runs before that gate is clear: `ls-files` expands a sparse index, which in a partial
+//! no `.git`, git would answer for the repository above it. Then where git places it, which
+//! reads no object: git that refuses a directory still lists a config with nothing of the
+//! repository's in it, so a clear gate needs a place. Then the config's names, never its
+//! values, because a value can hold a credential. No command that can read an object runs
+//! before that gate is clear: `ls-files` expands a sparse index, which in a partial
 //! clone is a fetch, and some gits ignore `GIT_NO_LAZY_FETCH`. Then `ls-files --stage`, where
 //! a submodule stops the rest, so `status` never recurses into a config nothing has read.
 //! Only then `status` and what follows.
@@ -241,9 +243,9 @@ impl Asking<'_> {
     /// Fills in what git says of a worktree whose files agree, in the order the module's
     /// header gives. A row not reached stays unknown.
     fn fill(&self, state: &mut WorktreeState) {
-        state.config_gate = self.config_gate();
         state.place = self.place();
         state.witness = self.witness(&state.place);
+        state.config_gate = self.gate_at(&state.place);
         if state.config_gate != Ok(ConfigGate::Clear) {
             return;
         }
@@ -283,6 +285,16 @@ impl Asking<'_> {
             return Ok(true);
         }
         has_gitlink(&self.ask_index(&["ls-files", "-z", "--sparse", "--stage"])?)
+    }
+
+    /// What the config says, as far as `place` shows git read it. A key it found stands, as
+    /// `core.worktree` does when git places the worktree elsewhere because of it; finding
+    /// none proves nothing unless git could place the worktree.
+    fn gate_at(&self, place: &Result<WorktreePlace, GitGap>) -> Result<ConfigGate, GitGap> {
+        match (self.config_gate(), place) {
+            (Ok(ConfigGate::Clear), Err(gap)) => Err(*gap),
+            (gate, _) => gate,
+        }
     }
 
     /// What the config says of what may be asked. A `reftable` directory counts whatever

@@ -478,6 +478,27 @@ fn sparse_is_asked_of_a_git_that_has_it_and_no_other() {
     }
 }
 
+/// Catches a gate read clear over config git never read: from a checkout someone else owns,
+/// `config --list` exits 0 printing only kipple's own `-c` keys, so a filter stays unseen.
+/// The wrapper refuses everything but the listing, which runs from the repository.
+#[test]
+fn a_gate_over_config_git_refused_stays_unknown() {
+    let repo = Repo::new();
+    repo.git(&["config", "filter.mark.clean", "cat"]);
+    let bin = repo.temp.path().join("bin");
+    let text = format!(
+        "#!/bin/sh\ncase \"$*\" in\n*'worktree list'*) ;;\n\
+         *) GIT_TEST_ASSUME_DIFFERENT_OWNER=1; export GIT_TEST_ASSUME_DIFFERENT_OWNER ;;\n\
+         esac\nexec '{}' \"$@\"\n",
+        real_git().display()
+    );
+    executable(&bin.join("git"), &text);
+
+    let scan = repo.scan_in(&repo.env_with(bin.into_os_string()));
+
+    assert_eq!(scan.fact("worktree.config_gate"), FactValue::Unknown);
+}
+
 /// Catches `ls-files` ahead of the gate again: on a blocked gate nothing that can read the
 /// index runs. The clean repository shows the log would catch one.
 #[test]
