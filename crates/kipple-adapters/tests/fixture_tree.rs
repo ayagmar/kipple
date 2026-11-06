@@ -132,6 +132,25 @@ fn a_directory_time_survives_its_children_being_written() {
     }
 }
 
+/// Catches a time set through a link, which leaves the link's path without the age the
+/// fixture states and ages its target instead, and one set on a file, which isn't what the
+/// fixture asked for.
+#[test]
+fn a_directory_time_is_refused_on_a_link_or_a_file() {
+    let at = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000_000);
+    for path in ["store", "real/file"] {
+        let mut tree = FixtureTree::new();
+        tree.file("real/file", b"")
+            .link("store", "real", Holds::AsWritten)
+            .modified_dir(path, at);
+        let temp = tempfile::tempdir().unwrap();
+
+        let error = tree.build_in(temp.path()).unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput, "{path}");
+    }
+}
+
 /// Catches a stamp read through the link, which describes its target and would never
 /// match what the link's own `lstat` reports.
 #[test]

@@ -96,7 +96,9 @@ impl FixtureTree {
     }
 
     /// The directory `path`, which the tree must hold, was last modified `at`. Set after
-    /// everything else is built, so writing its children doesn't overwrite it.
+    /// everything else is built, so writing its children doesn't overwrite it. A link or a
+    /// file at `path` is an error, since the time would land somewhere else or on the
+    /// wrong kind of thing.
     pub(crate) fn modified_dir(&mut self, path: &str, at: SystemTime) -> &mut Self {
         self.modified_dirs.push((path.to_owned(), at));
         self
@@ -165,7 +167,14 @@ impl FixtureTree {
             }
         }
         for (dir, at) in &self.modified_dirs {
-            open_dir(&root.join(dir))?.set_modified(*at)?;
+            let dir = root.join(dir);
+            if !fs::symlink_metadata(&dir)?.is_dir() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("{} isn't a directory", dir.display()),
+                ));
+            }
+            open_dir(&dir)?.set_modified(*at)?;
         }
         Ok(())
     }
