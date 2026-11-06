@@ -73,7 +73,7 @@ use crate::planner::Judge;
 use crate::policy::{Level, POLICY_VERSION, Policy, Verdict};
 use crate::probe::FileIdentity;
 use crate::root::{Roots, SymbolicRoot};
-use crate::rule::{Method, Operation, Rule, RuleId};
+use crate::rule::{Method, Rule, RuleId};
 
 /// A profile's name: 1 to 64 lowercase ASCII letters, digits and `-`, not starting with
 /// `-`, and not a name Windows keeps for a device. It names the file, so it is checked
@@ -479,7 +479,7 @@ fn removal_rules(rules: &[Rule]) -> Vec<&Rule> {
     rules
         .iter()
         .filter(|rule| rule.integration != IntegrationId::GENERIC)
-        .filter(|rule| matches!(rule.operation, Operation::RemoveFiles(_)))
+        .filter(|rule| rule.operation.removes_frozen_files())
         .collect()
 }
 

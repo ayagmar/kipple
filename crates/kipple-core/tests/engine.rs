@@ -238,6 +238,9 @@ const fn descriptor(id: &'static str) -> IntegrationDescriptor {
         owner_files: &[],
         verified: &[],
         consequences: &[],
+        facts: &[],
+        state: &[],
+        evidences: &[],
         revision: 1,
     }
 }

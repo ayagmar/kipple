@@ -50,15 +50,14 @@ impl Integration for Python {
             owner_files: &["pyvenv.cfg"],
             verified: &["Python 3.14.8 venv", "uv 0.12.23"],
             consequences: &[REINSTALLED, RECOMPILED],
+            facts: &[],
+            state: &[],
+            evidences: &[ActivityEvidence::Interpreted {
+                // An interpreter such as `/usr/bin/python3.14` runs a virtual environment's
+                // packages and writes the bytecode caches.
+                runtimes: &["python*"],
+            }],
             revision: 1,
-        }
-    }
-
-    fn activity_evidence(&self) -> ActivityEvidence {
-        // An interpreter such as `/usr/bin/python3.14` runs a virtual environment's
-        // packages and writes the bytecode caches.
-        ActivityEvidence::Interpreted {
-            runtimes: &["python*"],
         }
     }
 

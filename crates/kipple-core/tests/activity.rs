@@ -238,12 +238,11 @@ impl Integration for Artifact {
             owner_files: &[],
             verified: &[],
             consequences: &[],
+            facts: &[],
+            state: &[],
+            evidences: Box::leak(Box::new([self.evidence])),
             revision: 1,
         }
-    }
-
-    fn activity_evidence(&self) -> ActivityEvidence {
-        self.evidence
     }
 
     fn discover(

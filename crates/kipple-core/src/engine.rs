@@ -22,8 +22,8 @@ use crate::event::{EventTx, ScanEvent, Stopped};
 use crate::facts::{Above, Repositories};
 use crate::format::{IntegrationDigests, integration_digest};
 use crate::integration::{
-    ActivityEvidence, Advice, Evidence, FindingSink, Integration, IntegrationDescriptor,
-    IntegrationError, IntegrationId, ScanContext,
+    Advice, Evidence, FindingSink, Integration, IntegrationDescriptor, IntegrationError,
+    IntegrationId, ScanContext,
 };
 use crate::policy::{
     Consequence, Facts, HeldPath, Lineage, Modified, Policy, Proposal, Tracked, Verdict, WalkGap,
@@ -270,7 +270,6 @@ pub struct Engine {
 struct Registered {
     integration: Box<dyn Integration>,
     descriptor: IntegrationDescriptor,
-    evidence: ActivityEvidence,
     rules: Vec<Rule>,
 }
 
@@ -310,7 +309,6 @@ impl Engine {
             .into_iter()
             .map(|integration| Registered {
                 descriptor: integration.descriptor(),
-                evidence: integration.activity_evidence(),
                 integration,
                 rules: Vec::new(),
             })
@@ -343,7 +341,7 @@ impl Engine {
             self.integrations
                 .iter()
                 .map(|registered| {
-                    let digest = integration_digest(&registered.descriptor, registered.evidence);
+                    let digest = integration_digest(&registered.descriptor);
                     (registered.descriptor.id, digest)
                 })
                 .collect(),
@@ -662,7 +660,7 @@ impl Engine {
         let subject = Subject {
             path,
             lineage: &lineage,
-            evidence: owner.registered.evidence,
+            evidence: owner.registered.descriptor.evidence(),
             project: &owner.project(&found.finding),
         };
         let processes = self.ports.processes.as_ref();
@@ -783,6 +781,10 @@ impl<'a> Owner<'a> {
     fn proposal(&self, rule: Option<&Rule>) -> Proposal {
         match rule.map(|rule| &rule.operation) {
             Some(Operation::RemoveFiles(methods)) => Proposal::Remove(methods.clone()),
+            Some(Operation::RemoveVerifiedRelease { methods, .. }) => {
+                Proposal::RemoveRelease(methods.clone())
+            }
+            Some(Operation::Native(kind)) => Proposal::Native(*kind),
             Some(Operation::Report) | None if self.advised => Proposal::Advice,
             Some(Operation::Report) | None => Proposal::Report,
         }

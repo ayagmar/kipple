@@ -8,12 +8,68 @@
 use std::fmt;
 use std::path::Path;
 
+use crate::integration::IntegrationId;
 use crate::policy::{HeldPath, Lineage, starts_with};
 use crate::root::{Roots, SymbolicRoot};
 
 /// The built-in integrations' state roots, protected whole until each declares the
 /// subresources in it (M4): `--root` inside one plans nothing there.
 pub const STATE_ROOTS: &[SymbolicRoot] = &[SymbolicRoot::ClaudeConfig];
+
+/// One state root of a tool, as its integration declares it (04 §3.9). Everything in it is
+/// closed unless an [`OpenArea`] opens it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StateDeclaration {
+    /// The root.
+    pub root: SymbolicRoot,
+    /// What stays closed even inside an open area.
+    pub protected: &'static [ProtectedEntry],
+    /// What may be removed, and by whose rules.
+    pub open: &'static [OpenArea],
+    /// Roots of the same integration this one stands aside for: a path inside one is that
+    /// root's to answer for.
+    pub delegates: &'static [SymbolicRoot],
+    /// What is held when the root has no path.
+    pub unresolved: Unresolved,
+}
+
+/// A path below a state root that stays closed, in `/`-separated form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProtectedEntry {
+    /// This path.
+    Exact(&'static str),
+    /// Every path whose last component starts as this path's does, such as
+    /// `releases/.staging.`.
+    Prefix(&'static str),
+}
+
+/// A part of a state root some integrations may reach.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OpenArea {
+    /// Where it is.
+    pub at: Area,
+    /// Whose findings may be there.
+    pub integrations: &'static [IntegrationId],
+}
+
+/// Where an [`OpenArea`] is, below its root, in `/`-separated form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Area {
+    /// Exactly this path.
+    Exact(&'static str),
+    /// Whatever is strictly inside this path.
+    Inside(&'static str),
+}
+
+/// What is held when a state root has no path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unresolved {
+    /// Every finding of the scan: nothing can be shown to be outside a store of credentials
+    /// that can't be located.
+    HoldAll,
+    /// Only the findings of the integration that declared it.
+    HoldOwn,
+}
 
 named! {
     /// Why the host protects a path whatever any rule says.

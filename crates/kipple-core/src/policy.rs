@@ -8,6 +8,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::native::NativeKind;
 use crate::probe::{FileIdentity, ProbeError};
 use crate::rule::{Method, RuleId};
 use crate::tracked::GitGap;
@@ -128,6 +129,10 @@ pub enum Proposal {
     Advice,
     /// Remove its files, by one of these methods.
     Remove(Vec<Method>),
+    /// Remove a release, by one of these methods, if retention lets it go.
+    RemoveRelease(Vec<Method>),
+    /// Run its tool's own command.
+    Native(NativeKind),
 }
 
 /// Whether a git repository could track files inside the finding
@@ -604,7 +609,7 @@ fn fact_holds(facts: &Facts) -> Vec<Hold> {
     match facts.proposal {
         Proposal::Report => return vec![Hold::ReportOnly],
         Proposal::Advice => return vec![Hold::Advice],
-        Proposal::Remove(_) => {}
+        Proposal::Remove(_) | Proposal::RemoveRelease(_) | Proposal::Native(_) => {}
     }
     let mut holds = Vec::new();
     if !facts.layout_verified {

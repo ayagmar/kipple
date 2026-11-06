@@ -38,14 +38,13 @@ impl Integration for Node {
             owner_files: &[],
             verified: &["npm 11.19.0", "pnpm 12.9.1", "Bun 1.4.2"],
             consequences: &[REINSTALLED],
+            facts: &[],
+            state: &[],
+            evidences: &[ActivityEvidence::Interpreted {
+                // `node`, `bun` or `deno` run the packages from outside `node_modules`.
+                runtimes: &["node", "bun", "deno"],
+            }],
             revision: 1,
-        }
-    }
-
-    fn activity_evidence(&self) -> ActivityEvidence {
-        // `node`, `bun` or `deno` run the packages from outside `node_modules`.
-        ActivityEvidence::Interpreted {
-            runtimes: &["node", "bun", "deno"],
         }
     }
 

@@ -463,13 +463,14 @@ pub(crate) fn facts(finding: &Finding, policy: &Policy) -> Vec<Fact> {
     let proposal = match &facts.proposal {
         Proposal::Report => "report only: kipple never changes it".to_owned(),
         Proposal::Advice => "report only: the tool's own cleanup is advised".to_owned(),
-        Proposal::Remove(methods) => {
+        Proposal::Remove(methods) | Proposal::RemoveRelease(methods) => {
             let names: Vec<&str> = methods.iter().map(|m| m.name()).collect();
             format!("remove ({})", names.join(" or "))
         }
+        Proposal::Native(kind) => format!("its tool's own command ({kind})"),
     };
     lines.push(Fact::new("Proposes", proposal));
-    if !matches!(facts.proposal, Proposal::Remove(_)) {
+    if matches!(facts.proposal, Proposal::Report | Proposal::Advice) {
         return lines;
     }
     lines.push(Fact::new("Git", tracked(&facts.tracked)));

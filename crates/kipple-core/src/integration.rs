@@ -16,8 +16,9 @@ use crate::engine::{Finding, FindingId, Found};
 use crate::event::{EventTx, ScanEvent, Stopped};
 use crate::policy::Consequence;
 use crate::probe::{DirEntryMeta, EntryKind, EntryMeta, FsProbe, ProbeError};
+use crate::protect::StateDeclaration;
 use crate::root::{ResolvedRoot, SymbolicRoot};
-use crate::rule::{Lens, Platform, Rule, Selector};
+use crate::rule::{FactSpec, Lens, Platform, Rule, Selector};
 use crate::worktree::AgentLabel;
 
 /// A built-in integration's ID, such as `cargo`.
@@ -59,6 +60,13 @@ pub struct IntegrationDescriptor {
     /// ([`FindingSink::add`]). A profile freezes them with the rule (D-068), so a laxer
     /// recovery, loss or cost suspends the profile's entries for its rules.
     pub consequences: &'static [Consequence],
+    /// The facts its findings can supply, which its own rules may test.
+    pub facts: &'static [FactSpec],
+    /// Its tool's state roots: what the host protects whether or not it runs here.
+    pub state: &'static [StateDeclaration],
+    /// What can show one of its findings in use. One that declares nothing gets
+    /// [`ActivityEvidence::Everything`].
+    pub evidences: &'static [ActivityEvidence],
     /// Its revision: bumped whenever its code changes what it finds, how it verifies a
     /// layout, or the consequence it attaches. A profile freezes it with the rule, so a
     /// change that lives in code no [`Rule`] shows suspends the profile's entries for its
@@ -67,6 +75,17 @@ pub struct IntegrationDescriptor {
     /// unless the current pair is its newest row. Changed output bumps this and appends a
     /// row, and review holds rows to append-only: the test sees only the rows as they are.
     pub revision: u32,
+}
+
+impl IntegrationDescriptor {
+    /// The evidence its findings are judged by unless one chooses another.
+    #[must_use]
+    pub fn evidence(&self) -> ActivityEvidence {
+        self.evidences
+            .first()
+            .copied()
+            .unwrap_or(ActivityEvidence::Everything)
+    }
 }
 
 /// What can show one of an integration's findings in use (`docs/04-safety-model.md` §4,
@@ -150,12 +169,6 @@ pub enum IntegrationError {
 pub trait Integration: fmt::Debug + Send + Sync {
     /// Its ID and the roots it reads.
     fn descriptor(&self) -> IntegrationDescriptor;
-
-    /// What can show one of its findings in use. Unless it says otherwise, everything,
-    /// from every process.
-    fn activity_evidence(&self) -> ActivityEvidence {
-        ActivityEvidence::Everything
-    }
 
     /// Finds candidates under its roots and adds each one to `sink`.
     ///

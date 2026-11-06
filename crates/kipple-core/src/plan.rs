@@ -223,9 +223,17 @@ impl MethodChoice {
     pub fn for_proposal(&self, proposal: &Proposal) -> Result<Method, MethodRefusal> {
         let method = self.resolve();
         match proposal {
-            Proposal::Report | Proposal::Advice => Err(MethodRefusal::ReportOnly),
-            Proposal::Remove(methods) if methods.contains(&method) => Ok(method),
-            Proposal::Remove(_) => Err(MethodRefusal::NotOffered(method)),
+            Proposal::Report | Proposal::Advice | Proposal::Native(_) => {
+                Err(MethodRefusal::ReportOnly)
+            }
+            Proposal::Remove(methods) | Proposal::RemoveRelease(methods)
+                if methods.contains(&method) =>
+            {
+                Ok(method)
+            }
+            Proposal::Remove(_) | Proposal::RemoveRelease(_) => {
+                Err(MethodRefusal::NotOffered(method))
+            }
         }
     }
 }

@@ -281,7 +281,11 @@ fn capabilities(descriptors: &[IntegrationDescriptor]) -> Capabilities {
         roots: names(SymbolicRoot::ALL, SymbolicRoot::name),
         selectors: generic.chain(published).collect(),
         facts,
-        operations: OPERATIONS.to_vec(),
+        operations: OPERATIONS
+            .iter()
+            .filter(|operation| !operation.first_party)
+            .map(|operation| operation.name)
+            .collect(),
     }
 }
 

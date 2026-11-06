@@ -99,12 +99,11 @@ impl Integration for Declared {
             owner_files: &[],
             verified: &[],
             consequences: &[],
+            facts: &[],
+            state: &[],
+            evidences: &[ActivityEvidence::BuiltExecutables],
             revision: self.revision,
         }
-    }
-
-    fn activity_evidence(&self) -> ActivityEvidence {
-        ActivityEvidence::BuiltExecutables
     }
 
     fn discover(

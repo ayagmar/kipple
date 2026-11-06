@@ -93,7 +93,7 @@ impl Engine {
         let subject = Subject {
             path: &finding.path,
             lineage: &facts.lineage,
-            evidence: registered.evidence,
+            evidence: registered.descriptor.evidence(),
             project: &project,
         };
         fresh

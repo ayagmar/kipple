@@ -262,8 +262,13 @@ pub(crate) fn admit(
     }
     still_allowed(&entry.standing, recheck.verdict, authorization)?;
     match recheck.proposal {
-        Proposal::Remove(methods) if methods.contains(&entry.method) => {}
-        Proposal::Remove(_) | Proposal::Report | Proposal::Advice => {
+        Proposal::Remove(methods) | Proposal::RemoveRelease(methods)
+            if methods.contains(&entry.method) => {}
+        Proposal::Remove(_)
+        | Proposal::RemoveRelease(_)
+        | Proposal::Native(_)
+        | Proposal::Report
+        | Proposal::Advice => {
             return Err(Skip::MethodNotOffered(entry.method));
         }
     }

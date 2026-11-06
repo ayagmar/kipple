@@ -295,7 +295,7 @@ impl RuleCx<'_> {
                 let message = format!(
                     "kipple {} publishes no operation {other:?}; it publishes {}",
                     self.catalog.engine,
-                    OPERATIONS.join(" and ")
+                    published_operations().join(" and ")
                 );
                 c.error(ErrorCode::UnknownCapability, kind.span(), message);
                 None
@@ -480,4 +480,13 @@ fn home_scope_is_bounded(selector: &Selector) -> bool {
         .0
         .first()
         .is_some_and(|first| grammar::is_literal(first) && !first.chars().all(|c| c == '.'))
+}
+
+/// The operations a pack can name today.
+fn published_operations() -> Vec<&'static str> {
+    OPERATIONS
+        .iter()
+        .filter(|operation| !operation.first_party)
+        .map(|operation| operation.name)
+        .collect()
 }

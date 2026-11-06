@@ -89,6 +89,7 @@ mod imported;
 mod integration;
 mod journal;
 mod mutation;
+mod native;
 mod outcome;
 mod plan;
 mod planner;
@@ -136,6 +137,7 @@ pub use journal::{Intent, Journal, Record, RestoreResult};
 pub use mutation::{
     EffectSink, Executor, FileSystemClass, Finish, Freeze, Freezer, LocalFileSystem, Unsupported,
 };
+pub use native::NativeKind;
 pub use outcome::{
     ApplyError, Effect, ErrorCode, Found, Freed, ItemOutcome, Left, LeftCount, LeftReason, OsError,
     OsErrorKind, Receipt, ReceiptItem, Removed, SAMPLE, Skip, Status, Stop, Tally, Totals, Trashed,
@@ -162,15 +164,18 @@ pub use process::{
     Capabilities, CommandLines, EnvPath, Inventory, MountNamespace, Observer, Probed, ProcessClass,
     ProcessOutcome, ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Unread, UserId,
 };
-pub use protect::{Protection, Protections, STATE_ROOTS};
+pub use protect::{
+    Area, OpenArea, ProtectedEntry, Protection, Protections, STATE_ROOTS, StateDeclaration,
+    Unresolved,
+};
 pub use root::{
     LinkProblem, Resolution, ResolvedRoot, RootLink, RootSource, Roots, SettingProblem,
     SymbolicRoot, UnresolvedRoot,
 };
 pub use rule::{
-    Bounds, Category, FactKind, FactSpec, GENERIC_FACTS, GENERIC_SELECTORS, Lens, Method, Name,
-    OPERATIONS, Operation, Pack, PackId, Pattern, Platform, Predicate, Rule, RuleId, RuleText,
-    Selector, Test,
+    Bounds, Category, FactKind, FactSpec, GENERIC_FACTS, GENERIC_SELECTORS, GroupKey, Lens, Method,
+    Name, OPERATIONS, Operation, OperationSpec, Pack, PackId, Pattern, Platform, Predicate,
+    Retention, Rule, RuleId, RuleText, Selector, Test,
 };
 pub use run::{
     Depth, ItemState, PendingRestore, RunRead, RunState, RunSummary, StoredItem, StoredPlan,

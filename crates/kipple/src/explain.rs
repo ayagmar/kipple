@@ -82,6 +82,16 @@ fn operation(operation: &Operation) -> String {
                 names.join(" or ")
             )
         }
+        Operation::RemoveVerifiedRelease { methods, .. } => {
+            let names: Vec<&str> = methods.iter().map(|m| m.name()).collect();
+            format!(
+                "remove a release retention doesn't keep ({}) once you select and confirm it",
+                names.join(" or ")
+            )
+        }
+        Operation::Native(kind) => {
+            format!("run its tool's own command ({kind}) once you review it")
+        }
     }
 }
 

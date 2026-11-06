@@ -62,6 +62,9 @@ const PYTHON: IntegrationDescriptor = IntegrationDescriptor {
     owner_files: &[],
     verified: &[],
     consequences: &[],
+    facts: &[],
+    state: &[],
+    evidences: &[],
     revision: 1,
 };
 
