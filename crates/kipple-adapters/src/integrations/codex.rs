@@ -562,6 +562,17 @@ enum Entry {
     Unread(PathBuf),
 }
 
+impl Entry {
+    /// Whether something in it couldn't be read, so what it is isn't all known.
+    const fn is_unread(&self) -> bool {
+        match self {
+            Self::Unread(_) => true,
+            Self::Retired(retired) => !retired.whole,
+            Self::Published(_) | Self::Local(_) | Self::Kept(_) => false,
+        }
+    }
+}
+
 /// A `.retired.*` entry.
 #[derive(Debug)]
 struct Retired {
@@ -640,10 +651,10 @@ fn inspect(
         Err(stopped) => return Err(stopped),
     };
     let program = path.join(&manifest.entrypoint);
-    let aliased = is_windows(named.target)
-        || cx
-            .read_link(&path.join("codex"))
-            .is_ok_and(|target| target == Path::new("bin/codex"));
+    let aliased = match read_alias(cx, &path, named.target) {
+        Ok(aliased) => aliased,
+        Err(_) => return Ok(Entry::Unread(path)),
+    };
     if !walked.ordinary || !aliased || !walked.files.contains(&program) {
         return Ok(Entry::Kept(path));
     }
@@ -658,6 +669,18 @@ fn inspect(
         Some(_) => Entry::Published(release),
         None => Entry::Local(release),
     })
+}
+
+/// Whether the release at `path` has the alias its target calls for.
+fn read_alias(cx: &ScanContext<'_>, path: &Path, target: &str) -> Result<bool, ProbeError> {
+    if is_windows(target) {
+        return Ok(true);
+    }
+    match cx.read_link(&path.join("codex")) {
+        Ok(alias) => Ok(alias == Path::new("bin/codex")),
+        Err(error) if is_absent(&error) => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// Reads a `.retired.*` directory. Upstream may be deleting it, so a part that can't be
@@ -718,7 +741,7 @@ struct Component {
     gap: Option<GroupGap>,
     /// Whether an installer left a marker.
     busy: bool,
-    /// Whether every directory holding such a marker could be listed.
+    /// Whether its directory and `releases/` could be listed.
     listed: bool,
 }
 
@@ -838,12 +861,7 @@ impl Component {
             (EntryKind::Dir, name) if !name.is_empty() => inspect(cx, path, name, mount)?,
             _ => Entry::Kept(path),
         };
-        let unread = match &classified {
-            Entry::Unread(_) => true,
-            Entry::Retired(retired) => !retired.whole,
-            Entry::Published(_) | Entry::Local(_) | Entry::Kept(_) => false,
-        };
-        if unread {
+        if classified.is_unread() {
             self.block(GroupGap::Unreadable);
         }
         self.entries.push(classified);
@@ -902,9 +920,13 @@ impl Component {
             .map(|release| release.version.as_str())
     }
 
-    /// Whether it is what upstream leaves: only what upstream writes, and a selection.
-    const fn is_well_formed(&self) -> bool {
-        self.strays.is_empty() && self.active.is_some()
+    /// Whether it is what upstream leaves: only what upstream writes, and a selection. What
+    /// couldn't be listed or read may be anything, so it can't be called that.
+    fn is_well_formed(&self) -> bool {
+        self.listed
+            && self.strays.is_empty()
+            && self.active.is_some()
+            && !self.entries.iter().any(Entry::is_unread)
     }
 
     /// What `name` is to this component.
@@ -1067,7 +1089,10 @@ impl Store {
     /// stays one, blocked, so that retention sees the whole group.
     fn is_readable(&self) -> bool {
         self.strays.is_empty()
-            && self.components.iter().all(|c| c.strays.is_empty())
+            && self
+                .components
+                .iter()
+                .all(|c| c.listed && c.strays.is_empty())
             && self.version_supported() != FactValue::Enum("unsupported")
     }
 

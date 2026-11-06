@@ -227,6 +227,26 @@ fn unknown_layout_is_no_signature() {
     }
 }
 
+/// Catches a directory of the store that can't be listed passing for one with nothing unknown
+/// in it: it can hide a stray and every install marker while `current` and the releases still
+/// answer, and the removing rules would run on a layout nobody saw.
+#[test]
+fn a_store_directory_that_cant_be_listed_is_an_unknown_layout() {
+    for part in ["packages/standalone", "packages/standalone/releases"] {
+        let mut scene = verified_with_files();
+        scene.unlistable.push(at(part));
+
+        let scan = scene.scan();
+
+        only_reported_unknown(&scan);
+        assert!(
+            !scan.rows().iter().any(|row| row.starts_with("stale-")),
+            "{part}: nothing is a release: {:#?}",
+            scan.rows()
+        );
+    }
+}
+
 /// Catches a home with no store, such as an npm install's, passing for a verified one.
 #[test]
 fn home_without_a_store_is_unsupported() {
@@ -1197,6 +1217,7 @@ fn an_unreadable_part_never_reads_as_empty() {
         "packages/standalone/selection-history",
         "packages/standalone/releases/0.164.0-x86_64-unknown-linux-musl/codex-package.json",
         "packages/standalone/releases/0.164.0-x86_64-unknown-linux-musl/bin",
+        "packages/standalone/releases/0.164.0-x86_64-unknown-linux-musl/codex",
     ];
     for part in parts {
         let mut scene = verified();
@@ -1235,6 +1256,34 @@ fn an_unreadable_part_never_reads_as_empty() {
     let scan = inventory.scan();
     assert_eq!(scan.release(OLD).state, blocked(GroupGap::Unreadable));
     assert_eq!(scan.value(OLD, "inventory"), Some(FactValue::Unknown));
+}
+
+/// Catches an entry of `releases/` that couldn't be read leaving the home open: it may be a
+/// layout nobody verified, so what rests on the layout can't stand.
+#[test]
+fn an_unread_entry_of_releases_closes_the_home() {
+    let unread = [OLD, "packages/standalone/releases/.retired.x"];
+    for part in unread {
+        let mut scene = verified_with_files();
+        scene
+            .tree
+            .dir(&at("packages/standalone/releases/.retired.x"));
+        scene.denied.push(at(part));
+
+        let scan = scene.scan();
+
+        assert_eq!(scan.owner(), OwnerStatus::Unsupported, "{part}");
+        assert_eq!(
+            scan.value(TUI_LOG, "layout"),
+            Some(FactValue::Unknown),
+            "{part}"
+        );
+        assert_eq!(
+            scan.value(CATALOG, "layout"),
+            Some(FactValue::Unknown),
+            "{part}"
+        );
+    }
 }
 
 /// Catches the home's own listing failing quietly, which would read as a home with nothing

@@ -79,6 +79,8 @@ pub(crate) fn add_release(tree: &mut FixtureTree, store: &str, version: &str) {
 struct Disk {
     /// Paths that can't be read, nor anything below them.
     denied: Vec<PathBuf>,
+    /// Directories that can't be listed, though what is below them can be reached.
+    unlistable: Vec<PathBuf>,
     /// Paths that are neither a file, a directory nor a link, such as a FIFO.
     odd: Vec<PathBuf>,
     /// Directories that are mounts: they and everything below them are another volume.
@@ -96,6 +98,14 @@ impl Disk {
         let denied = self.denied.iter().any(|at| path.starts_with(at));
         if denied {
             return Err(ProbeError::io(path, io::ErrorKind::PermissionDenied.into()));
+        }
+        Ok(())
+    }
+
+    fn check_listing(&self, dir: &Path) -> Result<(), ProbeError> {
+        self.check(dir)?;
+        if self.unlistable.iter().any(|at| at == dir) {
+            return Err(ProbeError::io(dir, io::ErrorKind::PermissionDenied.into()));
         }
         Ok(())
     }
@@ -142,7 +152,7 @@ impl FsProbe for Disk {
     }
 
     fn read_dir(&self, dir: &Path) -> Result<Vec<DirEntryMeta>, ProbeError> {
-        self.check(dir)?;
+        self.check_listing(dir)?;
         let read = || -> io::Result<Vec<DirEntryMeta>> {
             fs::read_dir(dir)?
                 .map(|entry| {
@@ -158,7 +168,7 @@ impl FsProbe for Disk {
     }
 
     fn open_dir(&self, dir: &Path) -> Result<(), ProbeError> {
-        self.check(dir)?;
+        self.check_listing(dir)?;
         fs::read_dir(dir)
             .map(drop)
             .map_err(|e| ProbeError::io(dir, e))
@@ -361,6 +371,8 @@ pub(crate) struct Scene {
     histories: Vec<History>,
     /// Paths in the tree that can't be read.
     pub(crate) denied: Vec<String>,
+    /// Directories in the tree that can't be listed, as with `chmod 311`: only that fails.
+    pub(crate) unlistable: Vec<String>,
     /// Paths in the tree that are FIFOs or the like.
     pub(crate) odd: Vec<String>,
     /// Paths in the tree that are mounts.
@@ -387,6 +399,7 @@ impl Scene {
             tree,
             histories: Vec::new(),
             denied: Vec::new(),
+            unlistable: Vec::new(),
             odd: Vec::new(),
             mounts: Vec::new(),
             stored: Vec::new(),
@@ -451,6 +464,7 @@ impl Scene {
         let inside = |paths: &[String]| paths.iter().map(|path| root.join(path)).collect();
         let disk = Disk {
             denied: inside(&self.denied),
+            unlistable: inside(&self.unlistable),
             odd: inside(&self.odd),
             mounts: inside(&self.mounts),
             stored: self
