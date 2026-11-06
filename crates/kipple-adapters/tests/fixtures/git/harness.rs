@@ -209,6 +209,8 @@ pub(crate) struct Script {
     unlisted: BTreeMap<PathBuf, PathBuf>,
     /// Where an `inspect` cancels the scan.
     cancels_at: Option<PathBuf>,
+    /// Where a `list` fails.
+    list_fails_at: Option<PathBuf>,
 }
 
 impl Script {
@@ -253,6 +255,12 @@ impl Script {
         self
     }
 
+    /// Makes a `list` from `path` fail.
+    pub(crate) fn list_fails_at(mut self, path: &Path) -> Self {
+        self.list_fails_at = Some(path.to_owned());
+        self
+    }
+
     /// Makes every `list` fail with `gap`.
     pub(crate) const fn list_fails(mut self, gap: GitGap) -> Self {
         self.list_fails = Some(gap);
@@ -264,6 +272,9 @@ impl WorktreeQuery for Script {
     fn list(&self, repository: &Path, _: &CancelToken) -> Result<Vec<Registration>, GitGap> {
         if let Some(gap) = self.list_fails {
             return Err(gap);
+        }
+        if self.list_fails_at.as_deref() == Some(repository) {
+            return Err(GitGap::Failed);
         }
         let asked = self
             .unlisted

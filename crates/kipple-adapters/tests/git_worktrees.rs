@@ -601,6 +601,22 @@ fn a_cancel_while_asking_about_an_unlisted_checkout_claims_nothing() {
     assert_eq!(git.count(), 0, "a cancel is no failure of git's");
 }
 
+/// Catches a registration read as present when git couldn't say which repository the
+/// checkout belongs to: the rows came from another repository than the one that lists it.
+#[test]
+fn a_failed_question_about_a_checkouts_owner_leaves_it_unknown() {
+    let tree = repository_with(&[], |_| {});
+    let main = tree.at("home/projects/app");
+    let path = tree.at("outside/wt");
+    let script = Script::repository(&main, &[&path])
+        .state(&path, clean(&tree.at("home/projects/other"), &path))
+        .list_fails_at(&path);
+
+    let run = tree.scan(script);
+
+    assert_eq!(run.fact(&path, "registration_state"), FactValue::Unknown);
+}
+
 /// Catches a checkout that is truly elsewhere going unsaid once failures hold: the link is
 /// broken, which is an answer, so it is reported as moved.
 #[test]

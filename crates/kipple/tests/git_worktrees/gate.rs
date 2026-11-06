@@ -3,6 +3,7 @@
 #[cfg(unix)]
 mod programs;
 
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -847,6 +848,113 @@ fn a_record_of_another_admin_directory_is_invalid() {
     );
 }
 
+/// Copies the directory `from` to `to` as `cp -a` does, for what a repository holds.
+fn copy_tree(from: &Path, to: &Path) {
+    fs::create_dir_all(to).unwrap();
+    for entry in fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let target = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            fs::copy(entry.path(), &target).unwrap();
+        }
+    }
+}
+
+/// Catches a copy's stale registration read as present: the copy still lists the checkout,
+/// whose rows all come from the repository it belongs to, so it had two present findings
+/// and only one repository can remove it. The walk reaches a copy on either side of its
+/// original.
+#[test]
+fn a_copied_repository_leaves_its_worktree_to_its_own_repository() {
+    for name in ["aaa-copy", "zzz-copy"] {
+        let repo = Repo::new();
+        copy_tree(&repo.main, &repo.projects().join(name));
+
+        let scan = repo.scan();
+
+        assert_eq!(
+            scan.fact("registration_state"),
+            FactValue::Enum(RegistrationState::RegisteredPresent.name()),
+            "beside {name}"
+        );
+        assert_eq!(
+            scan.fact("repository_identity"),
+            FactValue::Enum("verified"),
+            "beside {name}"
+        );
+        assert_eq!(git_findings(&scan), 1, "beside {name}");
+    }
+}
+
+/// Catches a stale record of the copy hiding the repository that owns the checkout: the
+/// copy's branch is out of date, nothing else lists it in reach, and the worktree still
+/// reads as what it is.
+#[test]
+fn a_copy_never_stands_in_for_a_repository_outside_the_roots() {
+    let repo = Repo::new();
+    let outside = repo.temp.path().join("outside/app");
+    fs::create_dir_all(outside.parent().unwrap()).unwrap();
+    rename(&repo.main, &outside);
+    repo.git_in(&outside, &["worktree", "repair", "../../projects/wt"]);
+    copy_tree(&outside, &repo.projects().join("app-copy"));
+    repo.wt(&["switch", "-q", "-c", "later"]);
+
+    let scan = repo.scan();
+
+    assert_eq!(
+        scan.fact("registration_state"),
+        FactValue::Enum(RegistrationState::RegisteredPresent.name())
+    );
+    assert_eq!(
+        scan.fact("repository_identity"),
+        FactValue::Enum("verified")
+    );
+    assert_eq!(git_findings(&scan), 1);
+}
+
+/// What a test does to its repository.
+type Change = fn(&Repo);
+
+/// Each way a registration and a checkout can come to disagree, as a repository gets one.
+const DISAGREEMENTS: [(&str, Change); 5] = [
+    ("a copy", |repo| {
+        copy_tree(&repo.main, &repo.projects().join("app-copy"));
+    }),
+    ("a copy that moved on", |repo| {
+        copy_tree(&repo.main, &repo.projects().join("app-copy"));
+        repo.wt(&["switch", "-q", "-c", "later"]);
+    }),
+    ("a copy of a checkout", |repo| {
+        copy_tree(&repo.checkout, &repo.projects().join("wt-copy"));
+    }),
+    ("a gitdir at another worktree", |repo| {
+        registers_elsewhere(repo, "other", "wt");
+    }),
+    ("a moved checkout", |repo| {
+        rename(&repo.checkout, &repo.projects().join("moved"));
+    }),
+];
+
+/// Catches any path with two findings, which is two answers about one checkout, however
+/// the registration and the checkout came apart.
+#[test]
+fn no_path_has_two_findings() {
+    for (name, disagreement) in DISAGREEMENTS {
+        let repo = Repo::new();
+        repo.git(&["worktree", "add", "-q", "-b", "other", "../other"]);
+        disagreement(&repo);
+
+        let scan = repo.scan();
+
+        let git = scan.0.findings.iter().filter(|f| f.integration.0 == "git");
+        let paths: Vec<_> = git.map(|f| &f.path).collect();
+        let unique: BTreeSet<_> = paths.iter().collect();
+        assert_eq!(paths.len(), unique.len(), "{name}: {paths:?}");
+    }
+}
+
 /// Catches a `.git` that is a link followed to a file elsewhere: a checkout's own `.git`
 /// is a plain file, so one that isn't proves nothing.
 #[cfg(unix)]
@@ -938,16 +1046,26 @@ fn a_checkout_whose_repository_lay_outside_every_root_is_unregistered() {
         &away,
         &["worktree", "add", "-q", "-b", "far", "../../projects/far"],
     );
+    repo.git_in(
+        &away,
+        &["worktree", "add", "-q", "-b", "near", "../../projects/near"],
+    );
     rename(&away, &outside.join("gone"));
 
     let scan = repo.scan();
 
-    assert_eq!(
-        scan.fact_at("far", "registration_state"),
-        FactValue::Enum(RegistrationState::PresentUnregistered.name())
-    );
+    for name in ["far", "near"] {
+        assert_eq!(
+            scan.fact_at(name, "registration_state"),
+            FactValue::Enum(RegistrationState::PresentUnregistered.name()),
+            "{name}"
+        );
+    }
     let omissions = scan.0.integrations.iter().flat_map(|i| &i.omissions);
     assert_eq!(omissions.count(), 0, "its one finding says what is known");
+    let advice = scan.0.integrations.iter().flat_map(|i| &i.advice);
+    let snippets = advice.flat_map(|advice| &advice.snippets);
+    assert_eq!(snippets.count(), 0, "neither link leads anywhere to repair");
 }
 
 /// Catches a checkout found twice when its repository moved inside a root: the moved

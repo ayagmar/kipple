@@ -258,6 +258,11 @@ struct Discovery<'run, 'context, 'findings> {
     pending: BTreeMap<PathBuf, Vec<Listing>>,
     /// Each main worktree already gone through, which another of its worktrees lists again.
     mains: BTreeSet<PathBuf>,
+    /// The main worktree each common directory belongs to, as far as asked.
+    owners: BTreeMap<PathBuf, PathBuf>,
+    /// The common directories git listed, which a copy's list of the same paths says
+    /// nothing about.
+    answered: BTreeSet<PathBuf>,
     /// The common directories git couldn't list, each reported once.
     failed: BTreeSet<PathBuf>,
     /// Linked checkouts to look for in what the repositories listed, once all have been.
@@ -279,6 +284,8 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
             listed: BTreeSet::new(),
             pending: BTreeMap::new(),
             mains: BTreeSet::new(),
+            owners: BTreeMap::new(),
+            answered: BTreeSet::new(),
             failed: BTreeSet::new(),
             unconfirmed: Vec::new(),
             broken: Vec::new(),
@@ -318,12 +325,13 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
     /// with another of its worktrees. A list that fails says so, and never reads as a
     /// repository with no worktrees.
     fn list(&mut self, dir: &Path, common: &Path) -> Result<(), IntegrationError> {
-        if self.listed.contains(dir) || self.failed.contains(common) {
+        if self.answered.contains(common) || self.failed.contains(common) {
             return Ok(());
         }
         let listed = self.cx.worktrees().list(dir, self.cx.cancel_token());
         match listed {
             Ok(registrations) => {
+                self.answered.insert(common.to_owned());
                 self.registrations(&registrations);
                 Ok(())
             }
@@ -352,6 +360,7 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
         if !self.mains.insert(main.path.clone()) {
             return;
         }
+        self.owners.insert(common_of(main), main.path.clone());
         for registration in linked {
             let listings = self.pending.entry(registration.path.clone()).or_default();
             listings.push(Listing {
@@ -363,30 +372,71 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
 
     /// Adds the one finding of each path the repositories list.
     fn settle(&mut self) -> Result<(), IntegrationError> {
-        while let Some((_, listings)) = self.pending.pop_first() {
+        while let Some((path, listings)) = self.pending.pop_first() {
             if self.cx.is_cancelled() {
                 return Err(IntegrationError::Stopped);
             }
-            self.settled(&listings)?;
+            self.settled(&path, listings)?;
         }
         Ok(())
     }
 
-    /// Adds the finding of a path with these records. Two records of one path can't both
-    /// describe it, and `inspect` starts from the path, so nothing asked there would say
-    /// which one does.
-    fn settled(&mut self, listings: &[Listing]) -> Result<(), IntegrationError> {
-        let [listing] = listings else {
-            let Some(listing) = listings.first() else {
-                return Ok(());
-            };
-            return self.registered(listing, invalid());
+    /// Adds the finding of `path` from its records. Two from one repository can't both
+    /// describe it, and `inspect` starts from the path, so nothing asked there says which
+    /// does. From several repositories, only the checkout's own speaks: a copy of a
+    /// repository lists what the original does, and the rows come from the original.
+    fn settled(&mut self, path: &Path, listings: Vec<Listing>) -> Result<(), IntegrationError> {
+        let Some(first) = listings.first() else {
+            return Ok(());
         };
-        let state = self
-            .cx
-            .worktrees()
-            .inspect(&listing.registration, self.cx.cancel_token());
-        self.registered(listing, state)
+        if printed_twice(&listings) {
+            return self.registered(first, invalid());
+        }
+        let worktrees = self.cx.worktrees();
+        let cancel = self.cx.cancel_token();
+        let asked = listings
+            .iter()
+            .map(|l| worktrees.inspect(&l.registration, cancel));
+        let states: Vec<WorktreeState> = asked.collect();
+        let placed = states.iter().find_map(|state| state.place.as_ref().ok());
+        let Some(common) = placed.map(|place| place.common_dir.clone()) else {
+            let state = states.into_iter().next().unwrap_or_else(invalid);
+            return self.registered(first, state);
+        };
+        let owner = self.owner(path, &common);
+        // Asking found its repository's own record of this path, which settles it with these.
+        if let Some(more) = self.pending.get_mut(path) {
+            more.extend(listings);
+            return Ok(());
+        }
+        let state = match owner {
+            Ok(owner) => {
+                let mut records = listings.iter().zip(states);
+                let own = records.find(|(l, state)| l.main.path == owner && state.place.is_ok());
+                if let Some((listing, state)) = own {
+                    return self.registered(listing, state);
+                }
+                invalid()
+            }
+            Err(_) if self.cx.is_cancelled() => return Err(IntegrationError::Stopped),
+            Err(gap) => WorktreeState::unknown(gap),
+        };
+        self.registered(first, state)
+    }
+
+    /// The main worktree of the repository whose common directory is `common`, by git's own
+    /// word from the checkout at `path`. The repository can be outside every root, so its
+    /// files can't be compared from here, and `main/.git` isn't where a repository with a
+    /// separate git directory keeps it.
+    fn owner(&mut self, path: &Path, common: &Path) -> Result<PathBuf, GitGap> {
+        if let Some(main) = self.owners.get(common) {
+            return Ok(main.clone());
+        }
+        let records = self.cx.worktrees().list(path, self.cx.cancel_token())?;
+        let main = records.first().ok_or(GitGap::Failed)?.path.clone();
+        self.registrations(&records);
+        self.owners.insert(common.to_owned(), main.clone());
+        Ok(main)
     }
 
     fn registered(
@@ -548,6 +598,22 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
             consequence: None,
         };
         self.sink.add_supplied(rule, dir, claim, supplied)
+    }
+}
+
+/// Whether one repository printed two of these records.
+fn printed_twice(listings: &[Listing]) -> bool {
+    let mut mains = BTreeSet::new();
+    listings.iter().any(|l| !mains.insert(&l.main.path))
+}
+
+/// The common directory of the repository whose main worktree is `main`: `<main>/.git`, or a
+/// bare main itself.
+fn common_of(main: &Registration) -> PathBuf {
+    if main.bare {
+        main.path.clone()
+    } else {
+        main.path.join(".git")
     }
 }
 
@@ -749,18 +815,11 @@ fn facts(
 fn identity(main: &Registration, state: &WorktreeState) -> FactValue {
     match (&state.place, &state.witness) {
         (Err(GitGap::OtherWorkTree), _) => FactValue::Enum("differs"),
-        (Ok(place), Ok(_)) => {
-            let common = if main.bare {
-                main.path.clone()
-            } else {
-                main.path.join(".git")
-            };
-            FactValue::Enum(if place.common_dir == common {
-                "verified"
-            } else {
-                "differs"
-            })
-        }
+        (Ok(place), Ok(_)) => FactValue::Enum(if place.common_dir == common_of(main) {
+            "verified"
+        } else {
+            "differs"
+        }),
         _ => FactValue::Unknown,
     }
 }
