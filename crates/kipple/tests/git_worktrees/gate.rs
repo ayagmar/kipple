@@ -599,6 +599,7 @@ fn reftable_makes_facts_unknown() {
         FactValue::Enum("blocked")
     );
     assert_eq!(scan.fact("worktree.per_worktree_refs"), FactValue::Unknown);
+    assert_eq!(scan.fact(OPERATION), FactValue::Unknown);
     assert_eq!(scan.fact("git.tracked_changes"), FactValue::Unknown);
 }
 

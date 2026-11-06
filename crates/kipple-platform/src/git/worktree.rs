@@ -79,7 +79,7 @@ impl WorktreeQuery for GitQuery {
         let git = self.worktree_git();
         let mut state = WorktreeState {
             registration: Ok(RegistrationState::RegisteredPresent),
-            operation_in_progress: any_of(&links.admin, &OPERATIONS),
+            operation_in_progress: operation_in_progress(&links.admin),
             per_worktree_refs: per_worktree_refs(&links.admin),
             index_locked: any_of(&links.admin, &LOCKS),
             ..WorktreeState::unknown(git.as_ref().map_or_else(|gap| *gap, |_| GitGap::Failed))
@@ -97,13 +97,25 @@ impl WorktreeQuery for GitQuery {
     }
 }
 
-/// How many refs the admin directory `admin` holds. A reftable worktree keeps them in its
-/// table, and what is under `refs/` then is a stub: counting it would be a guess.
+/// How many refs the admin directory `admin` holds.
 fn per_worktree_refs(admin: &Path) -> Result<u64, GitGap> {
+    refuse_reftable(admin)?;
+    files_below(&admin.join("refs"))
+}
+
+/// Whether what an operation leaves is in the admin directory `admin`.
+fn operation_in_progress(admin: &Path) -> Result<bool, GitGap> {
+    refuse_reftable(admin)?;
+    any_of(admin, &OPERATIONS)
+}
+
+/// Refuses a reftable worktree: its refs and pseudo-refs such as `CHERRY_PICK_HEAD` are in
+/// its table, and what is left under `admin` would read as nothing there.
+fn refuse_reftable(admin: &Path) -> Result<(), GitGap> {
     if exists(&admin.join("reftable"))? {
         return Err(GitGap::Unsupported);
     }
-    files_below(&admin.join("refs"))
+    Ok(())
 }
 
 /// What a registration's files say.
