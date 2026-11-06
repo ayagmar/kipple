@@ -99,7 +99,7 @@ const FACTS: &[FactSpec] = &[
         name: LOG_DIR_CONFIGURED,
         kind: FactKind::Bool,
         selector: Some(TUI_LOG),
-        meaning: "whether a config file in the Codex home sets `log_dir`",
+        meaning: "whether a config file in the Codex home sets `log_dir`; system-wide config isn't read",
     },
     FactSpec {
         name: TUI_LOG_WRITER,
@@ -1125,7 +1125,7 @@ fn is_verified(version: &str) -> bool {
 /// What the config files in a home say of `log_dir`.
 #[derive(Debug, PartialEq, Eq)]
 enum LogDir {
-    /// Each file there was read, and none sets it.
+    /// Each config file in the home was read, and none sets it.
     Unset,
     /// Set, to these directories as far as they can be placed: a `~` can't be, since the
     /// home directory isn't one of this integration's roots.
@@ -1136,7 +1136,8 @@ enum LogDir {
 
 impl LogDir {
     /// Reads every config file among `entries` of `home`. A link to one counts as unread,
-    /// since kipple doesn't follow it. What the system's own layers set is out of reach.
+    /// since kipple doesn't follow it. The system's own layers aren't read, so `Unset` speaks
+    /// only for the home.
     fn read(cx: &ScanContext<'_>, home: &Path, entries: &[DirEntryMeta]) -> Self {
         let mut dirs = None;
         let configs = entries.iter().filter(|entry| is_config(entry));

@@ -146,7 +146,7 @@
           "name": "log_dir.configured",
           "kind": "bool",
           "selector": "codex-legacy-tui-log",
-          "meaning": "whether a config file in the Codex home sets `log_dir`"
+          "meaning": "whether a config file in the Codex home sets `log_dir`; system-wide config isn't read"
         },
         {
           "name": "tui_log.writer",
