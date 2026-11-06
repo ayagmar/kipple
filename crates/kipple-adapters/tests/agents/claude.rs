@@ -94,11 +94,10 @@ fn closed_debug_log_removed_open_one_kept() {
 /// couldn't check, so a closed log stays `unknown-git`. That fails closed, and it also means
 /// no file finding is removable there. When this fails, the host is fixed: delete this test
 /// and `GitBelowFile`.
-#[cfg(unix)]
 #[test]
 fn a_file_finding_is_held_by_the_git_probe() {
     let mut host = Host::new(installed());
-    host.git_below_file = GitBelowFile::AsTheOsAnswers;
+    host.git_below_file = GitBelowFile::NotADirectory;
 
     assert_eq!(host.scan().holds(&closed_log()), [Hold::UnknownGit]);
 }

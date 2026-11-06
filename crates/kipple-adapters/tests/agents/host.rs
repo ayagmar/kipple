@@ -97,9 +97,9 @@ type Reads = Arc<Mutex<Vec<PathBuf>>>;
 /// finding (`Repositories::above` starts at the item).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GitBelowFile {
-    /// `ENOTDIR`, as Linux and macOS do. The host takes that for a `.git` it couldn't check,
-    /// so it holds every file finding as `unknown-git`.
-    AsTheOsAnswers,
+    /// `ENOTDIR`, as Linux and macOS answer. The host takes that for a `.git` it couldn't
+    /// check, so it holds every file finding as `unknown-git`.
+    NotADirectory,
     /// Nothing there, as Windows answers and as the host should read `ENOTDIR`. A stand-in
     /// until `kipple-core/src/facts.rs` does: without it no rule here could reach its verdict.
     /// Remove this once it does; `a_file_finding_is_held_by_the_git_probe` then fails to say so.
@@ -115,22 +115,25 @@ struct TempFs {
 }
 
 impl TempFs {
-    fn stands_in(&self, path: &Path, error: &io::Error) -> bool {
-        self.git_below_file == GitBelowFile::Absent
-            && error.kind() == io::ErrorKind::NotADirectory
-            && path.file_name().is_some_and(|name| name == ".git")
+    /// The answer for `path` when it is `.git` below a file, on any OS.
+    fn git_below_file(&self, path: &Path) -> Option<io::ErrorKind> {
+        let parent = path.parent().filter(|_| path.ends_with(".git"))?;
+        fs::symlink_metadata(parent)
+            .ok()
+            .filter(fs::Metadata::is_file)?;
+        Some(match self.git_below_file {
+            GitBelowFile::NotADirectory => io::ErrorKind::NotADirectory,
+            GitBelowFile::Absent => io::ErrorKind::NotFound,
+        })
     }
 }
 
 impl FsProbe for TempFs {
     fn metadata(&self, path: &Path) -> Result<EntryMeta, ProbeError> {
-        let meta = fs::symlink_metadata(path).map_err(|error| {
-            if self.stands_in(path, &error) {
-                ProbeError::io(path, io::ErrorKind::NotFound.into())
-            } else {
-                ProbeError::io(path, error)
-            }
-        })?;
+        if let Some(kind) = self.git_below_file(path) {
+            return Err(ProbeError::io(path, kind.into()));
+        }
+        let meta = fs::symlink_metadata(path).map_err(|e| ProbeError::io(path, e))?;
         Ok(EntryMeta {
             kind: kind(meta.file_type()),
             identity: Some(identity(path)),
