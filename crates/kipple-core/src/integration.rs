@@ -63,8 +63,8 @@ pub struct IntegrationDescriptor {
     /// change that lives in code no [`Rule`] shows suspends the profile's entries for its
     /// rules. `kipple-adapters/tests/golden/revision` keeps each revision's digest of the
     /// integration's output over its layout fixtures, and `integration_revision.rs` fails
-    /// unless the current pair is its newest row: changed output passes only with this
-    /// bumped and a row appended.
+    /// unless the current pair is its newest row. Changed output bumps this and appends a
+    /// row, and review holds rows to append-only: the test sees only the rows as they are.
     pub revision: u32,
 }
 
