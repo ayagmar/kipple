@@ -18,7 +18,7 @@ use kipple_core::{
 };
 
 use crate::environment::Environment;
-use crate::os::HardLink;
+use crate::os::{ConfigFile, HardLink};
 use crate::roots::{absolute, under};
 
 /// kipple's own directories: under the XDG roots on Linux and macOS alike (D-015).
@@ -58,6 +58,26 @@ fn home(env: &Environment) -> Result<ResolvedRoot, UnresolvedRoot> {
         path,
         RootSource::Env("HOME"),
     ))
+}
+
+/// Codex's config files in the system's own configuration, the same on every Unix.
+const CODEX_SYSTEM_CONFIG: [&str; 3] = [
+    "/etc/codex/config.toml",
+    "/etc/codex/managed_config.toml",
+    "/etc/codex/requirements.toml",
+];
+
+/// Where Codex keeps its system-wide config files.
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "Windows asks the OS, which can fail"
+)]
+pub(crate) fn codex_system_config(env: &Environment) -> Result<Vec<ConfigFile>, UnresolvedRoot> {
+    let file = |name| ConfigFile {
+        name,
+        path: env.system_path(Path::new(name)),
+    };
+    Ok(CODEX_SYSTEM_CONFIG.map(file).to_vec())
 }
 
 /// The home root, then the XDG roots: each variable when set, its default under home

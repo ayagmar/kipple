@@ -999,6 +999,65 @@ fn a_value_kipple_cant_place_is_unknown_and_a_blank_one_unset() {
     }
 }
 
+/// Catches a Codex profile file going unread: `codex --profile work` layers it over
+/// `config.toml`, so a `sqlite_home` there is where the store really is. kipple can't know
+/// which profile a person selects, so every one counts.
+#[test]
+fn every_codex_profile_file_can_move_the_store() {
+    let dir = home();
+    let home = dir.path().canonicalize().unwrap();
+    let codex = home.join(".codex");
+    fs::create_dir_all(&codex).unwrap();
+    fs::write(codex.join("config.toml"), r#"sqlite_home = "/data/user""#).unwrap();
+    fs::write(
+        codex.join("work.config.toml"),
+        r#"sqlite_home = "/data/work""#,
+    )
+    .unwrap();
+    let inside = "[history]\nsqlite_home = \"home-db\"\n";
+    fs::write(codex.join("home.config.toml"), inside).unwrap();
+    fs::write(codex.join("notes.toml"), r#"sqlite_home = "/data/no""#).unwrap();
+    fs::write(codex.join("myconfig.toml"), r#"sqlite_home = "/data/no""#).unwrap();
+
+    let roots = roots(&[("HOME", text(&home))]);
+
+    let mut found: Vec<_> = roots
+        .all(SymbolicRoot::CodexSqliteHome)
+        .iter()
+        .map(|resolved| resolved.as_ref().unwrap().path.clone())
+        .collect();
+    found.sort();
+    let mut expected = vec![
+        PathBuf::from("/data/user"),
+        PathBuf::from("/data/work"),
+        codex.join("home-db"),
+    ];
+    expected.sort();
+    assert_eq!(found, expected);
+}
+
+/// Catches a profile file kipple can't read counting as one that sets nothing: its
+/// `sqlite_home` may be the store, so it holds like the others, and no value in the file
+/// reaches the message.
+#[test]
+fn a_codex_profile_kipple_cant_read_is_unknown() {
+    let bad = "token = \"s3cret\"\nsqlite_home = \n";
+    let dir = home();
+    let home = dir.path();
+    let codex = home.join(".codex");
+    fs::create_dir_all(codex.join("folder.config.toml")).unwrap();
+    fs::write(codex.join("work.config.toml"), bad).unwrap();
+
+    let roots = roots(&[("HOME", text(home))]);
+
+    let found = roots.all(SymbolicRoot::CodexSqliteHome);
+    assert_eq!(found.len(), 2, "one unknown for each, found {found:?}");
+    for resolved in found {
+        let message = resolved.as_ref().unwrap_err().to_string();
+        assert!(!message.contains("s3cret"), "shows no value: {message}");
+    }
+}
+
 /// Catches the parsers' input reaching a panic through what a person left in a file: any
 /// input must end in a value, an unknown or nothing.
 #[test]

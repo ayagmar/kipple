@@ -12,15 +12,15 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use kipple_core::{
-    LinkProblem, Resolution, ResolvedRoot, RootLink, RootSource, Roots, SymbolicRoot,
-    UnresolvedRoot,
+    LinkProblem, Resolution, ResolvedRoot, RootLink, RootSource, Roots, SettingProblem,
+    SymbolicRoot, UnresolvedRoot,
 };
 
 use self::agent_config::ConfigKey;
 use self::tool_path::Tool;
 use crate::environment::Environment;
 use crate::fs_probe::exact;
-use crate::os;
+use crate::os::{self, ConfigFile};
 
 /// The config file's name inside kipple's config directory.
 pub const CONFIG_FILE: &str = "config.toml";
@@ -154,12 +154,11 @@ const AGENT_LOCATIONS: [(SymbolicRoot, &str); 5] = [
 /// Codex's config files that can set `sqlite_home`, in its home.
 const CODEX_HOME_CONFIG: [&str; 3] = ["config.toml", "managed_config.toml", "requirements.toml"];
 
-/// The same, in the system's own configuration.
-const CODEX_SYSTEM_CONFIG: [&str; 3] = [
-    "/etc/codex/config.toml",
-    "/etc/codex/managed_config.toml",
-    "/etc/codex/requirements.toml",
-];
+/// How a Codex profile's file name ends: `work.config.toml` is the profile `work`.
+const CODEX_PROFILE_SUFFIX: &str = ".config.toml";
+
+/// What people call those files, shown when one can't be read.
+const CODEX_PROFILES: &str = "*.config.toml";
 
 /// Resolves every root this OS has. `project_roots`, when given (`--root`), replace the
 /// default project roots; none given means the defaults.
@@ -374,25 +373,75 @@ fn codex_sqlite_homes(
         let path = expanded(value, var, Tool::Codex, roots);
         found.push(path.and_then(|path| configured_dir(root, path, RootSource::Env(var))));
     }
-    let home = match roots.get(SymbolicRoot::CodexHome) {
-        Some(Ok(home)) => Some(home.path.as_path()),
-        Some(Err(_)) | None => None,
-    };
-    let in_home = CODEX_HOME_CONFIG
-        .into_iter()
-        .filter_map(|file| Some((file, home?.join(file))));
-    let in_system = CODEX_SYSTEM_CONFIG
-        .into_iter()
-        .map(|file| (file, env.system_path(Path::new(file))));
-    for (file, path) in in_home.chain(in_system) {
+    for file in codex_config_files(env, roots) {
+        let ConfigFile { name, path } = match file {
+            Ok(file) => file,
+            Err(unusable) => {
+                found.push(Err(unusable));
+                continue;
+            }
+        };
         let key = ConfigKey {
-            file,
+            file: name,
             key: "sqlite_home",
             tool: Tool::Codex,
         };
         found.extend(setting_dirs(key, &path, root, roots));
     }
     found
+}
+
+/// Every Codex config layer kipple can reach: its home's, each profile's, and the system's.
+/// A layer it can't list stays in the answer as unknown. Which of them Codex reads depends
+/// on how it was started, so each counts.
+fn codex_config_files(env: &Environment, roots: &Roots) -> Vec<Result<ConfigFile, UnresolvedRoot>> {
+    let mut files = Vec::new();
+    if let Some(Ok(home)) = roots.get(SymbolicRoot::CodexHome) {
+        let in_home = CODEX_HOME_CONFIG.map(|name| ConfigFile {
+            name,
+            path: home.path.join(name),
+        });
+        files.extend(in_home.map(Ok));
+        match codex_profiles(&home.path) {
+            Ok(profiles) => files.extend(profiles.into_iter().map(Ok)),
+            Err(unusable) => files.push(Err(unusable)),
+        }
+    }
+    match os::codex_system_config(env) {
+        Ok(system) => files.extend(system.into_iter().map(Ok)),
+        Err(unusable) => files.push(Err(unusable)),
+    }
+    files
+}
+
+/// The profile files in Codex's `home`, in name order.
+fn codex_profiles(home: &Path) -> Result<Vec<ConfigFile>, UnresolvedRoot> {
+    let unusable = |source: io::Error| UnresolvedRoot::Setting {
+        file: CODEX_PROFILES,
+        problem: SettingProblem::Unreadable(Arc::new(source)),
+    };
+    let entries = match fs::read_dir(exact(home)) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(unusable(error)),
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        let entry = entry.map_err(unusable)?;
+        if entry
+            .file_name()
+            .to_string_lossy()
+            .ends_with(CODEX_PROFILE_SUFFIX)
+        {
+            paths.push(entry.path());
+        }
+    }
+    paths.sort();
+    let profile = |path| ConfigFile {
+        name: CODEX_PROFILES,
+        path,
+    };
+    Ok(paths.into_iter().map(profile).collect())
 }
 
 /// `$PI_CODING_AGENT_DIR` as upstream reads it, then `~/.pi/agent`.
