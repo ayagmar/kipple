@@ -289,7 +289,7 @@ tree.file("projects/rust-app/Cargo.toml", b"[package]\nname = \"demo\"\n")
 tree.build_in(home)?;
 ```
 
-`link` and `bad_link` add real symlinks, on Windows too, where a test that can't make one fails. A link's target is a path in the tree, held as an absolute path. `modified` sets the times of the files below a directory, and `modified_dir` sets a directory's own time once its children are written. `FixtureTree::link_stamp` reads a built link's own `lstat` (Unix only), for a fixture that has to write a file recording it, since a change time can't be set.
+`link` and `bad_link` add real symlinks, on Windows too, where a test that can't make one fails. `link` takes what the link holds as an explicit `Holds`, since an integration can tell the forms apart: `AbsoluteInTree` is a path in the tree, held as an absolute path, and `AsWritten` is the target exactly as upstream writes it, relative to the link or absolute, in the tree or not. `modified` sets the times of the files below a directory, and `modified_dir` sets a directory's own time once its children are written. `FixtureTree::link_stamp` reads a built link's own `lstat` (Unix only), for a fixture that has to write a file recording it, since a change time can't be set.
 
 - Fixtures live in `crates/kipple-adapters/tests/fixtures/<integration>/`, one file per supported upstream layout named after the tool and version (`node/pnpm_v12_9_1.rs`), each adding its layout to a `FixtureTree`.
 - Each fixture comes with a positive case and at least one negative case (an unknown layout blocks, a running release is kept). `tests/integrations.rs` runs them through the engine.

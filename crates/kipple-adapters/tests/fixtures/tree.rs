@@ -4,7 +4,7 @@
 
 use std::fs;
 use std::io;
-use std::path::{Path, PathBuf};
+use std::path::{MAIN_SEPARATOR_STR, Path, PathBuf};
 use std::time::SystemTime;
 
 // Only the adapters' own tests call these so far, and the other crates that include this
@@ -12,6 +12,7 @@ use std::time::SystemTime;
 // place; drop a name once `demo_home` reaches it.
 const _: () = {
     let _ = FixtureTree::link;
+    let _ = Holds::AsWritten;
     let _ = FixtureTree::bad_link;
     let _ = FixtureTree::modified_dir;
     let _ = FixtureTree::link_stamp;
@@ -23,7 +24,7 @@ const _: () = {
 pub(crate) struct FixtureTree {
     dirs: Vec<String>,
     files: Vec<(String, Content)>,
-    links: Vec<(String, String)>,
+    links: Vec<(String, String, Holds)>,
     modified: Vec<(String, SystemTime)>,
     modified_dirs: Vec<(String, SystemTime)>,
 }
@@ -33,6 +34,19 @@ enum Content {
     Bytes(Vec<u8>),
     /// A sparse file of this length, so large sizes cost no disk.
     Sized(u64),
+}
+
+/// What a link holds of the target it's given, which is the upstream layout's to say: an
+/// integration can tell the forms apart, so a fixture has to state the one upstream writes.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Holds {
+    /// The target is a path relative to the directory the tree is built in, like a link's
+    /// own path, and the link holds it as an absolute path, as Codex's `current` does.
+    AbsoluteInTree,
+    /// The link holds the target as written, relative to the link (`bin/codex`,
+    /// `../../.pi/agent/bin/pi`) or absolute, in the tree or not. `/` separates its parts
+    /// on every system.
+    AsWritten,
 }
 
 impl FixtureTree {
@@ -60,18 +74,17 @@ impl FixtureTree {
         self
     }
 
-    /// A symlink at `path`, with its parent directories, to `target`, a path relative to
-    /// the directory the tree is built in, like `path`. The link holds it as an absolute
-    /// path, as Codex's `current` does. Links are made after every directory and file, in
-    /// the order added, so a link to a directory through another link comes after it.
-    pub(crate) fn link(&mut self, path: &str, target: &str) -> &mut Self {
-        self.links.push((path.to_owned(), target.to_owned()));
+    /// A symlink at `path`, with its parent directories, to `target`, which it holds as
+    /// `holds` says. Links are made after every directory and file, in the order added, so
+    /// a link to a directory through another link comes after it.
+    pub(crate) fn link(&mut self, path: &str, target: &str, holds: Holds) -> &mut Self {
+        self.links.push((path.to_owned(), target.to_owned(), holds));
         self
     }
 
     /// A symlink at `path`, with its parent directories, whose target doesn't exist.
     pub(crate) fn bad_link(&mut self, path: &str) -> &mut Self {
-        self.link(path, &format!("{path}.missing"))
+        self.link(path, &format!("{path}.missing"), Holds::AbsoluteInTree)
     }
 
     /// Every file below `dir` was last modified `at`, which overrides earlier calls for the
@@ -130,12 +143,16 @@ impl FixtureTree {
                 Content::Sized(len) => fs::File::create(&path)?.set_len(*len)?,
             }
         }
-        for (path, target) in &self.links {
+        for (path, target, holds) in &self.links {
             let path = root.join(path);
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)?;
             }
-            symlink(&below(root, target), &path)?;
+            let target = match holds {
+                Holds::AbsoluteInTree => below(root, target),
+                Holds::AsWritten => PathBuf::from(target.replace('/', MAIN_SEPARATOR_STR)),
+            };
+            symlink(&target, &path)?;
         }
         for (dir, at) in &self.modified {
             let below = self
@@ -154,7 +171,7 @@ impl FixtureTree {
     }
 }
 
-/// `path` below `root`, part by part: a link keeps its target as written, and Windows
+/// `path` below `root`, part by part: a link keeps its target as given, and Windows
 /// doesn't read a `/` in one.
 fn below(root: &Path, path: &str) -> PathBuf {
     path.split('/')
@@ -166,10 +183,12 @@ fn symlink(target: &Path, link: &Path) -> io::Result<()> {
     std::os::unix::fs::symlink(target, link)
 }
 
-/// A link of the kind `target` needs. One to nothing is a file link.
+/// A link of the kind `target` needs, which a relative one finds from the link's own
+/// directory, as the system will. One to nothing is a file link.
 #[cfg(windows)]
 fn symlink(target: &Path, link: &Path) -> io::Result<()> {
-    if target.is_dir() {
+    let resolved = link.parent().unwrap_or(link).join(target);
+    if resolved.is_dir() {
         std::os::windows::fs::symlink_dir(target, link)
     } else {
         std::os::windows::fs::symlink_file(target, link)
