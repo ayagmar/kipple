@@ -128,7 +128,7 @@ Anything that can drift from the binary is generated from it, and CI fails if th
 | **Rule catalog: one page per built-in rule** | rule packs plus integration descriptors | `site/src/content/docs/rules/<rule-id>.mdx`, covering what it finds, why it exists, the evidence kipple checks, what you lose, how it comes back, its bucket at each carefulness level, upstream references, and how to tune or disable it (exact config snippet). A rule without `why` and `loss` text fails `gen-docs --check` |
 | Hero scan and demo text | `kipple scan` against `demo-home` (from M6) | `site/src/generated/demo-scan.txt` |
 
-Mechanism: a dev-only `xtask` binary in the workspace (`cargo xtask gen-docs`). It is not one of the four product crates and is never shipped. A hidden subcommand in the shipped binary was rejected because it would grow the user-facing surface. Precedent: `~/projects/llm-usage-metrics/scripts/generate-cli-reference.mjs` builds `site/src/content/docs/cli-reference.mdx` from the real CLI definition, and the same approach is used here, in Rust.
+Mechanism: a dev-only `xtask` binary in the workspace (`cargo xtask gen-docs`). It is not a product crate and is never shipped. A hidden subcommand in the shipped binary was rejected because it would grow the user-facing surface. Precedent: `~/projects/llm-usage-metrics/scripts/generate-cli-reference.mjs` builds `site/src/content/docs/cli-reference.mdx` from the real CLI definition, and the same approach is used here, in Rust.
 
 ## 7. Demo recordings
 
@@ -150,4 +150,4 @@ Mechanism: a dev-only `xtask` binary in the workspace (`cargo xtask gen-docs`). 
 
 1. M0: `xtask gen-docs` for the CLI reference (`--help` and `--version`). M1: `cargo xtask demo-home`, `cargo xtask verify-demo`, and `gen-docs` for the JSON schemas and the support matrix (generated files are committed under `site/src/generated/` before the site exists, and `gen-docs --check` gates them).
 2. M6: Astro and Starlight site, landing page, Safety and recovery pages checked against tests, tapes.
-3. M7: release-candidate site, Lighthouse 100 under the release conditions, humanizer pass, user sign-off.
+3. M8: release-candidate site, Lighthouse 100 under the release conditions, humanizer pass, user sign-off.
