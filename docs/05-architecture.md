@@ -20,7 +20,7 @@ kipple/
 └── docs/                  this specification
 ```
 
-There are four crates, and no fifth (no testkit, no SDK) until reuse is demonstrated. We don't create a crate per integration or per OS.
+There are four crates. M7 adds a fifth, `kipple-app`, because the CLI and the TUI already share logic it will hold (11, M7). No other (no testkit, no SDK) until reuse is demonstrated. We don't create a crate per integration or per OS.
 
 ### Dependency direction
 
@@ -33,7 +33,7 @@ kipple (bin) ──► kipple-adapters ──► kipple-core
 - `kipple-core` depends on no other kipple crate and has no I/O of its own. It owns the traits that platform and adapters implement.
 - `kipple-adapters` and `kipple-platform` depend only on core. They don't depend on each other.
 - The binary is the only composition root. It wires platform implementations into the engine and registers integrations.
-- A future GUI (Tauri or native) is a second composition root that depends on the same three library crates. Today the binary also holds frontend logic a GUI would need (config loading and editing, the home screen's actions, level totals); that moves into a shared library crate before the GUI starts (11, After 0.1).
+- A future GUI (Tauri or native) is a second composition root that depends on the same three library crates. Today the binary also holds frontend logic a GUI would need (config loading and editing, the home screen's actions, level totals); that moves into a shared library crate at M7 (11, M7).
 
 These boundaries are enforced by Cargo itself (no dependency means no access) plus a CI check on `cargo metadata` that rejects new kipple-to-kipple edges.
 
@@ -204,7 +204,7 @@ planned: IntegrationProgress, PlanReady, ItemStarted, ItemCompleted(outcome), Ap
 - **Bounded parallelism.** Size computation runs on a work-stealing pool, not unbounded: one thread per CPU today, to be tuned to the storage. It can be cancelled at directory granularity.
 - **Prune early.** Discovery skips into a recognised artifact directory only for sizing, never to look for nested projects inside `node_modules` or `target`.
 - **TUI decoupling.** The UI thread renders from a snapshot model updated by events at most once per frame (60 Hz cap). Large leaf sets are frozen inside the engine, not kept as UI rows.
-- **Optional scan cache.** Directory identity plus mtime keyed sizes in the cache dir. It is only a hint, and a cold scan must still meet the budgets.
+- **Optional scan cache (planned, not built).** Directory identity plus mtime keyed sizes in the cache dir. It is only a hint, and a cold scan must still meet the budgets.
 - **Budgets** (to calibrate against fixtures, not marketing claims):
   - known-root results in under 250 ms
   - keypress-to-frame p95 under 50 ms while scanning
@@ -227,7 +227,7 @@ planned: IntegrationProgress, PlanReady, ItemStarted, ItemCompleted(outcome), Ap
 | Profiles | platform data dir `profiles/<name>.json` | one strict JSON document per profile (`kipple.profile/v1`), replaced whole |
 | Packs | data dir `packs/<id>/<version>/` | exact manifest bytes |
 | Lock and grants | data dir `packs.lock` | TOML with digests, sources and grants |
-| Scan cache | platform cache dir | versioned binary, safe to delete |
+| Scan cache (planned, not built) | platform cache dir | versioned binary, safe to delete |
 
 `FileRunStore` keeps the runs (D-065). `runs/` and each run's directory are mode 0700, every file in them 0600, and each is opened without following a link. `lock` refuses a file system outside the executor's allowlist, read from the data directory (or the nearest directory above a missing one) before anything is made and from `runs/` once it is open, makes `runs/` (and a missing data directory) on first use, and holds `.lock` with std `File::lock` (`flock`, `LockFileEx`), trying again for `LOCK_WAIT` while another process holds it; `.lock` is never removed. `create` refuses when free space is below the plan and its first record, makes the run's directory exclusively (the ID's counter bumped while one exists), writes `plan.partial`, syncs it, renames it to `plan` without replacing anything, writes `journal.jsonl` with the first record, and syncs `runs/` and the run's directory after each step. `append` cuts the journal to the offset the core gives, writes and syncs the record, and cuts it back if that fails. On Windows every name in `runs/` and a run's directory is opened relative to the directory's checked handle, as itself; files are written through (`FILE_WRITE_THROUGH`), the plan is renamed on its own handle, and a directory is synced by flushing it as the executor does. `header` reads up to the first newline, at most `HEADER_LIMIT`, and `journal` at most `JOURNAL_LIMIT`.
 

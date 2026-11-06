@@ -96,12 +96,12 @@ Pick: **release-plz for versioning and changelog, dist for building and publishi
 
 Alternative considered: hand-written tag workflow with `gh release create`, as in `~/projects/modmgr/.github/workflows/release.yml`. That's fine for a single JS artifact. For 5+ native targets, installers, checksums and a Homebrew tap, it means rebuilding most of what dist already does.
 
-### Workspace configuration (validated in an M7 rehearsal before enabling)
+### Workspace configuration (validated in an M8 rehearsal before enabling)
 
-- **Lockstep versions.** All four crates share one version through release-plz's `version_group`. There is one changelog, at the root.
+- **Lockstep versions.** All five crates (M7 adds `kipple-app`) share one version through release-plz's `version_group`. There is one changelog, at the root.
 - **One tag.** Only the `kipple` package has `git_tag_enable = true`, with `git_tag_name = "v{{ version }}"`. The library crates have tags and GitHub releases disabled. Without this, release-plz's multi-package default produces package-prefixed tags.
 - **Git-only mode.** `[workspace] git_only = true`, so release-plz takes the previous version from `v*` tags rather than from crates.io, which doesn't have these crates. `xtask` has `release = false`.
-- **Publishing only from the tag (D-017, amended 2026-10-16).** release-plz never uploads anything from `main`: every crate keeps `publish = false` for release-plz. Everything that publishes runs in the tag's release workflow after its gate: dist's GitHub release, installers, Homebrew and npm jobs, and a crates.io job that publishes the four crates in dependency order (`kipple-core`, then `kipple-adapters` and `kipple-platform`, then `kipple`) after a pre-publication gate (`cargo publish --dry-run` for each, package contents checked) that runs before any upload. The library crates say in their README and docs that they are internal, with no API stability before 1.0.
+- **Publishing only from the tag (D-017, amended 2026-10-16).** release-plz never uploads anything from `main`: every crate keeps `publish = false` for release-plz. Everything that publishes runs in the tag's release workflow after its gate: dist's GitHub release, installers, Homebrew and npm jobs, and a crates.io job that publishes the five crates in dependency order (`kipple-core`, then `kipple-adapters` and `kipple-platform`, then `kipple-app`, then `kipple`) after a pre-publication gate (`cargo publish --dry-run` for each, package contents checked) that runs before any upload. The library crates say in their README and docs that they are internal, with no API stability before 1.0.
 - **Versions.** release-plz's default for 0.x applies: a `feat` bumps the patch (0.1.0 to 0.1.1), a breaking change the minor. New rules, integrations and commands ship as 0.1.x releases; a change to the config, JSON schemas or CLI that breaks existing use makes 0.2.
 - **Token.** Tags pushed with the default `GITHUB_TOKEN` don't trigger other workflows. release-plz uses a GitHub App installation token scoped to `contents` and `pull-requests` on this repo, so the tag push triggers dist. `release-plz release` only creates the tag; `git_release_enable = false`, because dist creates the GitHub release.
 
@@ -149,7 +149,7 @@ Linux ships static musl binaries so one artifact runs on glibc and musl distros.
 | # | Channel | Mechanism | When |
 | --- | --- | --- | --- |
 | 1 | GitHub Releases + shell/PowerShell installers | dist | first release |
-| 2 | Homebrew tap (repo name decided at M7) | dist `installers = ["homebrew"]`, `publish-jobs = ["homebrew"]` | first release |
+| 2 | Homebrew tap (repo name decided at M8) | dist `installers = ["homebrew"]`, `publish-jobs = ["homebrew"]` | first release |
 | 3 | AUR `kipple-bin` (release archive) and `kipple` (source build) | custom dist publish job that renders PKGBUILDs and pushes to AUR over SSH | soon after first release |
 | 4 | crates.io (`cargo install kipple`, `cargo binstall kipple`) | the tag workflow's crates.io job (above); `binstall` finds the release archives through `[package.metadata.binstall]` | first release. All four names were free on 2026-10-16 |
 | 5 | npm (`npm i -g @ayagmar/kipple`, `npx @ayagmar/kipple`) | dist `installers = ["npm"]`, `publish-jobs = ["npm"]`, `npm-scope = "@ayagmar"`, `npm-package = "kipple"`: a small package that downloads the release archive for the platform, checks it and runs `kipple`. Unscoped `kipple` is taken by an abandoned package (D-001) | first release |
@@ -181,6 +181,6 @@ Before the first public tag:
 ## 5. Open items
 
 - Confirm the PowerShell installer's checksum verification before advertising it.
-- crates.io and npm publishing (M7): crate and package ownership, trusted publishing or tokens, and the pre-publication gate. Not verified here.
+- crates.io and npm publishing (M8): crate and package ownership, trusted publishing or tokens, and the pre-publication gate. Not verified here.
 - Create the GitHub App for release-plz's token.
 - Homebrew tap repo name and AUR maintainer account.
