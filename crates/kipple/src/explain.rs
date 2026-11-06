@@ -222,6 +222,7 @@ fn evidence_line(evidence: &EvidenceOut) -> String {
             "nothing inside that its tool writes, so its layout is unknown".to_owned()
         }
         EvidenceOut::Root { root } => format!("it is the {root} root itself"),
+        EvidenceOut::Worktree { agent } => human::worktree::evidence(*agent),
     }
 }
 

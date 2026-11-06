@@ -18,6 +18,7 @@ use crate::policy::Consequence;
 use crate::probe::{DirEntryMeta, EntryKind, EntryMeta, FsProbe, ProbeError};
 use crate::root::{ResolvedRoot, SymbolicRoot};
 use crate::rule::{Lens, Platform, Rule, Selector};
+use crate::worktree::AgentLabel;
 
 /// A built-in integration's ID, such as `cargo`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -113,6 +114,12 @@ pub enum Evidence {
     NoSignature,
     /// It is the root itself, such as the trash.
     Root(SymbolicRoot),
+    /// It is a git worktree, where this agent keeps them. The label is display only: the
+    /// finding's facts decide, so this counts as a verified layout.
+    Worktree {
+        /// Which agent's location it is in.
+        agent: AgentLabel,
+    },
 }
 
 /// A native setting or command an integration suggests. Shown, never run by kipple.
@@ -183,7 +190,8 @@ impl ScanContext<'_> {
         self.roots
     }
 
-    /// The paths of `root` that opened. [`SymbolicRoot::ProjectRoots`] may have several.
+    /// The paths of `root` that opened. [`SymbolicRoot::ProjectRoots`] and
+    /// [`SymbolicRoot::GitAgentLocations`] may have several.
     pub fn roots_of(&self, root: SymbolicRoot) -> impl Iterator<Item = &ResolvedRoot> {
         self.roots
             .iter()

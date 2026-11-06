@@ -156,7 +156,7 @@ Fake-path tests prove logic. Only native-profile tests count as platform evidenc
 
 ## 8. Compatibility across versions
 
-Data one version of kipple writes or reads must be read by the next. Each format kipple publishes or reads has a **baseline**, the contract of the last release, in `crates/kipple/tests/compat/<format>/<version>/`. There has been no release yet, so today's baselines are the first contract, version 1 of each format.
+Data one version of kipple writes or reads must be read by the next. Until the 0.1.0 baseline refresh there are no users: a format changes in place as `v1`, its baseline and samples are regenerated in the same commit with the reason in the commit message, and one reader reads only the current shape. The rule in full returns at that refresh. Each format kipple publishes or reads has a **baseline**, the contract of the last release, in `crates/kipple/tests/compat/<format>/<version>/`. There has been no release yet, so today's baselines are the first contract, version 1 of each format.
 
 What a baseline holds:
 - `schema.json`, for a format with a JSON schema: the `kipple scan --json`, `scan --events jsonl`, `rules --json` and `doctor --json` records, the support matrix, the theme file, and from M3b the apply events, receipt, history, plan file, stored plan and journal.
@@ -171,6 +171,8 @@ The check fails, rather than passes, on a schema keyword it doesn't compare anyw
 **The reader tests.** `crates/kipple/tests/compat.rs` reads every sample document of every version the baselines hold, so a document written for any earlier release still loads: the config with `config show` printing each line of its `.expected` file, each theme with `theme show` doing the same, each pack validating as a third-party pack, each run reading back with its interrupted item pending, and each plan file decoding. `kipple-core`'s tests reconcile the baseline run to the trash slot its intent named, and check that its tree is the bytes the `kipple.frozen-tree` v1 encoder writes today. They need the `test-roots` feature, so they run with the other end-to-end tests in `cargo xtask verify-demo`. When only the wording of `show` changes, update the `.expected` file in the same commit and say so.
 
 **A breaking change** bumps the format's version (`kipple.scan/v2`, `version = 2` in a theme) and needs a baseline for it: `cargo xtask check-compat --refresh` writes the schema of a version that has none. A reader keeps reading every older version it has a baseline for. A config file has no version, so a change that breaks a baseline config isn't allowed.
+
+**A deliberate refresh before 0.1.0.** Delete the format's `crates/kipple/tests/compat/<format>/v1/schema.json` and run `cargo xtask check-compat --refresh`, which writes a missing baseline, then rewrite the format's samples from the current writer. `--refresh` alone still never blesses a break.
 
 **Refreshing the baseline.** At each release, `cargo xtask check-compat --refresh` makes each compatible schema its baseline, so what the release added becomes part of the contract (10-ci-and-release.md §3, Flow). Add sample documents for any key the release reads that the samples don't set yet. `--refresh` never replaces a baseline the current schema breaks.
 

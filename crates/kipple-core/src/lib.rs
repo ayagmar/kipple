@@ -106,6 +106,7 @@ mod store;
 mod suggest;
 mod tracked;
 mod trash;
+mod worktree;
 
 pub use activity::{ProcessCensus, census};
 pub use apply::{
@@ -187,3 +188,4 @@ pub use store::{
 pub use suggest::{Suggestion, is_within, suggest};
 pub use tracked::{GitGap, TrackedQuery};
 pub use trash::{Forgotten, RestoreRequest, SlotState, TrashBackend, TrashDir, TrashSlot};
+pub use worktree::AgentLabel;

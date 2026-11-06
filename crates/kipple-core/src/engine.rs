@@ -649,11 +649,10 @@ impl Engine {
         };
         let tracked = self.tracked(path, measurement, gap, shared);
         let rule = owner.rule(&found.finding.rule);
-        let layout_verified = found
-            .finding
-            .evidence
-            .iter()
-            .any(|evidence| matches!(evidence, Evidence::Signature(_)));
+        let layout_verified =
+            found.finding.evidence.iter().any(|evidence| {
+                matches!(evidence, Evidence::Signature(_) | Evidence::Worktree { .. })
+            });
         let lineage = shared.identities.lineage(self.ports.fs.as_ref(), path);
         let scope = Scope {
             fs: self.ports.fs.as_ref(),

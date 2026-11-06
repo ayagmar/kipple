@@ -337,6 +337,30 @@ const fn hold_text(hold: Hold) -> (&'static str, &'static str) {
             "last change unknown",
             "kipple couldn't read when it last changed.",
         ),
+        Hold::Retained => (
+            "kept by retention",
+            "Its tool still needs this release, or its group couldn't be settled.",
+        ),
+        Hold::Unsettled => (
+            "not settled",
+            "kipple couldn't settle which releases of its group may go, so all of them stay.",
+        ),
+        Hold::FactUnmet => (
+            "check not passed",
+            "Its rule needs something about it that isn't so.",
+        ),
+        Hold::FactUnknown => (
+            "check unknown",
+            "Its rule needs something about it that kipple couldn't establish.",
+        ),
+        Hold::SubjectMismatch => (
+            "wrong kind of item",
+            "What its rule would do doesn't fit what was found here, so kipple won't do it.",
+        ),
+        Hold::TrackedInsideNative => (
+            "git tracks files in it",
+            "git tracks files inside it, and a tool's own command can't leave them out.",
+        ),
     }
 }
 
@@ -634,3 +658,4 @@ pub(crate) mod receipt;
 pub(crate) mod review;
 #[cfg(test)]
 mod tests;
+pub(crate) mod worktree;

@@ -7,9 +7,9 @@ use std::path::Path;
 
 use kipple_core::format::base64;
 use kipple_core::{
-    Activity, ActivityGap, Advice, Bucket, Completeness, Consequence, Evidence, Finding,
-    IntegrationId, IntegrationReport, Lens, Omission, Policy, ScanOutcome, ScanReport, Seen,
-    SpaceEstimate, SymbolicRoot, UnresolvedRoot, Verdict,
+    Activity, ActivityGap, Advice, AgentLabel, Bucket, Completeness, Consequence, Evidence,
+    Finding, IntegrationId, IntegrationReport, Lens, Omission, Policy, ScanOutcome, ScanReport,
+    Seen, SpaceEstimate, SymbolicRoot, UnresolvedRoot, Verdict,
 };
 use kipple_platform::{PLATFORM, raw_path};
 use schemars::JsonSchema;
@@ -200,7 +200,8 @@ pub struct VerdictOut {
     /// `loss`, `high-cost`); for Protected, what holds it (`disabled`, `kept`, `excluded`,
     /// `report-only`, `advice`, `unknown-layout`,
     /// `unknown-consequence`, `unknown-git`, `holds-repository`, `in-use`,
-    /// `unknown-activity`, `unknown-modified`). Empty when Safe.
+    /// `unknown-activity`, `unknown-modified`, `retained`, `unsettled`, `fact-unmet`,
+    /// `fact-unknown`, `subject-mismatch`, `tracked-inside-native`). Empty when Safe.
     pub reasons: Vec<&'static str>,
 }
 
@@ -405,6 +406,11 @@ pub enum EvidenceOut {
         /// The symbolic root.
         root: &'static str,
     },
+    /// It is a git worktree, where this agent keeps them.
+    Worktree {
+        /// The agent's location it is in.
+        agent: AgentLabel,
+    },
 }
 
 impl From<&Evidence> for EvidenceOut {
@@ -416,6 +422,7 @@ impl From<&Evidence> for EvidenceOut {
             },
             Evidence::NoSignature => Self::NoSignature,
             Evidence::Root(root) => Self::Root { root: root.name() },
+            Evidence::Worktree { agent } => Self::Worktree { agent: *agent },
         }
     }
 }

@@ -253,7 +253,8 @@ pub struct Facts {
     /// What its rule proposes.
     pub proposal: Proposal,
     /// Whether its integration recognised what its tool wrote inside: a
-    /// [`Signature`](crate::Evidence::Signature) among its evidence.
+    /// [`Signature`](crate::Evidence::Signature) or
+    /// [`Worktree`](crate::Evidence::Worktree) among its evidence.
     pub layout_verified: bool,
     /// What removing it costs, when its integration verified that.
     pub consequence: Option<Consequence>,
@@ -321,6 +322,21 @@ named! {
         UnknownActivity = "unknown-activity",
         /// Not everything inside could be read, so when it last changed isn't known.
         UnknownModified = "unknown-modified",
+        /// Retention keeps it at every level: a release its tool needs, or one of a group
+        /// that couldn't be settled.
+        Retained = "retained",
+        /// It is a release whose group wasn't settled, so whether it may go isn't known.
+        Unsettled = "unsettled",
+        /// A requirement or eligibility predicate of its rule failed.
+        FactUnmet = "fact-unmet",
+        /// A requirement or eligibility predicate of its rule rests on a fact that isn't
+        /// known.
+        FactUnknown = "fact-unknown",
+        /// Its rule's operation doesn't fit what its integration found, such as a worktree
+        /// under `remove-files`.
+        SubjectMismatch = "subject-mismatch",
+        /// git tracks entries inside it, and a native command can't leave them out.
+        TrackedInsideNative = "tracked-inside-native",
     }
 }
 

@@ -546,7 +546,13 @@
         "holds-repository",
         "in-use",
         "unknown-activity",
-        "unknown-modified"
+        "unknown-modified",
+        "retained",
+        "unsettled",
+        "fact-unmet",
+        "fact-unknown",
+        "subject-mismatch",
+        "tracked-inside-native"
       ]
     },
     "JudgementField": {
