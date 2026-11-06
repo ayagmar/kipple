@@ -68,6 +68,7 @@ fn worktree_facts(item: &Item) -> WorktreeFacts {
         repository: home("main"),
         admin: Some(home("main/.git/worktrees/topic")),
         witness: Ok(witness()),
+        ignored: Ok(Vec::new()),
         tool: Ok(tool(NativeTool::Git)),
         agent: AgentLabel::Unknown,
     }

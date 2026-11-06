@@ -107,6 +107,9 @@ pub struct WorktreeFacts {
     pub admin: Option<PathBuf>,
     /// What apply compares, or why it couldn't be built.
     pub witness: Result<WorktreeWitness, GitGap>,
+    /// The ignored paths `status` prints, relative to the checkout, which a scan settles
+    /// against its findings, or why git didn't say.
+    pub ignored: Result<Vec<PathBuf>, GitGap>,
     /// The `git` a removal would run, or why there is none.
     pub tool: Result<ResolvedTool, ToolGap>,
     /// Whose location it is in.

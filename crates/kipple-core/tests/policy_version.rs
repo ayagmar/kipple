@@ -121,6 +121,7 @@ fn worktree() -> Subject {
         repository: at("r"),
         admin: None,
         witness: Err(GitGap::Unsupported),
+        ignored: Err(GitGap::Unsupported),
         tool: Err(ToolGap::Missing),
         agent: AgentLabel::Unknown,
     }))

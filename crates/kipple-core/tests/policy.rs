@@ -747,6 +747,7 @@ fn worktree() -> Subject {
         repository: PathBuf::from("/home/u/repo"),
         admin: None,
         witness: Err(GitGap::Unsupported),
+        ignored: Err(GitGap::Unsupported),
         tool: Err(ToolGap::Missing),
         agent: AgentLabel::Unknown,
     }))
