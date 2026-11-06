@@ -31,10 +31,12 @@ use kipple_core::{
     Settlement, Status, apply, run_apply, run_clean,
 };
 
+/// `tool`, at a path absolute on every OS, as a resolver gives it: a stored plan refuses
+/// any other, and `/usr/bin` has no drive on Windows.
 fn tool(tool: NativeTool) -> ResolvedTool {
     ResolvedTool {
         tool,
-        path: PathBuf::from("/usr/bin/tool"),
+        path: home("bin/tool"),
         identity: id(900),
         version: "1.0.0".to_owned(),
         runtime: None,

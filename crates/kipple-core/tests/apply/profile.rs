@@ -959,7 +959,7 @@ fn a_profile_never_plans_a_native_item() {
         kind: NativeKind::NpmCacheClean,
         tool: Ok(ResolvedTool {
             tool: NativeTool::Npm,
-            path: PathBuf::from("/usr/bin/npm"),
+            path: home("bin/npm"),
             identity: id(900),
             version: "1.0.0".to_owned(),
             runtime: None,

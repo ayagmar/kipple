@@ -670,7 +670,7 @@ fn a_native_plan_says_it_cannot_be_undone_at_the_prompt_and_in_the_review() {
     let review = text(&app, 160, 48);
     assert!(review.contains(native::NATIVE_CANNOT_UNDO), "{review}");
     assert!(
-        review.contains("--no-optional-locks") && review.contains("rust-app/target"),
+        review.contains("--no-optional-locks") && review.contains("rust-app"),
         "the command and what it acts on, which may wrap: {review}"
     );
 }
