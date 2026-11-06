@@ -7,10 +7,12 @@
 //! A repository's own config can name a program that `status` runs, and no override reaches
 //! all of them. So `inspect` asks in a fixed order. It reads the registration's files first,
 //! and stops there unless the checkout is what its registration says: from a directory with
-//! no `.git`, git would answer for the repository above it. Then comes `ls-files --stage`,
-//! which runs no driver, and a submodule stops there, so `status` never recurses into a
-//! config the gate hasn't read. Then the config's names, never its values, because a value
-//! can hold a credential. Only a clear gate lets `status` and what follows run.
+//! no `.git`, git would answer for the repository above it. Then the config's names, never
+//! its values, because a value can hold a credential. No command that can read an object
+//! runs before that gate is clear: `ls-files` expands a sparse index, which in a partial
+//! clone is a fetch, and some gits ignore `GIT_NO_LAZY_FETCH`. Then `ls-files --stage`, where
+//! a submodule stops the rest, so `status` never recurses into a config nothing has read.
+//! Only then `status` and what follows.
 
 use std::io;
 use std::path::{Path, PathBuf};
@@ -175,13 +177,14 @@ impl Asking<'_> {
     /// Fills in what git says of a worktree whose files agree, in the order the module's
     /// header gives. A row not reached stays unknown.
     fn fill(&self, state: &mut WorktreeState) {
-        state.submodules = self.submodules();
-        if state.submodules == Ok(false) {
-            state.config_gate = self.config_gate();
-        }
+        state.config_gate = self.config_gate();
         state.place = self.place();
         state.witness = self.witness(&state.place);
         if state.config_gate != Ok(ConfigGate::Clear) {
+            return;
+        }
+        state.submodules = self.submodules();
+        if state.submodules != Ok(false) {
             return;
         }
         match self.status() {

@@ -33,6 +33,9 @@ pub(crate) fn git_isolation() -> Vec<Var<'static>> {
         var("GIT_OPTIONAL_LOCKS", "0"),
         var("GIT_PAGER", "cat"),
         var("GIT_NO_LAZY_FETCH", "1"),
+        // Empty allows no transport, so a fetch dies before it can run a repository's
+        // `core.sshCommand`, on the gits that ignore the line above as well.
+        var("GIT_ALLOW_PROTOCOL", ""),
         // Windows has no directory that can't hold a file: its XDG directory stays unset,
         // as `HOME` is, so git looks for none.
         #[cfg(unix)]

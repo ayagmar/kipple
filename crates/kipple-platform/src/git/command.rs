@@ -106,7 +106,11 @@ impl Git {
     }
 
     /// Every path the index of the repository at `dir` holds at or below `pathspec`,
-    /// relative to its top.
+    /// relative to its top. `--sparse` keeps a sparse index as it is where it can, and a
+    /// sparse directory the pathspec names comes back as a record [`Listing`] refuses. git
+    /// still expands the index for a sparse directory that has something on disk, as an
+    /// item below one does, unless config says not to, which would hide what is tracked
+    /// there: so that config is overridden, and [`read_index`] sees an expansion that failed.
     pub(super) fn tracked(
         &self,
         dir: &Path,
@@ -114,15 +118,18 @@ impl Git {
         cancel: &CancelToken,
     ) -> Result<Listing, GitGap> {
         let mut tail = vec![
+            OsStr::new("-c"),
+            OsStr::new("sparse.expectFilesOutsideOfPatterns=false"),
             OsStr::new("ls-files"),
             OsStr::new("-z"),
             OsStr::new("--cached"),
+            OsStr::new("--sparse"),
             OsStr::new("--full-name"),
             OsStr::new("--"),
         ];
         tail.extend(pathspec.arg.as_deref());
         let output = self.run(dir, pathspec.matching, &tail, cancel)?;
-        Listing::of(output.stdout)
+        Listing::of(read_index(output)?)
     }
 
     fn run(
@@ -165,6 +172,17 @@ impl Git {
         }
         Ok(output)
     }
+}
+
+/// What `ls-files` printed, unless it lost part of the index: a tree it couldn't read when
+/// expanding a sparse index prints `error:`, leaves those entries out and still exits 0. Only
+/// that line counts, as an expansion that worked prints hints here.
+fn read_index(output: Output) -> Result<Vec<u8>, GitGap> {
+    let mut lines = output.stderr.split(|byte| *byte == b'\n');
+    if lines.any(|line| line.starts_with(b"error:")) {
+        return Err(GitGap::Failed);
+    }
+    Ok(output.stdout)
 }
 
 /// One pathspec, and how git is to match it.
