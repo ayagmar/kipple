@@ -895,6 +895,7 @@ fn a_log_dir_out_of_reach_is_reported_unread() {
         (outside.to_str().unwrap(), "elsewhere"),
         ("../logs", "../logs"),
         ("logs-not-there-yet", "logs-not-there-yet"),
+        ("~/logs", "~/logs"),
     ] {
         let config = format!("log_dir = '{value}'\n");
         fs::write(home.join("config.toml"), config).unwrap();

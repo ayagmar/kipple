@@ -9,7 +9,7 @@
 //! Only the key `log_dir` is read from a config file, and `auth.json`, sessions and history
 //! are never opened. A parser's error can quote what it read, so none is kept.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component as Part, Path, PathBuf};
 
 use kipple_core::{
@@ -1127,11 +1127,31 @@ fn is_verified(version: &str) -> bool {
 enum LogDir {
     /// Each config file in the home was read, and none sets it.
     Unset,
-    /// Set, to these directories as far as they can be placed: a `~` can't be, since the
-    /// home directory isn't one of this integration's roots.
-    Set(Vec<PathBuf>),
+    /// Set, to these.
+    Set(LogDirs),
     /// A file couldn't be read or parsed, or a value isn't a path.
     Unknown,
+}
+
+/// The directories the config files name, each once.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct LogDirs {
+    /// Where each leads. Codex reads a relative one from the file's directory.
+    placed: BTreeSet<PathBuf>,
+    /// Those written with a `~`, as written: the home directory isn't one of this
+    /// integration's roots, so where they lead can't be said.
+    unplaced: BTreeSet<PathBuf>,
+}
+
+impl LogDirs {
+    /// Takes in `value`, from a config file in `home`.
+    fn add(&mut self, home: &Path, value: &str) {
+        if value.starts_with('~') {
+            self.unplaced.insert(PathBuf::from(value));
+        } else {
+            self.placed.insert(home.join(value));
+        }
+    }
 }
 
 impl LogDir {
@@ -1145,16 +1165,11 @@ impl LogDir {
             let Some(values) = read_config(cx, &home.join(&entry.name)) else {
                 return Self::Unknown;
             };
-            if !values.is_empty() {
-                let placed = values.iter().filter_map(|value| placed(home, value));
-                dirs.get_or_insert_with(Vec::new).extend(placed);
+            for value in values {
+                dirs.get_or_insert_with(LogDirs::default).add(home, &value);
             }
         }
-        dirs.map_or(Self::Unset, |mut dirs: Vec<PathBuf>| {
-            dirs.sort();
-            dirs.dedup();
-            Self::Set(dirs)
-        })
+        dirs.map_or(Self::Unset, Self::Set)
     }
 
     const fn configured(&self) -> FactValue {
@@ -1174,12 +1189,6 @@ fn is_config(entry: &DirEntryMeta) -> bool {
         let name = name.to_ascii_lowercase();
         CONFIG_FILES.contains(&name.as_str()) || name.ends_with(PROFILE_SUFFIX)
     })
-}
-
-/// Where a `log_dir` of a file in `home` leads. Codex reads a relative one from the file's
-/// directory.
-fn placed(home: &Path, value: &str) -> Option<PathBuf> {
-    (!value.is_empty() && !value.starts_with('~')).then(|| home.join(value))
 }
 
 /// Every value the TOML file at `path` gives `log_dir`, at any depth since a profile's table
@@ -1507,8 +1516,11 @@ impl Home {
         let LogDir::Set(dirs) = &self.log_dir else {
             return Ok(());
         };
-        for dir in dirs.iter().filter(|dir| **dir != default) {
+        for dir in dirs.placed.iter().filter(|dir| **dir != default) {
             self.add_configured_logs(cx, sink, dir)?;
+        }
+        for dir in &dirs.unplaced {
+            self.add_unread_logs(cx, sink, dir)?;
         }
         Ok(())
     }
@@ -1559,11 +1571,7 @@ impl Home {
         dir: &Path,
     ) -> Result<(), IntegrationError> {
         let Ok(entries) = cx.read_dir(dir) else {
-            let Some(rule) = rule_of(cx, STORE_ENTRIES) else {
-                return Ok(());
-            };
-            let evidence = vec![Evidence::NoSignature];
-            return sink.add_unread(rule, dir, evidence, self.plain(HOME_ACTIVITY));
+            return self.add_unread_logs(cx, sink, dir);
         };
         let logs = entries
             .iter()
@@ -1574,6 +1582,20 @@ impl Home {
             self.report(cx, sink, STORE_ENTRIES, Reported::known(&path, evidence))?;
         }
         Ok(())
+    }
+
+    /// A configured directory nothing could be read from, reported as it stands.
+    fn add_unread_logs(
+        &self,
+        cx: &ScanContext<'_>,
+        sink: &mut FindingSink<'_>,
+        dir: &Path,
+    ) -> Result<(), IntegrationError> {
+        let Some(rule) = rule_of(cx, STORE_ENTRIES) else {
+            return Ok(());
+        };
+        let evidence = vec![Evidence::NoSignature];
+        sink.add_unread(rule, dir, evidence, self.plain(HOME_ACTIVITY))
     }
 
     /// What `cache/` holds: the catalog's files through their own rule where it applies,
