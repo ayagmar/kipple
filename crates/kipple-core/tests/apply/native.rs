@@ -26,9 +26,9 @@ use super::{
 };
 use kipple_core::{
     Answer, ApplyFile, ApplyPorts, ApplyRequest, CancelToken, CleanRequest, Confirm, Consent,
-    Dropped, EntryKind, FindingId, LockGap, Method, MutationPorts, Recorders, ReleaseFacts,
-    ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion, Review, Session, Settlement, Status,
-    apply, run_apply, run_clean,
+    Dropped, EntryKind, FindingId, LockGap, Method, MutationPorts, Recorders, RelPath,
+    ReleaseFacts, ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion, Review, Session,
+    Settlement, Status, apply, run_apply, run_clean,
 };
 
 fn tool(tool: NativeTool) -> ResolvedTool {
@@ -472,16 +472,32 @@ fn the_plan_digest_names_the_tool_a_person_saw() {
 fn a_stored_native_item_reads_back_with_its_command() {
     let (scan, world) = worktree(&[]);
     let plan = reviewed(&scan, &world).plan;
-    let entry = &plan.entries()[0];
-    let Execution::Native(spec) = entry.execution() else {
+    let Execution::Native(spec) = plan.entries()[0].execution() else {
         panic!("a native item");
     };
     assert!(
         matches!(&spec.command, NativeCommand::GitWorktreeRemove { checkout, .. } if *checkout == spec.scope),
         "git runs in the checkout it removes: {spec:?}"
     );
+    reads_back(&plan);
 
-    let bytes = encode_stored_plan(&plan, &TestCodec).unwrap();
+    // npm's command starts in its cache root, whose anchor has nothing below the root.
+    let (store, npm) = cacache();
+    let cleaned = reviewed(&store, &npm).plan;
+    let Execution::Native(clean) = cleaned.entries()[0].execution() else {
+        panic!("a native item");
+    };
+    assert!(
+        matches!(&clean.command, NativeCommand::NpmCacheClean { cache } if cache.relative == RelPath::default()),
+        "the root itself: {clean:?}"
+    );
+    reads_back(&cleaned);
+}
+
+/// Asserts that `plan`'s only item reads back from its stored form as it was.
+fn reads_back(plan: &Plan) {
+    let entry = &plan.entries()[0];
+    let bytes = encode_stored_plan(plan, &TestCodec).unwrap();
     let end = bytes.iter().position(|byte| *byte == b'\n').unwrap();
     let stored = decode_stored_plan(&bytes[..end], None, &TestCodec).unwrap();
 
