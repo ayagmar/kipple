@@ -30,6 +30,11 @@ pub(super) const OUTPUT_LIMIT: u64 = 64 * 1024 * 1024;
 /// be left out.
 const OLDEST: [u64; 2] = [2, 32];
 
+/// The first git with `ls-files --sparse`. An older one expands a sparse index, which is the
+/// right answer in a complete repository. In a partial clone that is a fetch, which
+/// `GIT_ALLOW_PROTOCOL` refuses and [`read_index`] reads as a failure.
+const SPARSE_OLDEST: [u64; 2] = [2, 35];
+
 /// The git kipple runs: an absolute path from `PATH`, and the file it was when its version
 /// was checked.
 #[derive(Debug, Clone)]
@@ -134,10 +139,11 @@ impl Git {
             OsStr::new("ls-files"),
             OsStr::new("-z"),
             OsStr::new("--cached"),
-            OsStr::new("--sparse"),
-            OsStr::new("--full-name"),
-            OsStr::new("--"),
         ];
+        if !self.older_than(&SPARSE_OLDEST) {
+            tail.push(OsStr::new("--sparse"));
+        }
+        tail.extend([OsStr::new("--full-name"), OsStr::new("--")]);
         tail.extend(pathspec.arg.as_deref());
         let output = self.run(dir, pathspec.matching, &tail, cancel)?;
         Listing::of(read_index(output)?)

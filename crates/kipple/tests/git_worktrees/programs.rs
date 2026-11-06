@@ -450,24 +450,32 @@ fn what_is_tracked_below_a_sparse_directory_is_counted() {
     assert_eq!(query.count(&repo.main, &left, &CancelToken::new()), Ok(1));
 }
 
-/// Catches a git too old for `--sparse` answering "nothing tracked": it refuses the option,
-/// and a refusal has to hold the item.
+/// Catches `--sparse` passed to a git that doesn't have it, which refuses and holds every
+/// artifact in every repository on a git kipple supports, and left out on one that has it,
+/// where `ls-files` would expand a sparse index for nothing.
 #[test]
-fn a_git_that_refuses_sparse_blocks_the_tracked_query() {
-    let repo = Repo::new();
-    write(&repo.main.join("src/kept.txt"), b"x\n");
-    repo.git(&["add", "--", "src"]);
-    let bin = repo.temp.path().join("bin");
-    let text = format!(
-        "#!/bin/sh\ncase \"$*\" in\n*--sparse*) exit 129 ;;\n*) exec '{}' \"$@\" ;;\nesac\n",
-        real_git().display()
-    );
-    executable(&bin.join("git"), &text);
-    let query = GitQuery::new(&repo.env_with(bin.into_os_string()));
+fn sparse_is_asked_of_a_git_that_has_it_and_no_other() {
+    for (version, refused) in [
+        ("2.34.1", "*--sparse*"),
+        ("2.35.0", "*--cached\\ --full-name*"),
+    ] {
+        let repo = Repo::new();
+        write(&repo.main.join("src/kept.txt"), b"x\n");
+        repo.git(&["add", "--", "src"]);
+        let bin = repo.temp.path().join("bin");
+        let text = format!(
+            "#!/bin/sh\ncase \"$*\" in\n*--version*) echo 'git version {version}' ;;\n\
+             {refused}) echo \"error: unknown option\" >&2; exit 129 ;;\n\
+             *) exec '{}' \"$@\" ;;\nesac\n",
+            real_git().display()
+        );
+        executable(&bin.join("git"), &text);
+        let query = GitQuery::new(&repo.env_with(bin.into_os_string()));
 
-    let count = query.count(&repo.main, &repo.main.join("src"), &CancelToken::new());
+        let count = query.count(&repo.main, &repo.main.join("src"), &CancelToken::new());
 
-    assert_eq!(count, Err(GitGap::Failed));
+        assert_eq!(count, Ok(1), "git {version}");
+    }
 }
 
 /// Catches `ls-files` ahead of the gate again: on a blocked gate nothing that can read the
