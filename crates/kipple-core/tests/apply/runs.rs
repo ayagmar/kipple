@@ -466,7 +466,11 @@ fn native_records() -> Vec<Record> {
     [
         ItemOutcome::Failed {
             error: ApplyError::native(ErrorCode::NativeFailed, end),
-            effect: native.clone(),
+            effect: Some(native.clone()),
+        },
+        ItemOutcome::Failed {
+            error: ApplyError::new(ErrorCode::NativeFailed),
+            effect: None,
         },
         ItemOutcome::Done(native),
         ItemOutcome::Skipped(Skip::InstallerBusy(LockGap::Held)),
@@ -520,7 +524,7 @@ fn every_record() -> Vec<Record> {
             item: ItemId(1),
             outcome: ItemOutcome::Failed {
                 error: error.clone(),
-                effect: Effect::Files(FileEffect::default()),
+                effect: Some(Effect::Files(FileEffect::default())),
             },
         },
         Record::Outcome {

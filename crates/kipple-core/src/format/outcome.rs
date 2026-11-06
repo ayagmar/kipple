@@ -717,8 +717,9 @@ pub enum OutcomeOut {
     Failed {
         /// The error.
         error: ErrorOut,
-        /// What it did until then.
-        effect: EffectOut,
+        /// What it did until then. Absent for a command that never started.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effect: Option<EffectOut>,
     },
     /// The apply was cancelled during it.
     Cancelled {
@@ -745,7 +746,7 @@ impl OutcomeOut {
             },
             ItemOutcome::Failed { error, effect: e } => Self::Failed {
                 error: ErrorOut::of(error, codec),
-                effect: effect(e),
+                effect: e.as_ref().map(effect),
             },
             ItemOutcome::Cancelled(e) => Self::Cancelled { effect: effect(e) },
             ItemOutcome::Indeterminate(found) => Self::Indeterminate {
@@ -765,7 +766,7 @@ impl OutcomeOut {
             Self::Skipped { skip } => ItemOutcome::Skipped(skip.read(codec)?),
             Self::Failed { error, effect } => ItemOutcome::Failed {
                 error: error.read(codec)?,
-                effect: effect.read(codec)?,
+                effect: effect.as_ref().map(|e| e.read(codec)).transpose()?,
             },
             Self::Cancelled { effect } => ItemOutcome::Cancelled(effect.read(codec)?),
             Self::Indeterminate { found } => ItemOutcome::Indeterminate(found.read(codec)?),

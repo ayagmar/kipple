@@ -33,6 +33,7 @@ use kipple_core::{
     Removal, RestoreRequest, RuleSettings, Scope, ShapeError, Skip, SpaceEstimate, Stamp, Status,
     Tally, Tracked, TrashDir, TrashSlot, Trashed, TreeBuilder, Unauthorized, VerifiedRoot, Volume,
 };
+use kipple_core::{ApplyError, NativeTotal, Removed};
 
 const VOLUME: Volume = Volume {
     device: 7,
@@ -705,7 +706,7 @@ fn removals_inside_failed_and_cancelled_items_count_and_the_rest_is_not_reached(
     let failed = run(&tree, &marks, failing);
     let ItemOutcome::Failed {
         error,
-        effect: Effect::Files(effect),
+        effect: Some(Effect::Files(effect)),
     } = &failed
     else {
         panic!("an error stops the item");
@@ -877,7 +878,7 @@ fn a_removal_the_run_may_not_make_fails_the_item_and_counts_once() {
         tally.removed(id, Freed::Allocated(Allocated(10)));
         let ItemOutcome::Failed {
             error,
-            effect: Effect::Files(effect),
+            effect: Some(Effect::Files(effect)),
         } = tally.finish(run)
         else {
             panic!("removing {at:?} fails the item");
@@ -930,6 +931,32 @@ fn tree_with_entries_outside_the_run() -> (FrozenTree, Marks, NodeId, NodeId) {
     let dropped = find(&tree, "debug/incremental/s-1");
     marks.drop_subtree(&tree, dropped, LeftReason::Changed);
     (tree, marks, excluded, dropped)
+}
+
+/// Catches a command that never started counted as one that ran, or as files kipple
+/// touched: it failed, and did nothing (spec M4 pinned 32).
+#[test]
+fn a_command_that_never_started_counts_only_as_failed() {
+    let receipt = Receipt {
+        items: vec![ReceiptItem {
+            item: ItemId(0),
+            path: PathBuf::from("/p/cache"),
+            method: ItemMethod::Native,
+            estimate: None,
+            outcome: ItemOutcome::Failed {
+                error: ApplyError::new(ErrorCode::NativeFailed),
+                effect: None,
+            },
+            restored: None,
+        }],
+    };
+
+    let totals = receipt.totals();
+
+    assert_eq!(totals.native, NativeTotal::default());
+    assert_eq!(totals.removed, Removed::default());
+    assert_eq!(totals.items.get(&Status::Failed), Some(&1));
+    assert_eq!(receipt.items[0].outcome.file_effect(), None);
 }
 
 /// Catches what a tool's command freed reported as kipple's own removal, and a target

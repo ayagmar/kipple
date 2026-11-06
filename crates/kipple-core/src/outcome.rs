@@ -370,8 +370,9 @@ pub enum ItemOutcome {
     Failed {
         /// The error.
         error: ApplyError,
-        /// What it did until then.
-        effect: Effect,
+        /// What it did until then. None for a command that never started, which did
+        /// nothing and has no end to report.
+        effect: Option<Effect>,
     },
     /// The apply was cancelled during it; what it removed until then counts.
     Cancelled(Effect),
@@ -397,10 +398,8 @@ impl ItemOutcome {
     #[must_use]
     pub const fn effect(&self) -> Option<&Effect> {
         match self {
-            Self::Done(effect)
-            | Self::Partial(effect)
-            | Self::Cancelled(effect)
-            | Self::Failed { effect, .. } => Some(effect),
+            Self::Done(effect) | Self::Partial(effect) | Self::Cancelled(effect) => Some(effect),
+            Self::Failed { effect, .. } => effect.as_ref(),
             Self::Skipped(_) | Self::Indeterminate(_) => None,
         }
     }
@@ -866,7 +865,10 @@ impl<'run> Tally<'run> {
                 ItemOutcome::Indeterminate(Found::Unsynced(error))
             }
             Err(error) if refused(&error) => ItemOutcome::Skipped(Skip::Refused(error)),
-            Err(error) => ItemOutcome::Failed { error, effect },
+            Err(error) => ItemOutcome::Failed {
+                error,
+                effect: Some(effect),
+            },
             Ok(Finish::Cancelled) => ItemOutcome::Cancelled(effect),
             Ok(Finish::Completed) if short => ItemOutcome::Partial(effect),
             Ok(Finish::Completed) => ItemOutcome::Done(effect),

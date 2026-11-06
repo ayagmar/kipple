@@ -796,8 +796,15 @@
           "type": "object",
           "properties": {
             "effect": {
-              "description": "What it did until then.",
-              "$ref": "#/$defs/EffectOut"
+              "description": "What it did until then. Absent for a command that never started.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/EffectOut"
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "error": {
               "description": "The error.",
@@ -811,8 +818,7 @@
           "additionalProperties": false,
           "required": [
             "status",
-            "error",
-            "effect"
+            "error"
           ]
         },
         {
