@@ -152,12 +152,76 @@ Verify:
 - `cargo xtask site` passes (build, links, Lighthouse budget).
 - The founder approves the design direction before the build and the result after.
 
-## M7: Release pipeline and 0.1.0
+## M7: Quality and hardening
+
+M7 adds no features. It gets what M0 to M6 built ready to ship: shared logic moves into a library crate, each fact gets one owner, weak spots are hardened, tests that can't fail go, and speed and CI get budgets the project holds from then on. Nothing in M7 may weaken a check in [04-safety-model.md](04-safety-model.md).
+
+Build:
+- the library split: a fifth crate, `kipple-app`, between the library crates and the frontends. It holds what both frontends need: config loading, validation and editing; `Machine` and the built-in setup; the keep, level and project-root actions with the rescan they start; the project-root search; the level totals; the scan notices; `human` and the JSON model. The binary keeps clap, the TUI, themes, prompts and rendering, so it has only its views and keys, and no setting or total is worked out in two places. `check-arch`, [05-architecture.md](05-architecture.md) and `AGENTS.md` change with it
+- one source of truth:
+  - the core owns on-disk size, reclaimable size and one saturating total, and every frontend sum uses them
+  - one function gives the scan notices, and one folds paths for comparison
+  - the wording left in `doctor`, `explain` and `scan` moves to `human`
+  - free-string JSON values (omission kinds, activity reasons, `seen`, doctor sources) become closed enums in the schemas
+  - `check-arch` reads match arms with `syn` and flags any frontend that maps a core enum to text
+  - the gate compares the dependency table in [decisions.md](decisions.md) with `Cargo.lock` and the workflow pins
+- hardening:
+  - every size sum saturates
+  - `/proc` files are read as bytes, so one name that isn't UTF-8 doesn't protect every finding
+  - reads of stored plans and `/proc/<pid>` files are bounded
+  - the Windows walker counts a mount point as skipped, as Linux does
+  - typed errors replace `Result<_, String>` on public functions, and items only tests use leave the public surface
+  - a retention rule for finished runs, so a mutating command stops reading every run ever kept
+  - frozen profile roots survive a reboot that renumbers devices
+  - a profile run notices a grant whose rule left the config, and changed retention advice
+  - golden history lines can only be appended
+- tests:
+  - delete the tests that can't fail for a realistic bug: compile-time `Send` checks, and colour copies of screens already snapshotted
+  - shorten the `bench_tree` tests and the test that waits out a killed lock holder
+  - add generated-sequence tests for `App::update`, for the journal and reconcile across restarts, for config edits and for deduplication
+  - add fuzz targets for path normalization and the stored-format decoders, run by M5's nightly job
+  - run the TUI's Review path and its snapshots on Windows
+  - name each scenario and property of 04 §10 with its test, in 04 §10
+- performance:
+  - ask git once per repository per scan instead of twice per finding, keeping the size limit and identity checks
+  - share process paths in the activity index instead of storing every prefix per process
+  - cache the TUI's lines and per-node sums behind a revision that `update` bumps
+  - cap the walker's pool at 8 threads
+  - add a `[profile.release]` with LTO, one codegen unit and strip, keeping unwinding for the workers' `catch_unwind`
+  - add `cargo xtask bench-scan`, which times the scan budgets below
+- CI and tooling:
+  - a build cache saved from `main` only
+  - `push` runs limited to `main`, so a pull request runs once
+  - `timeout-minutes` on every job
+  - format and typos checked before anything compiles
+  - `verify-demo` stops repeating what the gate already ran
+  - per-test times uploaded from every run, and a binary size step
+  - grouped dependabot updates
+  - `check-style` reads macro bodies, and `check-docs` reads the site tapes
+
+Verify:
+- `crates/kipple/src` holds no config or policy logic: `cargo xtask check-arch` fails on a fixture that builds a `Policy` or edits config in the binary, one that reaches `kipple-adapters` from it, and one that adds clap or ratatui to `kipple-app`.
+- `cargo xtask check-arch` fails on a fixture for each wording form: a constant, `.into()`, `concat!`, an `if` value, a nested match and a multi-line arm.
+- `cargo xtask check-compat` fails when an output value is renamed.
+- The gate fails when the dependency table differs from `Cargo.lock`, and `cargo xtask check-docs` fails on a tape with a removed flag.
+- Every `unsafe` block has a stated invariant and a test, and `cargo xtask check-style` fails a block with no `SAFETY` comment.
+- No test on the milestone's removal list remains, and every scenario and property of 04 §10 names its test.
+- Each generated-sequence test runs at least 500 sequences in the gate, and a run of each fuzz target finds no crash in 10 minutes.
+- The TUI's Review path and its `clean__*` snapshots pass on Windows.
+- Scan and TUI budgets hold on generated trees, on 8 or more cores and an NVMe disk:
+  - `cargo xtask bench-scan`: a warm scan of the 1M reference tree under home takes under 1 s and peaks under 64 MB
+  - `cargo xtask bench-scan`: a scan with 2,000 findings in one repository takes under 1 s
+  - `cargo xtask bench-tui`: keypress-to-frame p95 is under 50 ms at 20,000 findings
+- The stripped Linux x86_64 release binary is under 6,000,000 bytes, checked in CI.
+- The default `cargo nextest run` takes under 3 s of wall time on Linux once built.
+- CI: the Windows `check` job takes under 270 s, a pull request's run has a p90 wall time under 300 s over 20 runs, each commit runs once, and every job has `timeout-minutes`.
+
+## M8: Release pipeline and 0.1.0
 
 Build ([10-ci-and-release.md](10-ci-and-release.md)):
 - release-plz and dist configured as specified
 - a GitHub App token, Homebrew tap and AUR jobs, the distro smoke matrix
-- crates.io publishing of the four crates and the npm package `@ayagmar/kipple`, both from the tag after the pre-publication gate (10 §3, D-017)
+- crates.io publishing of the five crates and the npm package `@ayagmar/kipple`, both from the tag after the pre-publication gate (10 §3, D-017)
 
 Verify:
 - A rehearsal on a fork or branch produces every artifact, checksum, installer, attestation and SBOM without publishing, and `cargo publish --dry-run` and `npm pack` succeed for every package.
@@ -176,5 +240,5 @@ Features ship as 0.1.x releases as each one is ready (D-017); a change that brea
 | 0.1.x | Report-only listing of leftover agent processes (orphaned MCP servers, headless browsers) with their memory use; kipple never kills them. Pack signatures and revocation. Store-specific session adapters (Pi first, since it is file-per-session with a documented in-app delete; Codex next, since its rollouts have no upstream retention), each needing verified semantics, fixtures and activity evidence. Model stores (Ollama manifests and blobs) |
 | 0.1.x | `analyze`: a full-disk explorer that knows what it is looking at |
 | 0.1.x or later | Privileged native operations, only after a separate reviewed design: a narrow privileged helper (never an elevated TUI or plugin host), typed operations, verified executable and config identity, re-checks after elevation, receipts. Covers pacman, apt, dnf and journald. It is the riskiest item here and ships only when its design review reaches READY |
-| GUI | Deferred; planned after the CLI and TUI settle. The core stays GUI-ready (D-002, D-029). Later, a Tauri or native app would be a second composition root over the same core. Its first step moves what both frontends need out of the binary into a library crate: config loading, validation and editing, the keep, level and project-root actions with the rescan they start, the level totals and the scan notices. The TUI then keeps only its view and keys, and no setting or total is worked out in two places |
+| GUI | Deferred; planned after the CLI and TUI settle. The core stays GUI-ready (D-002, D-029), and `kipple-app` (M7) holds what a second frontend needs. Later, a Tauri or native app would be a second frontend over `kipple-app` and the same core |
 | Maybe | An MCP server so agents can ask kipple what they can safely clean, via the same engine and grants |

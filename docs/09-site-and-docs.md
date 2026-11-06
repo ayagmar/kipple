@@ -150,4 +150,4 @@ Mechanism: a dev-only `xtask` binary in the workspace (`cargo xtask gen-docs`). 
 
 1. M0: `xtask gen-docs` for the CLI reference (`--help` and `--version`). M1: `cargo xtask demo-home`, `cargo xtask verify-demo`, and `gen-docs` for the JSON schemas and the support matrix (generated files are committed under `site/src/generated/` before the site exists, and `gen-docs --check` gates them).
 2. M6: Astro and Starlight site, landing page, Safety and recovery pages checked against tests, tapes.
-3. M7: release-candidate site, Lighthouse 100 under the release conditions, humanizer pass, user sign-off.
+3. M8: release-candidate site, Lighthouse 100 under the release conditions, humanizer pass, user sign-off.

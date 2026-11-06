@@ -68,7 +68,7 @@ git config core.hooksPath .githooks  # pre-commit: fmt, clippy, typos
 | [Engineering standards](docs/08-engineering-standards.md) | Gate, lints, architecture checks, test philosophy |
 | [Site and docs](docs/09-site-and-docs.md) | Landing page, docs site, generated references |
 | [CI and release](docs/10-ci-and-release.md) | CI matrix, release pipeline, channels, signing |
-| [Delivery plan](docs/11-delivery-plan.md) | Spikes, milestones M0–M7, roadmap |
+| [Delivery plan](docs/11-delivery-plan.md) | Spikes, milestones M0–M8, roadmap |
 | [Decisions](docs/decisions.md) | Decision log and candidate dependency versions |
 | [Product context](PRODUCT.md) | Users, positioning, voice and brand commitments for design work |
 | [Brand](assets/brand/BRAND.md) | Kip the otter, logo files, colours, rules |
