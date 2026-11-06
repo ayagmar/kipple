@@ -683,13 +683,13 @@ fn read_retired(
 
 /// `target` of a link in `component`, as the name of an entry of its `releases/`: upstream
 /// writes an absolute path, and any link that lands there is as good. The directories below
-/// the home were checked not to be links, so `..` in a relative target folds. An absolute
-/// one could pass through a link kipple can't see, so it has to be plain.
+/// the home were checked not to be links, so `..` in a relative target folds. One from a
+/// root could pass through a link kipple can't see, so it has to be plain.
 fn landed(component: &Path, target: &Path) -> Option<String> {
     let mut at = PathBuf::new();
     for part in component.join(target).components() {
         match part {
-            Part::ParentDir if target.is_absolute() => return None,
+            Part::ParentDir if target.has_root() => return None,
             Part::ParentDir => {
                 at.pop();
             }
@@ -868,13 +868,19 @@ impl Component {
 
     /// The name `current` selects, when that is a release of this component.
     fn selected(&self, cx: &ScanContext<'_>) -> Result<String, GroupGap> {
-        let target = cx.read_link(&self.dir.join("current")).map_err(|error| {
+        let unread = |error: ProbeError| {
             if is_absent(&error) {
                 GroupGap::Selection
             } else {
                 GroupGap::Unreadable
             }
-        })?;
+        };
+        // What reading a link says of anything else differs by OS, so its kind is asked.
+        let link = self.dir.join("current");
+        if cx.metadata(&link).map_err(unread)?.kind != EntryKind::Symlink {
+            return Err(GroupGap::Selection);
+        }
+        let target = cx.read_link(&link).map_err(unread)?;
         let name = landed(&self.dir, &target).ok_or(GroupGap::Selection)?;
         let signed = self.releases().any(|release| release.name == name);
         signed.then_some(name).ok_or(GroupGap::Selection)
@@ -1134,12 +1140,14 @@ impl LogDir {
     }
 }
 
-/// Whether `entry` of a home is a file Codex reads its config from.
+/// Whether `entry` of a home is a file Codex may read its config from. These are the one
+/// kind of name a person writes, and on a file system that ignores case Codex opens
+/// `CONFIG.TOML` as `config.toml`, so case doesn't count. Reading one too many only holds more.
 fn is_config(entry: &DirEntryMeta) -> bool {
-    entry
-        .name
-        .to_str()
-        .is_some_and(|name| CONFIG_FILES.contains(&name) || name.ends_with(PROFILE_SUFFIX))
+    entry.name.to_str().is_some_and(|name| {
+        let name = name.to_ascii_lowercase();
+        CONFIG_FILES.contains(&name.as_str()) || name.ends_with(PROFILE_SUFFIX)
+    })
 }
 
 /// Where a `log_dir` of a file in `home` leads. Codex reads a relative one from the file's

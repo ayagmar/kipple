@@ -800,16 +800,19 @@ fn stderr_logs_and_pid_files_never_candidates() {
     assert!(scan.closed(previous), "expected it to stay closed");
 }
 
-/// Each file of the home that can set `log_dir`, one at a time, with what it holds.
+/// Each file of the home that can set `log_dir`, one at a time, with what it holds. On a
+/// file system that ignores case, Codex opens `CONFIG.TOML` as `config.toml`.
 fn config_layers() -> Vec<(&'static str, &'static [u8])> {
     let top: &[u8] = b"log_dir = \"logs\"\n";
     let table: &[u8] = b"[profiles.work]\nlog_dir = \"logs\"\n";
     vec![
         ("config.toml", top),
         ("config.toml", table),
+        ("CONFIG.TOML", top),
         ("managed_config.toml", top),
         ("requirements.toml", top),
         ("work.config.toml", top),
+        ("work.CONFIG.toml", top),
     ]
 }
 
