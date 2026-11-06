@@ -32,7 +32,7 @@ const STORE_ENTRIES: &str = "codex-store-entries";
 const SELECTORS: &[IntegrationSelector] = &[
     IntegrationSelector {
         name: RELEASES,
-        meaning: "inactive release directories of a verified store",
+        meaning: "Codex releases in a verified store",
     },
     IntegrationSelector {
         name: RELEASE_ENTRIES,

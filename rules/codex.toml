@@ -12,7 +12,7 @@ platforms = ["linux", "macos", "windows"]
 [[rule]]
 id = "builtin.codex.stale-releases"
 integration = "codex"
-title = "Inactive Codex releases"
+title = "Codex releases"
 description = "Releases left after an update. The selected, previous, running and pending releases are always kept."
 why = "Codex keeps the selected and previous release and prunes the rest when it installs, but skips that when it can't prove a release is unused, and never on Windows."
 loss = "The removed versions. Codex downloads one again only if you install it."
