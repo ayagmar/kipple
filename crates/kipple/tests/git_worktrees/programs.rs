@@ -283,6 +283,11 @@ fn every_git_run_forbids_a_lazy_fetch() {
     let asked = logged.lines().filter(|line| !line.ends_with("--version"));
     let unguarded = asked.clone().filter(|line| !line.starts_with("1 ")).count();
     assert_eq!(unguarded, 0, "every line of {logged:?}");
+    // An unknown helper's name can't be corrected into an alias the repository chose.
+    let correcting = asked
+        .clone()
+        .filter(|line| !line.contains("help.autocorrect=0"));
+    assert_eq!(correcting.count(), 0, "every line of {logged:?}");
     assert_ne!(asked.count(), 0, "git ran");
 }
 
