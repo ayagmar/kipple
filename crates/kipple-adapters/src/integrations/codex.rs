@@ -658,8 +658,10 @@ fn read_manifest(cx: &ScanContext<'_>, dir: &Path) -> Result<ManifestRead, Probe
     }
 }
 
-/// Classifies the directory `releases/<name>`, by upstream's two checks and §3's signature:
-/// a manifest that agrees with the name, the entrypoint a regular file, the alias reading
+/// Classifies the directory `releases/<name>`. Whatever its name, a manifest of another layout
+/// makes the store unknown, and one that can't be read might be that. After that it goes by
+/// upstream's two checks and §3's signature: a manifest that agrees with the name, the
+/// entrypoint a regular file, the alias reading
 /// `bin/codex`, and nothing else but files and directories on the store's mount.
 fn inspect(
     cx: &ScanContext<'_>,
@@ -667,14 +669,17 @@ fn inspect(
     name: &str,
     mount: Option<u64>,
 ) -> Result<Entry, IntegrationError> {
-    let Some(named) = Named::of(name) else {
-        return Ok(Entry::Kept(path));
-    };
-    let manifest = match read_manifest(cx, &path) {
-        Ok(ManifestRead::Usable(manifest)) if named.agrees_with(&manifest) => manifest,
+    let usable = match read_manifest(cx, &path) {
+        Ok(ManifestRead::Usable(manifest)) => Some(manifest),
         Ok(ManifestRead::OtherLayout) => return Ok(Entry::OtherLayout(path)),
-        Ok(_) => return Ok(Entry::Kept(path)),
+        Ok(ManifestRead::Unusable) => None,
         Err(_) => return Ok(Entry::Unread(path)),
+    };
+    let signed = Named::of(name)
+        .zip(usable)
+        .filter(|(named, manifest)| named.agrees_with(manifest));
+    let Some((named, manifest)) = signed else {
+        return Ok(Entry::Kept(path));
     };
     let walked = match walk(cx, &path, mount) {
         Ok(walked) => walked,
@@ -891,7 +896,7 @@ impl Component {
             (EntryKind::Dir, name) if name.starts_with(".retired.") => {
                 read_retired(cx, path, mount)?
             }
-            (EntryKind::Dir, name) if !name.is_empty() => inspect(cx, path, name, mount)?,
+            (EntryKind::Dir, name) => inspect(cx, path, name, mount)?,
             _ => Entry::Kept(path),
         };
         if classified.is_unread() {

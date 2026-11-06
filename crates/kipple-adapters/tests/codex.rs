@@ -241,6 +241,19 @@ fn another_layout_version_makes_the_store_unknown() {
         &format!("{dir}/codex-package.json"),
         format!("{{{other}}}").as_bytes(),
     );
+    let named = |name: &str| {
+        let path = release(STANDALONE, name);
+        let mut scene = entry_named(&path, "0.163.0", MUSL);
+        scene.tree.file(
+            &at(&format!("{path}/codex-package.json")),
+            codex_v0_166_0::manifest("0.163.0", MUSL, "bin/codex")
+                .replace("\"layoutVersion\": 1", other)
+                .as_bytes(),
+        );
+        (scene, path)
+    };
+    let (backup, backup_path) = named("backup-x");
+    let (riscv, riscv_path) = named("0.170.0-riscv64gc-unknown-linux-gnu");
     let retired = release(STANDALONE, ".retired.AbCdEfGh");
     let mut set_aside = verified();
     set_aside.tree.file(
@@ -254,6 +267,8 @@ fn another_layout_version_makes_the_store_unknown() {
         ("an unselected release", unselected, damaged()),
         ("nothing else it can be read for", bare, damaged()),
         ("a release set aside", set_aside, retired),
+        ("a name of no grammar", backup, backup_path),
+        ("a target kipple doesn't know", riscv, riscv_path),
     ] {
         scene
             .tree
@@ -1338,12 +1353,14 @@ fn an_unreadable_part_never_reads_as_empty() {
 /// layout nobody verified, so what rests on the layout can't stand.
 #[test]
 fn an_unread_entry_of_releases_closes_the_home() {
-    let unread = [OLD, "packages/standalone/releases/.retired.x"];
+    let unnamed = "packages/standalone/releases/backup-x/codex-package.json";
+    let unread = [OLD, "packages/standalone/releases/.retired.x", unnamed];
     for part in unread {
         let mut scene = verified_with_files();
         scene
             .tree
-            .dir(&at("packages/standalone/releases/.retired.x"));
+            .dir(&at("packages/standalone/releases/.retired.x"))
+            .file(&at(unnamed), b"{}");
         scene.denied.push(at(part));
 
         let scan = scene.scan();
