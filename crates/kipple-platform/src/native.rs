@@ -25,17 +25,16 @@ pub(crate) fn git_isolation() -> Vec<Var<'static>> {
         name,
         value: OsStr::new(value),
     };
-    let mut vars = vec![
+    Vec::from([
         var("GIT_CONFIG_NOSYSTEM", "1"),
         var("GIT_CONFIG_GLOBAL", NULL_DEVICE),
         var("GIT_OPTIONAL_LOCKS", "0"),
         var("GIT_PAGER", "cat"),
-    ];
-    // Windows has no directory that can't hold a file: its XDG directory stays unset, as
-    // `HOME` is, so git looks for none.
-    #[cfg(unix)]
-    vars.push(var("XDG_CONFIG_HOME", NULL_DEVICE));
-    vars
+        // Windows has no directory that can't hold a file: its XDG directory stays unset,
+        // as `HOME` is, so git looks for none.
+        #[cfg(unix)]
+        var("XDG_CONFIG_HOME", NULL_DEVICE),
+    ])
 }
 
 /// `args` as a process gets them, with `data` for kipple's own paths. `None` when one
