@@ -1624,24 +1624,78 @@ fn wrong_fact_type_is_unknown() {
     assert_eq!(unmet_state(&test_of_another_type), Some(FactState::Unknown));
 }
 
-/// Catches an integration's fact being ignored once the host has a value of its own, which
-/// would let the host's view of a generic fact override what the tool knows.
+/// Catches the host's "no repository" standing in for git's answer about a worktree, which
+/// is a repository: a dirty one would pass "no changes".
 #[test]
 fn supplied_fact_wins_over_generic() {
-    let at_least_a_gigabyte = || {
-        let bounds = Bounds {
-            min: Some(1 << 30),
-            max: None,
+    let no_changes = || {
+        let none = Bounds {
+            min: None,
+            max: Some(0),
         };
-        Supplier::eligible("size", Test::Bytes(bounds))
+        Supplier::eligible("git.tracked_changes", Test::Count(none)).of_a_worktree()
     };
 
-    let measured = at_least_a_gigabyte().scan();
-    assert_eq!(unmet_state(&measured), Some(FactState::Failed));
-    let supplied = at_least_a_gigabyte()
-        .with("size", FactValue::Bytes(1 << 31))
+    let dirty = no_changes()
+        .with("git.tracked_changes", FactValue::Count(3))
         .scan();
-    assert_eq!(unmet_state(&supplied), None);
+    assert_eq!(unmet_state(&dirty), Some(FactState::Failed));
+    let clean = no_changes()
+        .with("git.tracked_changes", FactValue::Count(0))
+        .scan();
+    assert_eq!(unmet_state(&clean), None);
+}
+
+const fn at_least<T>(min: T) -> Bounds<T> {
+    Bounds {
+        min: Some(min),
+        max: None,
+    }
+}
+
+/// Catches an integration talking its finding past a rule's stricter predicate: what the
+/// host measured stands, on any subject, and what git status doesn't cover stays the host's.
+#[test]
+fn a_supplied_value_never_beats_the_host() {
+    let long = Duration::from_secs(1 << 40);
+    let cases = [
+        (
+            "size",
+            Test::Bytes(at_least(1 << 40)),
+            FactValue::Bytes(1 << 41),
+        ),
+        (
+            "modified_age",
+            Test::Duration(at_least(long)),
+            FactValue::Duration(long),
+        ),
+        ("marker.present", Test::Is(true), FactValue::Bool(true)),
+        (
+            "activity",
+            Test::OneOf(vec!["busy"]),
+            FactValue::Enum("busy"),
+        ),
+        (
+            "git.tracked_files_in_item",
+            Test::Count(at_least(1)),
+            FactValue::Count(1),
+        ),
+    ];
+    for (fact, test, value) in cases {
+        let asked = || Supplier::eligible(fact, test.clone());
+        let plain = unmet_state(&asked().scan());
+        assert!(plain.is_some(), "expected the host to fail {fact}");
+        assert_eq!(
+            unmet_state(&asked().with(fact, value).scan()),
+            plain,
+            "{fact}"
+        );
+
+        let checkout = unmet_state(&asked().of_a_worktree().scan());
+        assert!(checkout.is_some(), "expected the host to fail {fact}");
+        let supplied = asked().of_a_worktree().with(fact, value).scan();
+        assert_eq!(unmet_state(&supplied), checkout, "{fact}");
+    }
 }
 
 /// The git facts, each with the test a clean item passes.
