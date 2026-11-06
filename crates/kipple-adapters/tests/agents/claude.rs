@@ -17,6 +17,10 @@ const CLAUDE: IntegrationId = IntegrationId("claude-code");
 const CONFIG: &str = "home/.claude";
 const VERSIONS_DIR: &str = "home/.local/share/claude/versions";
 
+/// A session ID in the wrong case, with no lowercase twin in the fixture: macOS and Windows
+/// fold case, so a twin would be the same file.
+const UPPERCASE_SESSION: &str = "ABCDEF01-2345-4678-9ABC-DEF012345678";
+
 const SUPPORTED: Option<FactValue> = Some(FactValue::Enum("supported"));
 const UNKNOWN_LAYOUT: Option<FactValue> = Some(FactValue::Enum("unknown"));
 const UNKNOWN: Option<FactValue> = Some(FactValue::Unknown);
@@ -263,7 +267,7 @@ fn unknown_debug_name_is_kept() {
     let names = [
         format!("{CONFIG}/debug/notes.txt"),
         format!("{CONFIG}/debug/{CLOSED_SESSION}.txt.bak"),
-        format!("{CONFIG}/debug/{}.txt", CLOSED_SESSION.to_uppercase()),
+        format!("{CONFIG}/debug/{UPPERCASE_SESSION}.txt"),
         format!("{CONFIG}/debug/subdirectory"),
     ];
     for name in &names[..3] {
