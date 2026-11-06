@@ -252,12 +252,9 @@ mod tests {
             (Tool::Pi, LINUX, "file:///a b", "/a b"),
             (Tool::Pi, LINUX, "file:///home/u/pi", "/home/u/pi"),
             (Tool::Pi, LINUX, "file:///a//b", "/a/b"),
-            (Tool::Pi, LINUX, "file:///a/C:/x", "/a/C:/x"),
-            (Tool::Pi, WINDOWS, "file://C:/x", "file://C:/x"),
             (Tool::Pi, WINDOWS, "file://C|/x", "file://C|/x"),
             (Tool::Pi, WINDOWS, "file://a%62/x", "file://a%62/x"),
             (Tool::Pi, WINDOWS, "file://1.1/x", "file://1.1/x"),
-            (Tool::Pi, WINDOWS, r"file:///C:\a", r"file:///C:\a"),
             (Tool::Pi, WINDOWS, "file:///C:/a/b", r"C:\a\b"),
             (
                 Tool::Pi,
@@ -266,7 +263,6 @@ mod tests {
                 r"\\server\share\a",
             ),
             (Tool::Pi, WINDOWS, "file:///a", "file:///a"),
-            (Tool::Pi, WINDOWS, "file:///C:/a%5Cb", "file:///C:/a%5Cb"),
             (Tool::Pi, WINDOWS, "/c/a/b", r"C:\a\b"),
             (Tool::Pi, WINDOWS, "/c", r"C:\"),
             (Tool::Pi, WINDOWS, "/mnt/d/a", r"D:\a"),
@@ -283,7 +279,12 @@ mod tests {
             assert_eq!(found, expected, "{tool:?} on {platform:?} for {text:?}");
         }
 
-        let rewritten_by_the_url_parser = [
+        // These compare what was decoded, with no fold: on a Windows host a fold reads the
+        // `C:` inside another OS's value as a drive, which that OS's kipple never meets.
+        let kept = Tool::Pi.plain("file:///a/C:/x", LINUX);
+        assert_eq!(kept, PathBuf::from("/a/C:/x"));
+
+        let refused = [
             (LINUX, "file:///a//../b"),
             (LINUX, "file:///a/b//../../c"),
             (LINUX, "file:///home//../home/u/pi"),
@@ -304,9 +305,12 @@ mod tests {
             (WINDOWS, "file://server/share/%2e%2e/x"),
             (WINDOWS, "file://server/share/./x"),
             (WINDOWS, "file:///C:/a//../b"),
+            (WINDOWS, "file://C:/x"),
+            (WINDOWS, r"file:///C:\a"),
+            (WINDOWS, "file:///C:/a%5Cb"),
         ];
 
-        for (platform, text) in rewritten_by_the_url_parser {
+        for (platform, text) in refused {
             let found = Tool::Pi.plain(text, platform);
             assert_eq!(found, PathBuf::from(text), "refused on {platform:?}");
         }

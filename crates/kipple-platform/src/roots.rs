@@ -586,13 +586,21 @@ fn variable_dirs(
 
 /// The directories an accepted `path` can mean, each as `root`. The tools fold `.` and `..`
 /// by text, so that is where the store is. The OS goes through a link before a `..` and
-/// can answer differently, so what is really there as written is closed too.
+/// can answer differently, so what is really there as written is closed too. On Windows a
+/// name such as `C:` inside a path restarts the fold at that drive, in Codex as well, and
+/// leaves a path relative to a working directory kipple can't know, so that one is refused.
 fn closed_dirs(
     root: SymbolicRoot,
     path: PathBuf,
     source: RootSource,
 ) -> Vec<Result<ResolvedRoot, UnresolvedRoot>> {
     let text = folded(&path);
+    if !text.is_absolute() {
+        return vec![Err(UnresolvedRoot::Unresolvable {
+            path,
+            source: Arc::new(ErrorKind::InvalidInput.into()),
+        })];
+    }
     let written = (text != path && may_exist(&path)).then_some(path);
     std::iter::once(text)
         .chain(written)
@@ -869,5 +877,33 @@ pub fn kipple_dirs(roots: &Roots) -> KippleDirs {
         config,
         data,
         cache,
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use std::path::PathBuf;
+
+    use kipple_core::{RootSource, SymbolicRoot, UnresolvedRoot};
+
+    use super::closed_dirs;
+
+    /// Catches a drive name inside a Windows path leaving an `Ok` root at `C:x`, relative to
+    /// kipple's working directory, where the tool's own store can't be.
+    #[test]
+    fn a_drive_name_inside_a_windows_path_is_refused() {
+        let root = SymbolicRoot::PiAgent;
+        let source = RootSource::Env("PI_CODING_AGENT_DIR");
+        for value in [
+            r"C:\no-such\C:\x",
+            r"C:\no-such\D:x",
+            r"\\server\share\C:\x",
+        ] {
+            let found = closed_dirs(root, PathBuf::from(value), source);
+            assert!(
+                matches!(found[..], [Err(UnresolvedRoot::Unresolvable { .. })]),
+                "{value} is refused, found {found:?}"
+            );
+        }
     }
 }
