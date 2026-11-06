@@ -680,13 +680,65 @@ fn add_log(
     sink.add_supplied(rule, path, claim, supplied)
 }
 
-/// Whether `path` has anything to report: a file, or a directory with something in it.
-fn worth_reporting(cx: &ScanContext<'_>, path: &Path) -> Result<bool, ProbeError> {
-    match cx.metadata(path) {
-        Ok(meta) if meta.kind == EntryKind::Dir => Ok(!cx.read_dir(path)?.is_empty()),
-        Ok(_) => Ok(true),
-        Err(error) if error.io_kind() == Some(ErrorKind::NotFound) => Ok(false),
-        Err(error) => Err(error),
+/// What a report-only path holds. No failure here stops the integration: the removing rule
+/// doesn't rest on any of these.
+enum Reportable {
+    /// Nothing, or nothing that can be there.
+    Nothing,
+    /// A file, or a directory with something in it.
+    Something,
+    /// The OS wouldn't say, so it is listed as unread.
+    Unread,
+}
+
+fn reportable(cx: &ScanContext<'_>, path: &Path) -> Reportable {
+    let holds = cx.metadata(path).and_then(|meta| {
+        if meta.kind == EntryKind::Dir {
+            cx.read_dir(path).map(|entries| !entries.is_empty())
+        } else {
+            Ok(true)
+        }
+    });
+    match holds {
+        Ok(true) => Reportable::Something,
+        Ok(false) => Reportable::Nothing,
+        Err(error) if cannot_be_there(&error) => Reportable::Nothing,
+        Err(_) => Reportable::Unread,
+    }
+}
+
+/// Whether a failed probe shows the path can't exist as upstream lays it out: nothing is
+/// there, something on the way is a file, or it runs through a link kipple doesn't follow.
+fn cannot_be_there(error: &ProbeError) -> bool {
+    matches!(error, ProbeError::ThroughLink { .. })
+        || matches!(
+            error.io_kind(),
+            Some(ErrorKind::NotFound | ErrorKind::NotADirectory)
+        )
+}
+
+/// Lists `path` under `rule` as something the OS wouldn't describe.
+fn add_refused(
+    sink: &mut FindingSink<'_>,
+    rule: &Rule,
+    path: &Path,
+) -> Result<(), IntegrationError> {
+    let supplied = sink.supplied();
+    sink.add_unread(rule, path, vec![Evidence::NoSignature], supplied)
+}
+
+/// Reports `path` under the store inventory, when there is anything to report.
+fn report_entry(
+    cx: &ScanContext<'_>,
+    sink: &mut FindingSink<'_>,
+    path: &Path,
+    evidence: Evidence,
+    advice: Option<AdviceId>,
+) -> Result<(), IntegrationError> {
+    match (reportable(cx, path), rule_of(cx, STORE_ENTRIES)) {
+        (Reportable::Something, _) => report(cx, sink, path, evidence, advice),
+        (Reportable::Unread, Some(rule)) => add_refused(sink, rule, path),
+        (Reportable::Nothing, _) | (Reportable::Unread, None) => Ok(()),
     }
 }
 
@@ -698,10 +750,8 @@ fn add_store_entries(at: At<'_, '_>, sink: &mut FindingSink<'_>) -> Result<(), I
         let path = name
             .split('/')
             .fold(at.store.path.to_owned(), |at, part| at.join(part));
-        if worth_reporting(at.cx, &path)? {
-            let evidence = Evidence::Signature(name.to_owned());
-            report(at.cx, sink, &path, evidence, advice)?;
-        }
+        let evidence = Evidence::Signature(name.to_owned());
+        report_entry(at.cx, sink, &path, evidence, advice)?;
     }
     Ok(())
 }
@@ -749,15 +799,8 @@ fn add_mcp_logs(cx: &ScanContext<'_>, sink: &mut FindingSink<'_>) -> Result<(), 
     for root in CACHE_ROOTS {
         for cache in cx.roots_of(*root) {
             let path = cache.path.join(MCP_LOGS);
-            if worth_reporting(cx, &path)? {
-                report(
-                    cx,
-                    sink,
-                    &path,
-                    Evidence::Signature(MCP_LOGS.to_owned()),
-                    None,
-                )?;
-            }
+            let evidence = Evidence::Signature(MCP_LOGS.to_owned());
+            report_entry(cx, sink, &path, evidence, None)?;
         }
     }
     Ok(())
@@ -826,9 +869,13 @@ fn add_staging(
 ) -> Result<(), IntegrationError> {
     for cache in cx.roots_of(SymbolicRoot::XdgCache) {
         let staging = cache.path.join("claude").join("staging");
-        if worth_reporting(cx, &staging)? {
-            let evidence = vec![Evidence::Signature("staging".to_owned())];
-            sink.add(rule, &staging, evidence, None)?;
+        match reportable(cx, &staging) {
+            Reportable::Nothing => {}
+            Reportable::Unread => add_refused(sink, rule, &staging)?,
+            Reportable::Something => {
+                let evidence = vec![Evidence::Signature("staging".to_owned())];
+                sink.add(rule, &staging, evidence, None)?;
+            }
         }
     }
     Ok(())

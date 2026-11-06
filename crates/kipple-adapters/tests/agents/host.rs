@@ -116,6 +116,9 @@ pub(crate) enum Names {
     Folded,
 }
 
+/// The paths the OS refuses, each with everything below it.
+type Denied = Vec<PathBuf>;
+
 /// The real file system, with each path's identity derived from it, as a host with no links
 /// above the tree has.
 #[derive(Debug)]
@@ -123,6 +126,7 @@ struct TempFs {
     reads: Reads,
     git_below_file: GitBelowFile,
     names: Names,
+    denied: Denied,
 }
 
 impl TempFs {
@@ -165,6 +169,10 @@ impl TempFs {
 
 impl FsProbe for TempFs {
     fn metadata(&self, path: &Path) -> Result<EntryMeta, ProbeError> {
+        if self.denied.iter().any(|denied| path.starts_with(denied)) {
+            let denied = io::ErrorKind::PermissionDenied.into();
+            return Err(ProbeError::io(path, denied));
+        }
         if let Some(kind) = self.git_below_file(path) {
             return Err(ProbeError::io(path, kind.into()));
         }
@@ -385,6 +393,8 @@ pub(crate) struct Host {
     pub(crate) platform: Platform,
     pub(crate) git_below_file: GitBelowFile,
     pub(crate) names: Names,
+    /// Paths below the tree the OS refuses, `/`-separated.
+    pub(crate) denied: Vec<String>,
     roots: BTreeMap<SymbolicRoot, Vec<String>>,
     unresolved: Vec<SymbolicRoot>,
 }
@@ -414,6 +424,7 @@ impl Host {
             platform: Platform::Linux,
             git_below_file: GitBelowFile::Absent,
             names: Names::AsTheDiskDoes,
+            denied: Vec::new(),
             roots,
             unresolved: Vec::new(),
         }
@@ -463,6 +474,11 @@ impl Host {
             reads: Arc::clone(&reads),
             git_below_file: self.git_below_file,
             names: self.names,
+            denied: self
+                .denied
+                .iter()
+                .map(|path| below(self.temp.path(), path))
+                .collect(),
         };
         let engine = engine(self.platform, self.now, &shown, fs);
         let cancel = CancelToken::new();

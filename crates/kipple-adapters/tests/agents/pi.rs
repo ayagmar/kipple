@@ -543,6 +543,54 @@ fn the_inventory_reports_the_store() {
     }
 }
 
+/// Catches a report-only path stopping the integration and taking the removing rule with it:
+/// each of these is a file where a directory was, or a link kipple doesn't follow.
+#[test]
+fn an_inventory_path_that_cant_be_there_stops_nothing() {
+    let mut files = FixtureTree::new();
+    fixture::install(&mut files, AGENT, VERSION);
+    fixture::logs(&mut files, AGENT);
+    files
+        .file(&at("bin"), b"a file\n")
+        .file(&at("tmp"), b"a file\n");
+    let mut links = FixtureTree::new();
+    fixture::install(&mut links, AGENT, VERSION);
+    fixture::logs(&mut links, AGENT);
+    links
+        .dir("home/elsewhere")
+        .link(&at("bin"), "home/elsewhere", Holds::AbsoluteInTree)
+        .link(&at("tmp"), "home/elsewhere", Holds::AbsoluteInTree)
+        .link(
+            &at("install/staging"),
+            "home/elsewhere",
+            Holds::AbsoluteInTree,
+        );
+
+    for tree in [files, links] {
+        let scan = scan(tree);
+
+        assert_eq!(scan.omissions(PI).len(), 0, "expected no omission");
+        assert_eq!(scan.owner(PI), OwnerStatus::Supported);
+        assert_eq!(scan.found(LOGS).len(), 4, "expected the four logs");
+    }
+}
+
+/// Catches a report-only entry the OS refuses stopping the integration, or vanishing from the
+/// report.
+#[test]
+fn a_refused_inventory_entry_is_listed_and_stops_nothing() {
+    let refused = at("install/staging");
+    let mut host = Host::new(managed());
+    host.denied.push(refused.clone());
+
+    let scan = host.scan();
+
+    assert_eq!(scan.omissions(PI).len(), 0, "expected no omission");
+    assert_eq!(scan.owner(PI), OwnerStatus::Supported);
+    assert_eq!(scan.proposal(&refused), Proposal::Report);
+    assert_eq!(scan.found(LOGS).len(), 4, "expected the four logs");
+}
+
 /// Catches a damaged marker that still passes as this layout's: `layout` is supported only
 /// when all three keys say so.
 #[test]

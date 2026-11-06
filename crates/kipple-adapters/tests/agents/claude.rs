@@ -792,6 +792,50 @@ fn the_inventory_reports_with_advice_only_what_the_sweep_covers() {
     }
 }
 
+/// Catches a report-only entry stopping the integration, which took the removing rule and
+/// the rest of the inventory with it: a file where a directory was, or a link kipple doesn't
+/// follow, has nothing to report.
+#[test]
+fn an_inventory_path_that_cant_be_there_stops_nothing() {
+    let mut file = no_sessions();
+    file.dir(&format!("{CONFIG}/sessions"))
+        .file(&format!("{CONFIG}/cache"), b"a file, not a directory\n");
+    let mut linked = no_sessions();
+    linked
+        .dir(&format!("{CONFIG}/sessions"))
+        .dir("home/elsewhere")
+        .link(
+            "home/.cache/claude",
+            "home/elsewhere",
+            Holds::AbsoluteInTree,
+        );
+
+    for tree in [file, linked] {
+        let scan = scan(tree);
+
+        assert_eq!(scan.omissions(CLAUDE).len(), 0, "expected no omission");
+        assert_eq!(scan.owner(CLAUDE), OwnerStatus::Supported);
+        assert_eq!(scan.fact(&closed_log(), "session_closed"), CLOSED);
+    }
+}
+
+/// Catches a report-only entry the OS refuses stopping the integration, or vanishing from the
+/// report: it is listed, with what kipple knows of it, which is nothing.
+#[test]
+fn a_refused_inventory_entry_is_listed_and_stops_nothing() {
+    let refused = format!("{CONFIG}/plans");
+    let mut host = Host::new(installed());
+    host.denied.push(refused.clone());
+
+    let scan = host.scan();
+
+    assert_eq!(scan.omissions(CLAUDE).len(), 0, "expected no omission");
+    assert_eq!(scan.owner(CLAUDE), OwnerStatus::Supported);
+    assert_eq!(scan.finding(&refused).rule.0, STORE);
+    assert_eq!(scan.proposal(&refused), Proposal::Report);
+    assert_eq!(scan.fact(&closed_log(), "session_closed"), CLOSED);
+}
+
 /// Writes `valid`, mutated by each seed, at `at` below the configuration directory, and hands
 /// `check` what was written and what the scan made of it.
 fn each_mutation(valid: &[u8], at: &str, check: impl Fn(&[u8], &Scan)) {

@@ -471,11 +471,42 @@ fn report(
     rule_of(cx, STORE_ENTRIES).map_or(Ok(()), |rule| sink.add(rule, path, vec![evidence], None))
 }
 
-/// The entries of the directory at `dir`. None when nothing is there.
-fn entries_of(cx: &ScanContext<'_>, dir: &Path) -> Result<Vec<DirEntryMeta>, ProbeError> {
-    match kind_of(cx, dir)? {
+/// Whether a failed probe shows the path can't exist as upstream lays it out: something on
+/// the way is a file, or it runs through a link kipple doesn't follow.
+fn cannot_be_there(error: &ProbeError) -> bool {
+    matches!(error, ProbeError::ThroughLink { .. })
+        || error.io_kind() == Some(ErrorKind::NotADirectory)
+}
+
+/// Takes a failed probe of the report-only `path`, which never stops the integration, since
+/// the removing rule doesn't rest on it: what can't be there is nothing to report, and
+/// anything else is listed as unread.
+fn skip(
+    cx: &ScanContext<'_>,
+    sink: &mut FindingSink<'_>,
+    path: &Path,
+    error: &ProbeError,
+) -> Result<(), IntegrationError> {
+    let Some(rule) = rule_of(cx, STORE_ENTRIES).filter(|_| !cannot_be_there(error)) else {
+        return Ok(());
+    };
+    let supplied = sink.supplied();
+    sink.add_unread(rule, path, vec![Evidence::NoSignature], supplied)
+}
+
+/// The entries of the report-only directory at `dir`. None when nothing is there.
+fn entries_of(
+    cx: &ScanContext<'_>,
+    sink: &mut FindingSink<'_>,
+    dir: &Path,
+) -> Result<Vec<DirEntryMeta>, IntegrationError> {
+    let entries = kind_of(cx, dir).and_then(|kind| match kind {
         Some(EntryKind::Dir) => cx.read_dir(dir),
         Some(_) | None => Ok(Vec::new()),
+    });
+    match entries {
+        Ok(entries) => Ok(entries),
+        Err(error) => skip(cx, sink, dir, &error).map(|()| Vec::new()),
     }
 }
 
@@ -491,12 +522,14 @@ fn add_inventory(
         let path = name
             .split('/')
             .fold(agent.to_owned(), |at, part| at.join(part));
-        if kind_of(cx, &path)?.is_some() {
-            report(cx, sink, &path, Evidence::Signature((*name).to_owned()))?;
+        match kind_of(cx, &path) {
+            Ok(Some(_)) => report(cx, sink, &path, Evidence::Signature((*name).to_owned()))?,
+            Ok(None) => {}
+            Err(error) => skip(cx, sink, &path, &error)?,
         }
     }
     let releases = agent.join("install").join("releases");
-    for release in entries_of(cx, &releases)? {
+    for release in entries_of(cx, sink, &releases)? {
         if release.name != version {
             let known = release.name.to_str().is_some_and(is_release_name);
             let evidence = if known {
@@ -508,12 +541,12 @@ fn add_inventory(
         }
     }
     let staging = agent.join("install").join("staging");
-    for entry in entries_of(cx, &staging)? {
+    for entry in entries_of(cx, sink, &staging)? {
         let evidence = Evidence::Signature("install/staging".to_owned());
         report(cx, sink, &staging.join(&entry.name), evidence)?;
     }
     let extensions = agent.join("tmp").join("extensions");
-    if !entries_of(cx, &extensions)?.is_empty() {
+    if !entries_of(cx, sink, &extensions)?.is_empty() {
         report(
             cx,
             sink,
