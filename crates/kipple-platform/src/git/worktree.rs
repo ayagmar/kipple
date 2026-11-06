@@ -78,7 +78,7 @@ impl WorktreeQuery for GitQuery {
         let mut state = WorktreeState {
             registration: Ok(RegistrationState::RegisteredPresent),
             operation_in_progress: any_of(&links.admin, &OPERATIONS),
-            per_worktree_refs: files_below(&links.admin.join("refs")),
+            per_worktree_refs: per_worktree_refs(&links.admin),
             index_locked: any_of(&links.admin, &LOCKS),
             ..WorktreeState::unknown(git.as_ref().map_or_else(|gap| *gap, |_| GitGap::Failed))
         };
@@ -93,6 +93,15 @@ impl WorktreeQuery for GitQuery {
         }
         state
     }
+}
+
+/// How many refs the admin directory `admin` holds. A reftable worktree keeps them in its
+/// table, and what is under `refs/` then is a stub: counting it would be a guess.
+fn per_worktree_refs(admin: &Path) -> Result<u64, GitGap> {
+    if exists(&admin.join("reftable"))? {
+        return Err(GitGap::Unsupported);
+    }
+    files_below(&admin.join("refs"))
 }
 
 /// What a registration's files say.
