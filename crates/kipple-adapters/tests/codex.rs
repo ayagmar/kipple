@@ -996,13 +996,25 @@ fn login_log_stays_report_only() {
     assert!(scan.closed(login), "expected the login log to stay closed");
 }
 
+/// Catches the catalog's pattern ignoring case, which upstream's names never need. Alone in
+/// its directory, since a file system that ignores case makes it the same file as `CATALOG`.
+#[test]
+fn an_uppercase_catalog_name_is_only_reported() {
+    let path = "cache/remote_plugin_catalog/0123456789ABCDEF.json";
+    let mut scene = verified();
+    scene.tree.file(&at(path), b"{}");
+
+    let scan = scene.scan();
+
+    assert_eq!(scan.rule(path), "store-inventory");
+}
+
 /// Catches a rule's reach growing past the names upstream writes.
 #[test]
 fn catalog_name_must_match() {
     let dir = "cache/remote_plugin_catalog";
     let mut scene = verified_with_files();
     let others = [
-        "ABCDEF0123456789.json",
         "0123456789abcde.json",
         "0123456789abcdef0.json",
         "0123456789abcdef.tmp",
