@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::collections::hash_map::Entry;
 use std::fs;
+use std::mem;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Mutex, PoisonError};
@@ -70,7 +71,7 @@ impl Sizer for Walker {
             };
             self.pool.scope(|scope| visit(scope, &item, walk));
         }
-        Ok(tally.measurement())
+        Ok(tally.measurement(&item))
     }
 }
 
@@ -212,7 +213,26 @@ struct Tally {
     skipped_mounts: AtomicU64,
     linked: Mutex<HashMap<FileIdentity, Linked>>,
     newest: Mutex<Newest>,
-    repository: Mutex<Option<PathBuf>>,
+    repositories: Mutex<FirstTwo>,
+}
+
+/// The first two directories in path order, whichever task met them first. Each directory
+/// is added once, and the item sorts before everything inside it, so these always include
+/// the first one strictly inside it.
+#[derive(Debug, Default)]
+struct FirstTwo {
+    first: Option<PathBuf>,
+    second: Option<PathBuf>,
+}
+
+impl FirstTwo {
+    fn add(&mut self, found: PathBuf) {
+        if self.first.as_ref().is_none_or(|first| found < *first) {
+            self.second = self.first.replace(found);
+        } else if self.second.as_ref().is_none_or(|second| found < *second) {
+            self.second = Some(found);
+        }
+    }
 }
 
 impl Tally {
@@ -233,14 +253,10 @@ impl Tally {
         newest.merge(counts.newest);
         drop(newest);
         if let Some(found) = counts.repository {
-            let mut repository = self
-                .repository
+            self.repositories
                 .lock()
-                .unwrap_or_else(PoisonError::into_inner);
-            // The first in path order, whichever task met it first.
-            if repository.as_ref().is_none_or(|known| found < *known) {
-                *repository = Some(found);
-            }
+                .unwrap_or_else(PoisonError::into_inner)
+                .add(found);
         }
     }
 
@@ -265,21 +281,28 @@ impl Tally {
         (apparent, allocated)
     }
 
-    fn measurement(self) -> Measurement {
+    fn measurement(self, item: &Path) -> Measurement {
         let modified = self
             .newest
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .time();
-        let repository = self
-            .repository
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .take();
+        let FirstTwo { first, second } = mem::take(
+            &mut *self
+                .repositories
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+        let nested_repository = if first.as_deref() == Some(item) {
+            second
+        } else {
+            first.clone()
+        };
         Measurement {
             size: self.estimate(),
             modified,
-            repository,
+            repository: first,
+            nested_repository,
         }
     }
 

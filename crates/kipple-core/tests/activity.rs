@@ -190,6 +190,7 @@ impl Sizer for CompleteSizer {
             },
             modified: Some(SystemTime::UNIX_EPOCH),
             repository: None,
+            nested_repository: None,
         })
     }
 }

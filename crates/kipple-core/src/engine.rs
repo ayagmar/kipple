@@ -778,10 +778,11 @@ impl Engine {
         if let Above::Unchecked(error) = above {
             return Tracked::Unchecked(error);
         }
-        let inside = measurement.and_then(|m| m.repository.clone());
-        if let Some(work_tree) =
-            inside.filter(|work_tree| own_git == OwnGit::Counts || work_tree != path)
-        {
+        let inside = measurement.and_then(|m| match own_git {
+            OwnGit::Counts => m.repository.clone(),
+            OwnGit::Replaced => m.nested_repository.clone(),
+        });
+        if let Some(work_tree) = inside {
             return Tracked::HoldsRepository { work_tree };
         }
         if let Some(gap) = measurement.map_or(Some(WalkGap::Unread), walk_gap) {

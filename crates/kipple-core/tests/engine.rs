@@ -164,6 +164,7 @@ const fn measured(size: SpaceEstimate) -> Measurement {
         size,
         modified: Some(NOW),
         repository: None,
+        nested_repository: None,
     }
 }
 
@@ -1266,6 +1267,7 @@ fn only_a_complete_measurement_dates_a_finding_and_a_future_time_counts_as_now()
                 },
                 modified: Some(at),
                 repository: None,
+                nested_repository: None,
             }),
             ..FakeSizer::default()
         };
@@ -1322,6 +1324,7 @@ fn a_checkout_inside_a_finding_holds_it_and_an_incomplete_walk_cant_rule_one_out
     let editable = Measurement {
         // `pip install -e git+…` checks a package out inside the venv.
         repository: Some(PathBuf::from("/found/.venv/src/pkg")),
+        nested_repository: Some(PathBuf::from("/found/.venv/src/pkg")),
         ..measured(SIZE)
     };
     let unreadable = measured(SpaceEstimate {
@@ -1342,6 +1345,7 @@ fn a_checkout_inside_a_finding_holds_it_and_an_incomplete_walk_cant_rule_one_out
     // A walk that met a checkout before an unreadable entry shows the specific reason.
     let unreadable_after_checkout = Measurement {
         repository: Some(PathBuf::from("/found/.venv/src/pkg")),
+        nested_repository: Some(PathBuf::from("/found/.venv/src/pkg")),
         ..unreadable
     };
     assert!(
@@ -1852,12 +1856,14 @@ impl Integration for Subjected {
 )]
 fn worktree_tracked(
     id: &'static str,
-    inside: Option<&str>,
+    deeper: Option<&str>,
     answer: Result<u64, GitGap>,
 ) -> Tracked {
     let sizer = FakeSizer {
+        // As the walker reports a worktree: first its own `.git`, then what is below it.
         measurement: Some(Measurement {
-            repository: inside.map(PathBuf::from),
+            repository: Some(PathBuf::from("/found/repo/wt")),
+            nested_repository: deeper.map(PathBuf::from),
             ..measured(SIZE)
         }),
         ..FakeSizer::default()
@@ -1889,18 +1895,16 @@ fn worktree_tracked(
 /// in the worktree, or covering a repository deeper in it.
 #[test]
 fn a_worktree_stops_counting_only_its_own_git() {
-    let own = Some("/found/repo/wt");
-
     assert!(
         matches!(
-            worktree_tracked("git", own, Ok(0)),
+            worktree_tracked("git", None, Ok(0)),
             Tracked::Asked { tracked: 0, work_tree } if work_tree == Path::new("/found/repo")
         ),
         "the repository above is asked, and the worktree's own `.git` doesn't count"
     );
     assert!(
         matches!(
-            worktree_tracked("git", own, Ok(2)),
+            worktree_tracked("git", None, Ok(2)),
             Tracked::Asked { tracked: 2, .. }
         ),
         "what the repository above tracks is reported"
@@ -1914,7 +1918,7 @@ fn a_worktree_stops_counting_only_its_own_git() {
     );
     assert!(
         matches!(
-            worktree_tracked("cargo", own, Ok(0)),
+            worktree_tracked("cargo", None, Ok(0)),
             Tracked::HoldsRepository { .. }
         ),
         "any integration but git keeps the protection"
