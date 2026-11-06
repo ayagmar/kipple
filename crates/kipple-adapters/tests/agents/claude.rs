@@ -344,6 +344,24 @@ fn latest_link_blocks_nothing() {
     }
 }
 
+/// Catches a name alone hiding an entry: only upstream's link is left out, so a later layout's
+/// `debug/latest/`, or a file of that name, stays in the report (§7.11).
+#[test]
+fn a_latest_that_is_no_link_is_reported() {
+    let latest = format!("{CONFIG}/debug/latest");
+    let mut file = no_sessions();
+    file.file(&latest, b"\n");
+    let mut directory = no_sessions();
+    directory.file(&format!("{latest}/inner.txt"), b"\n");
+
+    for tree in [file, directory] {
+        let scan = scan(tree);
+
+        assert_eq!(scan.finding(&latest).rule.0, STORE);
+        assert_eq!(scan.proposal(&latest), Proposal::Advice);
+    }
+}
+
 /// Catches a cut-short process listing passing for an idle host (§7.6).
 #[test]
 fn incomplete_inventory_blocks_logs() {

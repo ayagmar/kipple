@@ -643,7 +643,7 @@ fn add_debug_entry(
     debug: &Path,
     entry: &DirEntryMeta,
 ) -> Result<(), IntegrationError> {
-    if entry.name == "latest" {
+    if entry.name == "latest" && entry.kind == EntryKind::Symlink {
         return Ok(());
     }
     let path = debug.join(&entry.name);
