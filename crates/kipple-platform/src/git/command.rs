@@ -1,6 +1,9 @@
 //! Running git: found once on `PATH`, checked to be the same file before each run, and
-//! isolated from every config and hook but the repository's own, which its command line
-//! overrides where it could run anything.
+//! isolated from every config and hook but the repository's own. Its command line overrides
+//! `core.fsmonitor` and `core.hooksPath`, its environment stops a lazy fetch where git
+//! honours that, and the worktree queries read the repository's config names before they
+//! ask anything that could run a filter (`worktree.rs`), because a repository's config can
+//! name a program no override reaches.
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -33,6 +36,8 @@ const OLDEST: [u64; 2] = [2, 32];
 pub(super) struct Git {
     path: PathBuf,
     identity: FileIdentity,
+    /// What it said it is when it was found.
+    version: ToolVersion,
     /// The environment it runs in, for what the runner passes on.
     env: Environment,
 }
@@ -59,17 +64,35 @@ pub(super) fn resolve(env: &Environment) -> Result<Git, GitGap> {
     Ok(Git {
         path,
         identity,
+        version,
         env: env.clone(),
     })
 }
 
-/// The identity of the file at `path`.
-fn identity(path: &Path) -> Option<FileIdentity> {
+/// The identity of the file at `path`, through any link.
+pub(super) fn identity(path: &Path) -> Option<FileIdentity> {
     let meta = fs::metadata(path).ok()?;
     os::identity(path, &meta)
 }
 
 impl Git {
+    /// Whether this git is older than `floor`.
+    pub(super) fn older_than(&self, floor: &[u64]) -> bool {
+        self.version < ToolVersion(floor.to_vec())
+    }
+
+    /// What git prints for `tail` from `dir`, whole and with exit 0.
+    pub(super) fn ask(
+        &self,
+        dir: &Path,
+        tail: &[&str],
+        cancel: &CancelToken,
+    ) -> Result<Vec<u8>, GitGap> {
+        let tail: Vec<&OsStr> = tail.iter().map(OsStr::new).collect();
+        let output = self.run(dir, Matching::Exact, &tail, cancel)?;
+        Ok(output.stdout)
+    }
+
     /// The work tree git finds from `dir`, as it prints it.
     pub(super) fn toplevel(&self, dir: &Path, cancel: &CancelToken) -> Result<PathBuf, GitGap> {
         let tail = [OsStr::new("rev-parse"), OsStr::new("--show-toplevel")];
@@ -234,13 +257,13 @@ fn record(bytes: &[u8]) -> Result<Record, GitGap> {
     clippy::unnecessary_wraps,
     reason = "every byte string is a path on Linux and macOS, not on Windows"
 )]
-fn os_string(bytes: &[u8]) -> Option<OsString> {
+pub(super) fn os_string(bytes: &[u8]) -> Option<OsString> {
     use std::os::unix::ffi::OsStrExt as _;
     Some(OsStr::from_bytes(bytes).to_owned())
 }
 
 #[cfg(windows)]
-fn os_string(bytes: &[u8]) -> Option<OsString> {
+pub(super) fn os_string(bytes: &[u8]) -> Option<OsString> {
     std::str::from_utf8(bytes).ok().map(OsString::from)
 }
 
