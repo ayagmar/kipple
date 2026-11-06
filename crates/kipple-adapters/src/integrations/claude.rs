@@ -439,7 +439,7 @@ struct Store<'cx> {
     layout: FactValue,
     /// The `claude.version_supported` fact.
     version: FactValue,
-    /// The sessions its markers name, in lowercase. `None` when one can't be read, since
+    /// The sessions its markers name. `None` when one can't be read, since
     /// that marker might name any session.
     open_sessions: Option<BTreeSet<String>>,
 }
@@ -529,11 +529,13 @@ fn is_marker(name: &OsStr) -> bool {
         .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
 }
 
-/// The `sessionId` of a marker, in lowercase, and nothing else of it.
+/// The `sessionId` of a marker, and nothing else of it. A log's name is the ID as upstream
+/// writes it, so any other value, another case included, can't be matched to a log and might
+/// be any session's: that marker can't be used.
 fn session_id(marker: &[u8]) -> Option<String> {
     let marker: serde_json::Value = serde_json::from_slice(marker).ok()?;
     let id = marker.get("sessionId")?.as_str()?;
-    (!id.is_empty()).then(|| id.to_ascii_lowercase())
+    is_uuid(id).then(|| id.to_owned())
 }
 
 /// What a directory holds.

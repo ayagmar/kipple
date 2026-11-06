@@ -183,9 +183,23 @@ fn missing_sessions_dir_blocks() {
 }
 
 /// Catches an upstream rename of the key, which is observed and undocumented, opening every
-/// log: a marker with no `sessionId` names something kipple can't read.
+/// log, or a value that isn't a session ID reading as one that names no log: such a marker
+/// might belong to any session. A log's name is the ID as upstream writes it, in lowercase,
+/// so another case is no ID either.
 #[test]
 fn marker_without_session_id_blocks() {
+    let cut_short: String = OPEN_SESSION.chars().take(35).collect();
+    for id in [
+        format!("sess_{OPEN_SESSION}"),
+        cut_short,
+        format!(" {OPEN_SESSION}"),
+        UPPERCASE_SESSION.to_owned(),
+    ] {
+        let contents = format!("{{\"pid\":7,\"sessionId\":\"{id}\"}}\n");
+        let scan = scan_with(no_sessions(), "sessions/7.json", contents.as_bytes());
+
+        assert_eq!(scan.fact(&closed_log(), "session_closed"), UNKNOWN, "{id}");
+    }
     for contents in [
         &b"{\"pid\":7,\"session\":\"a\"}\n"[..],
         b"{\"pid\":7,\"sessionId\":\"\"}\n",
@@ -869,25 +883,56 @@ fn each_mutation(valid: &[u8], at: &str, check: impl Fn(&[u8], &Scan)) {
     }
 }
 
-/// Catches a damaged marker that still parses being read as no session: the open log may
-/// only turn closed if what's left really names another one.
+/// S5 §3's grammar, written here from the report and not from the code under test.
+fn is_session_id(id: &str) -> bool {
+    id.len() == 36
+        && id.char_indices().all(|(at, part)| {
+            if [8, 13, 18, 23].contains(&at) {
+                part == '-'
+            } else {
+                matches!(part, '0'..='9' | 'a'..='f')
+            }
+        })
+}
+
+/// `fact`, for a marker that reads as `bytes`, is what it must be: unknown unless the marker's
+/// `sessionId` is a session ID.
+fn assert_read(bytes: &[u8], fact: Option<FactValue>) {
+    let parsed: Option<serde_json::Value> = serde_json::from_slice(bytes).ok();
+    let named = parsed.as_ref().and_then(|value| value.get("sessionId"));
+    let usable = named
+        .and_then(serde_json::Value::as_str)
+        .is_some_and(is_session_id);
+    let shown = String::from_utf8_lossy(bytes);
+    assert_eq!(fact == UNKNOWN, !usable, "marker {shown:?}");
+}
+
+/// Catches a damaged marker being read as no session: the log turns closed only if what's
+/// left is a session ID, so the marker really names another session.
 #[test]
 fn generated_markers_never_close_a_session_they_might_name() {
     let marker = marker(OPEN_SESSION);
     each_mutation(marker.as_bytes(), "sessions/4242.json", |bytes, scan| {
-        let parsed: Option<serde_json::Value> = serde_json::from_slice(bytes).ok();
-        let named = parsed.as_ref().and_then(|value| value.get("sessionId"));
-        let usable = named
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|id| !id.is_empty());
-        let fact = scan.fact(&log(OPEN_SESSION), "session_closed");
-        assert_eq!(
-            fact == UNKNOWN,
-            !usable,
-            "marker {:?}",
-            String::from_utf8_lossy(bytes)
-        );
+        assert_read(bytes, scan.fact(&log(OPEN_SESSION), "session_closed"));
     });
+}
+
+/// The same with the damage in the value alone. Mutating a whole marker rarely leaves it
+/// parsing with a bad ID, which is the case that would read as a closed session.
+#[test]
+fn generated_session_ids_never_close_a_session_they_might_name() {
+    for seed in 0..48 {
+        let id = Generated::seeded(seed).mutated(OPEN_SESSION.as_bytes());
+        let id = String::from_utf8_lossy(&id);
+        let marker = serde_json::json!({ "pid": 4242, "sessionId": id }).to_string();
+
+        let scan = scan_with(no_sessions(), "sessions/4242.json", marker.as_bytes());
+
+        assert_read(
+            marker.as_bytes(),
+            scan.fact(&closed_log(), "session_closed"),
+        );
+    }
 }
 
 /// Catches damaged settings being read as settings that move nothing: `layout` is supported
