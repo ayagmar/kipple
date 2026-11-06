@@ -8,6 +8,8 @@
 mod golden;
 
 use std::collections::BTreeMap;
+use std::fs;
+use std::io;
 
 use kipple_adapters::builtin;
 use kipple_core::format::{IntegrationDigests, rule_digest};
@@ -36,4 +38,17 @@ fn every_builtin_rule_keeps_its_digests() {
         golden::rows("rule_digest").unwrap(),
         "this edit suspends users' profiles: update the golden on purpose"
     );
+}
+
+/// Catches a stray `cargo` beside `cargo.txt` taking its key, so that the order the
+/// directory lists them in decides which one is compared and the other goes unchecked.
+#[test]
+fn a_golden_file_not_named_txt_fails_the_read() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("cargo.txt"), "row\n").unwrap();
+    fs::write(dir.path().join("cargo"), "row\n").unwrap();
+
+    let error = golden::rows_in(dir.path()).unwrap_err();
+
+    assert_eq!(error.kind(), io::ErrorKind::InvalidData);
 }
