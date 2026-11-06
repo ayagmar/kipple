@@ -278,7 +278,7 @@ Advice is text plus an exact command or config snippet, checked against supporte
 
 ## 7. Integration fixtures
 
-Fixtures are built by test code, not described in a new file format. A small `FixtureTree` builder (`tests/fixtures/tree.rs`), local to the `kipple-adapters` tests, creates directories, files with given contents, and sparse files of a given size (via `set_len`) in a temp dir:
+Fixtures are built by test code, not described in a new file format. A small `FixtureTree` builder (`tests/fixtures/tree.rs`), local to the `kipple-adapters` tests, creates directories, files with given contents, sparse files of a given size (via `set_len`) and symlinks in a temp dir:
 
 ```rust
 let mut tree = FixtureTree::new();
@@ -289,7 +289,7 @@ tree.file("projects/rust-app/Cargo.toml", b"[package]\nname = \"demo\"\n")
 tree.build_in(home)?;
 ```
 
-Symlinks and mtimes come with the first integration whose layout needs them.
+`link` and `bad_link` add real symlinks, on Windows too, where a test that can't make one fails. A link's target is a path in the tree, held as an absolute path. `modified` sets the times of the files below a directory, and `modified_dir` sets a directory's own time once its children are written. `FixtureTree::link_stamp` reads a built link's own `lstat` (Unix only), for a fixture that has to write a file recording it, since a change time can't be set.
 
 - Fixtures live in `crates/kipple-adapters/tests/fixtures/<integration>/`, one file per supported upstream layout named after the tool and version (`node/pnpm_v12_9_1.rs`), each adding its layout to a `FixtureTree`.
 - Each fixture comes with a positive case and at least one negative case (an unknown layout blocks, a running release is kept). `tests/integrations.rs` runs them through the engine.
