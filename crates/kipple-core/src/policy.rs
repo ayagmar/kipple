@@ -520,9 +520,9 @@ pub(crate) fn starts_with(path: &Path, base: &Path) -> bool {
 /// A profile records it, and a profile made under another version is suspended whole
 /// (D-068). `kipple-core/tests/policy_version.rs` keeps, for each version, a digest of
 /// every verdict over every kind of fact and config hold, and fails unless the current
-/// pair is its newest row: a changed verdict passes only with this bumped and a row
-/// appended.
-pub const POLICY_VERSION: u32 = 1;
+/// pair is its newest row. A changed verdict bumps this and appends a row, and review holds
+/// rows to append-only: the test sees only the rows as they are.
+pub const POLICY_VERSION: u32 = 2;
 
 /// Everything the user configured that decides buckets (`docs/03-functional-spec.md` §6).
 ///
