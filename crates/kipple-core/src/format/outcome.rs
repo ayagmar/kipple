@@ -505,6 +505,8 @@ pub enum SkipOut {
         /// Why.
         gap: GitGap,
     },
+    /// A repository tracks the item itself.
+    Tracked,
     /// Its tool's own locks couldn't be held.
     InstallerBusy {
         /// Why.
@@ -566,6 +568,7 @@ impl SkipOut {
             },
             Skip::TrashUnavailable(e) => Self::TrashUnavailable { error: error(e) },
             Skip::Git(gap) => Self::Git { gap: *gap },
+            Skip::Tracked => Self::Tracked,
             Skip::InstallerBusy(gap) => Self::InstallerBusy { gap: *gap },
             Skip::SemanticNotReviewed => Self::SemanticNotReviewed,
             Skip::ToolChanged(gap) => Self::ToolChanged { gap: *gap },
@@ -606,6 +609,7 @@ impl SkipOut {
             }),
             Self::TrashUnavailable { error: e } => Skip::TrashUnavailable(error(e)?),
             Self::Git { gap } => Skip::Git(*gap),
+            Self::Tracked => Skip::Tracked,
             Self::InstallerBusy { gap } => Skip::InstallerBusy(*gap),
             Self::SemanticNotReviewed => Skip::SemanticNotReviewed,
             Self::ToolChanged { gap } => Skip::ToolChanged(*gap),

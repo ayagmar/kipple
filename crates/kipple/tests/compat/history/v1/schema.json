@@ -1454,6 +1454,20 @@
           ]
         },
         {
+          "description": "A repository tracks the item itself.",
+          "type": "object",
+          "properties": {
+            "skip": {
+              "type": "string",
+              "const": "tracked"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "skip"
+          ]
+        },
+        {
           "description": "Its tool's own locks couldn't be held.",
           "type": "object",
           "properties": {
