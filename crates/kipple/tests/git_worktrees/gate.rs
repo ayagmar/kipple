@@ -918,7 +918,7 @@ fn a_copy_never_stands_in_for_a_repository_outside_the_roots() {
 type Change = fn(&Repo);
 
 /// Each way a registration and a checkout can come to disagree, as a repository gets one.
-const DISAGREEMENTS: [(&str, Change); 5] = [
+const DISAGREEMENTS: [(&str, Change); 6] = [
     ("a copy", |repo| {
         copy_tree(&repo.main, &repo.projects().join("app-copy"));
     }),
@@ -935,6 +935,15 @@ const DISAGREEMENTS: [(&str, Change); 5] = [
     ("a moved checkout", |repo| {
         rename(&repo.checkout, &repo.projects().join("moved"));
     }),
+    (
+        "a copy of a copy with a later worktree of its own",
+        |repo| {
+            let copy = repo.temp.path().join("x");
+            copy_tree(&repo.main, &copy);
+            repo.git_in(&copy, &["worktree", "add", "-q", "-b", "late", "../zz/z"]);
+            copy_tree(&copy, &repo.projects().join("c"));
+        },
+    ),
 ];
 
 /// Catches any path with two findings, which is two answers about one checkout, however

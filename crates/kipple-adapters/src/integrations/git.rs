@@ -260,6 +260,9 @@ struct Discovery<'run, 'context, 'findings> {
     pending: BTreeMap<PathBuf, Vec<Listing>>,
     /// Each main worktree already gone through, which another of its worktrees lists again.
     mains: BTreeSet<PathBuf>,
+    /// Each path that has had its finding. Asking who owns a later path can list this one
+    /// again, and it says nothing new.
+    settled: BTreeSet<PathBuf>,
     /// The main worktree each common directory belongs to, as far as asked.
     owners: BTreeMap<PathBuf, PathBuf>,
     /// The common directories git listed, which a copy's list of the same paths says
@@ -286,6 +289,7 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
             listed: BTreeSet::new(),
             pending: BTreeMap::new(),
             mains: BTreeSet::new(),
+            settled: BTreeSet::new(),
             owners: BTreeMap::new(),
             answered: BTreeSet::new(),
             failed: BTreeSet::new(),
@@ -378,7 +382,9 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
             if self.cx.is_cancelled() {
                 return Err(IntegrationError::Stopped);
             }
-            self.settled(&path, listings)?;
+            if !self.settled.contains(&path) {
+                self.settle_path(&path, listings)?;
+            }
         }
         Ok(())
     }
@@ -387,7 +393,7 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
     /// describe it, and `inspect` starts from the path, so nothing asked there says which
     /// does. From several repositories, only the checkout's own speaks: a copy of a
     /// repository lists what the original does, and the rows come from the original.
-    fn settled(&mut self, path: &Path, listings: Vec<Listing>) -> Result<(), IntegrationError> {
+    fn settle_path(&mut self, path: &Path, listings: Vec<Listing>) -> Result<(), IntegrationError> {
         let Some(first) = listings.first() else {
             return Ok(());
         };
@@ -447,6 +453,7 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
         state: WorktreeState,
     ) -> Result<(), IntegrationError> {
         let Listing { main, registration } = listing;
+        self.settled.insert(registration.path.clone());
         let agent = label(self.cx, &registration.path);
         let values = facts(main, registration, &state, &self.tool);
         let advice = self.advice(&state);
