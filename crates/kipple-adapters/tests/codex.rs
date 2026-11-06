@@ -925,6 +925,25 @@ fn tui_log_eligible_only_with_log_dir_unset() {
     assert_eq!(writer.holds(TUI_LOG), [Hold::FactUnmet]);
 }
 
+/// Catches `log_dir = ""` being dropped: upstream resolves it against the file's directory, so
+/// it is set, to the home, and a log there is reported.
+#[test]
+fn an_empty_log_dir_is_the_home() {
+    let mut scene = verified_with_files();
+    scene
+        .tree
+        .file(&at("config.toml"), b"log_dir = \"\"\n")
+        .file(&at("codex-tui.log"), b"beside the config\n");
+
+    let scan = scene.scan();
+
+    assert_eq!(scan.rule("codex-tui.log"), "store-inventory");
+    assert_eq!(
+        scan.value(TUI_LOG, "log_dir.configured"),
+        Some(FactValue::Bool(true))
+    );
+}
+
 /// Catches a `log_dir` that can't be followed being dropped: logs kipple can't list are
 /// reported as such, whether the directory is outside every root or simply not there yet.
 #[test]
