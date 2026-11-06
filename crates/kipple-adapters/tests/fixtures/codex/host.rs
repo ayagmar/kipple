@@ -129,22 +129,10 @@ impl Disk {
     }
 }
 
-/// `error`, with a path below a file reading as absent. The engine looks for `.git` inside
-/// each finding, and for a file the OS answers `ENOTDIR`, which it takes for a check that
-/// failed: every file would then be held for unknown git. These tests are about Codex's
-/// rules, so that answer is left out here.
-fn below_a_file(error: io::Error) -> io::Error {
-    if error.kind() == io::ErrorKind::NotADirectory {
-        io::ErrorKind::NotFound.into()
-    } else {
-        error
-    }
-}
-
 impl FsProbe for Disk {
     fn metadata(&self, path: &Path) -> Result<EntryMeta, ProbeError> {
         self.check(path)?;
-        let meta = fs::symlink_metadata(path).map_err(|e| ProbeError::io(path, below_a_file(e)))?;
+        let meta = fs::symlink_metadata(path).map_err(|e| ProbeError::io(path, e))?;
         Ok(EntryMeta {
             kind: self.kind(path, meta.file_type()),
             identity: Some(self.identity(path)),
