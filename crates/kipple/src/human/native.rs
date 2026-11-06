@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use kipple_core::{NativeArg, NativeCommand, NativeSpec};
+use kipple_core::{NativeArg, NativeCommand, NativeSpec, ResolvedTool};
 
 use super::escaped;
 
@@ -23,16 +23,29 @@ fn shown(arg: NativeArg) -> String {
     }
 }
 
-/// A native item as the person confirming it sees it: the command, what it acts on and
-/// its size, about `size` because nothing was enumerated. `path` is the reviewed path:
-/// npm's own arguments name only its working directory.
+/// The file that runs, after the runtime that starts it if it has one, and its version:
+/// two tools of one name are told apart here, and the digest names what this shows.
+fn resolved(tool: &ResolvedTool) -> String {
+    let runtime = tool.runtime.as_ref().map(|file| file.path.as_path());
+    let files: Vec<String> = runtime
+        .into_iter()
+        .chain([tool.path.as_path()])
+        .map(|file| escaped(&file.display().to_string()))
+        .collect();
+    format!("{} {}", files.join(" "), escaped(&tool.version))
+}
+
+/// A native item as the person confirming it sees it: the command, what it acts on, the
+/// tool that runs it and its size, about `size` because nothing was enumerated. `path` is
+/// the reviewed path: npm's own arguments name only its working directory.
 pub(crate) fn native_line(spec: &NativeSpec, size: &str, path: &Path) -> String {
     let args: Vec<String> = spec.command.argv().into_iter().map(shown).collect();
     let line = format!(
-        "  native  about {size}  {} {} on {}",
+        "  native  about {size}  {} {} on {}, run by {}",
         spec.tool.tool.program(),
         args.join(" "),
-        escaped(&path.display().to_string())
+        escaped(&path.display().to_string()),
+        resolved(&spec.tool)
     );
     match spec.command {
         NativeCommand::NpmCacheClean { .. } => format!("{line}: {NPM_REMOVES}"),
@@ -46,7 +59,7 @@ mod tests {
 
     use kipple_core::{
         Allocated, Anchor, FileIdentity, Measured, NativeCommand, NativeEffect, NativeEnd,
-        NativeTool, ObjectId, RelPath, ResolvedTool, SymbolicRoot, Totals, VerifiedRoot,
+        NativeTool, ObjectId, RelPath, SymbolicRoot, ToolFile, Totals, VerifiedRoot,
         WorktreeWitness,
     };
 
@@ -82,16 +95,20 @@ mod tests {
         }
     }
 
-    /// Catches a person confirming a command they can't read: its tool, its arguments and
-    /// the path they reviewed all show, never a path only kipple's data directory holds.
+    /// Catches a person confirming a command they can't read, or a tool they can't tell
+    /// from another of its name: its arguments, the path they reviewed and the files and
+    /// version that run it all show, never a path only kipple's data directory holds.
     #[test]
     fn a_native_line_says_what_runs_and_on_what() {
         let cache = NativeCommand::NpmCacheClean { cache: anchor() };
-        let line = native_line(
-            &spec(cache, NativeTool::Npm),
-            "12 MiB",
-            Path::new("/home/u/.npm/_cacache"),
-        );
+        let mut npm = spec(cache, NativeTool::Npm);
+        npm.tool.path = PathBuf::from("/opt/node/lib/node_modules/npm/bin/npm-cli.js");
+        npm.tool.version = "12.2.1".to_owned();
+        npm.tool.runtime = Some(ToolFile {
+            path: PathBuf::from("/opt/node/bin/node"),
+            identity: IDENTITY,
+        });
+        let line = native_line(&npm, "12 MiB", Path::new("/home/u/.npm/_cacache"));
         assert!(
             line.contains("npm cache clean --force") && line.contains("/home/u/.npm/_cacache"),
             "expected the command and the path: {line}"
@@ -99,6 +116,12 @@ mod tests {
         assert!(
             line.contains("about 12 MiB"),
             "an estimate, said so: {line}"
+        );
+        assert!(
+            line.contains(
+                "/opt/node/bin/node /opt/node/lib/node_modules/npm/bin/npm-cli.js 12.2.1"
+            ),
+            "the pair that runs, and its version: {line}"
         );
         assert!(line.contains(NPM_REMOVES), "what it removes: {line}");
         assert!(
@@ -121,6 +144,10 @@ mod tests {
         assert!(
             git.contains("worktree remove") && git.contains("(none)"),
             "expected the command and no device path: {git}"
+        );
+        assert!(
+            git.contains("/usr/bin/tool 1.0.0"),
+            "the file that runs, and its version: {git}"
         );
     }
 
