@@ -206,6 +206,9 @@ impl Freezer for World {
         let target = {
             let mut state = self.state();
             state.freezes += 1;
+            if let Some(log) = &state.log {
+                log.lock().unwrap().push("freeze");
+            }
             state.targets.get(&anchor.path()).cloned()
         };
         if cancel.is_cancelled() {

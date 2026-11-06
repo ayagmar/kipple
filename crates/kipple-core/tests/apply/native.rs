@@ -571,7 +571,7 @@ fn native_snapshot_is_taken_after_the_locks() {
     assert_eq!(outcome.status(), Status::Done, "{outcome:?}");
     assert_eq!(
         *log.lock().unwrap(),
-        ["locks", "now", "ran", "released"],
+        ["locks", "freeze", "now", "ran", "released"],
         "taken first, held through the run"
     );
 }
@@ -620,5 +620,5 @@ fn an_item_that_cant_be_read_again_is_skipped_and_its_locks_go() {
     let outcome = applied_under(&plan, &rescan, &locks, &world);
 
     assert_eq!(outcome, ItemOutcome::Skipped(Skip::RevisitMissing));
-    assert_eq!(*log.lock().unwrap(), ["locks", "now", "released"]);
+    assert_eq!(*log.lock().unwrap(), ["locks", "freeze", "now", "released"]);
 }
