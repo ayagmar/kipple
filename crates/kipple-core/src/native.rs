@@ -1,9 +1,10 @@
 //! The closed set of native operations (`docs/04-safety-model.md` §6).
 //!
 //! A native operation is a tool's own command, built here and nowhere else: no integration
-//! or rule constructs one, and [`NativeCommand::argv`] is the one source for what runs, what
-//! a person reviews and what the plan's digest covers. Only the platform's [`NativeRunner`]
-//! starts one, and only [`NativeOp`](crate::NativeOp) reaches it.
+//! or rule constructs one, and [`NativeCommand::argv`] is the one source for what runs and
+//! what a person reviews. A plan's digest covers the command, which decides its arguments.
+//! Only the platform's [`NativeRunner`] starts one, and only [`NativeOp`](crate::NativeOp)
+//! reaches it.
 
 use std::fmt;
 use std::path::{Path, PathBuf};
