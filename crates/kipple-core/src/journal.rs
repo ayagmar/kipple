@@ -17,8 +17,8 @@ use std::fmt;
 
 use crate::digest::Digest;
 use crate::outcome::{ApplyError, Found, ItemOutcome};
+use crate::plan::ItemMethod;
 use crate::plan::{ItemId, Plan};
-use crate::rule::Method;
 use crate::trash::TrashSlot;
 
 /// What an item's run is about to do, recorded before it does anything.
@@ -29,7 +29,7 @@ pub struct Intent {
     /// The item.
     pub item: ItemId,
     /// How it is removed.
-    pub method: Method,
+    pub method: ItemMethod,
     /// Its tree as stored with the plan ([`FrozenTree::digest`]).
     ///
     /// [`FrozenTree::digest`]: crate::FrozenTree::digest

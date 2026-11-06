@@ -6,8 +6,8 @@
 use std::path::Path;
 
 use kipple_core::{
-    Completeness, Effect, Ending, ItemOutcome, Left, Method, Plan, RunState, SpaceEstimate, Status,
-    Total, Totals,
+    Completeness, Effect, Ending, ItemMethod, ItemOutcome, Left, Method, Plan, RunState,
+    SpaceEstimate, Status, Total, Totals,
 };
 
 use super::outcome::{error_text, found, left_reason, measured, skip, status};
@@ -109,7 +109,7 @@ pub(crate) fn plan_heading(plan: &Plan) -> Vec<String> {
             let entries: Vec<_> = plan
                 .entries()
                 .iter()
-                .filter(|entry| entry.method() == method)
+                .filter(|entry| entry.file_method() == Some(method))
                 .collect();
             if entries.is_empty() {
                 return None;
@@ -148,10 +148,11 @@ const fn method_verb(method: Method) -> &'static str {
 }
 
 /// A plan item's method, in its line.
-pub(crate) const fn method_word(method: Method) -> &'static str {
+pub(crate) const fn method_word(method: ItemMethod) -> &'static str {
     match method {
-        Method::Delete => "delete",
-        Method::Trash => "trash",
+        ItemMethod::Delete => "delete",
+        ItemMethod::Trash => "trash",
+        ItemMethod::Native => "native",
     }
 }
 
@@ -338,7 +339,12 @@ pub(crate) fn run_heading(id: &str) -> String {
 
 /// An item as a receipt or `history` lists it: its number, status, method and path,
 /// then why it ended so, if there is more to say.
-pub(crate) fn item_line(item: u32, outcome: &ItemOutcome, method: Method, path: &Path) -> String {
+pub(crate) fn item_line(
+    item: u32,
+    outcome: &ItemOutcome,
+    method: ItemMethod,
+    path: &Path,
+) -> String {
     let line = format!(
         "  {item:>3}  {:<11}  {:<6}  {}",
         status(outcome.status()),
@@ -372,7 +378,7 @@ pub(crate) fn left_line(path: &Path, why: &str) -> String {
 }
 
 /// A plan item as the person confirming it sees it.
-pub(crate) fn plan_line(method: Method, size: &str, path: &Path) -> String {
+pub(crate) fn plan_line(method: ItemMethod, size: &str, path: &Path) -> String {
     format!(
         "  {:<6}  {size:>10}  {}",
         method_word(method),

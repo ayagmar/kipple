@@ -14,7 +14,7 @@ use clap::{Args, Subcommand};
 use kipple_core::format::IntegrationDigests;
 use kipple_core::profile::{
     self, DraftProfile, EntryScope, FreezeError, Profile, ProfileCheck, ProfileContents,
-    ProfileEntry, ProfileError, ProfileName, ProfileScene, ProfileStore as _, ProfileStoreError,
+    ProfileError, ProfileName, ProfileScene, ProfileStore as _, ProfileStoreError,
 };
 use kipple_core::{
     CancelToken, CleanRequest, Ending, Finished, PlanMode, Receipt, RuleId, ScanReport,
@@ -303,7 +303,7 @@ fn confirmed(
         .entries()
         .iter()
         .filter(|entry| entry.scope() == EntryScope::Included)
-        .map(ProfileEntry::method);
+        .map(|entry| entry.method().into());
     lines.extend(prompt::method_lines(methods));
     let question = words::save_question(contents.name().as_str());
     let answered = write_lines(io.stderr, &lines, ink)

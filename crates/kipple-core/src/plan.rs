@@ -17,6 +17,7 @@ use crate::digest::Digest;
 use crate::engine::FindingId;
 use crate::frozen::{FrozenTree, RelPath, Scope};
 use crate::mutation::LocalFileSystem;
+use crate::native::{NativeKind, NativeSpec};
 use crate::policy::{Caution, Facts, Level, Policy, Proposal, Verdict};
 use crate::probe::FileIdentity;
 use crate::root::SymbolicRoot;
@@ -130,17 +131,16 @@ pub struct Judgement {
     pub level: Level,
     /// The effective recent window, in days.
     pub recent_days: u16,
-    /// The method.
-    pub method: Method,
+    /// How it runs.
+    pub method: ItemMethod,
     /// The kept and excluded paths.
     pub held: Digest,
 }
 
 impl Judgement {
-    /// What `rule`'s finding with `facts` is judged under by `policy`, to be removed by
-    /// `method`.
+    /// What `rule`'s finding with `facts` is judged under by `policy`, to run by `method`.
     #[must_use]
-    pub fn new(policy: &Policy, rule: &Rule, facts: &Facts, method: Method) -> Self {
+    pub fn new(policy: &Policy, rule: &Rule, facts: &Facts, method: ItemMethod) -> Self {
         Self {
             policy: Digest::of_debug(policy),
             rule: rule.id.clone(),
@@ -204,6 +204,15 @@ pub enum MethodRefusal {
     NotOffered(Method),
 }
 
+/// How a finding's rule has it removed, by the choice made for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Removal {
+    /// Its files, by this method.
+    Files(Method),
+    /// Its tool's own command.
+    Native(NativeKind),
+}
+
 impl MethodChoice {
     /// The method: `--method`, else `rules.<id>.method`, else `clean.method`, else
     /// `delete`.
@@ -215,25 +224,82 @@ impl MethodChoice {
             .unwrap_or(Method::Delete)
     }
 
-    /// The method for a finding whose rule proposes `proposal`.
+    /// How a finding whose rule proposes `proposal` is removed.
+    ///
+    /// `clean.method` is a preference for files, which doesn't stop a tool's own command;
+    /// a method named for this run or this rule does.
     ///
     /// # Errors
     /// When the rule only reports or doesn't offer the method resolved. A trash item is
     /// never planned as a delete, nor the other way round.
-    pub fn for_proposal(&self, proposal: &Proposal) -> Result<Method, MethodRefusal> {
+    pub fn for_proposal(&self, proposal: &Proposal) -> Result<Removal, MethodRefusal> {
         let method = self.resolve();
         match proposal {
-            Proposal::Report | Proposal::Advice | Proposal::Native(_) => {
-                Err(MethodRefusal::ReportOnly)
+            Proposal::Report | Proposal::Advice => Err(MethodRefusal::ReportOnly),
+            Proposal::Native(_) if self.command_line.or(self.rule).is_some() => {
+                Err(MethodRefusal::NotOffered(method))
             }
+            Proposal::Native(kind) => Ok(Removal::Native(*kind)),
             Proposal::Remove(methods) | Proposal::RemoveRelease(methods)
                 if methods.contains(&method) =>
             {
-                Ok(method)
+                Ok(Removal::Files(method))
             }
             Proposal::Remove(_) | Proposal::RemoveRelease(_) => {
                 Err(MethodRefusal::NotOffered(method))
             }
+        }
+    }
+}
+
+named! {
+    /// How an item ran, as run records name it.
+    ItemMethod {
+        /// Its files were deleted.
+        Delete = "delete",
+        /// It moved to the trash.
+        Trash = "trash",
+        /// Its tool's own command ran.
+        Native = "native",
+    }
+}
+
+impl From<Method> for ItemMethod {
+    fn from(method: Method) -> Self {
+        match method {
+            Method::Delete => Self::Delete,
+            Method::Trash => Self::Trash,
+        }
+    }
+}
+
+/// How an item runs: a native item can't exist without its command, nor a file item
+/// carry one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Execution {
+    /// Its files, by the method chosen.
+    Files(Method),
+    /// Its tool's own command.
+    Native(Box<NativeSpec>),
+}
+
+impl Execution {
+    /// How run records name it.
+    #[must_use]
+    pub const fn method(&self) -> ItemMethod {
+        match self {
+            Self::Files(Method::Delete) => ItemMethod::Delete,
+            Self::Files(Method::Trash) => ItemMethod::Trash,
+            Self::Native(_) => ItemMethod::Native,
+        }
+    }
+
+    /// The method chosen, for a file item.
+    #[must_use]
+    pub const fn file_method(&self) -> Option<Method> {
+        match self {
+            Self::Files(method) => Some(*method),
+            Self::Native(_) => None,
         }
     }
 }
@@ -245,7 +311,7 @@ pub struct PlanEntry {
     pub(crate) finding: FindingId,
     pub(crate) path: PathBuf,
     pub(crate) anchor: Anchor,
-    pub(crate) method: Method,
+    pub(crate) execution: Execution,
     pub(crate) standing: Standing,
     pub(crate) judgement: Judgement,
     pub(crate) estimate: Option<SpaceEstimate>,
@@ -278,10 +344,22 @@ impl PlanEntry {
         &self.anchor
     }
 
-    /// How it is to be removed.
+    /// How it is to run.
     #[must_use]
-    pub const fn method(&self) -> Method {
-        self.method
+    pub const fn execution(&self) -> &Execution {
+        &self.execution
+    }
+
+    /// How run records name it.
+    #[must_use]
+    pub const fn method(&self) -> ItemMethod {
+        self.execution.method()
+    }
+
+    /// The method chosen, for a file item.
+    #[must_use]
+    pub const fn file_method(&self) -> Option<Method> {
+        self.execution.file_method()
     }
 
     /// The bucket and cautions it was planned with.
@@ -347,7 +425,7 @@ impl Plan {
                     entry.finding,
                     &entry.path,
                     &entry.anchor,
-                    entry.method,
+                    &entry.execution,
                     &entry.standing,
                     &entry.judgement,
                     entry.file_system,

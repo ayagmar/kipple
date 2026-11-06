@@ -9,10 +9,10 @@ use std::sync::Arc;
 use kipple_core::format::{decode_line, encode_line, encode_stored_plan};
 use kipple_core::{
     Allocated, ApplyError, ApplyPorts, CancelToken, Cause, CleanRequest, Component, Consent, Depth,
-    Digest, Effect, Ending, ErrorCode, FileEffect, Finished, Found, Intent, ItemId, ItemOutcome,
-    LockGap, Measured, Method, NativeEffect, NativeEnd, OsError, OsErrorKind, PlanMode, Receipt,
-    Record, RestoreResult, RunId, RunRead, RunState, Session, Skip, Stop, ToolGap, TrashSlot,
-    Trashed, Unreadable, history, read_run, run_clean, run_reconcile,
+    Digest, Effect, Ending, ErrorCode, FileEffect, Finished, Found, Intent, ItemId, ItemMethod,
+    ItemOutcome, LockGap, Measured, Method, NativeEffect, NativeEnd, OsError, OsErrorKind,
+    PlanMode, Receipt, Record, RestoreResult, RunId, RunRead, RunState, Session, Skip, Stop,
+    ToolGap, TrashSlot, Trashed, Unreadable, history, read_run, run_clean, run_reconcile,
 };
 
 use super::codec::TestCodec;
@@ -373,7 +373,7 @@ fn records_out_of_order_make_the_run_unreadable() {
         Record::Intent(Intent {
             plan,
             item: ItemId(0),
-            method: Method::Delete,
+            method: ItemMethod::Delete,
             reviewed: Digest(1),
             authorized: Digest(1),
             entries: 1,
@@ -411,7 +411,7 @@ fn history_says_running_only_while_the_lock_is_held() {
     let intent = Record::Intent(Intent {
         plan: Digest(0),
         item: ItemId(0),
-        method: Method::Delete,
+        method: ItemMethod::Delete,
         reviewed: Digest(0),
         authorized: Digest(0),
         entries: 1,
@@ -504,7 +504,7 @@ fn every_record() -> Vec<Record> {
         Record::Intent(Intent {
             plan: Digest(1),
             item: ItemId(0),
-            method: Method::Trash,
+            method: ItemMethod::Trash,
             reviewed: Digest(2),
             authorized: Digest(3),
             entries: 4,
@@ -664,6 +664,45 @@ fn stored_records_hold_no_free_text() {
             "keys holding text that isn't structured"
         );
     }
+}
+
+/// Catches a stored run of an earlier development build half-read, or counted as removing
+/// anything (pinned 25; 04 §7): the plan decodes whole in the current shape or is refused,
+/// and the next run isn't blocked by it.
+#[test]
+fn run_of_an_earlier_shape_is_unreadable_and_counts_nothing() {
+    let (item, target) = project(0, 100, &["a"]);
+    let world = world_of(&[(item.clone(), target)]);
+    let scan = scan_of(&[item]);
+    clean(
+        &world,
+        &Config::new(),
+        &scan,
+        &rescanned(&scan),
+        &CancelToken::new(),
+    );
+    let id = world.state().runs.keys().next().unwrap().clone();
+    let stored = world.state().runs[&id].plan.clone().unwrap();
+    let end = stored.iter().position(|byte| *byte == b'\n').unwrap();
+    let header = std::str::from_utf8(&stored[..end]).unwrap();
+    let earlier = header
+        .rsplit_once(r#","digest":""#)
+        .unwrap()
+        .0
+        .replace(r#""execution":{"method":"delete"}"#, r#""method":"delete""#);
+    let digest = Digest::of_bytes(earlier.as_bytes());
+    let mut signed = format!(r#"{earlier},"digest":"{digest}"}}"#).into_bytes();
+    signed.extend_from_slice(&stored[end..]);
+    world.state().runs.get_mut(&id).unwrap().plan = Some(signed);
+
+    let read = read_run(&world, &id, Depth::Headers, &TestCodec);
+    assert!(
+        matches!(read, RunRead::Unreadable(_, Unreadable::Plan(_))),
+        "an earlier shape is refused, never half-read: {read:?}"
+    );
+    let summaries = history(&world, kipple_core::LockState::Free, &TestCodec).unwrap();
+    assert_eq!(summaries[0].state, RunState::Unreadable);
+    assert_eq!(summaries[0].receipt.totals().removed.names, 0);
 }
 
 /// Catches a run stored without its plan claiming items, or a record a crash kept from

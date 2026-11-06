@@ -26,12 +26,15 @@ use std::sync::Arc;
 use crate::digest::Digest;
 use crate::frozen::{FrozenTree, Mark, Marks, NodeId};
 use crate::mutation::{FileSystemClass, Freeze};
-use crate::native::NativeSpec;
+use crate::native::{NativeKind, NativeSpec};
 use crate::outcome::{LeftReason, Skip, Tally};
-use crate::plan::{Anchor, ItemId, Judgement, Plan, PlanEntry, Standing};
-use crate::policy::{Proposal, Verdict};
+use crate::plan::{
+    Anchor, Execution, ItemId, ItemMethod, Judgement, JudgementField, Plan, PlanEntry, Standing,
+};
+use crate::policy::{Hold, Proposal, Verdict};
 use crate::profile::ProfileGrant;
 use crate::rule::Method;
+use crate::tracked::{GitGap, OwnGit, holds_repository};
 
 /// What the user authorized.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -303,6 +306,8 @@ pub(crate) struct Recheck<'facts> {
     pub(crate) proposal: &'facts Proposal,
     /// What the item is judged under now.
     pub(crate) judgement: &'facts Judgement,
+    /// Whether its own top-level `.git` stands for a repository inside it now.
+    pub(crate) own_git: OwnGit,
     /// The target frozen now.
     pub(crate) freeze: Freeze,
 }
@@ -317,8 +322,9 @@ pub(crate) struct Recheck<'facts> {
 /// not be Protected now; its bucket must still be one it was authorized in (a Safe item
 /// stays Safe, a Review item gains no caution, and under Safe-only it is Safe); its rule
 /// must still offer its method; its file system must be supported; the fresh freeze must
-/// confirm at least one reviewed entry; and a trash move needs every entry of the tree
-/// confirmed, nothing left out.
+/// confirm at least one reviewed entry; and a trash move or a native command needs every
+/// entry of the tree confirmed, nothing left out. No native command is authorized yet: a
+/// native item that passes everything is still refused.
 pub(crate) fn admit(
     plan: &Plan,
     item: ItemId,
@@ -331,20 +337,14 @@ pub(crate) fn admit(
         return Err(Skip::Rejudged(field));
     }
     still_allowed(&entry.standing, recheck.verdict, authorization)?;
-    match recheck.proposal {
-        Proposal::Remove(methods) | Proposal::RemoveRelease(methods)
-            if methods.contains(&entry.method) => {}
-        Proposal::Remove(_)
-        | Proposal::RemoveRelease(_)
-        | Proposal::Native(_)
-        | Proposal::Report
-        | Proposal::Advice => {
-            return Err(Skip::MethodNotOffered(entry.method));
-        }
-    }
+    still_offered(&entry.execution, recheck.proposal)?;
+    let own_git = recheck.own_git;
     let freeze = recheck.freeze;
     if let FileSystemClass::Unsupported(why) = freeze.file_system {
         return Err(Skip::FileSystem(why));
+    }
+    if let Execution::Native(spec) = &entry.execution {
+        native_stands(spec, own_git, &freeze.tree)?;
     }
     let tree = &entry.tree;
     let mut marks = tree.recheck(&freeze.tree);
@@ -364,17 +364,43 @@ pub(crate) fn admit(
         tree: Arc::clone(tree),
         marks,
     };
-    match entry.method {
-        Method::Delete => Ok(AuthorizedOp::Delete(DeleteOp(target))),
-        Method::Trash if whole => Ok(AuthorizedOp::Trash(TrashOp(target))),
-        Method::Trash => {
+    match &entry.execution {
+        Execution::Files(Method::Delete) => Ok(AuthorizedOp::Delete(DeleteOp(target))),
+        Execution::Files(Method::Trash) | Execution::Native(_) if !whole => {
             let effect = Tally::new(tree, &target.marks).before_run();
             Err(Skip::NotWhole {
                 left: effect.left,
                 excluded: effect.excluded,
             })
         }
+        Execution::Files(Method::Trash) => Ok(AuthorizedOp::Trash(TrashOp(target))),
+        Execution::Native(_) => Err(Skip::SemanticNotReviewed),
     }
+}
+
+/// Whether what the rule proposes now still offers how `execution` runs.
+fn still_offered(execution: &Execution, proposal: &Proposal) -> Result<(), Skip> {
+    match (execution, proposal) {
+        (
+            Execution::Files(method),
+            Proposal::Remove(methods) | Proposal::RemoveRelease(methods),
+        ) if methods.contains(method) => Ok(()),
+        (Execution::Native(spec), Proposal::Native(kind)) if spec.command.kind() == *kind => Ok(()),
+        (Execution::Files(method), _) => Err(Skip::MethodNotOffered(*method)),
+        (Execution::Native(_), _) => Err(Skip::Rejudged(JudgementField::Method)),
+    }
+}
+
+/// Whether a native command may act on `tree`: a worktree's removal only under the
+/// exception it was planned with, and no command over a repository inside its target.
+fn native_stands(spec: &NativeSpec, own_git: OwnGit, tree: &FrozenTree) -> Result<(), Skip> {
+    if spec.command.kind() == NativeKind::GitWorktreeRemove && own_git != OwnGit::Replaced {
+        return Err(Skip::Protected(vec![Hold::SubjectMismatch]));
+    }
+    if holds_repository(tree, own_git) {
+        return Err(Skip::Git(GitGap::NestedRepository));
+    }
+    Ok(())
 }
 
 /// Whether every entry of `tree` is still to be removed: nothing dropped, excluded, or
@@ -394,14 +420,21 @@ fn authorized_for(
             Err(Skip::NotReviewed)
         }
         Authorization::Reviewed(_) => Ok(()),
-        Authorization::SafeOnly => match (&entry.standing, entry.method) {
+        // Only a person who saw a tool's command authorizes it (04 §6).
+        Authorization::SafeOnly | Authorization::Profile(_)
+            if entry.method() == ItemMethod::Native =>
+        {
+            Err(Skip::SemanticNotReviewed)
+        }
+        Authorization::SafeOnly => match (&entry.standing, entry.file_method()) {
             (Standing::Review(cautions), _) => {
                 Err(Skip::Riskier(cautions.iter().copied().collect()))
             }
             // A trash move takes the directory whole, with whatever is in it then (04
             // §3.5): automation has no review of that; a profile records one.
-            (Standing::Safe, Method::Trash) => Err(Skip::WholeNotReviewed),
-            (Standing::Safe, Method::Delete) => Ok(()),
+            (Standing::Safe, Some(Method::Trash)) => Err(Skip::WholeNotReviewed),
+            (Standing::Safe, Some(Method::Delete)) => Ok(()),
+            (Standing::Safe, None) => Err(Skip::SemanticNotReviewed),
         },
         Authorization::Profile(grant) => match &entry.standing {
             Standing::Review(cautions) => Err(Skip::Riskier(cautions.iter().copied().collect())),

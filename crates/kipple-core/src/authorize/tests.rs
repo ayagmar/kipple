@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::{Authorization, AuthorizedOp, Recheck, ReviewedPlan, admit};
+use crate::capability::NativeTool;
 use crate::digest::Digest;
 use crate::engine::FindingId;
 use crate::frozen::{
@@ -13,14 +14,18 @@ use crate::frozen::{
     Volume,
 };
 use crate::mutation::{FileSystemClass, Freeze, LocalFileSystem, Unsupported};
+use crate::native::{NativeCommand, NativeKind, NativeSpec, ResolvedTool};
 use crate::outcome::{LeftReason, Skip};
 use crate::plan::{
-    Anchor, ItemId, Judgement, JudgementField, Plan, PlanEntry, Standing, VerifiedRoot,
+    Anchor, Execution, ItemId, ItemMethod, Judgement, JudgementField, Plan, PlanEntry, Standing,
+    VerifiedRoot,
 };
 use crate::policy::{Caution, Hold, Level, Proposal, Verdict};
 use crate::probe::{EntryKind, FileIdentity};
 use crate::root::SymbolicRoot;
 use crate::rule::{Method, RuleId};
+use crate::tracked::{GitGap, OwnGit};
+use crate::worktree::{ObjectId, WorktreeWitness};
 
 const VOLUME: Volume = Volume {
     device: 7,
@@ -75,7 +80,7 @@ fn judgement(level: Level) -> Judgement {
         rule_digest: Digest(2),
         level,
         recent_days: 7,
-        method: Method::Delete,
+        method: ItemMethod::Delete,
         held: Digest(3),
     }
 }
@@ -95,10 +100,10 @@ fn entry(method: Method, standing: Standing, tree: FrozenTree) -> PlanEntry {
         finding: FindingId(4),
         path: anchor.path(),
         anchor,
-        method,
+        execution: Execution::Files(method),
         standing,
         judgement: Judgement {
-            method,
+            method: method.into(),
             ..judgement(Level::Balanced)
         },
         estimate: None,
@@ -120,6 +125,7 @@ struct Now {
     verdict: Verdict,
     proposal: Proposal,
     judgement: Judgement,
+    own_git: OwnGit,
     freeze: Freeze,
 }
 
@@ -132,6 +138,7 @@ impl Now {
             },
             proposal: Proposal::Remove(vec![Method::Delete, Method::Trash]),
             judgement: entry.judgement.clone(),
+            own_git: OwnGit::Counts,
             freeze: freeze((*entry.tree).clone()),
         }
     }
@@ -158,6 +165,7 @@ fn admit_item(
         verdict: &now.verdict,
         proposal: &now.proposal,
         judgement: &now.judgement,
+        own_git: now.own_git,
         freeze: now.freeze,
     };
     admit(&plan, item, &authorization, recheck)
@@ -412,5 +420,152 @@ fn a_root_target_is_never_moved_to_the_trash() {
     assert!(
         matches!(skip, Skip::NotWhole { .. }),
         "a root's directory isn't authorized, so it can't move: {skip:?}"
+    );
+}
+
+/// A native item on `tree`, reviewed, with everything at apply as it was at planning.
+fn native(command: NativeCommand, tree: FrozenTree) -> (PlanEntry, Now) {
+    let mut native = entry(Method::Delete, Standing::Safe, tree);
+    native.execution = Execution::Native(Box::new(NativeSpec {
+        command,
+        tool: ResolvedTool {
+            tool: NativeTool::Git,
+            path: PathBuf::from("/usr/bin/git"),
+            identity: FileIdentity { volume: 7, file: 9 },
+            version: "2.47.0".to_owned(),
+            runtime: None,
+        },
+        scope: native.anchor.clone(),
+    }));
+    native.judgement.method = ItemMethod::Native;
+    let mut now = Now::same_as(&native);
+    now.proposal = Proposal::Native(match &native.execution {
+        Execution::Native(spec) => spec.command.kind(),
+        Execution::Files(_) => NativeKind::NpmCacheClean,
+    });
+    (native, now)
+}
+
+fn npm(tree: FrozenTree) -> (PlanEntry, Now) {
+    let cache = entry(Method::Delete, Standing::Safe, tree.clone()).anchor;
+    native(NativeCommand::NpmCacheClean { cache }, tree)
+}
+
+fn worktree(tree: FrozenTree) -> (PlanEntry, Now) {
+    let checkout = entry(Method::Delete, Standing::Safe, tree.clone()).anchor;
+    let identity = FileIdentity { volume: 7, file: 5 };
+    let witness = WorktreeWitness {
+        common: identity,
+        admin: identity,
+        gitfile: identity,
+        gitdir_file: identity,
+        head: ObjectId("0".repeat(40)),
+        branch: None,
+    };
+    let (entry, mut now) = native(NativeCommand::GitWorktreeRemove { checkout, witness }, tree);
+    now.own_git = OwnGit::Replaced;
+    (entry, now)
+}
+
+/// A worktree's tree with a `.git` of `kind` at `path` below its top.
+fn with_git(path: &[&str], kind: EntryKind) -> FrozenTree {
+    let mut builder =
+        TreeBuilder::new(Scope::Whole, VOLUME, &snapshot(EntryKind::Dir, 20, 1)).unwrap();
+    let mut at = builder.top();
+    for (index, name) in path.iter().enumerate() {
+        let file = 21 + index as u128;
+        let last = index + 1 == path.len();
+        let entry = snapshot(if last { kind } else { EntryKind::Dir }, file, 1);
+        at = builder
+            .add(at, Component::new(*name).unwrap(), &entry)
+            .unwrap();
+    }
+    builder.finish().unwrap()
+}
+
+/// Why `item`, as it is at apply, isn't authorized, for a person who reviewed it.
+fn refused((item, now): (PlanEntry, Now)) -> Skip {
+    admit_now(&item, None, now).unwrap_err()
+}
+
+/// `item`, with `change` made to what is there at apply.
+fn changed((item, mut now): (PlanEntry, Now), change: fn(&mut Now)) -> (PlanEntry, Now) {
+    change(&mut now);
+    (item, now)
+}
+
+/// Catches a tool's command run over a tree with a mark on it: a command can't subtract,
+/// so what revalidation dropped or the plan left out would go anyway (pinned 4).
+#[test]
+fn dropped_mark_on_a_native_tree_refuses_the_item() {
+    let dropped = refused(changed(npm(tree(1)), |now| now.freeze = freeze(tree(5))));
+    assert!(
+        matches!(dropped, Skip::NotWhole { .. }),
+        "a dropped entry refuses the whole item: {dropped:?}"
+    );
+
+    let mut frozen = tree(1);
+    let c = frozen
+        .find(&RelPath::of("deps/c".as_ref()).unwrap())
+        .unwrap();
+    frozen.exclude(c);
+    let excluded = refused(npm(frozen));
+    assert!(
+        matches!(excluded, Skip::NotWhole { excluded: 1, .. }),
+        "an exclusion refuses the whole item: {excluded:?}"
+    );
+}
+
+/// Catches automation reaching a tool's command that passes every other check, and an
+/// item that passes them all making an operation before anything can run one (pinned 24).
+#[test]
+fn only_a_person_authorizes_a_native_item_and_none_runs_yet() {
+    let (item, now) = npm(tree(1));
+    let automated = admit_now(&item, Some(Authorization::SafeOnly), now).unwrap_err();
+    assert_eq!(automated, Skip::SemanticNotReviewed);
+
+    assert_eq!(
+        refused(npm(tree(1))),
+        Skip::SemanticNotReviewed,
+        "fail closed until it runs"
+    );
+}
+
+/// Catches a command reviewed as one operation admitted when the rule now proposes
+/// another, or files.
+#[test]
+fn a_native_item_needs_the_same_operation_proposed_now() {
+    let method = Skip::Rejudged(JudgementField::Method);
+    let other = changed(npm(tree(1)), |now| {
+        now.proposal = Proposal::Native(NativeKind::GitWorktreeRemove);
+    });
+    assert_eq!(refused(other), method);
+
+    let files = changed(npm(tree(1)), |now| {
+        now.proposal = Proposal::Remove(vec![Method::Delete]);
+    });
+    assert_eq!(refused(files), method);
+}
+
+/// Catches the worktree exception widened past the worktree's own top-level `.git`: a
+/// repository anywhere deeper, a directory or a case variant at the top, holds it, and an
+/// item that lost the exception's key holds whatever it contains (pinned 4).
+#[test]
+fn only_a_worktrees_own_git_file_is_excused_at_apply() {
+    let holding = [
+        with_git(&["sub", ".git"], EntryKind::File),
+        with_git(&["sub", ".git"], EntryKind::Dir),
+        with_git(&[".git"], EntryKind::Dir),
+        with_git(&[".GIT"], EntryKind::File),
+    ];
+    for tree in holding {
+        assert_eq!(refused(worktree(tree)), Skip::Git(GitGap::NestedRepository));
+    }
+
+    let own = || worktree(with_git(&[".git"], EntryKind::File));
+    assert_eq!(refused(own()), Skip::SemanticNotReviewed, "past every hold");
+    assert_eq!(
+        refused(changed(own(), |now| now.own_git = OwnGit::Counts)),
+        Skip::Protected(vec![Hold::SubjectMismatch])
     );
 }

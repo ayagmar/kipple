@@ -29,7 +29,7 @@ use crate::integration::{
 use crate::native::ToolResolver;
 use crate::policy::{
     Activity, ActivityGap, Consequence, Facts, HeldPath, Lineage, Modified, Policy, Proposal,
-    Tracked, Verdict, WalkGap, replaces_own_git,
+    Tracked, Verdict, WalkGap,
 };
 use crate::probe::{Clock, EntryKind, EntryMeta, FileIdentity, FsProbe, ProbeError, Sizer};
 use crate::process::ProcessProbe;
@@ -39,7 +39,7 @@ use crate::root::{ResolvedRoot, Roots, SymbolicRoot, UnresolvedRoot};
 use crate::rule::{Category, Lens, Operation, Rule, RuleId};
 use crate::size::{Completeness, Measurement, SpaceEstimate};
 use crate::supplied::{AdviceId, Subject, Supplied};
-use crate::tracked::{GitGap, TrackedQuery};
+use crate::tracked::{GitGap, OwnGit, TrackedQuery};
 use crate::worktree::WorktreeQuery;
 
 /// A finding's ID within one scan. IDs are references, never authorization.
@@ -719,11 +719,7 @@ impl Engine {
         let rule = owner.rule(&found.finding.rule);
         let proposal = owner.proposal(rule, found.supplied.advice);
         let integration = found.finding.integration;
-        let own_git = if replaces_own_git(&proposal, &found.supplied.subject, integration) {
-            OwnGit::Replaced
-        } else {
-            OwnGit::Counts
-        };
+        let own_git = OwnGit::of(&proposal, &found.supplied.subject, integration);
         let tracked = self.tracked(path, measurement, own_git, shared);
         let lineage = shared.identities.lineage(self.ports.fs.as_ref(), path);
         let scope = Scope {
@@ -923,15 +919,6 @@ pub(crate) enum Reading {
     Measured,
     /// It isn't: only reported.
     Unread,
-}
-
-/// Whether a finding's own top-level `.git` counts as a repository inside it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum OwnGit {
-    /// It does.
-    Counts,
-    /// It doesn't: the finding is the worktree that `.git` belongs to.
-    Replaced,
 }
 
 /// Whether the integration recognised `finding`'s layout.

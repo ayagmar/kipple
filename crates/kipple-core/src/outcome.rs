@@ -21,7 +21,7 @@ use crate::frozen::{FrozenTree, Mark, Marks, NodeId, RelPath, Unauthorized};
 use crate::journal::RestoreResult;
 use crate::mutation::{EffectSink, Finish, Unsupported};
 use crate::native::{NativeEnd, ToolGap};
-use crate::plan::{ItemId, JudgementField};
+use crate::plan::{ItemId, ItemMethod, JudgementField};
 use crate::planner::{Conflict, Unjudged};
 use crate::policy::{Caution, Hold};
 use crate::protect::Protection;
@@ -915,7 +915,7 @@ pub struct ReceiptItem {
     /// The finding's path, as it was shown.
     pub path: PathBuf,
     /// How it was to be removed.
-    pub method: Method,
+    pub method: ItemMethod,
     /// What the scan estimated removing it would free.
     pub estimate: Option<SpaceEstimate>,
     /// What happened.

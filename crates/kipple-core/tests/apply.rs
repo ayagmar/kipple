@@ -1144,10 +1144,10 @@ fn refusals(planned: &Planned) -> Vec<(FindingId, Skip)> {
         .collect()
 }
 
-/// Catches a rule of a new operation reaching a plan before the card that owns it: a tool's
-/// command can't be planned as files, and a release waits for settle.
+/// Catches a new operation running before the card that owns it: a tool's command with
+/// no tool has nothing to build, and a release waits for settle.
 #[test]
-fn no_new_operation_can_be_planned_yet() {
+fn no_new_operation_can_run_yet() {
     let (item, target) = project(0, 100, TARGET);
     let world = world_of(&[(item.clone(), target)]);
     let config = Config::new();
@@ -1167,13 +1167,9 @@ fn no_new_operation_can_be_planned_yet() {
         }),
     );
     let commands = plan_all(&native, &config, &world, PlanMode::Review);
-    assert!(
-        matches!(
-            refusals(&commands).as_slice(),
-            [(FindingId(0), Skip::MethodNotOffered(_))]
-        ),
-        "expected a native item to be refused, got {:?}",
-        refusals(&commands)
+    assert_eq!(
+        refusals(&commands),
+        [(FindingId(0), Skip::ToolChanged(ToolGap::Missing))]
     );
 
     let release = scan_with(

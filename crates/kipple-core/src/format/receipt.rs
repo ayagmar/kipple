@@ -13,6 +13,7 @@ use super::{HISTORY, RECEIPT, TextOut, path_out};
 use crate::frozen::NameCodec;
 use crate::imported::{Dropped, DroppedItem};
 use crate::outcome::{Receipt, ReceiptItem, Status};
+use crate::plan::ItemMethod;
 use crate::profile::ProfileRun;
 use crate::rule::{Method, RuleId};
 use crate::run::{RunState, RunSummary};
@@ -185,7 +186,7 @@ pub struct ReceiptItemOut {
     /// The finding's path, as shown.
     pub path: TextOut,
     /// How it was to be removed.
-    pub method: Method,
+    pub method: ItemMethod,
     /// What the scan estimated removing it frees.
     pub estimate: Option<EstimateOut>,
     /// What happened.

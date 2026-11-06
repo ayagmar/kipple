@@ -439,6 +439,14 @@
         "tracked-inside-native"
       ]
     },
+    "ItemMethod": {
+      "type": "string",
+      "enum": [
+        "delete",
+        "trash",
+        "native"
+      ]
+    },
     "JudgementField": {
       "type": "string",
       "enum": [
@@ -777,7 +785,7 @@
             },
             "method": {
               "description": "How it is removed.",
-              "$ref": "#/$defs/Method"
+              "$ref": "#/$defs/ItemMethod"
             },
             "plan": {
               "description": "The stored plan's digest.",

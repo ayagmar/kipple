@@ -9,8 +9,8 @@
 use std::io::{self, Write};
 
 use kipple_core::{
-    Answer, CancelToken, Confirm, Finding, Method, Plan, PlanEntry, Policy, RefusedItem, Review,
-    ScanReport, Waited,
+    Answer, CancelToken, Confirm, Finding, ItemMethod, Plan, PlanEntry, Policy, RefusedItem,
+    Review, ScanReport, Waited,
 };
 
 use super::output::{Line, Shown, Told, left_out};
@@ -149,11 +149,11 @@ pub(super) fn item_lines(plan: &Plan) -> Vec<Line> {
 }
 
 /// What deleting and a trash move mean, for each of `methods` used.
-pub(super) fn method_lines(methods: impl Iterator<Item = Method>) -> Vec<Line> {
-    let used: Vec<Method> = methods.collect();
+pub(super) fn method_lines(methods: impl Iterator<Item = ItemMethod>) -> Vec<Line> {
+    let used: Vec<ItemMethod> = methods.collect();
     [
-        (Method::Delete, words::DELETE_PERMANENT),
-        (Method::Trash, words::TRASH_WHOLE),
+        (ItemMethod::Delete, words::DELETE_PERMANENT),
+        (ItemMethod::Trash, words::TRASH_WHOLE),
     ]
     .into_iter()
     .filter(|(method, _)| used.contains(method))

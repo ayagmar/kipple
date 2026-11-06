@@ -765,6 +765,14 @@
         "tracked-inside-native"
       ]
     },
+    "ItemMethod": {
+      "type": "string",
+      "enum": [
+        "delete",
+        "trash",
+        "native"
+      ]
+    },
     "JudgementField": {
       "type": "string",
       "enum": [
@@ -1140,7 +1148,7 @@
         },
         "method": {
           "description": "How it was to be removed.",
-          "$ref": "#/$defs/Method"
+          "$ref": "#/$defs/ItemMethod"
         },
         "outcome": {
           "description": "What happened.",

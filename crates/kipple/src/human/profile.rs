@@ -90,7 +90,7 @@ pub(crate) fn entry_line(entry: &ProfileEntry) -> String {
         rule_state(entry.enabled()),
         super::level(entry.level()),
         entry.recent_days(),
-        method_word(entry.method())
+        method_word(entry.method().into())
     )
 }
 

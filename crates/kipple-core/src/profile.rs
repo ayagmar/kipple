@@ -607,8 +607,8 @@ impl ProfileGrant {
         judgement.policy == self.policy
             && self.rules.get(&judgement.rule).is_some_and(|granted| {
                 granted.rule == judgement.rule_digest
-                    && granted.method == entry.method()
-                    && granted.method == judgement.method
+                    && entry.file_method() == Some(granted.method)
+                    && judgement.method == granted.method.into()
                     && granted.roots.contains(&entry.anchor().root)
             })
     }

@@ -35,10 +35,9 @@ use crate::mutation::{Finish, Freeze};
 use crate::outcome::{
     ApplyError, Effect, ErrorCode, ItemOutcome, Receipt, ReceiptItem, Skip, Stop, Tally,
 };
-use crate::plan::{ItemId, Plan, PlanEntry, VerifiedRoot};
+use crate::plan::{ItemId, ItemMethod, Plan, PlanEntry, VerifiedRoot};
 use crate::planner::{Judge, Judged, MutationPorts, Scene, Unjudged, untracked};
 use crate::policy::Verdict;
-use crate::rule::Method;
 use crate::trash::TrashSlot;
 
 /// What to apply.
@@ -246,7 +245,7 @@ impl Run<'_> {
 
     /// Revalidates `entry`, then runs it between its intent and its outcome.
     fn item(&self, entry: &PlanEntry, journal: &mut dyn Journal, events: &mut dyn ItemSink) -> Ran {
-        if entry.method() == Method::Trash {
+        if entry.method() == ItemMethod::Trash {
             // Its result is read again when the slot is chosen.
             self.prepare_home().ok();
         }
@@ -318,7 +317,7 @@ impl Run<'_> {
         Intent {
             plan: self.request.plan.digest(),
             item: target.item(),
-            method: op.method(),
+            method: op.method().into(),
             reviewed: target.tree().digest(),
             authorized: target.digest(),
             entries: target.marks().authorized(),
@@ -335,6 +334,7 @@ impl Run<'_> {
             verdict: &verdict,
             proposal: &judged.proposal,
             judgement: &judged.judgement,
+            own_git: judged.own_git(),
             freeze,
         };
         admit(

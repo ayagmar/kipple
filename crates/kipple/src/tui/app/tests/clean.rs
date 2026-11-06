@@ -43,8 +43,8 @@ use std::time::{Duration, SystemTime};
 
 use kipple_core::{
     Allocated, Apparent, ApplyEvent, CancelToken, Completeness, Effect as Ran, Ending,
-    EventChannel, FileEffect, Finding, FindingId, Finished, Found, ItemEvent, ItemId, ItemOutcome,
-    JudgementField, Left, LeftCount, LeftReason, Method, Platform, Receipt, ReceiptItem,
+    EventChannel, FileEffect, Finding, FindingId, Finished, Found, ItemEvent, ItemId, ItemMethod,
+    ItemOutcome, JudgementField, Left, LeftCount, LeftReason, Platform, Receipt, ReceiptItem,
     Reconciled, Removed, RunId, ScanEvent, ScanReport, ScanRequest, Skip, SpaceEstimate,
     event_channel,
 };
@@ -773,7 +773,7 @@ fn finished(app: &App) -> Finished {
         ReceiptItem {
             item: ItemId(at),
             path: entry.path().clone(),
-            method: Method::Delete,
+            method: ItemMethod::Delete,
             estimate: entry.estimate().copied(),
             outcome,
             restored: None,

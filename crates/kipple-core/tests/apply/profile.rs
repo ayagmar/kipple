@@ -1072,6 +1072,28 @@ fn holds_for(desk: &Desk, profile: &Profile, check: &ProfileCheck, path: &std::p
     );
 }
 
+/// Catches a profile of an earlier development build half-read: one entry it can't place
+/// refuses the whole file, so no other entry of it runs (pinned 25).
+#[test]
+fn earlier_profile_is_refused_whole() {
+    let desk = desk();
+    let draft = profile::freeze(name("nightly"), &desk.scene(), UNIX_EPOCH, None).unwrap();
+    let bytes = encode_profile(draft.contents(), &TestCodec);
+    let mut earlier: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    earlier["entries"][0]["retired"] = serde_json::json!(true);
+    let shelf = Shelf::default();
+    shelf
+        .create_new(&name("nightly"), &serde_json::to_vec(&earlier).unwrap())
+        .unwrap();
+
+    let refused = profile::read(&shelf, &name("nightly"), &TestCodec).unwrap_err();
+
+    assert!(
+        matches!(refused, ProfileError::Format(FormatError::Shape { .. })),
+        "an entry of another shape refuses the file: {refused:?}"
+    );
+}
+
 /// A profile as stored, made with a kept path that has a note holding `SECRET`: what the
 /// free-text test reads (04 §8a).
 pub(super) fn stored_with_a_note() -> Vec<u8> {

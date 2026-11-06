@@ -308,10 +308,13 @@ fn narrow(entry: &mut PlanEntry, items: &[(usize, &ImportedItem)]) -> Result<(),
         if anchor.root != item.root || anchor.relative != item.relative {
             return Err(Dropped::RootChanged);
         }
-        if entry.method() != item.method {
+        let Some(method) = entry.file_method() else {
+            return Err(Dropped::Refused(Skip::SemanticNotReviewed));
+        };
+        if method != item.method {
             return Err(Dropped::MethodWidened {
                 file: item.method,
-                now: entry.method(),
+                now: method,
             });
         }
         let outside = outside(entry.tree(), &item.tree);

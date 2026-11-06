@@ -153,8 +153,8 @@ pub use outcome::{
     Removed, SAMPLE, Skip, Status, Stop, Tally, Totals, Trashed, TrashedTotal,
 };
 pub use plan::{
-    Anchor, ItemId, Judgement, JudgementField, MethodChoice, MethodRefusal, Plan, PlanEntry,
-    Selection, Standing, Total, VerifiedRoot,
+    Anchor, Execution, ItemId, ItemMethod, Judgement, JudgementField, MethodChoice, MethodRefusal,
+    Plan, PlanEntry, Removal, Selection, Standing, Total, VerifiedRoot,
 };
 pub use planner::{
     Conflict, ConflictKind, Judge, Merged, Methods, MutationPorts, PlanMode, PlanRequest, Planned,

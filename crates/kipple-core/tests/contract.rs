@@ -26,12 +26,12 @@ use fakes::{FakeExecutor, Script};
 use kipple_core::{
     Activity, Allocated, Anchor, Apparent, BadName, CancelToken, Completeness, Component,
     Consequence, Cost, DecodeError, Drift, Effect, EntryKind, EntrySnapshot, ErrorCode, Facts,
-    FileEffect, FileIdentity, Fingerprint, Finish, FrozenTree, HeldPath, ItemId, ItemOutcome,
-    Judgement, JudgementField, LeftReason, Level, Lineage, Loss, Mark, Marks, Measured, Method,
-    MethodChoice, MethodRefusal, Modified, NameCodec as _, NativeEffect, NativeEnd, NodeId, Policy,
-    Proposal, Receipt, ReceiptItem, Recovery, RelPath, RestoreRequest, RuleSettings, Scope,
-    ShapeError, Skip, SpaceEstimate, Stamp, Status, Tally, Tracked, TrashDir, TrashSlot, Trashed,
-    TreeBuilder, Unauthorized, VerifiedRoot, Volume,
+    FileEffect, FileIdentity, Fingerprint, Finish, FrozenTree, HeldPath, ItemId, ItemMethod,
+    ItemOutcome, Judgement, JudgementField, LeftReason, Level, Lineage, Loss, Mark, Marks,
+    Measured, Method, MethodChoice, MethodRefusal, Modified, NameCodec as _, NativeEffect,
+    NativeEnd, NativeKind, NodeId, Policy, Proposal, Receipt, ReceiptItem, Recovery, RelPath,
+    Removal, RestoreRequest, RuleSettings, Scope, ShapeError, Skip, SpaceEstimate, Stamp, Status,
+    Tally, Tracked, TrashDir, TrashSlot, Trashed, TreeBuilder, Unauthorized, VerifiedRoot, Volume,
 };
 
 const VOLUME: Volume = Volume {
@@ -747,10 +747,10 @@ fn removals_inside_failed_and_cancelled_items_count_and_the_rest_is_not_reached(
     }));
     let receipt = Receipt {
         items: vec![
-            item(failed.clone(), Method::Delete),
-            item(cancelled.clone(), Method::Delete),
-            item(ItemOutcome::Skipped(Skip::NotReviewed), Method::Delete),
-            item(trashed, Method::Trash),
+            item(failed.clone(), ItemMethod::Delete),
+            item(cancelled.clone(), ItemMethod::Delete),
+            item(ItemOutcome::Skipped(Skip::NotReviewed), ItemMethod::Delete),
+            item(trashed, ItemMethod::Trash),
         ],
     };
     let totals = receipt.totals();
@@ -943,7 +943,7 @@ fn native_totals_stand_apart_from_what_kipple_removed() {
     let item = |at: u32, reclaimed| ReceiptItem {
         item: ItemId(at),
         path: PathBuf::from("/p/cache"),
-        method: Method::Delete,
+        method: ItemMethod::Native,
         estimate: None,
         outcome: ItemOutcome::Done(Effect::Native(NativeEffect { exit, reclaimed })),
         restored: None,
@@ -1054,12 +1054,44 @@ fn facts() -> Facts {
     }
 }
 
+/// Catches a preference for files stopping a tool's own command, and a method a person
+/// named for this run or rule replaced by one they didn't (pinned 3).
+#[test]
+fn a_native_proposal_gives_way_to_a_named_method_and_not_a_preference() {
+    let proposal = Proposal::Native(NativeKind::NpmCacheClean);
+    let preference = MethodChoice {
+        config: Some(Method::Trash),
+        ..MethodChoice::default()
+    };
+    assert_eq!(
+        preference.for_proposal(&proposal),
+        Ok(Removal::Native(NativeKind::NpmCacheClean))
+    );
+
+    let flag = MethodChoice {
+        command_line: Some(Method::Delete),
+        ..MethodChoice::default()
+    };
+    let rule = MethodChoice {
+        rule: Some(Method::Trash),
+        ..MethodChoice::default()
+    };
+    assert_eq!(
+        flag.for_proposal(&proposal),
+        Err(MethodRefusal::NotOffered(Method::Delete))
+    );
+    assert_eq!(
+        rule.for_proposal(&proposal),
+        Err(MethodRefusal::NotOffered(Method::Trash))
+    );
+}
+
 /// Catches a plan applied after the config changed what it was judged under: a kept
 /// path, a rule's level or the rule itself (v2.1 H; 11 M3's profile regressions).
 #[test]
 fn a_judgement_changes_with_whatever_the_item_was_judged_under() {
     let policy = Policy::default();
-    let then = Judgement::new(&policy, &rule(), &facts(), Method::Delete);
+    let then = Judgement::new(&policy, &rule(), &facts(), ItemMethod::Delete);
     assert_eq!(then.first_difference(&then.clone()), None);
 
     let mut kept = policy.clone();
@@ -1067,7 +1099,7 @@ fn a_judgement_changes_with_whatever_the_item_was_judged_under() {
         forms: vec![PathBuf::from("/home/u/keep")],
         ..HeldPath::default()
     });
-    let kept = Judgement::new(&kept, &rule(), &facts(), Method::Delete);
+    let kept = Judgement::new(&kept, &rule(), &facts(), ItemMethod::Delete);
     assert_eq!(then.first_difference(&kept), Some(JudgementField::Held));
 
     let mut level = policy.clone();
@@ -1078,11 +1110,11 @@ fn a_judgement_changes_with_whatever_the_item_was_judged_under() {
             ..RuleSettings::default()
         },
     );
-    let level = Judgement::new(&level, &rule(), &facts(), Method::Delete);
+    let level = Judgement::new(&level, &rule(), &facts(), ItemMethod::Delete);
     assert_eq!(then.first_difference(&level), Some(JudgementField::Level));
 
     let mut wider = rule();
     wider.recent_days = Some(30);
-    let wider = Judgement::new(&policy, &wider, &facts(), Method::Delete);
+    let wider = Judgement::new(&policy, &wider, &facts(), ItemMethod::Delete);
     assert_eq!(then.first_difference(&wider), Some(JudgementField::Rule));
 }

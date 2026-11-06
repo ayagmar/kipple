@@ -4,7 +4,7 @@
 //! each item with what it frees, a Review item's cautions under it, then what was left
 //! out of the plan and why. It is read-only: what it shows is exactly what `y` runs.
 
-use kipple_core::{Method, Standing};
+use kipple_core::{ItemMethod, Standing};
 use ratatui::text::Line as Text;
 
 use super::{Look, homed};
@@ -29,10 +29,10 @@ pub(super) fn head(title: String, review: &Review, look: Look<'_>) -> Vec<Text<'
         head.push(line(Role::Warning, review::NOTHING_TO_CLEAN.to_owned()));
     }
     let has = |method| entries.iter().any(|entry| entry.method() == method);
-    if has(Method::Delete) {
+    if has(ItemMethod::Delete) {
         head.push(line(Role::Warning, receipt::DELETE_PERMANENT.to_owned()));
     }
-    if has(Method::Trash) {
+    if has(ItemMethod::Trash) {
         head.push(line(Role::Warning, receipt::TRASH_WHOLE.to_owned()));
     }
     let cautioned = entries

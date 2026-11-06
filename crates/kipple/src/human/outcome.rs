@@ -50,7 +50,7 @@ pub(crate) fn skip(skip: &Skip) -> String {
             "a trash move takes the directory whole, which needs a review".to_owned()
         }
         Skip::NotWhole { .. } => {
-            "some of it changed since review, and a trash move takes it whole".to_owned()
+            "some of it changed since review, and it can only go whole".to_owned()
         }
         Skip::NotStarted(why) => stop(*why).to_owned(),
         Skip::RootChanged => "the folder it is in isn't the one scanned".to_owned(),

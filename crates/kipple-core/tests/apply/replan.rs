@@ -138,7 +138,7 @@ fn a_files_trash_narrows_a_configured_delete() {
             .plan
             .entries()
             .iter()
-            .all(|entry| entry.method() == Method::Trash),
+            .all(|entry| entry.file_method() == Some(Method::Trash)),
         "the file's trash narrows the configured delete"
     );
 }
