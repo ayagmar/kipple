@@ -117,6 +117,7 @@ fn report(found: &[Found]) -> ScanReport {
             omissions: Vec::new(),
             opened: Vec::new(),
             advice: Vec::new(),
+            owner: kipple_core::OwnerStatus::Unsupported,
         }],
         findings,
         unchecked_system: 0,

@@ -30,6 +30,7 @@ use crate::policy::{
 };
 use crate::probe::{Clock, EntryKind, EntryMeta, FileIdentity, FsProbe, ProbeError, Sizer};
 use crate::process::ProcessProbe;
+use crate::protect::{OwnerStatus, Owners};
 use crate::root::{ResolvedRoot, Roots, SymbolicRoot, UnresolvedRoot};
 use crate::rule::{Category, Lens, Operation, Rule, RuleId};
 use crate::size::{Completeness, Measurement, SpaceEstimate};
@@ -171,6 +172,8 @@ pub struct IntegrationReport {
     /// they were opened. A plan anchors each item at one of these, and apply compares the
     /// root with this identity before anything else.
     pub opened: Vec<OpenedRoot>,
+    /// Whether it recognised what it read, which is what lets its state roots open.
+    pub owner: OwnerStatus,
 }
 
 /// A root an integration read, as it was when the scan opened it.
@@ -205,6 +208,13 @@ pub struct ScanReport {
 }
 
 impl ScanReport {
+    /// Whether each integration of this scan is supported.
+    #[must_use]
+    pub fn owners(&self) -> Owners {
+        let status = |report: &IntegrationReport| (report.id, report.owner);
+        Owners(self.integrations.iter().map(status).collect())
+    }
+
     /// The root `finding` is anchored below: the deepest root its integration opened that
     /// holds it. What a plan item's anchor is, so what a profile's grant is checked
     /// against.
@@ -460,20 +470,10 @@ impl Engine {
             found: Vec::new(),
             advice: Vec::new(),
             evidence: registered.descriptor.evidence(),
+            owner: OwnerStatus::Unsupported,
         };
-        if !shared.cancel.is_cancelled() {
-            // A panic is caught here so what the integration found before it is kept.
-            let discovered = panic::catch_unwind(AssertUnwindSafe(|| {
-                registered.integration.discover(&cx, &mut sink)
-            }));
-            match discovered {
-                Ok(Ok(()) | Err(IntegrationError::Stopped)) => {}
-                Ok(Err(IntegrationError::Probe(error))) => {
-                    omissions.push(Omission::DiscoveryFailed { error });
-                }
-                Err(_) => omissions.push(Omission::Crashed),
-            }
-        }
+        let finished = !shared.cancel.is_cancelled()
+            && discover(registered, &cx, &mut sink, &mut omissions) == Discovery::Finished;
         // A directory under two paths of a root is one gap, in path order.
         let mut unlisted = BTreeMap::new();
         let mut excluded = BTreeSet::new();
@@ -489,6 +489,11 @@ impl Engine {
                 .map(|error| Omission::Unlisted { error }),
         );
         omissions.extend(excluded.into_iter().map(|path| Omission::Excluded { path }));
+        let status = if finished {
+            sink.owner
+        } else {
+            OwnerStatus::Unsupported
+        };
         let (mut found, advice) = (sink.found, sink.advice);
         found.sort_by(|a, b| a.finding.path.cmp(&b.finding.path));
         let owner = Owner {
@@ -502,6 +507,7 @@ impl Engine {
             omissions,
             advice,
             opened: identities,
+            owner: status,
         };
         finish(report, findings, shared)
     }
@@ -860,8 +866,40 @@ fn crashed(id: IntegrationId, shared: Shared<'_>) -> IntegrationRun {
         omissions: vec![Omission::Crashed],
         advice: Vec::new(),
         opened: Vec::new(),
+        owner: OwnerStatus::Unsupported,
     };
     finish(report, Vec::new(), shared)
+}
+
+/// How an integration's discovery ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Discovery {
+    /// It ran to its end.
+    Finished,
+    /// It was stopped, failed or panicked, so what it said about its layout doesn't stand.
+    CutShort,
+}
+
+/// Runs `registered`'s discovery, recording in `omissions` why it failed if it did. A panic
+/// is caught here so what the integration found before it is kept.
+fn discover(
+    registered: &Registered,
+    cx: &ScanContext<'_>,
+    sink: &mut FindingSink<'_>,
+    omissions: &mut Vec<Omission>,
+) -> Discovery {
+    let discovered = panic::catch_unwind(AssertUnwindSafe(|| {
+        registered.integration.discover(cx, sink)
+    }));
+    match discovered {
+        Ok(Ok(())) => return Discovery::Finished,
+        Ok(Err(IntegrationError::Stopped)) => {}
+        Ok(Err(IntegrationError::Probe(error))) => {
+            omissions.push(Omission::DiscoveryFailed { error });
+        }
+        Err(_) => omissions.push(Omission::Crashed),
+    }
+    Discovery::CutShort
 }
 
 fn report(outcome: ScanOutcome, runs: Vec<IntegrationRun>) -> ScanReport {

@@ -17,12 +17,12 @@ use kipple_core::{
     EntryKind, EntryMeta, EventChannel, EventRx, Evidence, FactKind, FactSpec, FactState,
     FactValue, Facts, FileIdentity, FindingSink, FrozenTree, FsProbe, GitGap, Hold, Integration,
     IntegrationDescriptor, IntegrationError, IntegrationId, Inventory, Lens, Level, Measurement,
-    Method, Modified, Name, NodeId, Observer, Omission, OpenedRoot, Operation, Platform, Policy,
-    Ports, Predicate, ProbeError, ProcessOutcome, ProcessProbe, ProcessRecord, ProcessSnapshot,
-    Proposal, Recovery, ResolvedRoot, RootLink, RootSource, Roots, Rule, RuleId, RuleText,
-    ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Selector, Sizer, SpaceEstimate,
-    Supplied, SymbolicRoot, Test, Tracked, TrackedQuery, UnresolvedRoot, Verdict, WalkGap,
-    event_channel,
+    Method, Modified, Name, NodeId, Observer, Omission, OpenedRoot, Operation, OwnerStatus,
+    Platform, Policy, Ports, Predicate, ProbeError, ProcessOutcome, ProcessProbe, ProcessRecord,
+    ProcessSnapshot, Proposal, Recovery, ResolvedRoot, RootLink, RootSource, Roots, Rule, RuleId,
+    RuleText, ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Selector, Sizer,
+    SpaceEstimate, Supplied, SymbolicRoot, Test, Tracked, TrackedQuery, UnresolvedRoot, Verdict,
+    WalkGap, event_channel,
 };
 
 /// Ten times the 100 ms cancellation budget: long enough not to flake on a loaded CI
@@ -1704,4 +1704,66 @@ fn a_rule_that_only_reports_decides_nothing_by_its_predicates() {
     assert_eq!(facts.proposal, Proposal::Report);
     let found = holds(&facts);
     assert_eq!(found, vec![Hold::ReportOnly], "a report rule only reports");
+}
+
+/// How [`Owning`]'s discovery ends, after it says its layout is supported.
+#[derive(Debug, Clone, Copy)]
+enum Ending {
+    Finishes,
+    Fails,
+    Crashes,
+}
+
+#[derive(Debug)]
+struct Owning(Ending);
+
+impl Integration for Owning {
+    fn descriptor(&self) -> IntegrationDescriptor {
+        descriptor("owning")
+    }
+
+    #[expect(
+        clippy::panic,
+        clippy::panic_in_result_fn,
+        reason = "simulates a bug in an integration"
+    )]
+    fn discover(
+        &self,
+        _: &ScanContext<'_>,
+        sink: &mut FindingSink<'_>,
+    ) -> Result<(), IntegrationError> {
+        sink.set_owner_status(OwnerStatus::Supported);
+        match self.0 {
+            Ending::Finishes => Ok(()),
+            Ending::Fails => Err(ProbeError::io(
+                Path::new("/found"),
+                io::ErrorKind::PermissionDenied.into(),
+            )
+            .into()),
+            Ending::Crashes => panic!("integration bug"),
+        }
+    }
+}
+
+/// Catches a discovery that said "supported" and then failed opening its state roots, and
+/// an integration the scan didn't run reading as supported.
+#[test]
+fn an_owner_is_supported_only_if_its_discovery_finishes() {
+    let status = |ending| {
+        let engine = engine(FakeSizer::default(), vec![Box::new(Owning(ending))]);
+        run(&engine, &found())
+            .owners()
+            .status(IntegrationId("owning"))
+    };
+
+    assert_eq!(status(Ending::Finishes), OwnerStatus::Supported);
+    assert_eq!(status(Ending::Fails), OwnerStatus::Unsupported);
+    assert_eq!(status(Ending::Crashes), OwnerStatus::Unsupported);
+    let nothing_ran = engine(FakeSizer::default(), Vec::new());
+    assert_eq!(
+        run(&nothing_ran, &found())
+            .owners()
+            .status(IntegrationId("owning")),
+        OwnerStatus::Unsupported
+    );
 }

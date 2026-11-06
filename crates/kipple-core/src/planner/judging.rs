@@ -122,10 +122,16 @@ impl<'scan> Scene<'scan> {
             cautioned: Placed::default(),
             by_place: HashMap::new(),
         };
+        let owners = scan.owners();
         for (index, finding) in scan.findings.iter().enumerate() {
             let verdict = finding.verdict(judge.policy);
             let lineage = finding.facts.as_ref().map(|facts| &facts.lineage);
-            let host = lineage.and_then(|lineage| judge.protections.check(&finding.path, lineage));
+            let host = lineage.and_then(|lineage| {
+                let integration = finding.integration;
+                judge
+                    .protections
+                    .check(&finding.path, lineage, integration, &owners)
+            });
             match (&host, &verdict) {
                 (None, Some(Verdict::Safe)) => {}
                 (None, Some(Verdict::Review(_))) => scene.cautioned.add(index, lineage),

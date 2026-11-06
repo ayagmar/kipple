@@ -10,6 +10,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 
+use kipple_adapters::builtin;
 use kipple_core::{
     ApplyEvent, ApplyPorts, Engine, EventSink, Judge, Method, Methods, MutationPorts, Protections,
     Rule, Session, SymbolicRoot,
@@ -66,7 +67,12 @@ impl Machine {
                 rules: BTreeMap::new(),
                 config: settings.loaded.config.method,
             },
-            protections: Protections::of_host(roots, data.as_deref(), &|path| held_at(path, roots)),
+            protections: Protections::of_host(
+                roots,
+                data.as_deref(),
+                &builtin::descriptors(),
+                &|path| held_at(path, roots),
+            ),
             store: FileRunStore::new(data.clone(), Arc::clone(&clock)),
             profiles: FileProfileStore::new(data),
             trash: ConfinedTrash::new(trash, clock),

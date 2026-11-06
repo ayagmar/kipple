@@ -166,8 +166,8 @@ pub use process::{
     ProcessOutcome, ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Unread, UserId,
 };
 pub use protect::{
-    Area, OpenArea, ProtectedEntry, Protection, Protections, STATE_ROOTS, StateDeclaration,
-    Unresolved,
+    Area, OpenArea, OwnerStatus, Owners, ProtectedEntry, Protection, Protections, StateDeclaration,
+    StateRoot, Unresolved,
 };
 pub use root::{
     LinkProblem, Resolution, ResolvedRoot, RootLink, RootSource, Roots, SettingProblem,

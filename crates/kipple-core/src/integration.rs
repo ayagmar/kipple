@@ -16,7 +16,7 @@ use crate::engine::{Finding, FindingId, Found};
 use crate::event::{EventTx, ScanEvent, Stopped};
 use crate::policy::Consequence;
 use crate::probe::{DirEntryMeta, EntryKind, EntryMeta, FsProbe, ProbeError};
-use crate::protect::StateDeclaration;
+use crate::protect::{OwnerStatus, StateDeclaration};
 use crate::root::{ResolvedRoot, SymbolicRoot};
 use crate::rule::{FactSpec, Lens, Platform, Rule, Selector};
 use crate::supplied::{AdviceId, Claim, Supplied};
@@ -417,6 +417,8 @@ pub struct FindingSink<'scan> {
     pub(crate) advice: Vec<Advice>,
     /// What a finding is judged by unless it chooses another.
     pub(crate) evidence: ActivityEvidence,
+    /// What it said about the layout it read.
+    pub(crate) owner: OwnerStatus,
 }
 
 impl FindingSink<'_> {
@@ -440,6 +442,12 @@ impl FindingSink<'_> {
             consequence,
         };
         self.add_supplied(rule, path, claim, self.supplied())
+    }
+
+    /// Says whether the integration recognised what it read, which is what lets its state
+    /// roots open. It stands only if `discover` runs to its end.
+    pub const fn set_owner_status(&mut self, status: OwnerStatus) {
+        self.owner = status;
     }
 
     /// What a plain finding of this integration supplies, to build on.
