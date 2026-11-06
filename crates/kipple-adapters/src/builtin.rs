@@ -12,7 +12,7 @@ pub use crate::integrations::{Anomaly, Unregistered, registration_advice};
 /// Integrations that give advice with no verified layout behind them. They report and find
 /// nothing. Every other integration reports only once `verified` names what it was built
 /// against.
-pub const ADVICE_ONLY: &[IntegrationId] = &[IntegrationId("claude-code")];
+pub const ADVICE_ONLY: &[IntegrationId] = &[];
 
 /// The built-in rule packs, from `rules/` in the repository, by file name.
 pub const PACKS: &[(&str, &str)] = &[

@@ -97,6 +97,6 @@ fn the_support_matrix_claims_nothing_for_an_integration_that_finds_nothing() {
     for stub in ["codex", "cursor", "git", "npm", "pi"] {
         assert_eq!(claims(&support, stub), [(false, false); 3], "{stub}");
     }
-    assert_eq!(claims(&support, "claude-code"), [(false, true); 3]);
+    assert_eq!(claims(&support, "claude-code"), [(true, true); 3]);
     assert_eq!(claims(&support, "cargo"), [(true, true); 3]);
 }

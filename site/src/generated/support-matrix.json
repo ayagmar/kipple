@@ -38,12 +38,150 @@
     {
       "id": "claude-code",
       "lens": "agents",
-      "verified": [],
-      "facts": [],
+      "verified": [
+        "Claude Code 2.1.318"
+      ],
+      "facts": [
+        {
+          "name": "layout",
+          "kind": "enum",
+          "values": [
+            "supported",
+            "unknown"
+          ],
+          "selector": null,
+          "meaning": "whether the configuration directory is the one Claude Code uses, on a verified version"
+        },
+        {
+          "name": "claude.version_supported",
+          "kind": "enum",
+          "values": [
+            "supported",
+            "unsupported"
+          ],
+          "selector": null,
+          "meaning": "whether the launcher's version equals a verified one; a non-native install shows none, which is unknown"
+        },
+        {
+          "name": "session_closed",
+          "kind": "bool",
+          "selector": "claude-debug-logs",
+          "meaning": "whether every session marker was read and none names this log's session"
+        },
+        {
+          "name": "launcher_target",
+          "kind": "bool",
+          "selector": "claude-versions",
+          "meaning": "whether the launcher points at this version"
+        },
+        {
+          "name": "version_running",
+          "kind": "bool",
+          "selector": "claude-versions",
+          "meaning": "whether a lock file names this version; no lock proves nothing, so that is unknown"
+        }
+      ],
       "protected": [
         {
           "root": "claude.config",
-          "entries": [],
+          "entries": [
+            {
+              "path": ".credentials.json",
+              "matches": "exact"
+            },
+            {
+              "path": ".claude.json",
+              "matches": "exact"
+            },
+            {
+              "path": "settings.json",
+              "matches": "exact"
+            },
+            {
+              "path": "settings.local.json",
+              "matches": "exact"
+            },
+            {
+              "path": "projects",
+              "matches": "exact"
+            },
+            {
+              "path": "history.jsonl",
+              "matches": "exact"
+            },
+            {
+              "path": "file-history",
+              "matches": "exact"
+            },
+            {
+              "path": "sessions",
+              "matches": "exact"
+            },
+            {
+              "path": "jobs",
+              "matches": "exact"
+            },
+            {
+              "path": "daemon",
+              "matches": "exact"
+            },
+            {
+              "path": "backups",
+              "matches": "exact"
+            },
+            {
+              "path": "plugins",
+              "matches": "exact"
+            },
+            {
+              "path": "skills",
+              "matches": "exact"
+            },
+            {
+              "path": "agents",
+              "matches": "exact"
+            },
+            {
+              "path": "agent-memory",
+              "matches": "exact"
+            },
+            {
+              "path": "hooks",
+              "matches": "exact"
+            },
+            {
+              "path": "rules",
+              "matches": "exact"
+            },
+            {
+              "path": "commands",
+              "matches": "exact"
+            },
+            {
+              "path": "workflows",
+              "matches": "exact"
+            },
+            {
+              "path": "tasks",
+              "matches": "exact"
+            },
+            {
+              "path": "CLAUDE.md",
+              "matches": "exact"
+            },
+            {
+              "path": "remote-settings.json",
+              "matches": "exact"
+            },
+            {
+              "path": "policy-limits.json",
+              "matches": "exact"
+            },
+            {
+              "path": "debug/latest",
+              "matches": "exact"
+            }
+          ],
           "delegates": []
         },
         {
@@ -69,7 +207,16 @@
           "delegates": []
         }
       ],
-      "open": [],
+      "open": [
+        {
+          "root": "claude.config",
+          "path": "debug",
+          "reaches": "inside",
+          "integrations": [
+            "claude-code"
+          ]
+        }
+      ],
       "rules": [
         "builtin.claude-code.closed-debug-logs",
         "builtin.claude-code.versions",
@@ -78,19 +225,19 @@
       "platforms": [
         {
           "platform": "linux",
-          "discover": false,
+          "discover": true,
           "report": true,
-          "mutate": false
+          "mutate": true
         },
         {
           "platform": "macos",
-          "discover": false,
+          "discover": true,
           "report": true,
           "mutate": false
         },
         {
           "platform": "windows",
-          "discover": false,
+          "discover": true,
           "report": true,
           "mutate": false
         }
