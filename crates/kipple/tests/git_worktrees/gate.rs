@@ -602,13 +602,39 @@ fn core_worktree_makes_status_facts_unknown() {
     assert_eq!(scan.fact("git.untracked_files"), FactValue::Unknown);
 }
 
-/// Catches a reftable repository read as if its refs were files: its per-worktree refs
-/// aren't where they are counted, so zero would be a guess. A git before 2.45 can't make one.
-#[test]
-fn reftable_makes_facts_unknown() {
+/// Whether this git can make a reftable repository. A git from 2.45 on that can't is a
+/// failure, because the test would otherwise pass with nothing proved.
+#[expect(
+    clippy::print_stderr,
+    reason = "a test that skips says so in its output"
+)]
+fn makes_reftable() -> bool {
     let probe = Repo::bare_bones(Refs::Files);
     let args = ["init", "-q", "--ref-format=reftable", "../probe"];
-    if !probe.run_git(&probe.main, &args).status.success() {
+    if probe.run_git(&probe.main, &args).status.success() {
+        return true;
+    }
+    let version = probe.git(&["--version"]);
+    let version = String::from_utf8_lossy(&version);
+    let number = version.split_whitespace().nth(2).unwrap_or_default();
+    let parts: Vec<u64> = number
+        .split('.')
+        .filter_map(|part| part.parse().ok())
+        .collect();
+    assert!(
+        parts[..] < [2, 45][..],
+        "{version} is 2.45 or newer and made no reftable repository"
+    );
+    eprintln!("skipped: {version} is older than 2.45 and can't make a reftable repository");
+    false
+}
+
+/// Catches a reftable repository read as if its refs were files: its per-worktree refs
+/// aren't where they are counted, so zero would be a guess. On a git older than 2.45 this
+/// proves nothing, and says so.
+#[test]
+fn reftable_makes_facts_unknown() {
+    if !makes_reftable() {
         return;
     }
 

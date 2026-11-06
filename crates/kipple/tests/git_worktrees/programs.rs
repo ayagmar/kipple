@@ -28,6 +28,19 @@ fn marker(repo: &Repo) -> Marker {
     }
 }
 
+/// A marker for `core.sshCommand`. It exits at once, because git waits on what it runs as a
+/// transport, and a script that keeps reading would hold a test that fails open forever.
+fn fetch_marker(repo: &Repo) -> Marker {
+    let path = repo.temp.path().join("marker");
+    let script = repo.temp.path().join("mark");
+    let text = format!("#!/bin/sh\ntouch '{}'\nexit 1\n", path.display());
+    executable(&script, &text);
+    Marker {
+        script: script.display().to_string(),
+        path,
+    }
+}
+
 /// Where a config key is written.
 #[derive(Debug, Clone, Copy)]
 enum Scope {
@@ -130,44 +143,58 @@ fn no_monitor_hook_or_diff_program_runs() {
     }
 }
 
-/// Catches a lazy fetch out of a blobless clone: reading a missing blob would run
-/// `core.sshCommand`, which the repository chose.
-#[test]
-fn a_blobless_clone_fetches_nothing() {
-    let repo = Repo::bare_bones(Refs::Files);
+/// A blobless clone at `projects/clone`, its worktree at `projects/wt` holding a staged
+/// rename of a blob the clone never fetched, and `core.sshCommand` naming the marker:
+/// `status` looks for the rename, which reads that blob, which is a fetch.
+fn blobless_rename(repo: &Repo) -> Marker {
+    let text = "the same line, long enough for rename detection to find it\n".repeat(8);
+    repo.commit("old.txt", text.as_bytes());
     repo.git(&["config", "uploadpack.allowFilter", "true"]);
     let url = format!("file://{}", repo.main.display());
     let clone = repo.temp.path().join("projects/clone");
     let clone_text = clone.display().to_string();
-    repo.git(&[
-        "clone",
+    let filter = "--filter=blob:none";
+    repo.git(&["clone", "-q", filter, "--no-checkout", &url, &clone_text]);
+    let add = [
+        "worktree",
+        "add",
         "-q",
-        "--filter=blob:none",
         "--no-checkout",
-        &url,
-        &clone_text,
-    ]);
-    let mark = marker(&repo);
+        "-b",
+        "wt",
+        "../wt",
+    ];
+    repo.git_in(&clone, &add);
+    let mark = fetch_marker(repo);
     repo.git_in(&clone, &["config", "core.sshCommand", &mark.script]);
-    repo.git_in(
-        &clone,
-        &["remote", "set-url", "origin", "ssh://example.invalid/x"],
+    let ssh = "ssh://example.invalid/x";
+    repo.git_in(&clone, &["remote", "set-url", "origin", ssh]);
+    rename(&repo.main, &repo.temp.path().join("origin"));
+    repo.wt(&["read-tree", "HEAD"]);
+    repo.wt(&["update-index", "--force-remove", "old.txt"]);
+    // One byte apart: an identical blob is a rename by its name alone, read by nothing.
+    write(
+        &repo.checkout.join("new.txt"),
+        format!("{text}.").as_bytes(),
     );
-    repo.git_in(
-        &clone,
-        &[
-            "worktree",
-            "add",
-            "-q",
-            "--no-checkout",
-            "-b",
-            "wt",
-            "../wt",
-        ],
-    );
+    repo.wt(&["update-index", "--add", "new.txt"]);
+    mark
+}
 
-    let scan = assert_nothing_ran(&repo, &mark, "core.sshCommand");
+/// Catches `status` reaching a blob a blobless clone never fetched, which would run
+/// `core.sshCommand`: the partial-clone class stops it, with no guard of the environment
+/// left to help, and running `status` by hand shows the fixture can fire.
+#[test]
+fn a_blobless_clone_fetches_nothing() {
+    let repo = Repo::bare_bones(Refs::Files);
+    let mark = blobless_rename(&repo);
+    repo.run_git(&repo.checkout, &["status", "--porcelain"]);
+    assert!(mark.path.exists(), "the fixture's status tries to fetch");
+    remove_file(&mark.path);
 
+    let scan = repo.scan_in(&git_with_no_guard(&repo));
+
+    assert!(!mark.path.exists(), "the scan ran no program");
     assert_eq!(
         scan.fact("worktree.config_gate"),
         FactValue::Enum("blocked")
@@ -284,6 +311,17 @@ fn git_that_can_fetch(repo: &Repo) -> Environment {
     repo.env_with(bin.into_os_string())
 }
 
+/// A git with neither of the environment's guards against a fetch, so only the gate is left.
+fn git_with_no_guard(repo: &Repo) -> Environment {
+    let bin = repo.temp.path().join("bin");
+    let text = format!(
+        "#!/bin/sh\nunset GIT_NO_LAZY_FETCH GIT_ALLOW_PROTOCOL\nexec '{}' \"$@\"\n",
+        real_git().display()
+    );
+    executable(&bin.join("git"), &text);
+    repo.env_with(bin.into_os_string())
+}
+
 /// A treeless clone at `projects/clone` with a sparse index, its worktree at `projects/wt`,
 /// the tree of `away/` never fetched, and `core.sshCommand` naming the marker: reading that
 /// tree is a promisor fetch, which runs the marker. The origin is the repository's main.
@@ -305,7 +343,7 @@ fn treeless_sparse_clone(repo: &Repo) -> Marker {
     repo.git_in(&clone, &["checkout", "-q", "main"]);
     repo.git_in(&clone, &["worktree", "add", "-q", "-b", "wt", "../wt"]);
     drop_tree(repo, &clone, "main:away");
-    let mark = marker(repo);
+    let mark = fetch_marker(repo);
     repo.git_in(&clone, &["config", "core.sshCommand", &mark.script]);
     let ssh = "ssh://example.invalid/x";
     repo.git_in(&clone, &["remote", "set-url", "origin", ssh]);
@@ -360,7 +398,7 @@ fn a_treeless_sparse_clone_runs_nothing_at_scan() {
     let repo = Repo::bare_bones(Refs::Files);
     let mark = treeless_sparse_clone(&repo);
 
-    let scan = repo.scan_in(&git_that_can_fetch(&repo));
+    let scan = repo.scan_in(&git_with_no_guard(&repo));
 
     assert!(!mark.path.exists(), "the scan ran no program");
     assert_eq!(
