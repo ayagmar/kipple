@@ -130,8 +130,10 @@ impl FixtureTree {
         Err(io::ErrorKind::Unsupported.into())
     }
 
-    /// Creates everything inside `root`, which must exist.
+    /// Creates everything inside `root`, which must exist. A relative `root` is taken from
+    /// the working directory, once, so a link that holds an absolute path holds a sound one.
     pub(crate) fn build_in(&self, root: &Path) -> io::Result<()> {
+        let root = &std::path::absolute(root)?;
         for dir in &self.dirs {
             fs::create_dir_all(root.join(dir))?;
         }

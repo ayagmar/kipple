@@ -151,6 +151,24 @@ fn a_directory_time_is_refused_on_a_link_or_a_file() {
     }
 }
 
+/// Catches a link's absolute target built from a relative root, which dangles because the
+/// link reads it from its own directory, as `cargo xtask demo-home some/dir` would.
+#[test]
+fn a_tree_built_under_a_relative_root_has_sound_links() {
+    let mut tree = FixtureTree::new();
+    tree.file("real/file", b"")
+        .link("sub/current", "real", Holds::AbsoluteInTree);
+    let temp = tempfile::tempdir_in(".").unwrap();
+    let root = Path::new(temp.path().file_name().unwrap());
+
+    tree.build_in(root).unwrap();
+
+    let link = root.join("sub/current");
+    let held = fs::read_link(&link).unwrap();
+    assert!(held.is_absolute(), "it holds {}", held.display());
+    assert!(link.join("file").is_file(), "the link should resolve");
+}
+
 /// Catches a stamp read through the link, which describes its target and would never
 /// match what the link's own `lstat` reports.
 #[test]
