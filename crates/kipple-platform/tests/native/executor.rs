@@ -650,7 +650,10 @@ fn a_placeholder_fails_the_freeze() {
         .unwrap_err();
 
     assert_eq!(refused.code, ErrorCode::UnknownEntry);
-    assert_eq!(refused.at, Some(RelPath::of("sub/b".as_ref()).unwrap()));
+    assert_eq!(
+        refused.below(),
+        Some(&RelPath::of("sub/b".as_ref()).unwrap())
+    );
 }
 
 /// Catches the file system going unclassified on the system's own volume.

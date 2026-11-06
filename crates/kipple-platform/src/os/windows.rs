@@ -267,7 +267,11 @@ pub(crate) const fn is_executable(_: &fs::Metadata) -> bool {
 pub(crate) const INHERITED_VARS: &[&str] = &["SystemRoot"];
 
 /// No mechanism is pinned here yet, so a command can't start from a checked directory.
-pub(crate) const fn working_dir(_: &crate::executor::sys::Dir) -> Option<std::path::PathBuf> {
+#[expect(
+    clippy::missing_const_for_fn,
+    reason = "the Unix function of this name reads the handle and can't be const"
+)]
+pub(crate) fn working_dir(_: &crate::executor::sys::Dir) -> Option<PathBuf> {
     None
 }
 
