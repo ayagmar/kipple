@@ -132,6 +132,36 @@ fn a_git_checkout_anywhere_inside_an_item_is_reported_whether_dot_git_is_a_dir_o
     assert_eq!(repository(&plain), None);
 }
 
+/// Catches a nested clone hiding behind a worktree's own `.git`, which sorts first: the
+/// worktree exception would then lose it and remove the clone's unpushed commits.
+#[test]
+fn a_repository_below_a_worktree_is_reported_past_its_own_git() {
+    let temp = TempDir::new().unwrap();
+    let measure = |item: &Path| {
+        Walker::new()
+            .unwrap()
+            .size(item, &CancelToken::new())
+            .unwrap()
+    };
+    let worktree = temp.path().join("wt");
+    write(&worktree.join(".git"), 10);
+    write(&worktree.join("vendor/lib/.git/HEAD"), 10);
+    write(&worktree.join("zebra/.git"), 10);
+    let alone = temp.path().join("alone");
+    write(&alone.join(".git"), 10);
+    let plain = temp.path().join("plain");
+    write(&plain.join("dep/.git"), 10);
+
+    let measured = measure(&worktree);
+    assert_eq!(measured.repository.as_ref(), Some(&worktree));
+    assert_eq!(
+        measured.nested_repository,
+        Some(worktree.join("vendor/lib"))
+    );
+    assert_eq!(measure(&alone).nested_repository, None);
+    assert_eq!(measure(&plain).nested_repository, Some(plain.join("dep")));
+}
+
 #[test]
 fn a_cancelled_walk_is_never_reported_as_complete() {
     let (temp, _) = tree_with_links_out();

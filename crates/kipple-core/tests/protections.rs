@@ -368,6 +368,37 @@ fn delegation_needs_the_same_owner_and_the_child_to_consent() {
     assert_eq!(check(&other_owner, session, PI, &owners), SUBRESOURCE);
 }
 
+/// Catches a slip in a descriptor opening a store of credentials to everyone: roots that
+/// stand aside for each other, or for themselves, leave nobody to say no.
+#[test]
+fn a_delegation_cycle_opens_nothing() {
+    const FIRST: StateDeclaration = StateDeclaration {
+        delegates: &[SymbolicRoot::PiAgent],
+        ..closed(SymbolicRoot::PiHome, Unresolved::HoldAll)
+    };
+    const SECOND: StateDeclaration = StateDeclaration {
+        delegates: &[SymbolicRoot::PiHome],
+        ..closed(SymbolicRoot::PiAgent, Unresolved::HoldAll)
+    };
+    const ITSELF: StateDeclaration = StateDeclaration {
+        delegates: &[SymbolicRoot::PiHome],
+        ..closed(SymbolicRoot::PiHome, Unresolved::HoldAll)
+    };
+    let both = [
+        (SymbolicRoot::PiHome, "/home/u/.pi"),
+        (SymbolicRoot::PiAgent, "/home/u/.pi/agent"),
+    ];
+    let cycle = host(&both, &[descriptor(PI, &[FIRST, SECOND])]);
+    let alone = host(&both[..1], &[descriptor(PI, &[ITSELF])]);
+    let owners = supported(&[PI]);
+    let secret = "/home/u/.pi/agent/auth.json";
+
+    for integration in [PI, IntegrationId::GENERIC] {
+        assert_eq!(check(&cycle, secret, integration, &owners), SUBRESOURCE);
+        assert_eq!(check(&alone, secret, integration, &owners), SUBRESOURCE);
+    }
+}
+
 /// Catches a directory above a state root being removed, root and all, because it isn't
 /// inside anything closed.
 #[test]

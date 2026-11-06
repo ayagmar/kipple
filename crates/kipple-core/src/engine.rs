@@ -622,11 +622,13 @@ impl Engine {
     ) -> Vec<Finding> {
         let mut findings = Vec::with_capacity(found.len());
         let mut withheld = Vec::new();
+        let mut unmeasured = Vec::new();
         let mut stopped = false;
         for one in found {
             stopped = stopped || shared.cancel.is_cancelled();
             if stopped {
-                findings.push(one.finding);
+                findings.push(one.finding.clone());
+                unmeasured.push(one);
                 continue;
             }
             let (size, facts) = self.measure(&one, owner, shared, omissions);
@@ -640,7 +642,7 @@ impl Engine {
             }
             findings.push(finding);
         }
-        self.settle_integration(&mut findings, owner, shared);
+        self.settle_integration(&mut findings, &unmeasured, owner, shared);
         for finding in withheld.into_iter().filter_map(|at| findings.get(at)) {
             // After a cancel this goes nowhere, and what it says still holds the finding.
             if announce(finding, shared).is_err() {
@@ -786,10 +788,11 @@ impl Engine {
         if let Above::Unchecked(error) = above {
             return Tracked::Unchecked(error);
         }
-        let inside = measurement.and_then(|m| m.repository.clone());
-        if let Some(work_tree) =
-            inside.filter(|work_tree| own_git == OwnGit::Counts || work_tree != path)
-        {
+        let inside = measurement.and_then(|m| match own_git {
+            OwnGit::Counts => m.repository.clone(),
+            OwnGit::Replaced => m.nested_repository.clone(),
+        });
+        if let Some(work_tree) = inside {
             return Tracked::HoldsRepository { work_tree };
         }
         if let Some(gap) = measurement.map_or(Some(WalkGap::Unread), walk_gap) {

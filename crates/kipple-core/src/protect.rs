@@ -288,14 +288,15 @@ impl Protections {
             .is_some_and(|below| self.stands_aside(root, asked) || root.opens(&below, asked))
     }
 
-    /// Whether the path is inside a root that `root` delegates to, of the same integration:
-    /// that root reaches it too, and answers for it.
+    /// Whether the path is inside a root that `root` delegates to, of the same integration,
+    /// and that root opens it itself. Delegation is one level: asking only whether the
+    /// child reaches the path would let a cycle, or a root naming itself, consent to anything.
     fn stands_aside(&self, root: &StateRoot, asked: Asked<'_>) -> bool {
         self.state
             .iter()
             .filter(|child| child.owner == root.owner)
             .filter(|child| root.declaration.delegates.contains(&child.declaration.root))
-            .any(|child| below(&child.held, asked).is_some())
+            .any(|child| below(&child.held, asked).is_some_and(|below| child.opens(&below, asked)))
     }
 }
 

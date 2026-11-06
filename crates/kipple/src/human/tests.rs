@@ -75,6 +75,7 @@ impl Sizer for Sized {
             },
             modified: Some(SystemTime::UNIX_EPOCH),
             repository: None,
+            nested_repository: None,
         })
     }
 }

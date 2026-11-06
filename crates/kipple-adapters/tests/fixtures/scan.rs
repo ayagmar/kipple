@@ -90,6 +90,7 @@ impl Sizer for NoSizer {
             size,
             modified: None,
             repository: None,
+            nested_repository: None,
         })
     }
 }
