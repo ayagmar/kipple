@@ -843,6 +843,162 @@ fn a_setting_file_kipple_cant_parse_is_unknown_and_quotes_nothing() {
     }
 }
 
+/// Variables to set, each a name and its value.
+type Vars<'text> = &'text [(&'text str, &'text str)];
+
+/// The home, and what `root` resolves to below it with `vars` set and `document` at `file`.
+/// `<home>` in either stands for that home's path.
+fn read_in_home(
+    vars: Vars<'_>,
+    file: &str,
+    document: &str,
+    root: SymbolicRoot,
+) -> (PathBuf, Vec<Result<PathBuf, String>>) {
+    let dir = home();
+    let home = dir.path().canonicalize().unwrap();
+    let at = home.join(file);
+    fs::create_dir_all(at.parent().unwrap()).unwrap();
+    let here = text(&home);
+    fs::write(&at, document.replace("<home>", here)).unwrap();
+    let values: Vec<_> = vars
+        .iter()
+        .map(|(k, v)| (*k, v.replace("<home>", here)))
+        .collect();
+    let mut all: Vec<_> = values.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    all.push(("HOME", here));
+    let roots = roots(&all);
+    let found = roots
+        .all(root)
+        .iter()
+        .map(|resolved| {
+            let path = resolved.as_ref().map(|r| r.path.clone());
+            path.map_err(ToString::to_string)
+        })
+        .collect();
+    (home, found)
+}
+
+/// Catches a value kipple decodes differently from its tool. That gives an `Ok` root in the
+/// wrong place with no error, so the real store stays open, or an error on a setup the tool
+/// accepts, which on `pi.agent` holds every finding of the scan.
+#[test]
+fn a_moved_store_is_read_the_way_its_own_tool_reads_the_value() {
+    let codex = SymbolicRoot::CodexSqliteHome;
+    let pi = SymbolicRoot::PiSessionDir;
+    let rows: [(Vars<'_>, &str, &str, SymbolicRoot, &str); 11] = [
+        (&[], CODEX_CONFIG, r#"sqlite_home = "~//db""#, codex, "db"),
+        (
+            &[],
+            CODEX_CONFIG,
+            r#"sqlite_home = "state/db""#,
+            codex,
+            ".codex/state/db",
+        ),
+        (
+            &[],
+            CODEX_CONFIG,
+            r#"sqlite_home = "file:///x""#,
+            codex,
+            ".codex/file:/x",
+        ),
+        (
+            &[("CODEX_SQLITE_HOME", "<home>/db ")],
+            CODEX_CONFIG,
+            "",
+            codex,
+            "db",
+        ),
+        (
+            &[("CODEX_SQLITE_HOME", " ~/db")],
+            CODEX_CONFIG,
+            "",
+            codex,
+            "db",
+        ),
+        (&[], PI_SETTINGS, r#"{"sessionDir": "~//s"}"#, pi, "s"),
+        (
+            &[],
+            PI_SETTINGS,
+            "\u{feff}{\"sessionDir\": \"~/s\"}",
+            pi,
+            "s",
+        ),
+        (
+            &[],
+            PI_SETTINGS,
+            r#"{"sessionDir": "file://<home>/s"}"#,
+            pi,
+            "s",
+        ),
+        (
+            &[],
+            PI_SETTINGS,
+            r#"{"sessionDir": "file://localhost<home>/a%20b"}"#,
+            pi,
+            "a b",
+        ),
+        (
+            &[("PI_CODING_AGENT_SESSION_DIR", "~//s")],
+            CODEX_CONFIG,
+            "",
+            pi,
+            "s",
+        ),
+        (
+            &[("PI_CODING_AGENT_SESSION_DIR", "file://<home>/s")],
+            CODEX_CONFIG,
+            "",
+            pi,
+            "s",
+        ),
+    ];
+
+    for (vars, file, document, root, below) in rows {
+        let (home, found) = read_in_home(vars, file, document, root);
+        assert_eq!(found, [Ok(home.join(below))], "for {vars:?} {document:?}");
+    }
+}
+
+/// Catches `~//agent` leaving the home: `Path::join` with an absolute path drops the base,
+/// so a `HoldAll` credentials root would land on an absent `/agent` and hold nothing.
+#[test]
+fn a_tilde_with_doubled_slashes_stays_in_the_home() {
+    let vars = [("PI_CODING_AGENT_DIR", "~//agent")];
+
+    let (home, found) = read_in_home(&vars, CODEX_CONFIG, "", SymbolicRoot::PiAgent);
+
+    assert_eq!(found, [Ok(home.join("agent"))]);
+}
+
+/// Catches a blank `$CODEX_SQLITE_HOME` reading as a place: upstream trims it and treats
+/// what is left as unset. Catches a value kipple can't place reading as unset too: Pi's and
+/// Codex's working directories aren't kipple's, so a relative value stays unknown.
+#[test]
+fn a_value_kipple_cant_place_is_unknown_and_a_blank_one_unset() {
+    let codex = SymbolicRoot::CodexSqliteHome;
+    let pi = SymbolicRoot::PiSessionDir;
+    let blank = [("CODEX_SQLITE_HOME", "   ")];
+    assert_eq!(read_in_home(&blank, CODEX_CONFIG, "", codex).1, []);
+
+    let unknown: [(Vars<'_>, &str, &str, SymbolicRoot); 4] = [
+        (
+            &[("CODEX_SQLITE_HOME", "relative/db")],
+            CODEX_CONFIG,
+            "",
+            codex,
+        ),
+        (&[], PI_SETTINGS, r#"{"sessionDir": "relative/s"}"#, pi),
+        (&[], PI_SETTINGS, r#"{"sessionDir": "file://host/s"}"#, pi),
+        (&[], PI_SETTINGS, r#"{"sessionDir": "file:///s%2Ft"}"#, pi),
+    ];
+
+    for (vars, file, document, root) in unknown {
+        let (_, found) = read_in_home(vars, file, document, root);
+        assert_eq!(found.len(), 1, "for {vars:?} {document:?}: {found:?}");
+        assert!(found[0].is_err(), "unknown, found {found:?}");
+    }
+}
+
 /// Catches the parsers' input reaching a panic through what a person left in a file: any
 /// input must end in a value, an unknown or nothing.
 #[test]

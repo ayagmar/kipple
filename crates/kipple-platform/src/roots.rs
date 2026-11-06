@@ -2,6 +2,7 @@
 //! §1), and kipple's own directories (`docs/03-functional-spec.md` §6, D-037).
 
 mod agent_config;
+mod tool_path;
 
 use std::collections::HashSet;
 use std::ffi::OsStr;
@@ -15,7 +16,8 @@ use kipple_core::{
     UnresolvedRoot,
 };
 
-use self::agent_config::{ConfigKey, Format};
+use self::agent_config::ConfigKey;
+use self::tool_path::Tool;
 use crate::environment::Environment;
 use crate::fs_probe::exact;
 use crate::os;
@@ -366,11 +368,12 @@ fn codex_sqlite_homes(
 ) -> Vec<Result<ResolvedRoot, UnresolvedRoot>> {
     let root = SymbolicRoot::CodexSqliteHome;
     let var = "CODEX_SQLITE_HOME";
-    let mut found = match absolute(env, var) {
-        Ok(Some(path)) => vec![configured_dir(root, path, RootSource::Env(var))],
-        Ok(None) => Vec::new(),
-        Err(unusable) => vec![Err(unusable)],
-    };
+    let mut found = Vec::new();
+    if let Some(value) = trimmed(env, var) {
+        // Upstream reads a relative value from its working directory, which kipple can't know.
+        let path = expanded(value, var, Tool::Codex, roots);
+        found.push(path.and_then(|path| configured_dir(root, path, RootSource::Env(var))));
+    }
     let home = match roots.get(SymbolicRoot::CodexHome) {
         Some(Ok(home)) => Some(home.path.as_path()),
         Some(Err(_)) | None => None,
@@ -385,7 +388,7 @@ fn codex_sqlite_homes(
         let key = ConfigKey {
             file,
             key: "sqlite_home",
-            format: Format::Toml,
+            tool: Tool::Codex,
         };
         found.extend(setting_dirs(key, &path, root, roots));
     }
@@ -398,7 +401,7 @@ fn pi_agent(env: &Environment, roots: &Roots) -> Result<ResolvedRoot, Unresolved
     let var = "PI_CODING_AGENT_DIR";
     match env.get(var) {
         Some(value) => {
-            let path = expanded(value, var, roots)?;
+            let path = expanded(value, var, Tool::Pi, roots)?;
             configured_dir(root, path, RootSource::Env(var))
         }
         None => under(roots, SymbolicRoot::Home, root, ".pi/agent"),
@@ -412,14 +415,14 @@ fn pi_session_dirs(env: &Environment, roots: &Roots) -> Vec<Result<ResolvedRoot,
     let var = "PI_CODING_AGENT_SESSION_DIR";
     let mut found = Vec::new();
     if let Some(value) = env.get(var) {
-        let path = expanded(value, var, roots);
+        let path = expanded(value, var, Tool::Pi, roots);
         found.push(path.and_then(|path| configured_dir(root, path, RootSource::Env(var))));
     }
     if let Some(Ok(agent)) = roots.get(SymbolicRoot::PiAgent) {
         let key = ConfigKey {
             file: "settings.json",
             key: "sessionDir",
-            format: Format::Json,
+            tool: Tool::Pi,
         };
         found.extend(setting_dirs(key, &agent.path.join(key.file), root, roots));
     }
@@ -444,29 +447,52 @@ fn setting_dirs(
     values
         .iter()
         .map(|value| {
-            let dir = expanded(value.as_os_str(), key.key, roots)?;
-            configured_dir(root, dir, source)
+            let value = value.as_os_str();
+            let mut dir = decoded(value, key.tool, roots)?;
+            // Codex reads a relative value from the file's directory. Pi reads it from its
+            // working directory, which kipple can't know, so that one stays refused.
+            if let (Tool::Codex, Some(beside)) = (key.tool, path.parent()) {
+                dir = beside.join(dir);
+            }
+            configured_dir(root, in_full(dir, value, key.key)?, source)
         })
         .collect()
 }
 
-/// `value` as an absolute path, with a leading `~` or `~/` read as the home directory.
-fn expanded(value: &OsStr, var: &'static str, roots: &Roots) -> Result<PathBuf, UnresolvedRoot> {
-    let tilde = match value.to_str() {
-        Some("~") => Some(""),
-        Some(text) => text.strip_prefix("~/"),
-        None => None,
+/// The value of `var` with the white space around it gone, `None` when nothing is left.
+fn trimmed<'env>(env: &'env Environment, var: &str) -> Option<&'env OsStr> {
+    let value = env.get(var)?;
+    let value = value.to_str().map_or(value, |text| OsStr::new(text.trim()));
+    (!value.is_empty()).then_some(value)
+}
+
+/// `value` as an absolute path, read the way `tool` reads it.
+fn expanded(
+    value: &OsStr,
+    var: &'static str,
+    tool: Tool,
+    roots: &Roots,
+) -> Result<PathBuf, UnresolvedRoot> {
+    in_full(decoded(value, tool, roots)?, value, var)
+}
+
+/// What `tool` means by `value`, which may still be relative.
+fn decoded(value: &OsStr, tool: Tool, roots: &Roots) -> Result<PathBuf, UnresolvedRoot> {
+    let Some(text) = value.to_str() else {
+        return Ok(PathBuf::from(value));
     };
-    let path = match tilde {
-        None => PathBuf::from(value),
-        Some(rest) => {
-            let Some(Ok(home)) = roots.get(SymbolicRoot::Home) else {
-                let base = SymbolicRoot::Home;
-                return Err(UnresolvedRoot::BaseUnresolved { base });
-            };
-            home.path.join(rest)
-        }
+    let Some(rest) = tool.below_home(text, os::PLATFORM) else {
+        return Ok(tool.plain(text, os::PLATFORM));
     };
+    let Some(Ok(home)) = roots.get(SymbolicRoot::Home) else {
+        let base = SymbolicRoot::Home;
+        return Err(UnresolvedRoot::BaseUnresolved { base });
+    };
+    Ok(home.path.join(rest))
+}
+
+/// `path` when it is absolute. `value` and `var` say what gave it, for the error.
+fn in_full(path: PathBuf, value: &OsStr, var: &'static str) -> Result<PathBuf, UnresolvedRoot> {
     if path.is_absolute() {
         return Ok(path);
     }

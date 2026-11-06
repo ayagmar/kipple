@@ -16,16 +16,8 @@ use kipple_core::{SettingProblem, UnresolvedRoot};
 use serde_json::Value as Json;
 use toml::de::{DeTable, DeValue};
 
+use super::tool_path::Tool;
 use crate::config_file::read_config;
-
-/// What a config file is written in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Format {
-    /// TOML.
-    Toml,
-    /// JSON.
-    Json,
-}
 
 /// One setting in one config file.
 #[derive(Debug, Clone, Copy)]
@@ -34,8 +26,8 @@ pub(super) struct ConfigKey {
     pub(super) file: &'static str,
     /// The key.
     pub(super) key: &'static str,
-    /// What the file is written in.
-    pub(super) format: Format,
+    /// Whose file it is, which says how it is written and what its paths mean.
+    pub(super) tool: Tool,
 }
 
 impl ConfigKey {
@@ -52,9 +44,9 @@ impl ConfigKey {
         let Some(text) = read_config(path).map_err(unusable)? else {
             return Ok(Vec::new());
         };
-        let found = match self.format {
-            Format::Toml => toml_values(&text, self.key),
-            Format::Json => json_values(&text, self.key),
+        let found = match self.tool {
+            Tool::Codex => toml_values(&text, self.key),
+            Tool::Pi => json_values(&text, self.key),
         };
         found
             .ok_or_else(|| invalid("it can't be parsed".to_owned()))?
@@ -103,10 +95,11 @@ fn in_toml_value(value: &DeValue<'_>, key: &str, found: &mut Vec<Option<String>>
 }
 
 /// Every place the JSON `text` sets `key`, `None` for a value that isn't a string. `None`
-/// when `text` doesn't parse. Of a key repeated in one object only the last counts, which
-/// is also the one Pi's `JSON.parse` keeps.
+/// when `text` doesn't parse. A leading byte order mark is skipped, as Pi skips it. Of a key
+/// repeated in one object only the last counts, which is also the one Pi's `JSON.parse` keeps.
 fn json_values(text: &str, key: &str) -> Option<Vec<Option<String>>> {
-    let document: Json = serde_json::from_str(text).ok()?;
+    let document: Json =
+        serde_json::from_str(text.strip_prefix('\u{feff}').unwrap_or(text)).ok()?;
     let mut found = Vec::new();
     in_json(&document, key, &mut found);
     Some(found)
