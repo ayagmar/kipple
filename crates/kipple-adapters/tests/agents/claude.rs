@@ -73,7 +73,7 @@ fn proposes_removal(scan: &Scan, relative: &str) -> bool {
 /// Catches a log being offered while its session runs, or a closed one never reaching the
 /// removal: the rule's whole purpose (§7.1). Going through the policy and the host's
 /// protection both, it's what lets a person remove the log and nothing else. The removal
-/// itself is the executor's, which these tests can't reach from this crate.
+/// itself is the executor's: `kipple`'s `tui.rs` runs one end to end.
 #[test]
 fn closed_debug_log_removed_open_one_kept() {
     let scan = scan(installed());

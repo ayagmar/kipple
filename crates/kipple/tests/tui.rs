@@ -17,6 +17,8 @@ mod bun_v1_4_2;
 mod cargo_v1_99_0;
 #[path = "../../kipple-adapters/tests/fixtures/claude-code/settings.rs"]
 mod claude_settings;
+#[path = "../../kipple-adapters/tests/fixtures/claude/v2_1_318.rs"]
+mod claude_v2_1_318;
 #[path = "../../kipple-adapters/tests/fixtures/demo_home.rs"]
 mod demo_home;
 #[path = "../../kipple-adapters/tests/fixtures/journald/v262.rs"]
@@ -112,6 +114,21 @@ impl Demo {
             roots,
             config,
         }
+    }
+
+    /// The demo with a verified native Claude Code in it, which holds one open session and
+    /// one closed. The demo's roots leave out where a native install keeps its versions.
+    fn with_claude() -> Self {
+        let demo = Self::new();
+        let mut tree = tree::FixtureTree::new();
+        claude_v2_1_318::config(&mut tree, "home/.claude");
+        claude_v2_1_318::install(&mut tree, "home", claude_v2_1_318::VERSION);
+        tree.build_in(demo.temp.path()).unwrap();
+        let versions = demo.at("home/.local/share/claude");
+        let mut file = fs::read_to_string(&demo.roots).unwrap();
+        writeln!(file, "claude.versions = {}", versions.display()).unwrap();
+        fs::write(&demo.roots, file).unwrap();
+        demo
     }
 
     fn at(&self, relative: &str) -> PathBuf {
@@ -438,6 +455,47 @@ fn s_enter_y_on_a_review_finding_removes_it_and_the_result_shows_it() {
         .unwrap_or_else(|| panic!("the item isn't in the result: {result}"));
     assert!(line.contains("done"), "{line}");
     assert!(result.contains("Done."), "{result}");
+}
+
+// Catches a file finding never reaching a removal: a real disk answers `ENOTDIR` for `.git`
+// below a file, which held every log as unknown git while each fake answered `NotFound`.
+// Here a file goes through the real probe, plan, freezer and executor, and only that file.
+#[test]
+fn s_enter_y_on_a_closed_claude_log_removes_it_and_keeps_the_open_one() {
+    // The rule removes on Linux alone (spec M4 pinned 39).
+    if !matches!(PLATFORM, Platform::Linux) {
+        return;
+    }
+    let demo = Demo::with_claude();
+    let closed = format!("debug/{}.txt", claude_v2_1_318::CLOSED_SESSION);
+    let open = format!("home/.claude/debug/{}.txt", claude_v2_1_318::OPEN_SESSION);
+    // The header repeats the filter, so the row is told by the whole path.
+    let shown = format!("~/.claude/{closed}");
+    let mut script = filtered_to(&closed, Bucket::Review);
+    script.extend(press(&[Key::Char('s'), Key::Enter]));
+    script.push(Step::Look);
+    script.extend(press(&[Key::Char('y')]));
+
+    let frames = demo.home(script);
+
+    let review = &frames.looked[0];
+    assert!(review.contains("Review: clean 1 item"), "{review}");
+    assert!(review.contains(&shown), "{review}");
+    assert!(
+        !present(&demo.at(&format!("home/.claude/{closed}"))),
+        "the closed log stays"
+    );
+    assert!(present(&demo.at(&open)), "the open session's log went");
+    assert!(
+        present(&demo.at("home/.claude/sessions/4242.json")),
+        "the session's marker went"
+    );
+    let result = &frames.last;
+    let line = result
+        .lines()
+        .find(|row| row.contains(&shown))
+        .unwrap_or_else(|| panic!("the item isn't in the result: {result}"));
+    assert!(line.contains("done"), "{line}");
 }
 
 // Catches a key typed while the plan was made or the review drawn confirming a review
