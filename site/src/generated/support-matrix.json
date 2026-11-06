@@ -38,12 +38,150 @@
     {
       "id": "claude-code",
       "lens": "agents",
-      "verified": [],
-      "facts": [],
+      "verified": [
+        "Claude Code 2.1.318"
+      ],
+      "facts": [
+        {
+          "name": "layout",
+          "kind": "enum",
+          "values": [
+            "supported",
+            "unknown"
+          ],
+          "selector": null,
+          "meaning": "whether the configuration directory is the one Claude Code uses, on a verified version"
+        },
+        {
+          "name": "claude.version_supported",
+          "kind": "enum",
+          "values": [
+            "supported",
+            "unsupported"
+          ],
+          "selector": null,
+          "meaning": "whether the launcher's version equals a verified one; a non-native install shows none, which is unknown"
+        },
+        {
+          "name": "session_closed",
+          "kind": "bool",
+          "selector": "claude-debug-logs",
+          "meaning": "whether every session marker was read and none names this log's session"
+        },
+        {
+          "name": "launcher_target",
+          "kind": "bool",
+          "selector": "claude-versions",
+          "meaning": "whether the launcher points at this version"
+        },
+        {
+          "name": "version_running",
+          "kind": "bool",
+          "selector": "claude-versions",
+          "meaning": "whether a lock file names this version; no lock proves nothing, so that is unknown"
+        }
+      ],
       "protected": [
         {
           "root": "claude.config",
-          "entries": [],
+          "entries": [
+            {
+              "path": ".credentials.json",
+              "matches": "exact"
+            },
+            {
+              "path": ".claude.json",
+              "matches": "exact"
+            },
+            {
+              "path": "settings.json",
+              "matches": "exact"
+            },
+            {
+              "path": "settings.local.json",
+              "matches": "exact"
+            },
+            {
+              "path": "projects",
+              "matches": "exact"
+            },
+            {
+              "path": "history.jsonl",
+              "matches": "exact"
+            },
+            {
+              "path": "file-history",
+              "matches": "exact"
+            },
+            {
+              "path": "sessions",
+              "matches": "exact"
+            },
+            {
+              "path": "jobs",
+              "matches": "exact"
+            },
+            {
+              "path": "daemon",
+              "matches": "exact"
+            },
+            {
+              "path": "backups",
+              "matches": "exact"
+            },
+            {
+              "path": "plugins",
+              "matches": "exact"
+            },
+            {
+              "path": "skills",
+              "matches": "exact"
+            },
+            {
+              "path": "agents",
+              "matches": "exact"
+            },
+            {
+              "path": "agent-memory",
+              "matches": "exact"
+            },
+            {
+              "path": "hooks",
+              "matches": "exact"
+            },
+            {
+              "path": "rules",
+              "matches": "exact"
+            },
+            {
+              "path": "commands",
+              "matches": "exact"
+            },
+            {
+              "path": "workflows",
+              "matches": "exact"
+            },
+            {
+              "path": "tasks",
+              "matches": "exact"
+            },
+            {
+              "path": "CLAUDE.md",
+              "matches": "exact"
+            },
+            {
+              "path": "remote-settings.json",
+              "matches": "exact"
+            },
+            {
+              "path": "policy-limits.json",
+              "matches": "exact"
+            },
+            {
+              "path": "debug/latest",
+              "matches": "exact"
+            }
+          ],
           "delegates": []
         },
         {
@@ -69,7 +207,16 @@
           "delegates": []
         }
       ],
-      "open": [],
+      "open": [
+        {
+          "root": "claude.config",
+          "path": "debug",
+          "reaches": "inside",
+          "integrations": [
+            "claude-code"
+          ]
+        }
+      ],
       "rules": [
         "builtin.claude-code.closed-debug-logs",
         "builtin.claude-code.versions",
@@ -78,19 +225,19 @@
       "platforms": [
         {
           "platform": "linux",
-          "discover": false,
+          "discover": true,
           "report": true,
-          "mutate": false
+          "mutate": true
         },
         {
           "platform": "macos",
-          "discover": false,
+          "discover": true,
           "report": true,
           "mutate": false
         },
         {
           "platform": "windows",
-          "discover": false,
+          "discover": true,
           "report": true,
           "mutate": false
         }
@@ -184,19 +331,19 @@
         {
           "platform": "linux",
           "discover": false,
-          "report": false,
+          "report": true,
           "mutate": false
         },
         {
           "platform": "macos",
           "discover": false,
-          "report": false,
+          "report": true,
           "mutate": false
         },
         {
           "platform": "windows",
           "discover": false,
-          "report": false,
+          "report": true,
           "mutate": false
         }
       ]
@@ -383,12 +530,166 @@
     {
       "id": "pi",
       "lens": "agents",
-      "verified": [],
-      "facts": [],
+      "verified": [
+        "Pi 1.5.0"
+      ],
+      "facts": [
+        {
+          "name": "layout",
+          "kind": "enum",
+          "values": [
+            "supported",
+            "unknown"
+          ],
+          "selector": null,
+          "meaning": "whether the agent directory is a managed install of a verified version"
+        },
+        {
+          "name": "pi.version_supported",
+          "kind": "enum",
+          "values": [
+            "supported",
+            "unsupported"
+          ],
+          "selector": null,
+          "meaning": "whether `install/current-version` equals a verified version; none that can be read is unknown"
+        },
+        {
+          "name": "installer_activity",
+          "kind": "enum",
+          "values": [
+            "idle",
+            "busy"
+          ],
+          "selector": "pi-closed-logs",
+          "meaning": "whether `install/update.lock/` says an update is running"
+        }
+      ],
       "protected": [
         {
           "root": "pi.agent",
-          "entries": [],
+          "entries": [
+            {
+              "path": "auth.json",
+              "matches": "exact"
+            },
+            {
+              "path": "auth.json.lock",
+              "matches": "exact"
+            },
+            {
+              "path": "mcp-auth.json",
+              "matches": "exact"
+            },
+            {
+              "path": "mcp-auth.json.lock",
+              "matches": "exact"
+            },
+            {
+              "path": "mcp-auth-refresh-",
+              "matches": "prefix"
+            },
+            {
+              "path": "settings.json",
+              "matches": "exact"
+            },
+            {
+              "path": "settings.json.lock",
+              "matches": "exact"
+            },
+            {
+              "path": "keybindings.json",
+              "matches": "exact"
+            },
+            {
+              "path": "mcp.json",
+              "matches": "exact"
+            },
+            {
+              "path": "models.json",
+              "matches": "exact"
+            },
+            {
+              "path": "models-store.json",
+              "matches": "exact"
+            },
+            {
+              "path": "models-store.json.lock",
+              "matches": "exact"
+            },
+            {
+              "path": "trust.json",
+              "matches": "exact"
+            },
+            {
+              "path": "trust.json.lock",
+              "matches": "exact"
+            },
+            {
+              "path": "crashes.json",
+              "matches": "exact"
+            },
+            {
+              "path": "AGENTS",
+              "matches": "prefix"
+            },
+            {
+              "path": "CLAUDE",
+              "matches": "prefix"
+            },
+            {
+              "path": "SYSTEM.md",
+              "matches": "exact"
+            },
+            {
+              "path": "APPEND_SYSTEM.md",
+              "matches": "exact"
+            },
+            {
+              "path": "sessions",
+              "matches": "exact"
+            },
+            {
+              "path": "extensions",
+              "matches": "exact"
+            },
+            {
+              "path": "skills",
+              "matches": "exact"
+            },
+            {
+              "path": "prompts",
+              "matches": "exact"
+            },
+            {
+              "path": "themes",
+              "matches": "exact"
+            },
+            {
+              "path": "git",
+              "matches": "exact"
+            },
+            {
+              "path": "npm",
+              "matches": "exact"
+            },
+            {
+              "path": "tmp",
+              "matches": "exact"
+            },
+            {
+              "path": "bin",
+              "matches": "exact"
+            },
+            {
+              "path": "install",
+              "matches": "exact"
+            },
+            {
+              "path": "win-git-bash",
+              "matches": "exact"
+            }
+          ],
           "delegates": []
         },
         {
@@ -404,7 +705,40 @@
           "delegates": []
         }
       ],
-      "open": [],
+      "open": [
+        {
+          "root": "pi.agent",
+          "path": "pi-debug.log",
+          "reaches": "exact",
+          "integrations": [
+            "pi"
+          ]
+        },
+        {
+          "root": "pi.agent",
+          "path": "pi-tui-crash.log",
+          "reaches": "exact",
+          "integrations": [
+            "pi"
+          ]
+        },
+        {
+          "root": "pi.agent",
+          "path": "pi-tui-debug.log",
+          "reaches": "exact",
+          "integrations": [
+            "pi"
+          ]
+        },
+        {
+          "root": "pi.agent",
+          "path": "mcp.log.1",
+          "reaches": "exact",
+          "integrations": [
+            "pi"
+          ]
+        }
+      ],
       "rules": [
         "builtin.pi.closed-logs",
         "builtin.pi.store-inventory"
@@ -412,20 +746,20 @@
       "platforms": [
         {
           "platform": "linux",
-          "discover": false,
-          "report": false,
-          "mutate": false
+          "discover": true,
+          "report": true,
+          "mutate": true
         },
         {
           "platform": "macos",
-          "discover": false,
-          "report": false,
+          "discover": true,
+          "report": true,
           "mutate": false
         },
         {
           "platform": "windows",
-          "discover": false,
-          "report": false,
+          "discover": true,
+          "report": true,
           "mutate": false
         }
       ]

@@ -9,10 +9,11 @@ use crate::pack::{self, Catalog, Origin, PackError};
 
 pub use crate::integrations::{Anomaly, Unregistered, registration_advice};
 
-/// Integrations that give advice with no verified layout behind them. They report and find
-/// nothing. Every other integration reports only once `verified` names what it was built
-/// against.
-pub const ADVICE_ONLY: &[IntegrationId] = &[IntegrationId("claude-code")];
+/// Integrations that give advice and may report, with no verified layout behind them.
+///
+/// The support matrix shows `report` for them and not `discover`. Every other integration
+/// reports only once `verified` names what it was built against.
+pub const ADVICE_ONLY: &[IntegrationId] = &[IntegrationId("cursor")];
 
 /// The built-in rule packs, from `rules/` in the repository, by file name.
 pub const PACKS: &[(&str, &str)] = &[

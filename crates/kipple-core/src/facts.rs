@@ -74,7 +74,16 @@ impl Repositories {
         let entry = match fs.metadata(&dir.join(".git")) {
             // A `.git` file, link or directory all mean a repository.
             Ok(_) => GitEntry::Present,
-            Err(error) if error.io_kind() == Some(io::ErrorKind::NotFound) => GitEntry::Absent,
+            // Below something that isn't a directory, nothing can be there either. Each
+            // directory above is still asked.
+            Err(error)
+                if matches!(
+                    error.io_kind(),
+                    Some(io::ErrorKind::NotFound | io::ErrorKind::NotADirectory)
+                ) =>
+            {
+                GitEntry::Absent
+            }
             Err(error) => GitEntry::Unchecked(error),
         };
         let mut cache = self.0.lock().unwrap_or_else(PoisonError::into_inner);

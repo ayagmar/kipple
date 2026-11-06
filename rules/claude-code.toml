@@ -14,8 +14,8 @@ id = "builtin.claude-code.closed-debug-logs"
 integration = "claude-code"
 title = "Claude Code debug logs of closed sessions"
 description = "One log per session in `debug/`, for sessions no longer open."
-why = "Claude Code writes a debug log per session and sweeps them by age."
-loss = "The session's diagnostics."
+why = "Claude Code writes a debug log for a session with debug logging on, and sweeps them by age."
+loss = "The session's diagnostics. Claude Code doesn't write them again."
 references = ["https://code.claude.com/docs/en/claude-directory#cleaned-up-automatically"]
 category = "log"
 platforms = ["linux"]
@@ -24,8 +24,17 @@ platforms = ["linux"]
 root = "claude.config"
 selection = "claude-debug-logs"
 
+[rule.requirements]
+layout = "supported"
+claude.version_supported = "supported"
+
+[rule.eligibility]
+session_closed = true
+modified_age = { min = "14d" }
+
 [rule.operation]
-kind = "report"
+kind = "remove-files"
+methods = ["delete", "trash"]
 
 [[rule]]
 id = "builtin.claude-code.versions"
@@ -49,7 +58,7 @@ kind = "report"
 id = "builtin.claude-code.store-inventory"
 integration = "claude-code"
 title = "Claude Code's store, reported only"
-description = "Shell snapshots, session environments, plans, caches and old directories."
+description = "Shell snapshots, session environments, plans, logs, caches and old directories, and debug logs where they aren't removed."
 why = "Claude Code keeps these in its configuration directory."
 loss = "Nothing. Report only."
 references = ["https://code.claude.com/docs/en/claude-directory"]
