@@ -1,11 +1,12 @@
 //! The support matrix the docs site renders (`docs/09-site-and-docs.md` §6): each
 //! integration, where it runs, and what it does there.
 
-use kipple_core::Platform;
+use kipple_core::{IntegrationDescriptor, Operation, Platform};
 use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::json::{LensOut, SUPPORT_MATRIX, VERSION};
+use crate::rules::{self, FactInfo, IntegrationInfo, OpenInfo, ProtectedRoot};
 use crate::setup::{Builtin, BuiltinRule};
 
 /// The generated support matrix.
@@ -28,6 +29,12 @@ pub struct SupportOut {
     pub lens: LensOut,
     /// The upstream versions its layouts were verified against.
     pub verified: Vec<&'static str>,
+    /// The facts its findings can supply.
+    pub facts: Vec<FactInfo>,
+    /// Its tool's state roots: closed, whether or not it runs here, except for `open`.
+    pub protected: Vec<ProtectedRoot>,
+    /// What its state roots open, and to whom.
+    pub open: Vec<OpenInfo>,
     /// Its rules.
     pub rules: Vec<String>,
     /// What it does on each platform.
@@ -43,7 +50,7 @@ pub struct PlatformSupport {
     pub discover: bool,
     /// Whether it reports sizes or advice there.
     pub report: bool,
-    /// Whether it may change anything there. Never, in this version.
+    /// Whether one of its rules may change anything there.
     pub mutate: bool,
 }
 
@@ -54,37 +61,57 @@ impl SupportMatrixOut {
         let integrations = builtin
             .descriptors
             .iter()
-            .map(|d| SupportOut {
-                id: d.id.0,
-                lens: d.lens.into(),
-                verified: d.verified.to_vec(),
-                rules: builtin
-                    .rules()
-                    .filter(|BuiltinRule { rule, .. }| rule.integration == d.id)
-                    .map(|BuiltinRule { rule, .. }| rule.id.0.clone())
-                    .collect(),
-                platforms: Platform::ALL
-                    .iter()
-                    .map(|&platform| {
-                        let supported = d.platforms.contains(&platform);
-                        // Advice alone, as for Claude Code, finds nothing.
-                        let finds = builtin.rules().any(|BuiltinRule { rule, .. }| {
-                            rule.integration == d.id && rule.platforms.contains(&platform)
-                        });
-                        PlatformSupport {
-                            platform: platform.name(),
-                            discover: supported && finds,
-                            report: supported,
-                            mutate: false,
-                        }
-                    })
-                    .collect(),
-            })
+            .map(|descriptor| support(builtin, descriptor))
             .collect();
         Self {
             schema: SUPPORT_MATRIX,
             kipple: VERSION,
             integrations,
         }
+    }
+}
+
+fn support(builtin: &Builtin, descriptor: &IntegrationDescriptor) -> SupportOut {
+    let IntegrationInfo {
+        id,
+        lens,
+        verified,
+        facts,
+        protected,
+        open,
+        ..
+    } = rules::integration(descriptor);
+    let own = || {
+        builtin
+            .rules()
+            .filter(|BuiltinRule { rule, .. }| rule.integration == descriptor.id)
+    };
+    SupportOut {
+        id,
+        lens,
+        verified,
+        facts,
+        protected,
+        open,
+        rules: own()
+            .map(|BuiltinRule { rule, .. }| rule.id.0.clone())
+            .collect(),
+        platforms: Platform::ALL
+            .iter()
+            .map(|&platform| {
+                let supported = descriptor.platforms.contains(&platform);
+                let here: Vec<BuiltinRule<'_>> = own()
+                    .filter(|found| found.rule.platforms.contains(&platform))
+                    .collect();
+                let removes = |found: &BuiltinRule<'_>| found.rule.operation != Operation::Report;
+                PlatformSupport {
+                    platform: platform.name(),
+                    // Advice alone, as for Claude Code, finds nothing.
+                    discover: supported && !here.is_empty(),
+                    report: supported,
+                    mutate: supported && here.iter().any(removes),
+                }
+            })
+            .collect(),
     }
 }
