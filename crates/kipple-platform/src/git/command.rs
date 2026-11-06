@@ -93,6 +93,17 @@ impl Git {
         Ok(output.stdout)
     }
 
+    /// What the `ls-files` of `tail` prints from `dir`, unless it lost part of the index.
+    pub(super) fn ask_index(
+        &self,
+        dir: &Path,
+        tail: &[&str],
+        cancel: &CancelToken,
+    ) -> Result<Vec<u8>, GitGap> {
+        let tail: Vec<&OsStr> = tail.iter().map(OsStr::new).collect();
+        read_index(self.run(dir, Matching::Exact, &tail, cancel)?)
+    }
+
     /// The work tree git finds from `dir`, as it prints it.
     pub(super) fn toplevel(&self, dir: &Path, cancel: &CancelToken) -> Result<PathBuf, GitGap> {
         let tail = [OsStr::new("rev-parse"), OsStr::new("--show-toplevel")];

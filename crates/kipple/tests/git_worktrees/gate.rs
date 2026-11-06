@@ -603,6 +603,24 @@ fn reftable_makes_facts_unknown() {
     assert_eq!(scan.fact("git.tracked_changes"), FactValue::Unknown);
 }
 
+/// Catches a sparse directory read as an empty one: a gitlink or a hidden edit below it is
+/// behind that record, so the rows that come from the index can't read clear.
+#[test]
+fn a_sparse_directory_leaves_the_index_rows_unknown() {
+    let repo = Repo::bare_bones(Refs::Files);
+    write(&repo.main.join("keep/a.txt"), b"a\n");
+    write(&repo.main.join("away/b.txt"), b"b\n");
+    repo.git(&["add", "--", "keep", "away"]);
+    repo.git(&["commit", "-q", "-m", "two directories"]);
+    repo.git(&["sparse-checkout", "set", "--cone", "--sparse-index", "keep"]);
+    repo.add_worktree();
+
+    let scan = repo.scan();
+
+    assert_eq!(scan.fact("worktree.submodules"), FactValue::Unknown);
+    assert_eq!(scan.fact("git.hidden_changes"), FactValue::Unknown);
+}
+
 /// Catches a config value carried into a report: the gate reads key names, and a URL or a
 /// filter command can hold a credential.
 #[test]

@@ -219,6 +219,10 @@ impl Asking<'_> {
         self.git.ask(&self.links.checkout, tail, self.cancel)
     }
 
+    fn ask_index(&self, tail: &[&str]) -> Result<Vec<u8>, GitGap> {
+        self.git.ask_index(&self.links.checkout, tail, self.cancel)
+    }
+
     /// Whether anything says it has a submodule, populated or not: `remove` refuses only a
     /// populated one, and deletes the rest.
     fn submodules(&self) -> Result<bool, GitGap> {
@@ -226,7 +230,7 @@ impl Asking<'_> {
         if exists(&links.admin.join("modules"))? || exists(&links.checkout.join(".gitmodules"))? {
             return Ok(true);
         }
-        has_gitlink(&self.ask(&["ls-files", "-z", "--stage"])?)
+        has_gitlink(&self.ask_index(&["ls-files", "-z", "--sparse", "--stage"])?)
     }
 
     /// What the config says of what may be asked. A `reftable` directory counts whatever
@@ -300,7 +304,7 @@ impl Asking<'_> {
     /// How many paths carry a tag `status` doesn't look behind: `skip-worktree`, or
     /// lowercase for assume-unchanged.
     fn hidden_changes(&self) -> Result<u64, GitGap> {
-        parse_tags(&self.ask(&["ls-files", "-z", "-v"])?)
+        parse_tags(&self.ask_index(&["ls-files", "-z", "--sparse", "-v"])?)
     }
 
     /// Whether a local branch holds HEAD, the worktree's own included, since removal never
@@ -352,11 +356,13 @@ fn parse_status(stdout: &[u8]) -> Result<Status, GitGap> {
     Ok(status)
 }
 
-/// How many of `ls-files -z -v`'s records are tagged anything but `H`.
+/// How many of `ls-files -z -v`'s records are tagged anything but `H`. A sparse directory is
+/// a gap, as it is in every `ls-files` here: what it holds wasn't listed.
 fn parse_tags(stdout: &[u8]) -> Result<u64, GitGap> {
     let mut hidden = 0;
     for record in records(stdout)? {
         match record {
+            [.., b'/'] => return Err(GitGap::Unplaced),
             [b'H', b' ', _, ..] => {}
             [_, b' ', _, ..] => hidden += 1,
             _ => return Err(GitGap::Truncated),
@@ -371,6 +377,9 @@ fn has_gitlink(stdout: &[u8]) -> Result<bool, GitGap> {
     for record in records(stdout)? {
         if !record.contains(&b'\t') || !record.contains(&b' ') {
             return Err(GitGap::Truncated);
+        }
+        if record.ends_with(b"/") {
+            return Err(GitGap::Unplaced);
         }
         found = found || record.starts_with(b"160000 ");
     }
@@ -758,6 +767,15 @@ mod tests {
         assert_eq!(parse_tags(b"H a\0H b\0"), Ok(0));
         assert_eq!(parse_tags(b"H a\0S b\0h c\0s d\0"), Ok(3));
         assert_eq!(parse_tags(b"Ha\0"), Err(GitGap::Truncated));
+    }
+
+    /// Catches a sparse directory taken for one path: what it holds wasn't listed, so
+    /// neither row can read clear.
+    #[test]
+    fn a_directory_in_the_index_is_a_gap() {
+        assert_eq!(parse_tags(b"H a\0S away/\0"), Err(GitGap::Unplaced));
+        let sparse = b"100644 aa 0\ta\x00040000 bb 0\taway/\0";
+        assert_eq!(has_gitlink(sparse), Err(GitGap::Unplaced));
     }
 
     /// Catches a key the gate names being let through by its spelling, and a key it doesn't
