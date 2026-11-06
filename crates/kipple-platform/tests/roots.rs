@@ -812,7 +812,7 @@ fn every_json_form_of_a_setting_decodes_to_its_path() {
 /// and these files can hold tokens. A file nested past any use must not crash the scan.
 #[test]
 fn a_setting_file_kipple_cant_parse_is_unknown_and_quotes_nothing() {
-    let deep = "[".repeat(100_000);
+    let deep = format!("{}{}", "[".repeat(100_000), "]".repeat(100_000));
     let toml_rows = [
         "token = \"s3cret\"\nsqlite_home = \"/data/unclosed\n".to_owned(),
         "token = \"s3cret\"\ntoken = \"s3cret\"\n".to_owned(),
