@@ -163,7 +163,8 @@ impl NativeCommand {
         }
     }
 
-    /// Its arguments: what runs, what a person reviews and what the digest covers.
+    /// Its arguments: what runs and what a person reviews. They follow from the command
+    /// alone, so a plan's digest covers them by covering the command.
     #[must_use]
     pub fn argv(&self) -> Vec<NativeArg> {
         match self {
