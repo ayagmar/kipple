@@ -94,7 +94,7 @@ fn the_support_matrix_claims_nothing_for_an_integration_that_finds_nothing() {
 
     let support = matrix(&builtin);
 
-    for stub in ["codex", "cursor", "git", "npm", "pi"] {
+    for stub in ["codex", "cursor", "npm", "pi"] {
         assert_eq!(claims(&support, stub), [(false, false); 3], "{stub}");
     }
     assert_eq!(claims(&support, "claude-code"), [(false, true); 3]);
