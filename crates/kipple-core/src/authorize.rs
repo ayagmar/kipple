@@ -264,7 +264,7 @@ impl NativeOp {
 /// }
 /// ```
 #[cfg(doctest)]
-pub struct NativeOpCompileFail;
+pub const fn native_op_compile_fail() {}
 
 /// An operation revalidation authorized.
 #[derive(Debug)]
