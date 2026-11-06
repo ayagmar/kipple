@@ -6,10 +6,11 @@
 use std::path::Path;
 
 use kipple_core::{
-    Completeness, Effect, Ending, ItemMethod, ItemOutcome, Left, Method, Plan, RunState,
-    SpaceEstimate, Status, Total, Totals,
+    Completeness, Effect, Ending, Execution, ItemMethod, ItemOutcome, Left, Method, Plan,
+    PlanEntry, RunState, SpaceEstimate, Status, Total, Totals,
 };
 
+use super::native::native_line;
 use super::outcome::{error_text, found, left_reason, measured, skip, status};
 use super::{bytes, escaped};
 
@@ -103,30 +104,43 @@ pub(crate) fn threshold(above: u64) -> String {
 
 /// The plan's heading: what it removes, by method (J3).
 pub(crate) fn plan_heading(plan: &Plan) -> Vec<String> {
-    [Method::Delete, Method::Trash]
+    let by_method = [Method::Delete, Method::Trash]
         .into_iter()
         .filter_map(|method| {
-            let entries: Vec<_> = plan
-                .entries()
-                .iter()
-                .filter(|entry| entry.file_method() == Some(method))
-                .collect();
-            if entries.is_empty() {
-                return None;
-            }
-            let size: u64 = entries
-                .iter()
-                .filter_map(|entry| entry.estimate())
-                .map(SpaceEstimate::reclaim)
-                .sum();
-            Some(format!(
-                "{} {} in {}",
-                method_verb(method),
-                bytes(size),
-                items_word(entries.len())
-            ))
-        })
+            let entries = of_method(plan, method.into());
+            (!entries.is_empty()).then(|| {
+                format!(
+                    "{} {} in {}",
+                    method_verb(method),
+                    bytes(reclaim(&entries)),
+                    items_word(entries.len())
+                )
+            })
+        });
+    let native = of_method(plan, ItemMethod::Native);
+    let commands = (!native.is_empty()).then(|| {
+        format!(
+            "run the tool's own command on {}, about {}",
+            items_word(native.len()),
+            bytes(reclaim(&native))
+        )
+    });
+    by_method.chain(commands).collect()
+}
+
+fn of_method(plan: &Plan, method: ItemMethod) -> Vec<&PlanEntry> {
+    plan.entries()
+        .iter()
+        .filter(|entry| entry.method() == method)
         .collect()
+}
+
+fn reclaim(entries: &[&PlanEntry]) -> u64 {
+    entries
+        .iter()
+        .filter_map(|entry| entry.estimate())
+        .map(SpaceEstimate::reclaim)
+        .sum()
 }
 
 /// A plan item's size, as its line shows it.
@@ -377,13 +391,17 @@ pub(crate) fn left_line(path: &Path, why: &str) -> String {
     }
 }
 
-/// A plan item as the person confirming it sees it.
-pub(crate) fn plan_line(method: ItemMethod, size: &str, path: &Path) -> String {
-    format!(
-        "  {:<6}  {size:>10}  {}",
-        method_word(method),
-        escaped(&path.display().to_string())
-    )
+/// A plan item as the person confirming it sees it, at `path` as this frontend shows it.
+pub(crate) fn plan_line(entry: &PlanEntry, path: &Path) -> String {
+    let size = estimate(entry.estimate());
+    match entry.execution() {
+        Execution::Native(spec) => native_line(spec, &size, path),
+        Execution::Files(_) => format!(
+            "  {:<6}  {size:>10}  {}",
+            method_word(entry.method()),
+            escaped(&path.display().to_string())
+        ),
+    }
 }
 
 /// What `restore` did with one item.

@@ -8,7 +8,7 @@ use kipple_core::{ItemMethod, Standing};
 use ratatui::text::Line as Text;
 
 use super::{Look, homed};
-use crate::human::{outcome, receipt, review};
+use crate::human::{native, outcome, receipt, review};
 use crate::theme::Role;
 use crate::tui::app::{App, Review};
 
@@ -35,6 +35,9 @@ pub(super) fn head(title: String, review: &Review, look: Look<'_>) -> Vec<Text<'
     if has(ItemMethod::Trash) {
         head.push(line(Role::Warning, receipt::TRASH_WHOLE.to_owned()));
     }
+    if has(ItemMethod::Native) {
+        head.push(line(Role::Warning, native::NATIVE_CANNOT_UNDO.to_owned()));
+    }
     let cautioned = entries
         .iter()
         .filter(|entry| matches!(entry.standing(), Standing::Review(_)))
@@ -58,8 +61,7 @@ pub(super) fn lines(app: &App, review: &Review, look: Look<'_>) -> Vec<Text<'sta
             .map(|heading| line(Role::Title, heading)),
     );
     for entry in plan.entries() {
-        let size = receipt::estimate(entry.estimate());
-        let text = receipt::plan_line(entry.method(), &size, &homed(entry.path(), home));
+        let text = receipt::plan_line(entry, &homed(entry.path(), home));
         lines.push(line(Role::Text, text));
         if let Some(cautions) = review::cautions(entry.standing()) {
             lines.push(line(Role::Review, cautions));

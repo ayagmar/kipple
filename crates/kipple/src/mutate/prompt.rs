@@ -15,7 +15,7 @@ use kipple_core::{
 
 use super::output::{Line, Shown, Told, left_out};
 use crate::Answers;
-use crate::human::{receipt as words, review};
+use crate::human::{native, receipt as words, review};
 use crate::theme::{Ink, Role};
 
 /// Asks on `out` and reads the answer from `input`.
@@ -138,13 +138,10 @@ pub(super) fn item_lines(plan: &Plan) -> Vec<Line> {
     let headings = words::plan_heading(plan)
         .into_iter()
         .map(|heading| Line::new(Role::Title, heading));
-    let items = plan.entries().iter().map(|entry| {
-        let size = words::estimate(entry.estimate());
-        Line::new(
-            Role::Text,
-            words::plan_line(entry.method(), &size, entry.path()),
-        )
-    });
+    let items = plan
+        .entries()
+        .iter()
+        .map(|entry| Line::new(Role::Text, words::plan_line(entry, entry.path())));
     headings.chain(items).collect()
 }
 
@@ -154,6 +151,7 @@ pub(super) fn method_lines(methods: impl Iterator<Item = ItemMethod>) -> Vec<Lin
     [
         (ItemMethod::Delete, words::DELETE_PERMANENT),
         (ItemMethod::Trash, words::TRASH_WHOLE),
+        (ItemMethod::Native, native::NATIVE_CANNOT_UNDO),
     ]
     .into_iter()
     .filter(|(method, _)| used.contains(method))
