@@ -71,8 +71,12 @@ pub enum Anomaly<'path> {
     Invalid,
 }
 
-/// What to do about `anomaly`. `prune` drops a registration's admin directory, so only a
-/// missing checkout is offered it: an invalid one may still be on disk.
+/// What to do about `anomaly`.
+///
+/// `prune` drops a registration's admin directory, so only a missing checkout is offered it:
+/// an invalid one may still be on disk. A directory's name can come from a repository or an
+/// agent and a person pastes these commands, so it goes in the sentence and never in a
+/// snippet.
 #[must_use]
 pub fn registration_advice(anomaly: Anomaly<'_>) -> Advice {
     let (title, text, snippets) = match anomaly {
@@ -80,33 +84,39 @@ pub fn registration_advice(anomaly: Anomaly<'_>) -> Advice {
             "A worktree whose checkout is gone",
             "Git still lists this worktree, and its directory isn't there. It may be on a disk \
              that isn't mounted, or it may have moved, so check that first. The dry run shows \
-             what git would drop. Without it, `git gc` prunes the registration after 3 months.",
+             what git would drop. Without it, `git gc` prunes the registration after 3 months."
+                .to_owned(),
             vec!["git worktree prune --dry-run --verbose".to_owned()],
         ),
         Anomaly::Unregistered(path, Unregistered::Moved) => (
             "A worktree that moved",
-            "This checkout's repository no longer lists it here, and its link to the repository \
-             still works. Repair points git at the new path. It may hold commits found nowhere \
-             else.",
-            vec![format!("git worktree repair {}", path.display())],
+            format!(
+                "The repository of the checkout at {} no longer lists it there, and its link to \
+                 the repository still works. Run the command from inside that directory: repair \
+                 points git at the new path. It may hold commits found nowhere else.",
+                path.display()
+            ),
+            vec!["git worktree repair".to_owned()],
         ),
         Anomaly::Unregistered(_, Unregistered::TargetGone) => (
             "A checkout that lost its repository",
             "What this checkout's `.git` file points to is gone, so git can't say what it holds. \
-             Review it by hand: it may hold work found nowhere else.",
+             Review it by hand: it may hold work found nowhere else."
+                .to_owned(),
             Vec::new(),
         ),
         Anomaly::Invalid => (
             "A worktree git can't read",
             "Git lists this worktree, and what is there doesn't match the registration. Review \
              it by hand, and don't prune: that drops the admin directory of a checkout still \
-             on disk.",
+             on disk."
+                .to_owned(),
             Vec::new(),
         ),
     };
     Advice {
         title: title.to_owned(),
-        text: text.to_owned(),
+        text,
         snippets,
         references: vec!["https://git-scm.com/docs/git-worktree".to_owned()],
     }

