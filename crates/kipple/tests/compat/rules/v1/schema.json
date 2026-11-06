@@ -44,6 +44,21 @@
     "capabilities"
   ],
   "$defs": {
+    "AreaReach": {
+      "description": "What an open area covers.",
+      "oneOf": [
+        {
+          "description": "Exactly that path.",
+          "type": "string",
+          "const": "exact"
+        },
+        {
+          "description": "Whatever is strictly inside it.",
+          "type": "string",
+          "const": "inside"
+        }
+      ]
+    },
     "Capabilities": {
       "description": "The published capability set.",
       "type": "object",
@@ -59,7 +74,7 @@
           "description": "Operations.",
           "type": "array",
           "items": {
-            "type": "string"
+            "$ref": "#/$defs/OperationInfo"
           }
         },
         "roots": {
@@ -128,6 +143,13 @@
       "description": "A built-in integration.",
       "type": "object",
       "properties": {
+        "facts": {
+          "description": "The facts its findings can supply, which only its own rules may test.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/FactInfo"
+          }
+        },
         "id": {
           "description": "Its ID.",
           "type": "string"
@@ -136,11 +158,25 @@
           "description": "Its lens.",
           "$ref": "#/$defs/LensOut"
         },
+        "open": {
+          "description": "What its state roots open, and to whom.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/OpenInfo"
+          }
+        },
         "platforms": {
           "description": "The platforms it supports.",
           "type": "array",
           "items": {
             "type": "string"
+          }
+        },
+        "protected": {
+          "description": "Its tool's state roots: closed, whether or not it runs here, except for `open`.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProtectedRoot"
           }
         },
         "roots": {
@@ -168,7 +204,10 @@
         "platforms",
         "supported",
         "roots",
-        "verified"
+        "verified",
+        "facts",
+        "protected",
+        "open"
       ]
     },
     "LensOut": {
@@ -189,6 +228,135 @@
           "type": "string",
           "const": "system"
         }
+      ]
+    },
+    "OpenInfo": {
+      "description": "A part of a state root some integrations may reach.",
+      "type": "object",
+      "properties": {
+        "integrations": {
+          "description": "Whose findings may be there.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "path": {
+          "description": "Where it is, `/`-separated.",
+          "type": "string"
+        },
+        "reaches": {
+          "description": "What it covers.",
+          "$ref": "#/$defs/AreaReach"
+        },
+        "root": {
+          "description": "The root.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "path",
+        "reaches",
+        "integrations"
+      ]
+    },
+    "OperationInfo": {
+      "description": "An operation rules may name.",
+      "type": "object",
+      "properties": {
+        "first_party": {
+          "description": "Whether only built-in packs may name it.",
+          "type": "boolean"
+        },
+        "meaning": {
+          "description": "What it does.",
+          "type": "string"
+        },
+        "methods": {
+          "description": "The methods a rule using it may offer, none for one that chooses no method.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "name": {
+          "description": "The name rules use for it.",
+          "type": "string"
+        },
+        "retention": {
+          "description": "Whether a rule using it must carry a `[rule.retention]` table.",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name",
+        "first_party",
+        "retention",
+        "methods",
+        "meaning"
+      ]
+    },
+    "PathMatch": {
+      "description": "What a protected path covers.",
+      "oneOf": [
+        {
+          "description": "That path.",
+          "type": "string",
+          "const": "exact"
+        },
+        {
+          "description": "Every path whose last component starts as this one's does.",
+          "type": "string",
+          "const": "prefix"
+        }
+      ]
+    },
+    "ProtectedPath": {
+      "description": "A path below a state root that stays closed.",
+      "type": "object",
+      "properties": {
+        "matches": {
+          "description": "What it covers.",
+          "$ref": "#/$defs/PathMatch"
+        },
+        "path": {
+          "description": "The path, `/`-separated.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "path",
+        "matches"
+      ]
+    },
+    "ProtectedRoot": {
+      "description": "A state root and what stays closed even inside what it opens.",
+      "type": "object",
+      "properties": {
+        "delegates": {
+          "description": "Roots of the same integration that answer for what is inside them.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "entries": {
+          "description": "Paths below it that nothing opens.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ProtectedPath"
+          }
+        },
+        "root": {
+          "description": "The root.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "root",
+        "entries",
+        "delegates"
       ]
     },
     "RuleOut": {

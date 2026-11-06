@@ -1,0 +1,93 @@
+schema_version = 1
+
+[pack]
+id = "builtin.codex"
+version = "1.0.0"
+publisher = "kipple"
+description = "Codex's release store, logs and caches"
+license = "MIT"
+kipple = ">=0.0.0"
+platforms = ["linux", "macos", "windows"]
+
+[[rule]]
+id = "builtin.codex.stale-releases"
+integration = "codex"
+title = "Inactive Codex releases"
+description = "Releases left after an update. The selected, previous, running and pending releases are always kept."
+why = "Codex keeps the selected and previous release and prunes the rest when it installs, but skips that when it can't prove a release is unused, and never on Windows."
+loss = "The removed versions. Codex downloads one again only if you install it."
+category = "release-install"
+platforms = ["linux"]
+
+[rule.scope]
+root = "codex.release-store"
+selection = "verified-release-directories"
+
+[rule.operation]
+kind = "report"
+
+[[rule]]
+id = "builtin.codex.release-inventory"
+integration = "codex"
+title = "Codex releases, reported only"
+description = "Local builds, older layouts, unknown directories, retired releases, and inactive releases where the store isn't verified."
+why = "Codex and its installers leave these in the release store."
+loss = "Nothing. Report only."
+category = "release-install"
+
+[rule.scope]
+root = "codex.release-store"
+selection = "codex-release-entries"
+
+[rule.operation]
+kind = "report"
+
+[[rule]]
+id = "builtin.codex.legacy-tui-log"
+integration = "codex"
+title = "Codex's old TUI log"
+description = "`codex-tui.log` in the default log directory."
+why = "Codex once appended to this log without bound, and only some versions delete it."
+loss = "The old diagnostics in the log."
+category = "log"
+platforms = ["linux"]
+
+[rule.scope]
+root = "codex.home"
+selection = "codex-legacy-tui-log"
+
+[rule.operation]
+kind = "report"
+
+[[rule]]
+id = "builtin.codex.plugin-catalog-cache"
+integration = "codex"
+title = "Codex's plugin catalog cache"
+description = "Cached copies of the remote plugin catalog."
+why = "Codex caches the remote plugin catalog and refreshes it after 3 hours."
+loss = "Nothing lasting: Codex fetches the catalog again."
+category = "cache"
+platforms = ["linux"]
+
+[rule.scope]
+root = "codex.home"
+selection = "codex-plugin-catalog-files"
+
+[rule.operation]
+kind = "report"
+
+[[rule]]
+id = "builtin.codex.store-inventory"
+integration = "codex"
+title = "Codex's logs and caches, reported only"
+description = "Logs, databases of logs, caches and temporary files in the Codex home."
+why = "Codex keeps these in its home directory."
+loss = "Nothing. Report only."
+category = "cache"
+
+[rule.scope]
+root = "codex.home"
+selection = "codex-store-entries"
+
+[rule.operation]
+kind = "report"
