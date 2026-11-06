@@ -26,7 +26,7 @@ use kipple_core::{
 };
 
 use super::GitQuery;
-use super::command::{Git, identity, os_string};
+use super::command::{Git, identity, os_string, records};
 use crate::fs_probe::NoFollowFs;
 
 /// The first git with `worktree list --porcelain -z`. Without it a path or a lock reason
@@ -303,8 +303,8 @@ impl Asking<'_> {
         if exists(&self.links.admin.join("reftable"))? {
             return Ok(ConfigGate::Blocked(ConfigClass::RefStorage));
         }
-        let names = self.ask(&["config", "--includes", "--null", "--name-only", "--list"])?;
-        let class = records(&names)?.into_iter().find_map(config_class);
+        let classes = self.git.config_classes(&self.links.checkout, self.cancel)?;
+        let class = classes.into_iter().next();
         Ok(class.map_or(ConfigGate::Clear, ConfigGate::Blocked))
     }
 
@@ -462,32 +462,6 @@ fn parse_place(stdout: &[u8]) -> Result<WorktreePlace, GitGap> {
         common_dir: absolute(common_dir).ok_or(GitGap::Truncated)?,
         top: absolute(top).ok_or(GitGap::Truncated)?,
     })
-}
-
-/// The class of the config key `name`, if it is one the gate stops at. Git prints a key's
-/// section and variable in lowercase, and the part between them as written.
-fn config_class(name: &[u8]) -> Option<ConfigClass> {
-    let name = String::from_utf8_lossy(name).to_ascii_lowercase();
-    let (section, rest) = name.split_once('.')?;
-    let variable = rest.rsplit('.').next()?;
-    match (section, variable) {
-        ("filter", "clean" | "smudge" | "process") => Some(ConfigClass::Filter),
-        ("remote", "promisor" | "partialclonefilter") | ("extensions", "partialclone") => {
-            Some(ConfigClass::PartialClone)
-        }
-        ("core", "worktree") => Some(ConfigClass::WorkTree),
-        ("extensions", "refstorage") => Some(ConfigClass::RefStorage),
-        _ => None,
-    }
-}
-
-/// The records of output that ends each one in a NUL.
-fn records(stdout: &[u8]) -> Result<Vec<&[u8]>, GitGap> {
-    if stdout.is_empty() {
-        return Ok(Vec::new());
-    }
-    let body = stdout.strip_suffix(b"\0").ok_or(GitGap::Truncated)?;
-    Ok(body.split(|byte| *byte == 0).collect())
 }
 
 /// `worktree list --porcelain -z`: attributes that each end in a NUL, and one more NUL after
@@ -648,6 +622,7 @@ fn files_below(dir: &Path) -> Result<u64, GitGap> {
 
 #[cfg(test)]
 mod tests {
+    use super::super::command::config_class;
     use super::*;
 
     /// An absolute path on this system, as git prints one.

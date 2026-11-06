@@ -4,7 +4,7 @@
 use std::os::unix::fs::PermissionsExt as _;
 
 use super::*;
-use kipple_core::{GitGap, Omission, TrackedQuery as _, WorktreeQuery as _};
+use kipple_core::{GitGap, Omission, Tracked, TrackedQuery as _, WorktreeQuery as _};
 
 /// A script the test's config names, which leaves a marker if anything runs it.
 struct Marker {
@@ -397,7 +397,18 @@ fn remove_pack(index: &Path) {
 fn a_treeless_sparse_clone_runs_nothing_at_scan() {
     let repo = Repo::bare_bones(Refs::Files);
     let mark = treeless_sparse_clone(&repo);
+    let clone = repo.projects().join("clone");
+    let program = format!("!{}", mark.script);
+    repo.git_in(&clone, &["config", "remote.origin.vcs", "\n"]);
+    repo.git_in(&clone, &["config", "help.autocorrect", "-1"]);
+    repo.git_in(&clone, &["config", "alias.remote-x", &program]);
+    write(&repo.checkout.join("away/web/package.json"), b"{}\n");
+    write(
+        &repo.checkout.join("away/web/node_modules/dep/index.js"),
+        b"\n",
+    );
 
+    // Neither second line is here: what holds is that no fetch starts.
     let scan = repo.scan_in(&git_with_no_guard(&repo));
 
     assert!(!mark.path.exists(), "the scan ran no program");
@@ -405,6 +416,96 @@ fn a_treeless_sparse_clone_runs_nothing_at_scan() {
         scan.fact("worktree.config_gate"),
         FactValue::Enum("blocked")
     );
+    let artifact = scan
+        .0
+        .findings
+        .iter()
+        .find(|f| f.path.ends_with("node_modules"));
+    let tracked = artifact.and_then(|f| f.facts.as_ref()).map(|f| &f.tracked);
+    assert!(
+        matches!(
+            tracked,
+            Some(Tracked::InsideRepository {
+                gap: GitGap::Failed,
+                ..
+            })
+        ),
+        "the artifact is held: {tracked:?}"
+    );
+}
+
+/// Ways a repository comes to be a promisor, as its config names them.
+const PROMISORS: [(&str, Change); 4] = [
+    ("remote.origin.promisor", |repo| {
+        repo.git(&["config", "remote.origin.promisor", "true"]);
+    }),
+    ("remote.origin.partialclonefilter", |repo| {
+        repo.git(&["config", "remote.origin.partialclonefilter", "blob:none"]);
+    }),
+    ("extensions.partialClone", |repo| {
+        repo.git(&["config", "extensions.partialClone", "origin"]);
+    }),
+    ("an included file", |repo| {
+        let included = repo.temp.path().join("included");
+        write(&included, b"[remote \"origin\"]\n\tpromisor = true\n");
+        let text = included.display().to_string();
+        repo.git(&["config", "include.path", &text]);
+    }),
+];
+
+/// A worktree with one tracked file in `src`, whose count is 1.
+fn with_tracked_file() -> Repo {
+    let repo = Repo::new();
+    write(&repo.checkout.join("src/kept.txt"), b"x\n");
+    repo.wt(&["add", "--", "src"]);
+    repo
+}
+
+/// What git answers of `src` in the worktree of `repo`, and how many `ls-files` that took.
+fn asked_what_is_tracked(repo: &Repo) -> (Result<u64, GitGap>, usize) {
+    let (env, log) = logging_git(repo);
+    let src = repo.checkout.join("src");
+    let count = GitQuery::new(&env).count(&repo.checkout, &src, &CancelToken::new());
+    (count, runs(&log, " ls-files "))
+}
+
+/// Catches `ls-files` reaching a promisor: from there a lazy fetch can start, and a fetch
+/// reaches programs and URLs no transport list covers (`fetch.bundleURI`, `core.askPass`),
+/// so the only safe fetch is the one that never starts. A complete repository still answers,
+/// which also shows the log would catch a run.
+#[test]
+fn a_promisor_never_reaches_ls_files_when_asked_what_is_tracked() {
+    let complete = asked_what_is_tracked(&with_tracked_file());
+    assert_eq!(complete.0, Ok(1));
+    assert_ne!(complete.1, 0, "a complete repository is asked");
+
+    for (name, promisor) in PROMISORS {
+        let repo = with_tracked_file();
+        promisor(&repo);
+
+        let (count, listed) = asked_what_is_tracked(&repo);
+
+        assert_eq!(count, Err(GitGap::Failed), "{name}");
+        assert_eq!(listed, 0, "{name}");
+    }
+}
+
+/// Catches a config git couldn't list read as a repository with no promisor.
+#[test]
+fn a_config_git_couldnt_list_holds_the_tracked_query() {
+    let repo = with_tracked_file();
+    let bin = repo.temp.path().join("bin");
+    let text = format!(
+        "#!/bin/sh\ncase \"$*\" in\n*'config --includes'*) exit 1 ;;\nesac\nexec '{}' \"$@\"\n",
+        real_git().display()
+    );
+    executable(&bin.join("git"), &text);
+    let query = GitQuery::new(&repo.env_with(bin.into_os_string()));
+    let src = repo.checkout.join("src");
+
+    let count = query.count(&repo.checkout, &src, &CancelToken::new());
+
+    assert_eq!(count, Err(GitGap::Failed));
 }
 
 /// Catches the same read in the tracked query, which has no gate: it runs for an artifact
@@ -527,14 +628,16 @@ fn records_that_disagree_with_nothing_placed_read_invalid() {
 
 /// Catches a transport denial a repository can name its way past. `Git::tracked` has no gate,
 /// and a remote can pick a helper by any name, the empty one as well, which git runs as
-/// `git remote-<name>`: an alias of that name in the repository's config then runs a program.
-/// The last route's alias form needs git 2.54, and an older git ignores it.
+/// `git remote-<name>`: an alias of that name in the repository's config then runs a program,
+/// and `help.autocorrect` turns a name no alias can hold into one that can. The third route's
+/// alias form needs git 2.54, and an older git ignores it.
 #[test]
 fn no_helper_a_repository_names_runs_when_asked_what_is_tracked() {
     let routes = [
         ("remote.origin.url", "::x", "alias.remote-"),
         ("remote.origin.vcs", "none", "alias.remote-none"),
         ("remote.origin.vcs", "_", "alias.remote-_.command"),
+        ("remote.origin.vcs", "\n", "alias.remote-x"),
     ];
     for (key, value, alias) in routes {
         let repo = Repo::bare_bones(Refs::Files);
@@ -543,6 +646,7 @@ fn no_helper_a_repository_names_runs_when_asked_what_is_tracked() {
         repo.git_in(&clone, &["config", key, value]);
         let program = format!("!{}", mark.script);
         repo.git_in(&clone, &["config", alias, &program]);
+        repo.git_in(&clone, &["config", "help.autocorrect", "-1"]);
         let query = GitQuery::new(&git_that_can_fetch(&repo));
         let left = repo.checkout.join("away/left");
         fs::create_dir_all(&left).unwrap();

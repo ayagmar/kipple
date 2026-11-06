@@ -33,11 +33,11 @@ pub(crate) fn git_isolation() -> Vec<Var<'static>> {
         var("GIT_OPTIONAL_LOCKS", "0"),
         var("GIT_PAGER", "cat"),
         var("GIT_NO_LAZY_FETCH", "1"),
-        // Git allows only the names listed here, so a fetch dies before it can run a
-        // repository's `core.sshCommand`, on the gits that ignore the line above as well.
-        // A repository can name a helper itself and reach it through an alias of the same
-        // name, so the one name listed is one no alias can hold. Empty or `:` would list
-        // the empty name, which `::x` as a remote's URL picks.
+        // Both of these are second lines. What holds is that a promisor is refused, so no
+        // fetch starts: no version number says which gits honour the line above, and a
+        // fetch that has started can reach what this list never sees, as `fetch.bundleURI`
+        // does. Git can't be told to list nothing, so it lists one name no alias can hold:
+        // empty or `:` would list the empty name, which `::x` as a remote's URL picks.
         var("GIT_ALLOW_PROTOCOL", "\n"),
         // Windows has no directory that can't hold a file: its XDG directory stays unset,
         // as `HOME` is, so git looks for none.

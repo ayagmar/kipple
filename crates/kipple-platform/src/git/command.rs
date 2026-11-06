@@ -1,9 +1,11 @@
 //! Running git: found once on `PATH`, checked to be the same file before each run, and
 //! isolated from every config and hook but the repository's own. Its command line overrides
-//! `core.fsmonitor` and `core.hooksPath`, its environment stops a lazy fetch where git
-//! honours that, and the worktree queries read the repository's config names before they
-//! ask anything that could run a filter (`worktree.rs`), because a repository's config can
-//! name a program no override reaches.
+//! `core.fsmonitor` and `core.hooksPath`, and every query that can read an object reads the
+//! repository's config names first, because a repository's config can name a program no
+//! override reaches. The worktree queries stop at what could run a filter (`worktree.rs`), and
+//! the tracked query at a promisor: a lazy fetch only starts in one, and once it has started
+//! it reaches programs and URLs nothing here covers. Which gits honour `GIT_NO_LAZY_FETCH`
+//! no version number says, so that variable and `GIT_ALLOW_PROTOCOL` are second lines.
 
 use std::ffi::{OsStr, OsString};
 use std::fs;
@@ -11,7 +13,8 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use kipple_core::{
-    CancelToken, Component, FileIdentity, GIT_ISOLATION, GitGap, NativeTool, ToolVersion,
+    CancelToken, Component, ConfigClass, FileIdentity, GIT_ISOLATION, GitGap, NativeTool,
+    ToolVersion,
 };
 
 use crate::capabilities;
@@ -31,8 +34,8 @@ pub(super) const OUTPUT_LIMIT: u64 = 64 * 1024 * 1024;
 const OLDEST: [u64; 2] = [2, 32];
 
 /// The first git with `ls-files --sparse`. An older one expands a sparse index, which is the
-/// right answer in a complete repository. In a partial clone that is a fetch, which
-/// `GIT_ALLOW_PROTOCOL` refuses and [`read_index`] reads as a failure.
+/// right answer in a complete repository, and a promisor, where it would be a fetch, never
+/// gets that far.
 const SPARSE_OLDEST: [u64; 2] = [2, 35];
 
 /// The git kipple runs: an absolute path from `PATH`, and the file it was when its version
@@ -109,6 +112,21 @@ impl Git {
         read_index(self.run(dir, Matching::Exact, &tail, cancel)?)
     }
 
+    /// The class of each key the config at `dir` names that kipple stops at, in git's order.
+    /// Names only, with includes, because a value can hold a credential.
+    pub(super) fn config_classes(
+        &self,
+        dir: &Path,
+        cancel: &CancelToken,
+    ) -> Result<Vec<ConfigClass>, GitGap> {
+        let tail = ["config", "--includes", "--null", "--name-only", "--list"];
+        let names = self.ask(dir, &tail, cancel)?;
+        Ok(records(&names)?
+            .into_iter()
+            .filter_map(config_class)
+            .collect())
+    }
+
     /// The work tree git finds from `dir`, as it prints it.
     pub(super) fn toplevel(&self, dir: &Path, cancel: &CancelToken) -> Result<PathBuf, GitGap> {
         let tail = [OsStr::new("rev-parse"), OsStr::new("--show-toplevel")];
@@ -127,12 +145,19 @@ impl Git {
     /// still expands the index for a sparse directory that has something on disk, as an
     /// item below one does, unless config says not to, which would hide what is tracked
     /// there: so that config is overridden, and [`read_index`] sees an expansion that failed.
+    /// In a promisor an expansion can be a fetch, so one is refused before `ls-files` runs.
     pub(super) fn tracked(
         &self,
         dir: &Path,
         pathspec: &Pathspec,
         cancel: &CancelToken,
     ) -> Result<Listing, GitGap> {
+        if self
+            .config_classes(dir, cancel)?
+            .contains(&ConfigClass::PartialClone)
+        {
+            return Err(GitGap::Failed);
+        }
         let mut tail = vec![
             OsStr::new("-c"),
             OsStr::new("sparse.expectFilesOutsideOfPatterns=false"),
@@ -189,6 +214,32 @@ impl Git {
         }
         Ok(output)
     }
+}
+
+/// The class of the config key `name`, if it is one the gate stops at. Git prints a key's
+/// section and variable in lowercase, and the part between them as written.
+pub(super) fn config_class(name: &[u8]) -> Option<ConfigClass> {
+    let name = String::from_utf8_lossy(name).to_ascii_lowercase();
+    let (section, rest) = name.split_once('.')?;
+    let variable = rest.rsplit('.').next()?;
+    match (section, variable) {
+        ("filter", "clean" | "smudge" | "process") => Some(ConfigClass::Filter),
+        ("remote", "promisor" | "partialclonefilter") | ("extensions", "partialclone") => {
+            Some(ConfigClass::PartialClone)
+        }
+        ("core", "worktree") => Some(ConfigClass::WorkTree),
+        ("extensions", "refstorage") => Some(ConfigClass::RefStorage),
+        _ => None,
+    }
+}
+
+/// The records of output that ends each one in a NUL.
+pub(super) fn records(stdout: &[u8]) -> Result<Vec<&[u8]>, GitGap> {
+    if stdout.is_empty() {
+        return Ok(Vec::new());
+    }
+    let body = stdout.strip_suffix(b"\0").ok_or(GitGap::Truncated)?;
+    Ok(body.split(|byte| *byte == 0).collect())
 }
 
 /// What `ls-files` printed, unless it lost part of the index: a tree it couldn't read when
