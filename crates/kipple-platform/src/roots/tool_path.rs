@@ -105,9 +105,10 @@ fn drive_path(text: &str) -> Option<String> {
 /// The path a `file://` URL names, as Node's `fileURLToPath` gives it, with its dot segments
 /// still to fold. The URL parser Node runs first drops or rewrites what is refused here, so
 /// reading those forms as text would name another directory: a backslash, a tab, a line
-/// break and white space at the end. Also refused, as `fileURLToPath` refuses them: another
-/// host outside Windows, an encoded separator, bad percent-encoding, and on Windows a local
-/// path with no drive.
+/// break and white space at the end. So is a path whose dot segments the parser folds
+/// differently, see [`folds_differently`]. Also refused, as `fileURLToPath` refuses them:
+/// another host outside Windows, an encoded separator, bad percent-encoding, and on Windows
+/// a local path with no drive.
 fn file_url(text: &str, platform: Platform) -> Option<String> {
     let rest = text.strip_prefix("file://")?;
     if text.contains(['\\', '\t', '\r', '\n']) || text.ends_with(|c| c <= ' ') {
@@ -121,6 +122,9 @@ fn file_url(text: &str, platform: Platform) -> Option<String> {
         host
     };
     let path = percent_decoded(path, platform)?;
+    if folds_differently(host, &path, platform) {
+        return None;
+    }
     if platform != Platform::Windows {
         return host.is_empty().then(|| format!("/{path}"));
     }
@@ -132,6 +136,28 @@ fn file_url(text: &str, platform: Platform) -> Option<String> {
         return None;
     };
     letter.is_ascii_alphabetic().then_some(path)
+}
+
+/// Whether the URL parser reads the decoded `path` differently from a fold by text. Its `..`
+/// pops an empty segment, which a fold never sees. On every OS it keeps a drive that comes
+/// first once dot segments are gone, so `..` can't pop it and `C|` becomes `C:`, which leaves
+/// the path wrong outside Windows, where that is an ordinary name. With a host on Windows it
+/// folds before the share is split off, and a fold stops at the share.
+fn folds_differently(host: &str, path: &str, platform: Platform) -> bool {
+    let dotted = path.split('/').any(|segment| matches!(segment, "." | ".."));
+    if dotted && path.split('/').any(str::is_empty) {
+        return true;
+    }
+    if platform == Platform::Windows {
+        return dotted && !host.is_empty();
+    }
+    let first = path.split('/').next().is_some_and(names_a_drive);
+    first || (dotted && path.split('/').any(names_a_drive))
+}
+
+/// Whether the URL parser reads `segment` as a drive, on any OS.
+const fn names_a_drive(segment: &str) -> bool {
+    matches!(segment.as_bytes(), [letter, b':' | b'|'] if letter.is_ascii_alphabetic())
 }
 
 /// Whether the URL parser keeps `host` as it is written. A drive (`C:`, `C|`), an escape or
@@ -224,6 +250,9 @@ mod tests {
             (Tool::Pi, LINUX, "file:///a?q ", "file:///a?q "),
             (Tool::Pi, LINUX, " file:///a", " file:///a"),
             (Tool::Pi, LINUX, "file:///a b", "/a b"),
+            (Tool::Pi, LINUX, "file:///home/u/pi", "/home/u/pi"),
+            (Tool::Pi, LINUX, "file:///a//b", "/a/b"),
+            (Tool::Pi, LINUX, "file:///a/C:/x", "/a/C:/x"),
             (Tool::Pi, WINDOWS, "file://C:/x", "file://C:/x"),
             (Tool::Pi, WINDOWS, "file://C|/x", "file://C|/x"),
             (Tool::Pi, WINDOWS, "file://a%62/x", "file://a%62/x"),
@@ -252,6 +281,34 @@ mod tests {
             let found = folded(&tool.plain(text, platform));
             let expected = PathBuf::from(expected);
             assert_eq!(found, expected, "{tool:?} on {platform:?} for {text:?}");
+        }
+
+        let rewritten_by_the_url_parser = [
+            (LINUX, "file:///a//../b"),
+            (LINUX, "file:///a/b//../../c"),
+            (LINUX, "file:///home//../home/u/pi"),
+            (LINUX, "file:///a//%2e%2e/b"),
+            (LINUX, "file:///a//./b"),
+            (LINUX, "file:///C:/../x"),
+            (LINUX, "file:///c:/x/../../y"),
+            (LINUX, "file:///c:/a/../../x"),
+            (LINUX, "file:///C|/x"),
+            (LINUX, "file:///C:/x"),
+            (LINUX, "file:///C:"),
+            (LINUX, "file:///a/../C|/x"),
+            (LINUX, "file:///./C:/../x"),
+            (LINUX, "file:///%2e/C:/../x"),
+            (Platform::Macos, "file:///C:/x"),
+            (WINDOWS, "file://server/a/../b"),
+            (WINDOWS, "file://server/share/../x"),
+            (WINDOWS, "file://server/share/%2e%2e/x"),
+            (WINDOWS, "file://server/share/./x"),
+            (WINDOWS, "file:///C:/a//../b"),
+        ];
+
+        for (platform, text) in rewritten_by_the_url_parser {
+            let found = Tool::Pi.plain(text, platform);
+            assert_eq!(found, PathBuf::from(text), "refused on {platform:?}");
         }
     }
 }
