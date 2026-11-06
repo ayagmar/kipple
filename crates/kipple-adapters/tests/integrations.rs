@@ -34,7 +34,7 @@ use std::path::Path;
 
 use harness::{Scanned, scan};
 use kipple_adapters::builtin;
-use kipple_core::{Advice, Evidence, ScanReport, SymbolicRoot};
+use kipple_core::{Advice, Evidence, OwnerStatus, ScanReport, SymbolicRoot};
 use tree::FixtureTree;
 
 fn advice<'r>(report: &'r ScanReport, integration: &str) -> &'r [Advice] {
@@ -299,4 +299,42 @@ fn every_builtin_rule_applies_only_where_its_integration_runs() {
             );
         }
     }
+}
+
+/// Catches a stub reporting its layout as supported, which would open whatever its roots
+/// declare before anything has verified them, or finding something with no fixture behind
+/// it.
+#[test]
+fn a_stub_finds_nothing_and_keeps_its_roots_closed() {
+    let Scanned { report, .. } = scan(&demo_home::tree(demo_home::looked_at()));
+
+    for id in ["codex", "cursor", "git", "npm", "pi"] {
+        let integration = report.integrations.iter().find(|i| i.id.0 == id).unwrap();
+        assert_eq!(integration.owner, OwnerStatus::Unsupported, "{id}");
+        assert!(
+            report.findings.iter().all(|f| f.integration.0 != id),
+            "{id} found nothing"
+        );
+    }
+}
+
+/// Catches `prune` advised for a checkout still on disk: it drops the admin directory, which
+/// leaves the checkout unable to reach its repository.
+#[test]
+fn only_a_missing_checkout_is_advised_to_prune() {
+    let path = Path::new("/work/moved");
+    let moved = builtin::Anomaly::Unregistered(path, builtin::Unregistered::Moved);
+    let gone = builtin::Anomaly::Unregistered(path, builtin::Unregistered::TargetGone);
+    let snippets = |anomaly| builtin::registration_advice(anomaly).snippets;
+
+    assert_eq!(
+        snippets(builtin::Anomaly::Missing),
+        ["git worktree prune --dry-run --verbose"]
+    );
+    assert_eq!(
+        snippets(moved),
+        [format!("git worktree repair {}", path.display())]
+    );
+    assert_eq!(snippets(gone), [] as [String; 0]);
+    assert_eq!(snippets(builtin::Anomaly::Invalid), [] as [String; 0]);
 }

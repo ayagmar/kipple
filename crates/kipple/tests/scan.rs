@@ -200,7 +200,7 @@ fn a_lens_scans_only_its_own_integrations() {
         .iter()
         .map(|i| i["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ran, ["claude-code"]);
+    assert_eq!(ran, ["claude-code", "codex", "cursor", "git", "pi"]);
     assert_eq!(report["findings"], Value::Array(Vec::new()));
 }
 

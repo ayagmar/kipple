@@ -252,6 +252,7 @@ The Cargo, Node and Python rules propose `remove-files` with `delete` or `trash`
 | Pacman | system | the package cache, when not empty (Linux) | the root | — (report only, advice) | pacman 7.1.0 |
 | journald | system | the persistent journal, when not empty (Linux) | the root | — (report only, advice) | systemd 262 |
 | Claude Code | agents | nothing yet; advice only | — | — | Claude Code settings docs, checked 2026-10-11 |
+| Codex, Git worktrees, npm, Pi, Cursor | agents, except npm (dev) | nothing yet: each has its descriptor, its closed roots and its rules as `report` | — | — | nothing yet |
 
 A `target`, `node_modules` or `.venv` with no recognised signature is still reported, with `no-signature` evidence, so an unknown layout is visible but can never become eligible. A candidate that can't be listed, including a `__pycache__`, is reported with no layout evidence at all. Generic `dirs-matching` and `files-matching` rules from third-party packs are validated but not evaluated before M5.
 

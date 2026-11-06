@@ -45,10 +45,141 @@
           "root": "claude.config",
           "entries": [],
           "delegates": []
+        },
+        {
+          "root": "claude.home",
+          "entries": [],
+          "delegates": [
+            "claude.config"
+          ]
+        },
+        {
+          "root": "claude.config-file",
+          "entries": [],
+          "delegates": []
+        },
+        {
+          "root": "claude.versions",
+          "entries": [],
+          "delegates": []
+        },
+        {
+          "root": "claude.install-state",
+          "entries": [],
+          "delegates": []
         }
       ],
       "open": [],
-      "rules": [],
+      "rules": [
+        "builtin.claude-code.closed-debug-logs",
+        "builtin.claude-code.versions",
+        "builtin.claude-code.store-inventory"
+      ],
+      "platforms": [
+        {
+          "platform": "linux",
+          "discover": true,
+          "report": true,
+          "mutate": false
+        },
+        {
+          "platform": "macos",
+          "discover": true,
+          "report": true,
+          "mutate": false
+        },
+        {
+          "platform": "windows",
+          "discover": true,
+          "report": true,
+          "mutate": false
+        }
+      ]
+    },
+    {
+      "id": "codex",
+      "lens": "agents",
+      "verified": [],
+      "facts": [],
+      "protected": [
+        {
+          "root": "codex.home",
+          "entries": [],
+          "delegates": []
+        },
+        {
+          "root": "codex.default-home",
+          "entries": [],
+          "delegates": [
+            "codex.home"
+          ]
+        },
+        {
+          "root": "codex.sqlite-home",
+          "entries": [],
+          "delegates": []
+        }
+      ],
+      "open": [],
+      "rules": [
+        "builtin.codex.stale-releases",
+        "builtin.codex.release-inventory",
+        "builtin.codex.legacy-tui-log",
+        "builtin.codex.plugin-catalog-cache",
+        "builtin.codex.store-inventory"
+      ],
+      "platforms": [
+        {
+          "platform": "linux",
+          "discover": true,
+          "report": true,
+          "mutate": false
+        },
+        {
+          "platform": "macos",
+          "discover": true,
+          "report": true,
+          "mutate": false
+        },
+        {
+          "platform": "windows",
+          "discover": true,
+          "report": true,
+          "mutate": false
+        }
+      ]
+    },
+    {
+      "id": "cursor",
+      "lens": "agents",
+      "verified": [],
+      "facts": [],
+      "protected": [
+        {
+          "root": "cursor.config",
+          "entries": [],
+          "delegates": []
+        },
+        {
+          "root": "cursor.app-data",
+          "entries": [],
+          "delegates": []
+        },
+        {
+          "root": "cursor.cli",
+          "entries": [],
+          "delegates": []
+        },
+        {
+          "root": "cursor.server",
+          "entries": [],
+          "delegates": []
+        }
+      ],
+      "open": [],
+      "rules": [
+        "builtin.cursor.app-data-size"
+      ],
       "platforms": [
         {
           "platform": "linux",
@@ -64,7 +195,40 @@
         },
         {
           "platform": "windows",
-          "discover": false,
+          "discover": true,
+          "report": true,
+          "mutate": false
+        }
+      ]
+    },
+    {
+      "id": "git",
+      "lens": "agents",
+      "verified": [],
+      "facts": [],
+      "protected": [],
+      "open": [],
+      "rules": [
+        "builtin.git.worktree-remove",
+        "builtin.git.worktree-inventory",
+        "builtin.git.worktree-anomalies"
+      ],
+      "platforms": [
+        {
+          "platform": "linux",
+          "discover": true,
+          "report": true,
+          "mutate": false
+        },
+        {
+          "platform": "macos",
+          "discover": true,
+          "report": true,
+          "mutate": false
+        },
+        {
+          "platform": "windows",
+          "discover": true,
           "report": true,
           "mutate": false
         }
@@ -139,6 +303,51 @@
       ]
     },
     {
+      "id": "npm",
+      "lens": "dev",
+      "verified": [],
+      "facts": [],
+      "protected": [
+        {
+          "root": "npm.cache",
+          "entries": [],
+          "delegates": []
+        },
+        {
+          "root": "npm.default-cache",
+          "entries": [],
+          "delegates": [
+            "npm.cache"
+          ]
+        }
+      ],
+      "open": [],
+      "rules": [
+        "builtin.npm.cache",
+        "builtin.npm.inventory"
+      ],
+      "platforms": [
+        {
+          "platform": "linux",
+          "discover": true,
+          "report": true,
+          "mutate": false
+        },
+        {
+          "platform": "macos",
+          "discover": true,
+          "report": true,
+          "mutate": false
+        },
+        {
+          "platform": "windows",
+          "discover": true,
+          "report": true,
+          "mutate": false
+        }
+      ]
+    },
+    {
       "id": "pacman",
       "lens": "system",
       "verified": [
@@ -167,6 +376,56 @@
           "platform": "windows",
           "discover": false,
           "report": false,
+          "mutate": false
+        }
+      ]
+    },
+    {
+      "id": "pi",
+      "lens": "agents",
+      "verified": [],
+      "facts": [],
+      "protected": [
+        {
+          "root": "pi.agent",
+          "entries": [],
+          "delegates": []
+        },
+        {
+          "root": "pi.home",
+          "entries": [],
+          "delegates": [
+            "pi.agent"
+          ]
+        },
+        {
+          "root": "pi.session-dir",
+          "entries": [],
+          "delegates": []
+        }
+      ],
+      "open": [],
+      "rules": [
+        "builtin.pi.closed-logs",
+        "builtin.pi.store-inventory"
+      ],
+      "platforms": [
+        {
+          "platform": "linux",
+          "discover": true,
+          "report": true,
+          "mutate": false
+        },
+        {
+          "platform": "macos",
+          "discover": true,
+          "report": true,
+          "mutate": false
+        },
+        {
+          "platform": "windows",
+          "discover": true,
+          "report": true,
           "mutate": false
         }
       ]

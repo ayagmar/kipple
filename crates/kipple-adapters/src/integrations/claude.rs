@@ -4,20 +4,51 @@
 //! files arrive with spike S5.
 
 use kipple_core::{
-    Advice, FindingSink, Integration, IntegrationDescriptor, IntegrationError, IntegrationId, Lens,
-    Platform, ScanContext, StateDeclaration, SymbolicRoot, Unresolved,
+    Advice, FindingSink, Integration, IntegrationDescriptor, IntegrationError, IntegrationId,
+    IntegrationSelector, Lens, Platform, ScanContext, StateDeclaration, SymbolicRoot, Unresolved,
 };
 
-/// Its configuration directory stays closed whole until its layout is verified, and a
-/// `$CLAUDE_CONFIG_DIR` that can't be used may hide credentials anywhere, so that holds
-/// everything.
-const STATE: &[StateDeclaration] = &[StateDeclaration {
-    root: SymbolicRoot::ClaudeConfig,
-    protected: &[],
-    open: &[],
-    delegates: &[],
-    unresolved: Unresolved::HoldAll,
-}];
+const SELECTORS: &[IntegrationSelector] = &[
+    IntegrationSelector {
+        name: "claude-debug-logs",
+        meaning: "one regular file per session in the debug directory",
+    },
+    IntegrationSelector {
+        name: "claude-versions",
+        meaning: "the versions a native install keeps",
+    },
+    IntegrationSelector {
+        name: "claude-store-entries",
+        meaning: "entries of the configuration directory that are reported and never removed",
+    },
+];
+
+const fn closed(root: SymbolicRoot, delegates: &'static [SymbolicRoot]) -> StateDeclaration {
+    StateDeclaration {
+        root,
+        protected: &[],
+        open: &[],
+        delegates,
+        unresolved: Unresolved::HoldOwn,
+    }
+}
+
+/// Its roots stay closed whole until its layout is verified, and a `$CLAUDE_CONFIG_DIR` that
+/// can't be used may hide credentials anywhere, so that holds everything. `~/.claude` stays
+/// declared when that variable moves the rest, because upstream still writes there.
+const STATE: &[StateDeclaration] = &[
+    StateDeclaration {
+        root: SymbolicRoot::ClaudeConfig,
+        protected: &[],
+        open: &[],
+        delegates: &[],
+        unresolved: Unresolved::HoldAll,
+    },
+    closed(SymbolicRoot::ClaudeHome, &[SymbolicRoot::ClaudeConfig]),
+    closed(SymbolicRoot::ClaudeConfigFile, &[]),
+    closed(SymbolicRoot::ClaudeVersions, &[]),
+    closed(SymbolicRoot::ClaudeInstallState, &[]),
+];
 
 /// Claude Code's default retention, in days.
 const DEFAULT_DAYS: u64 = 30;
@@ -36,7 +67,7 @@ impl Integration for ClaudeCode {
             lens: Lens::Agents,
             platforms: Platform::ALL,
             roots: &[SymbolicRoot::ClaudeConfig],
-            selectors: &[],
+            selectors: SELECTORS,
             artifacts: &[],
             owner_files: &[],
             verified: &[],
