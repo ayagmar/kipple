@@ -61,10 +61,10 @@ pub struct IntegrationDescriptor {
     /// Its revision: bumped whenever its code changes what it finds, how it verifies a
     /// layout, or the consequence it attaches. A profile freezes it with the rule, so a
     /// change that lives in code no [`Rule`] shows suspends the profile's entries for its
-    /// rules. `kipple-adapters/tests/integration_revision.rs` keeps each revision's digest
-    /// of the integration's output over its layout fixtures, and fails unless the current
-    /// pair is its newest row: changed output passes only with this bumped and a row
-    /// appended.
+    /// rules. `kipple-adapters/tests/golden/revision` keeps each revision's digest of the
+    /// integration's output over its layout fixtures, and `integration_revision.rs` fails
+    /// unless the current pair is its newest row: changed output passes only with this
+    /// bumped and a row appended.
     pub revision: u32,
 }
 

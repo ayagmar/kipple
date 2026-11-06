@@ -1,8 +1,12 @@
 //! The golden of what each built-in integration finds and says about it over its layout
 //! fixtures, negative ones included (spec M3c pinned 14): a profile freezes each
-//! integration's `revision`, so the revision must change whenever this output does. The
-//! golden is a history, so changed output can't pass by its digest being pasted over the
-//! old one.
+//! integration's `revision`, so the revision must change whenever this output does.
+//! `tests/golden/revision` holds a file per integration, every revision it has had, oldest
+//! first: the revision and the digest of what it found over the fixtures. A change to what
+//! one finds appends a row with its next revision, and a row is never edited, which review
+//! holds to: this test sees only the rows as they are now.
+//! Linux runs every integration; the other systems leave some out, so the digests are
+//! Linux's, which CI runs.
 #![expect(
     clippy::unwrap_used,
     reason = "a fixture that fails to build fails the test"
@@ -10,6 +14,8 @@
 
 #[path = "fixtures/demo_home.rs"]
 mod demo_home;
+#[path = "golden/rows.rs"]
+mod golden;
 #[path = "fixtures/scan.rs"]
 mod harness;
 #[path = "fixtures/tree.rs"]
@@ -42,22 +48,6 @@ use std::fmt::Write as _;
 use kipple_adapters::builtin;
 use kipple_core::{Digest, ScanReport};
 use tree::FixtureTree;
-
-/// Every revision each built-in integration has had, by ID, oldest first: its ID, the
-/// revision and the digest of what it found over the fixtures. A change to what one finds
-/// appends a row with its next revision; a row is never edited, so pasting a new digest
-/// over the current one fails.
-/// Linux runs every integration; the other systems leave some out, so the digests are
-/// Linux's, which CI runs.
-const HISTORY: &[(&str, u32, &str)] = &[
-    ("cargo", 1, "0e697897cb5b69e21c7e9c0e34286df0"),
-    ("claude-code", 1, "6c62272e07bb014262b821756295c58d"),
-    ("journald", 1, "e49780136435bcd315cc754678ba943d"),
-    ("node", 1, "33375509d0fb63b07c0536a2f84bf3d4"),
-    ("pacman", 1, "3cacf4638284236d5a3f07f4f76e18c2"),
-    ("python", 1, "dbd2f33b7e200232c1e2b0ec124102b1"),
-    ("trash", 1, "0ec6cbf58676b78efbb8d575ed1f1bca"),
-];
 
 /// Layouts beside the supported ones: a cargo target without its tag or with a forged
 /// one, bytecode beside other files or inside an environment, a `node_modules` without
@@ -168,7 +158,8 @@ fn lines(base: &std::path::Path, report: &ScanReport, into: &mut BTreeMap<String
 }
 
 /// Catches an integration whose findings or facts changed while its revision didn't,
-/// which would keep profiles made under the old behaviour active.
+/// which would keep profiles made under the old behaviour active, an integration with no
+/// row, and rows with no integration.
 #[test]
 fn every_integration_changes_only_with_its_revision() {
     if std::env::consts::OS != "linux" {
@@ -179,26 +170,45 @@ fn every_integration_changes_only_with_its_revision() {
         let harness::Scanned { temp, report } = harness::scan(&tree);
         lines(temp.path(), &report, &mut found);
     }
-    let wrong: Vec<String> = builtin::descriptors()
+    let mut history = golden::rows("revision").unwrap();
+    let mut wrong: Vec<String> = builtin::descriptors()
         .into_iter()
         .filter_map(|descriptor| {
             let id = descriptor.id.0;
             let text = found.get(id).map_or("", String::as_str);
             let digest = Digest::of_bytes(text.as_bytes()).to_string();
-            out_of_history(id, descriptor.revision, &digest)
+            let rows = history.remove(id).unwrap_or_default();
+            out_of_history(id, &rows, descriptor.revision, &digest)
         })
         .collect();
-    assert_eq!(wrong, [] as [String; 0]);
+    wrong.extend(
+        history
+            .into_keys()
+            .map(|id| format!("{id}: it has rows, but no integration has that ID")),
+    );
+    assert_eq!(
+        wrong,
+        [] as [String; 0],
+        "integration output changed: bump its revision"
+    );
 }
 
-/// Why `revision` and `digest`, the integration `id` now, aren't its newest row in
-/// [`HISTORY`]; `None` when they are.
-fn out_of_history(id: &str, revision: u32, digest: &str) -> Option<String> {
-    let rows: Vec<(u32, &str)> = HISTORY
+/// A row's revision and digest.
+fn parsed(row: &str) -> Option<(u32, &str)> {
+    let (revision, digest) = row.split_once(' ')?;
+    Some((revision.parse().ok()?, digest))
+}
+
+/// Why `revision` and `digest`, the integration `id` now, aren't the newest of its `rows`;
+/// `None` when they are.
+fn out_of_history(id: &str, rows: &[String], revision: u32, digest: &str) -> Option<String> {
+    let Some(rows) = rows
         .iter()
-        .filter(|(listed, ..)| *listed == id)
-        .map(|(_, listed, its)| (*listed, *its))
-        .collect();
+        .map(|row| parsed(row))
+        .collect::<Option<Vec<_>>>()
+    else {
+        return Some(format!("{id}: a row isn't `<revision> <digest>`: {rows:?}"));
+    };
     let revisions: Vec<u32> = rows.iter().map(|(listed, _)| *listed).collect();
     if !revisions.is_sorted_by(|a, b| a < b) {
         return Some(format!(
@@ -212,8 +222,8 @@ fn out_of_history(id: &str, revision: u32, digest: &str) -> Option<String> {
         let next = revisions.last().map_or(1, |newest| newest + 1);
         return Some(format!(
             "{id}: its output changed, but revision {revision} is listed with {listed}: bump \
-             its revision to {next} and append (\"{id}\", {next}, \"{digest}\") to HISTORY; \
-             never edit a row"
+             its revision to {next} and append `{next} {digest}` to \
+             tests/golden/revision/{id}.txt; never edit a row"
         ));
     }
     let newest = rows.last().copied();
