@@ -32,6 +32,7 @@ mod uv_v0_12_23;
 #[path = "../../../../../kipple-adapters/tests/fixtures/python/venv_v3_14_8.rs"]
 mod venv_v3_14_8;
 
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs;
@@ -42,18 +43,22 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use kipple_core::{
-    Allocated, Apparent, ApplyEvent, CancelToken, Completeness, Effect as Ran, Ending,
-    EventChannel, FileEffect, Finding, FindingId, Finished, Found, ItemEvent, ItemId, ItemMethod,
-    ItemOutcome, JudgementField, Left, LeftCount, LeftReason, Platform, Receipt, ReceiptItem,
-    Reconciled, Removed, RunId, ScanEvent, ScanReport, ScanRequest, Skip, SpaceEstimate,
-    event_channel,
+    AgentLabel, Allocated, Apparent, ApplyEvent, CancelToken, Checkout, CleanRequest, Completeness,
+    Effect as Ran, Ending, EventChannel, FileEffect, FileIdentity, Finding, FindingId, Finished,
+    Found, IntegrationId, ItemEvent, ItemId, ItemMethod, ItemOutcome, JudgementField, Left,
+    LeftCount, LeftReason, NativeKind, NativeTool, ObjectId, PlanMode, Platform, Proposal, Receipt,
+    ReceiptItem, Reconciled, Registration, RegistrationState, Removed, ResolvedTool, RunId,
+    ScanEvent, ScanReport, ScanRequest, Selection, Skip, SpaceEstimate, Subject, WorktreeFacts,
+    WorktreeWitness, event_channel, prepare_clean,
 };
 use kipple_platform::{Environment, PLATFORM};
 use tempfile::TempDir;
 
 use super::{Paint, look, press, screen, to, typed};
 use crate::config::{self, Settings};
-use crate::human::{receipt, review};
+use crate::human::{native, receipt, review};
+use crate::machine::Machine;
+use crate::mutate::prompt_shows;
 use crate::setup::Builtin;
 use crate::theme::Glyphs;
 use crate::tui::app::{
@@ -577,6 +582,96 @@ fn what_deleting_means_and_what_to_read_below_show_above_a_long_review() {
     assert!(
         shown.contains(&review::below(cautioned, 1).unwrap()),
         "{shown}"
+    );
+}
+
+/// `home`'s scan with the Cargo target at [`RUST_APP`] a linked worktree, whose removal
+/// is git's own command: no integration proposes one on a test's disk yet.
+fn native_scan(home: &Home) -> ScanReport {
+    let mut report = home.scan();
+    let finding = report
+        .findings
+        .iter_mut()
+        .find(|finding| finding.path.ends_with(RUST_APP))
+        .unwrap();
+    let identity = FileIdentity { volume: 1, file: 2 };
+    let witness = WorktreeWitness {
+        common: identity,
+        admin: identity,
+        gitfile: identity,
+        gitdir_file: identity,
+        head: ObjectId("a".repeat(40)),
+        branch: None,
+    };
+    let tool = ResolvedTool {
+        tool: NativeTool::Git,
+        path: PathBuf::from("/usr/bin/git"),
+        identity,
+        version: "2.56.0".to_owned(),
+        runtime: None,
+    };
+    let worktree = WorktreeFacts {
+        registration: Registration {
+            path: finding.path.clone(),
+            head: Some(ObjectId("a".repeat(40))),
+            checkout: Checkout::Detached,
+            locked: None,
+            prunable: false,
+            bare: false,
+        },
+        state: RegistrationState::RegisteredPresent,
+        repository: finding.path.clone(),
+        admin: None,
+        witness: Ok(witness),
+        tool: Ok(tool),
+        agent: AgentLabel::Unknown,
+    };
+    let facts = finding.facts.as_mut().unwrap();
+    facts.integration = IntegrationId::GIT;
+    facts.proposal = Proposal::Native(NativeKind::GitWorktreeRemove);
+    facts.supplied.subject = Subject::Worktree(Box::new(worktree));
+    report
+}
+
+// Catches a tool's command reaching a person without what it can't take back: the CLI's
+// prompt and the TUI's review each say so beside the command (pinned 23).
+#[test]
+fn a_native_plan_says_it_cannot_be_undone_at_the_prompt_and_in_the_review() {
+    let home = Home::new("");
+    let report = native_scan(&home);
+    let id = report
+        .findings
+        .iter()
+        .find(|finding| finding.path.ends_with(RUST_APP))
+        .unwrap()
+        .id;
+
+    let machine = Machine::from_settings(&home.builtin, &home.env, home.settings(), None).unwrap();
+    let selection = Selection(BTreeSet::from([id]));
+    let request = CleanRequest {
+        scan: &report,
+        selection: &selection,
+    };
+    let cancel = CancelToken::new();
+    let prepared =
+        machine.with_session(|session| prepare_clean(&request, session, PlanMode::Safe, &cancel));
+    let prompt = prompt_shows(&prepared.review(), &report, &machine.settings().policy).join("\n");
+    assert!(prompt.contains(native::NATIVE_CANNOT_UNDO), "{prompt}");
+    assert!(prompt.contains("worktree remove"), "{prompt}");
+
+    let mut app = home.scanning(&report, 160, 48);
+    app.update(Msg::Finished {
+        report: Arc::new(report),
+        elapsed: Duration::from_millis(1_240),
+    });
+    select(&mut app, &[RUST_APP]);
+    press(&mut app, &[Key::Enter]);
+    home.plan(&mut app);
+    let review = text(&app, 160, 48);
+    assert!(review.contains(native::NATIVE_CANNOT_UNDO), "{review}");
+    assert!(
+        review.contains("--no-optional-locks") && review.contains("rust-app/target"),
+        "the command and what it acts on, which may wrap: {review}"
     );
 }
 

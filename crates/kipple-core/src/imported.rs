@@ -139,7 +139,8 @@ pub struct ReplanRequest<'file> {
     /// A fresh scan of the roots the current config resolves.
     pub scan: &'file ScanReport,
     /// [`PlanMode::SafeOnly`] for `apply --yes`, [`PlanMode::Safe`] for a person who
-    /// reviews the summary. Review items drop either way.
+    /// reviews the summary. Review items drop either way, and so does an item whose rule
+    /// now runs a tool's own command: a file never authorizes one.
     pub mode: PlanMode,
 }
 

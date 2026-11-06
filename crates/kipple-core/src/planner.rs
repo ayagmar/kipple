@@ -79,10 +79,14 @@ named! {
     PlanMode {
         /// A person, who reviews it item by item in the TUI: Safe and Review items.
         Review = "review",
-        /// A person at the command line, who reviews the summary, or a profile, which
-        /// recorded that review when it was made: Safe items by any method. Review
-        /// items need the TUI's per-item review (pinned 1).
+        /// A person at the command line, who reviews the summary: Safe items by any
+        /// method, a tool's own command included. Review items need the TUI's per-item
+        /// review (pinned 1).
         Safe = "safe",
+        /// What runs later, with no person at it: a profile, which recorded its review
+        /// when it was made, or a plan file. Safe items that remove files, by either
+        /// method. A tool's own command is never one (pinned 24).
+        SafeFiles = "safe-files",
         /// Automation without a profile (`clean` or `apply` with `--yes`): Safe items
         /// removed by a delete, nothing else (pinned 1).
         SafeOnly = "safe-only",
@@ -258,17 +262,14 @@ fn suited<'scan>(
 fn unsuited(judged: &Judged<'_>, mode: PlanMode) -> Option<Skip> {
     match (mode, &judged.verdict, judged.method()) {
         (PlanMode::Review, _, _)
-        | (PlanMode::Safe, Verdict::Safe, ItemMethod::Delete | ItemMethod::Trash)
+        | (PlanMode::Safe, Verdict::Safe, _)
+        | (PlanMode::SafeFiles, Verdict::Safe, ItemMethod::Delete | ItemMethod::Trash)
         | (PlanMode::SafeOnly, Verdict::Safe, ItemMethod::Delete) => None,
-        (PlanMode::Safe | PlanMode::SafeOnly, _, ItemMethod::Native) => {
+        (PlanMode::SafeFiles | PlanMode::SafeOnly, _, ItemMethod::Native) => {
             Some(Skip::SemanticNotReviewed)
         }
-        (PlanMode::Safe | PlanMode::SafeOnly, Verdict::Review(cautions), _) => {
-            Some(Skip::Riskier(cautions.clone()))
-        }
-        (PlanMode::Safe | PlanMode::SafeOnly, Verdict::Protected(holds), _) => {
-            Some(Skip::Protected(holds.clone()))
-        }
+        (_, Verdict::Review(cautions), _) => Some(Skip::Riskier(cautions.clone())),
+        (_, Verdict::Protected(holds), _) => Some(Skip::Protected(holds.clone())),
         (PlanMode::SafeOnly, Verdict::Safe, ItemMethod::Trash) => Some(Skip::WholeNotReviewed),
     }
 }

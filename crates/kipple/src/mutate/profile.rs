@@ -354,8 +354,8 @@ fn today(draft: &DraftProfile, scanned: &Scanned, cancel: &CancelToken) -> Vec<L
         scan: &scanned.report,
         selection: &selection,
     };
-    let prepared =
-        machine.with_session(|session| prepare_clean(&request, session, PlanMode::Safe, cancel));
+    let prepared = machine
+        .with_session(|session| prepare_clean(&request, session, PlanMode::SafeFiles, cancel));
     if prepared.plan().entries().is_empty() {
         return vec![Line::new(Role::Text, words::NOTHING_TODAY.to_owned())];
     }

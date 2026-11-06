@@ -55,17 +55,18 @@ pub(crate) struct PlanItemOut {
 }
 
 /// `plan` as a plan file. A native item has no place in one: only a person who saw its
-/// command authorizes it, so it is left out.
+/// command authorizes it, so a plan for a file is made without any.
 ///
 /// # Errors
 /// [`FormatError::TooLarge`] when an item's tree or the whole file is larger than the
-/// reader takes.
+/// reader takes, and [`FormatError::NativeItem`] when `plan` holds a native item, which
+/// is refused rather than left out unsaid.
 pub fn encode_plan_file(plan: &Plan, codec: &dyn NameCodec) -> Result<Vec<u8>, FormatError> {
     let items = plan
         .entries()
         .iter()
-        .filter_map(|entry| Some((entry, entry.file_method()?)))
-        .map(|(entry, method)| {
+        .map(|entry| {
+            let method = entry.file_method().ok_or(FormatError::NativeItem(PLAN))?;
             let anchor = entry.anchor();
             let tree = entry.tree().encode(codec);
             if tree.len() > TREE_LIMIT {

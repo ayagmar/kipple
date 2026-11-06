@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use kipple_core::format::encode_stored_plan;
-use kipple_core::format::{decode_plan_file, decode_stored_plan, encode_plan_file};
+use kipple_core::format::{FormatError, decode_plan_file, decode_stored_plan, encode_plan_file};
 use kipple_core::{
     AgentLabel, Authorization, Checkout, Execution, GitGap, Hold, IntegrationId, ItemMethod,
     ItemOutcome, NativeCommand, NativeKind, NativeTool, ObjectId, Plan, PlanMode, Planned,
@@ -21,13 +21,14 @@ use kipple_core::{
 use super::codec::TestCodec;
 use super::world::{Locks, Log, Rescanned, Target, World};
 use super::{
-    Config, Item, TARGET, apply_as, home, id, plan_all, ports, project, refusals, rel, rescanned,
-    scan_of, snapshot, world_of,
+    Config, Item, TARGET, apply_as, everything, home, id, plan_all, ports, project, refusals, rel,
+    rescanned, scan_of, snapshot, world_of,
 };
 use kipple_core::{
-    ApplyPorts, ApplyRequest, CancelToken, EntryKind, FindingId, LockGap, Method, MutationPorts,
-    Recorders, ReleaseFacts, ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion, Settlement,
-    Status, apply,
+    Answer, ApplyFile, ApplyPorts, ApplyRequest, CancelToken, CleanRequest, Confirm, Consent,
+    Dropped, EntryKind, FindingId, LockGap, Method, MutationPorts, Recorders, ReleaseFacts,
+    ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion, Review, Session, Settlement, Status,
+    apply, run_apply, run_clean,
 };
 
 fn tool(tool: NativeTool) -> ResolvedTool {
@@ -120,18 +121,16 @@ fn applied_as(plan: &Plan, shown: Authorization, scan: &ScanReport, world: &Worl
     receipt.items[0].outcome.clone()
 }
 
-/// Catches `--yes`, `--only X --yes` or a profile reaching a tool's command: at planning
-/// and again at apply, whatever else the item passes (pinned 24).
+/// Catches `--yes` or `--only X --yes` reaching a tool's command: at planning and again
+/// at apply, whatever else the item passes (pinned 24).
 #[test]
 fn yes_refuses_native_at_plan_and_apply() {
     let (scan, world) = cacache();
-    for mode in [PlanMode::SafeOnly, PlanMode::Safe] {
-        let planned = plan_all(&scan, &Config::new(), &world, mode);
-        assert_eq!(
-            refusals(&planned),
-            [(FindingId(0), Skip::SemanticNotReviewed)]
-        );
-    }
+    let planned = plan_all(&scan, &Config::new(), &world, PlanMode::SafeOnly);
+    assert_eq!(
+        refusals(&planned),
+        [(FindingId(0), Skip::SemanticNotReviewed)]
+    );
 
     let plan = reviewed(&scan, &world).plan;
     assert_eq!(plan.entries().len(), 1, "a person may plan it");
@@ -141,23 +140,127 @@ fn yes_refuses_native_at_plan_and_apply() {
     );
 }
 
-/// Catches a plan file carrying a tool's command to a run no person reviewed: `plan -o`
-/// plans as [`PlanMode::Safe`], which leaves it out and says so, and the writer has no
-/// place for one that reached it (pinned 24).
+/// Catches a plan file carrying a tool's command to a run no person reviewed, or losing
+/// one unsaid: `plan -o` plans as [`PlanMode::SafeFiles`], which leaves it out and says
+/// so, and the writer refuses one that reached it (pinned 24).
 #[test]
 fn plan_file_leaves_native_out() {
     let (native, world) = cacache();
-    let plan = reviewed(&native, &world).plan;
-    let bytes = encode_plan_file(&plan, &TestCodec).unwrap();
-    let file = decode_plan_file(&bytes, &TestCodec).unwrap();
-    assert_eq!(file.len(), 0);
-
-    let planned = plan_all(&native, &Config::new(), &world, PlanMode::Safe);
+    let planned = plan_all(&native, &Config::new(), &world, PlanMode::SafeFiles);
     assert_eq!(
         refusals(&planned),
         [(FindingId(0), Skip::SemanticNotReviewed)],
         "what `plan -o` lists as left out"
     );
+
+    let plan = reviewed(&native, &world).plan;
+    let written = encode_plan_file(&plan, &TestCodec);
+    assert!(
+        matches!(written, Err(FormatError::NativeItem(_))),
+        "never dropped unsaid: {written:?}"
+    );
+}
+
+/// Answers yes at the prompt, keeping how many items it was shown.
+#[derive(Default)]
+struct Approves(usize);
+
+impl Confirm for Approves {
+    fn confirm(&mut self, review: &Review<'_>) -> Answer {
+        self.0 = review.plan.entries().len();
+        Answer::Yes
+    }
+}
+
+/// Catches the prompt never reaching a tool's command, which leaves a person no way to
+/// review one at the command line, and a yes there running it before the card that
+/// runs it (pinned 23, 24).
+#[test]
+fn a_person_at_the_prompt_sees_a_native_item_and_nothing_runs_yet() {
+    let (scan, world) = cacache();
+    let config = Config::new();
+    let mutation = ports(&world);
+    let rescan = rescanned(&scan);
+    let session = Session {
+        judge: config.judge(),
+        store: &world,
+        ports: ApplyPorts {
+            rescan: &rescan,
+            mutation: &mutation,
+        },
+        codec: &TestCodec,
+    };
+    let selection = everything(&scan);
+    let request = CleanRequest {
+        scan: &scan,
+        selection: &selection,
+    };
+    let mut person = Approves::default();
+
+    let finished = run_clean(
+        &request,
+        &session,
+        Consent::Ask(&mut person),
+        &mut (),
+        &CancelToken::new(),
+    );
+
+    assert_eq!(person.0, 1, "the prompt showed it");
+    assert_eq!(
+        finished.receipt.items[0].outcome,
+        ItemOutcome::Skipped(Skip::SemanticNotReviewed)
+    );
+    assert_eq!(world.state().ran, Vec::new(), "nothing ran");
+}
+
+/// Catches a plan file reaching a tool's command through a person's prompt: the file named
+/// files, its rule now runs a command, and the item drops before anyone is asked
+/// (pinned 24).
+#[test]
+fn a_file_item_whose_rule_now_runs_a_command_drops() {
+    let (mut scan, world) = cacache();
+    let native = scan.findings[0].facts.clone();
+    let facts = scan.findings[0].facts.as_mut().unwrap();
+    facts.proposal = Proposal::Remove(vec![Method::Delete]);
+    facts.supplied.subject = Subject::Plain;
+    let planned = plan_all(&scan, &Config::new(), &world, PlanMode::SafeFiles);
+    let file = encode_plan_file(&planned.plan, &TestCodec).unwrap();
+    let imported = decode_plan_file(&file, &TestCodec).unwrap();
+    scan.findings[0].facts = native;
+    let config = Config::new();
+    let mutation = ports(&world);
+    let rescan = rescanned(&scan);
+    let session = Session {
+        judge: config.judge(),
+        store: &world,
+        ports: ApplyPorts {
+            rescan: &rescan,
+            mutation: &mutation,
+        },
+        codec: &TestCodec,
+    };
+    let applying = ApplyFile {
+        imported: &imported,
+        scan: &scan,
+    };
+    let mut person = Approves::default();
+
+    let finished = run_apply(
+        &applying,
+        &session,
+        Consent::Ask(&mut person),
+        &mut (),
+        &CancelToken::new(),
+    );
+
+    assert_eq!(person.0, 0, "no one is asked about it");
+    let why: Vec<&Dropped> = finished.dropped.iter().map(|item| &item.why).collect();
+    assert_eq!(
+        why,
+        [&Dropped::Refused(Skip::MethodNotOffered(Method::Delete))],
+        "the file's method for that rule is a method named, which a command gives way to"
+    );
+    assert_eq!(world.state().ran, Vec::new(), "nothing ran");
 }
 
 /// Catches a command deleting what git tracks: a file plan leaves such an entry out, and

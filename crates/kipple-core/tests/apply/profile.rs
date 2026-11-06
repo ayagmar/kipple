@@ -16,10 +16,10 @@ use kipple_core::profile::{
 use kipple_core::{
     ActivityEvidence, ApplyPorts, Authorization, Bucket, CancelToken, CleanRequest, Confirmed,
     Consent, Ending, FindingSink, HeldPath, Integration, IntegrationDescriptor, IntegrationError,
-    IntegrationId, Lens, Level, Lineage, Method, Modified, OpenedRoot, POLICY_VERSION, PlanMode,
-    Platform, Prepared, ResolvedRoot, RootSource, Roots, RuleId, RuleSettings, ScanContext,
-    ScanReport, Selector, Session, Skip, Status, SymbolicRoot, WalkGap, prepare_clean, run_clean,
-    run_prepared,
+    IntegrationId, Lens, Level, Lineage, Method, Modified, NativeKind, NativeTool, OpenedRoot,
+    POLICY_VERSION, PlanMode, Platform, Prepared, Proposal, ResolvedRoot, ResolvedTool, RootSource,
+    Roots, RuleId, RuleSettings, ScanContext, ScanReport, Selector, SemanticFacts, Session, Skip,
+    Status, Subject, SymbolicRoot, WalkGap, prepare_clean, run_clean, run_prepared,
 };
 
 use super::codec::TestCodec;
@@ -940,6 +940,67 @@ fn clean_with_a_profiles_consent_runs_its_selection() {
         .map(|item| &item.path)
         .collect();
     assert_eq!(done, [&home("p2/out")]);
+}
+
+/// Catches a profile reaching a tool's command: a rule it grants that now runs one is
+/// left out before planning, and no one reviewed it (pinned 24).
+#[test]
+fn a_profile_never_plans_a_native_item() {
+    let mut desk = desk();
+    let profile = desk.make(Some(&[OTHER_RULE]));
+    let check = desk.check(&profile);
+    let selected = check.selection().0.first().copied().unwrap();
+    let finding = desk.scan.findings.iter_mut().find(|f| f.id == selected);
+    let finding = finding.unwrap();
+    finding.path = home("_cacache");
+    let facts = finding.facts.as_mut().unwrap();
+    facts.proposal = Proposal::Native(NativeKind::NpmCacheClean);
+    facts.supplied.subject = Subject::Semantic(SemanticFacts {
+        kind: NativeKind::NpmCacheClean,
+        tool: Ok(ResolvedTool {
+            tool: NativeTool::Npm,
+            path: PathBuf::from("/usr/bin/npm"),
+            identity: id(900),
+            version: "1.0.0".to_owned(),
+            runtime: None,
+        }),
+    });
+    let world = world_of(&desk.targets);
+    let mutation = ports(&world);
+    let rescan = rescanned(&desk.scan);
+    let session = Session {
+        judge: desk.config.judge(),
+        store: &world,
+        ports: ApplyPorts {
+            rescan: &rescan,
+            mutation: &mutation,
+        },
+        codec: &TestCodec,
+    };
+    let request = CleanRequest {
+        scan: &desk.scan,
+        selection: check.selection(),
+    };
+    let consent = Consent::Profile(check.grant().unwrap().clone());
+
+    let finished = run_clean(&request, &session, consent, &mut (), &CancelToken::new());
+
+    let refused: Vec<&Skip> = finished
+        .refused
+        .iter()
+        .filter(|item| item.path == home("_cacache"))
+        .map(|item| &item.skip)
+        .collect();
+    assert_eq!(refused, [&Skip::SemanticNotReviewed]);
+    assert!(
+        finished
+            .receipt
+            .items
+            .iter()
+            .all(|item| item.path != home("_cacache")),
+        "not planned: {:?}",
+        finished.receipt
+    );
 }
 
 /// Catches a prepared clean that can't go to the worker thread that applies it
