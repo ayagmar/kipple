@@ -23,9 +23,9 @@ use std::sync::Arc;
 
 use host::{Host, Scan, abs, running};
 use kipple_core::{
-    Activity, Evidence, FactValue, FileIdentity, Fingerprint, IntegrationId, Inventory, NativeKind,
-    NativeTool, OwnerStatus, Platform, Proposal, ResolvedTool, SemanticFacts, Stamp, Subject,
-    SymbolicRoot, ToolFile, ToolGap, Unread, Verdict,
+    Activity, Evidence, FactValue, FileIdentity, Fingerprint, Hold, IntegrationId, Inventory,
+    Level, NativeKind, NativeTool, OwnerStatus, Platform, Proposal, ResolvedTool, SemanticFacts,
+    Stamp, Subject, SymbolicRoot, ToolFile, ToolGap, Unread, Verdict,
 };
 use tree::{FixtureTree, Holds};
 
@@ -42,14 +42,7 @@ const _: () = {
     let _ = host::Generated::mutated;
     let _ = host::sealed;
     let _ = (Host::unresolved, Host::path);
-    let _ = (
-        Scan::verdict_at,
-        Scan::holds,
-        Scan::omissions,
-        Scan::advice,
-        Scan::read,
-        Scan::all,
-    );
+    let _ = (Scan::omissions, Scan::advice, Scan::read, Scan::all);
 };
 
 const NPM: IntegrationId = IntegrationId("npm");
@@ -58,6 +51,8 @@ const INVENTORY: &str = "builtin.npm.inventory";
 
 const ROOT: &str = "home/.npm";
 const CACACHE: &str = "home/.npm/_cacache";
+
+const CLEAN: Proposal = Proposal::Native(NativeKind::NpmCacheClean);
 
 const SUPPORTED: FactValue = FactValue::Enum("supported");
 const UNKNOWN_LAYOUT: FactValue = FactValue::Enum("unknown");
@@ -136,7 +131,24 @@ fn signature_needs_no_cachedir_tag() {
             "{version}"
         );
         assert_eq!(scan.owner(NPM), OwnerStatus::Supported, "{version}");
+        assert_eq!(scan.verdict(CACACHE), Verdict::Safe, "{version}");
     }
+}
+
+/// Catches the clean losing its command, or its consequence pushing it to Review at
+/// Balanced (founder decision 18): on Linux a recognised cache with a verified npm is
+/// `npm cache clean`, Safe at Balanced, and Careful still keeps it for review.
+#[test]
+fn the_clean_is_safe_at_balanced_on_linux() {
+    let scan = host(v11()).scan();
+
+    assert_eq!(scan.proposal(CACACHE), CLEAN);
+    assert_eq!(scan.verdict_at(CACACHE, Level::Balanced), Verdict::Safe);
+    let careful = scan.verdict_at(CACACHE, Level::Careful);
+    assert!(
+        matches!(careful, Verdict::Review(_)),
+        "review at careful, found {careful:?}"
+    );
 }
 
 /// Catches `CACHEDIR.TAG` alone read as a cache: any tool can write one, and the directory
@@ -178,6 +190,14 @@ fn linked_cacache_blocks() {
     );
     assert_eq!(scan.fact(CACACHE, "layout"), Some(UNKNOWN_LAYOUT));
     assert_eq!(scan.owner(NPM), OwnerStatus::Unsupported);
+    let holds = scan.holds(CACACHE);
+    assert!(
+        holds.contains(&Hold::FactUnmet) && holds.contains(&Hold::UnknownLayout),
+        "a link fails the rule, found {holds:?}"
+    );
+    let facts = scan.finding(CACACHE).facts.as_ref().unwrap();
+    let unmet: Vec<_> = facts.unmet.iter().map(|unmet| unmet.fact).collect();
+    assert_eq!(unmet, ["cache.is_link", "layout"]);
 }
 
 /// Catches a later cacache's layout, or anything else in `_cacache`, taken for the one
@@ -197,6 +217,11 @@ fn unknown_cache_format_blocks() {
         Some(FactValue::Bool(false))
     );
     assert_eq!(scan.owner(NPM), OwnerStatus::Unsupported);
+    let holds = scan.holds(CACACHE);
+    assert!(
+        holds.contains(&Hold::FactUnmet) && holds.contains(&Hold::UnknownLayout),
+        "an unknown format fails the rule, found {holds:?}"
+    );
 }
 
 /// Catches `_npx` or `_logs` offered with the cache: `_npx` holds the packages `npx` runs
@@ -288,7 +313,8 @@ fn running_npm_holds() {
         busy.processes.running.push(process);
 
         let at_apply = scan.now(CACACHE).unwrap().activity;
-        let at_scan = busy.scan().activity(CACACHE);
+        let busy = busy.scan();
+        let at_scan = busy.activity(CACACHE);
 
         assert!(
             matches!(idle, Activity::IdleExceptSystem { .. }),
@@ -300,6 +326,7 @@ fn running_npm_holds() {
                 "npm in use, found {activity:?}"
             );
         }
+        assert_eq!(busy.holds(CACACHE), [Hold::InUse]);
     }
 }
 
@@ -320,6 +347,7 @@ fn unreadable_node_process_blocks() {
         matches!(activity, Activity::Unknown(_)),
         "unknown, found {activity:?}"
     );
+    assert_eq!(scan.holds(CACACHE), [Hold::UnknownActivity]);
 }
 
 /// Catches a process listing that came back short read as complete: npm may be among the
@@ -338,6 +366,7 @@ fn failed_process_probe_blocks() {
         matches!(activity, Activity::Unknown(_)),
         "unknown, found {activity:?}"
     );
+    assert_eq!(scan.holds(CACACHE), [Hold::UnknownActivity]);
 }
 
 /// Catches the clean offered where it was never verified: macOS and Windows report the
@@ -355,37 +384,56 @@ fn macos_and_windows_are_report_only() {
         assert_eq!(scan.found(INVENTORY), reported, "{platform:?}");
         assert_eq!(scan.proposal(CACACHE), Proposal::Report, "{platform:?}");
         assert_eq!(subject(&scan, CACACHE), Subject::Plain, "{platform:?}");
+        assert_eq!(scan.holds(CACACHE), [Hold::ReportOnly], "{platform:?}");
     }
 }
 
-/// Catches a tool gap supplied as a fact that lets the clean through, or a gap lost: the
-/// facts and the semantic subject say which npm would run, or why none can.
+/// Catches a tool gap supplied as a fact that lets the clean through, or a gap lost: npm
+/// missing, a wrapper, an unreadable npm or one outside the list holds the cache with the
+/// fact it fails, and the semantic subject says which npm would run, or why none can.
 #[test]
 fn the_tool_is_supplied_as_the_facts_that_decide() {
+    let unmet_and_unknown = &[Hold::FactUnmet, Hold::FactUnknown][..];
     let cases = [
-        (Ok(npm()), FactValue::Bool(true), SUPPORTED),
+        (Ok(npm()), FactValue::Bool(true), SUPPORTED, &[][..]),
         (
             Err(ToolGap::UnverifiedVersion),
             FactValue::Bool(true),
             FactValue::Enum("unsupported"),
+            &[Hold::FactUnmet][..],
+        ),
+        (
+            Err(ToolGap::UnknownVersion),
+            FactValue::Bool(true),
+            FactValue::Unknown,
+            &[Hold::FactUnknown][..],
         ),
         (
             Err(ToolGap::Missing),
             FactValue::Bool(false),
             FactValue::Unknown,
+            unmet_and_unknown,
         ),
         (
             Err(ToolGap::Script),
             FactValue::Bool(false),
             FactValue::Unknown,
+            unmet_and_unknown,
         ),
         (
             Err(ToolGap::Unreadable),
             FactValue::Unknown,
             FactValue::Unknown,
+            &[Hold::FactUnknown][..],
+        ),
+        (
+            Err(ToolGap::Changed),
+            FactValue::Unknown,
+            FactValue::Unknown,
+            &[Hold::FactUnknown][..],
         ),
     ];
-    for (tool, executable, version) in cases {
+    for (tool, executable, version, holds) in cases {
         let mut host = host(v11());
         host.npm = tool.clone();
 
@@ -401,6 +449,7 @@ fn the_tool_is_supplied_as_the_facts_that_decide() {
             tool: tool.clone(),
         });
         assert_eq!(subject(&scan, CACACHE), semantic, "{tool:?}");
+        assert_eq!(scan.holds(CACACHE), holds, "{tool:?}");
     }
 }
 

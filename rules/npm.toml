@@ -23,8 +23,14 @@ platforms = ["linux"]
 root = "npm.cache"
 selection = "npm-download-cache"
 
+[rule.requirements]
+layout = "supported"
+npm.executable_verified = true
+npm.version_supported = "supported"
+cache.is_link = false
+
 [rule.operation]
-kind = "report"
+kind = "native.npm-cache-clean"
 
 [[rule]]
 id = "builtin.npm.inventory"

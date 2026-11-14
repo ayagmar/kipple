@@ -77,6 +77,7 @@ fn the_support_matrix_says_mutate_only_where_a_rule_removes() {
     };
     assert_eq!(on_linux("cargo"), json!(true));
     assert_eq!(on_linux("pacman"), json!(false));
+    assert_eq!(on_linux("npm"), json!(true), "npm's own command removes");
 }
 
 /// Each platform's `discover` and `report` for `id`.

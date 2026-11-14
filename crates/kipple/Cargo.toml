@@ -57,5 +57,9 @@ required-features = ["test-roots"]
 name = "tui"
 required-features = ["test-roots"]
 
+[[test]]
+name = "npm"
+required-features = ["test-roots"]
+
 [lints]
 workspace = true
