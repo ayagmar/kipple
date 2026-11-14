@@ -24,8 +24,9 @@ use std::fs;
 
 use host::{DAEMON, HOME, MUSL, STANDALONE, Scan, Scene, StoredLink, at, component, name, release};
 use kipple_core::{
-    ActivityEvidence, Evidence, FactValue, GroupGap, Hold, IntegrationId, Inventory, Omission,
-    OwnerStatus, Platform, Policy, Proposal, ReleaseRole, ReleaseState, UnresolvedRoot, Verdict,
+    Activity, ActivityEvidence, Evidence, FactValue, GroupGap, Hold, IntegrationId, Inventory, Now,
+    Omission, OwnerStatus, Platform, Policy, Proposal, ReleaseRole, ReleaseState, UnresolvedRoot,
+    Verdict,
 };
 use tree::Holds;
 
@@ -1163,6 +1164,89 @@ fn running_codex_holds_catalog_and_log() {
     for path in [TUI_LOG, CATALOG] {
         assert_eq!(unsure.holds(path), [Hold::UnknownActivity], "{path}");
     }
+}
+
+/// What apply reads again of `path`, which must be read.
+fn now(scan: &Scan, path: &str) -> Now {
+    let now = scan.now(path);
+    assert!(now.is_ok(), "{path} wasn't read again: {now:?}");
+    now.ok().unwrap()
+}
+
+/// Catches a `log_dir` written to the config during a long apply going unseen: Codex then
+/// writes the log again, and the apply would remove it on the scan's answer.
+#[test]
+fn log_dir_set_during_apply_keeps_the_log() {
+    let scan = verified_with_files().scan();
+    assert_eq!(now(&scan, TUI_LOG).unmet, []);
+
+    fs::write(
+        scan.built.home().join("config.toml"),
+        b"log_dir = \"logs\"\n",
+    )
+    .unwrap();
+
+    let now = now(&scan, TUI_LOG);
+    let configured = now.supplied.values.get("log_dir.configured").copied();
+    assert_eq!(configured, Some(FactValue::Bool(true)));
+    assert_eq!(now.unmet.len(), 1, "expected log_dir.configured unmet");
+}
+
+/// Catches a Codex started during the apply being missed for the log and the catalog,
+/// which it may be writing.
+#[test]
+fn codex_started_during_apply_keeps_log_and_catalog() {
+    let scan = verified_with_files().scan();
+
+    scan.show(|shown| shown.running.push(at(&format!("{ACTIVE}/bin/codex"))));
+
+    for path in [TUI_LOG, CATALOG] {
+        let now = now(&scan, path);
+        assert!(
+            matches!(now.activity, Activity::InUse { .. }),
+            "expected {path} in use, got {:?}",
+            now.activity
+        );
+    }
+}
+
+/// Catches apply removing a catalog file on the scan's word after Codex renamed it: what is
+/// at that path now is no file the rule found.
+#[test]
+fn catalog_renamed_during_apply_is_dropped() {
+    let scan = verified_with_files().scan();
+    let home = scan.built.home();
+
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test plays Codex renaming its own file"
+    )]
+    fs::rename(
+        home.join(CATALOG),
+        home.join("cache/remote_plugin_catalog/other.json"),
+    )
+    .unwrap();
+
+    let now = now(&scan, CATALOG);
+    assert_eq!(now.supplied.values.get("layout"), Some(&FactValue::Unknown));
+    assert_eq!(now.unmet.len(), 1, "expected the layout unknown");
+}
+
+/// Catches a config file that can't be read at apply passing for one that says nothing:
+/// `log_dir` may be set in it.
+#[test]
+fn unreadable_config_during_apply_holds() {
+    let mut scene = verified_with_files();
+    scene.tree.file(&at("config.toml"), b"model = \"o3\"\n");
+    let scan = scene.scan();
+    assert_eq!(now(&scan, TUI_LOG).unmet, []);
+
+    scan.deny("config.toml");
+
+    let now = now(&scan, TUI_LOG);
+    let configured = now.supplied.values.get("log_dir.configured").copied();
+    assert_eq!(configured, Some(FactValue::Unknown));
+    assert_eq!(now.unmet.len(), 1, "expected log_dir.configured unknown");
 }
 
 /// Catches a `.migration-current` that can't be read passing for no install in progress:

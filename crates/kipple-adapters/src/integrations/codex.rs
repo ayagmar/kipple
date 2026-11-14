@@ -14,11 +14,11 @@ use std::path::{Component as Part, Path, PathBuf};
 
 use kipple_core::{
     ActivityEvidence, Advice, Area, Claim, Consequence, Cost, DirEntryMeta, EntryKind, Evidence,
-    FactKind, FactSpec, FactValue, FindingSink, GroupGap, Integration, IntegrationDescriptor,
-    IntegrationError, IntegrationId, IntegrationSelector, Lens, Loss, OpenArea, OwnerStatus,
-    Platform, ProbeError, Program, ProtectedEntry, Recovery, ReleaseFacts, ReleaseGroup,
-    ReleaseRole, ReleaseState, ReleaseVersion, Rule, ScanContext, Selector, StateDeclaration,
-    Subject, Supplied, SymbolicRoot, Unresolved,
+    FactKind, FactSpec, FactValue, Finding, FindingSink, GroupGap, Integration,
+    IntegrationDescriptor, IntegrationError, IntegrationId, IntegrationSelector, Lens, Loss,
+    OpenArea, OwnerStatus, Platform, ProbeError, Program, ProtectedEntry, Recovery, ReleaseFacts,
+    ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion, Rule, RuleId, ScanContext, Selector,
+    StateDeclaration, Subject, Supplied, SymbolicRoot, Unresolved,
 };
 use serde_json::Value as Json;
 use toml::de::{DeTable, DeValue};
@@ -374,6 +374,137 @@ impl Integration for Codex {
             sink.set_owner_status(OwnerStatus::Supported);
             sink.advise(advice());
         }
+        Ok(())
+    }
+
+    /// Reads the finding's home again, through the code the scan read it with, and gives
+    /// what that finds at its path under its rule now. One no longer found there holds: a
+    /// release is blocked, since its group may have changed, and anything else loses its
+    /// layout.
+    fn revisit(
+        &self,
+        cx: &ScanContext<'_>,
+        finding: &Finding,
+    ) -> Result<Option<Supplied>, IntegrationError> {
+        let Some(facts) = finding.facts.as_ref() else {
+            return Ok(None);
+        };
+        let mut revisited = Revisited {
+            rule: &finding.rule,
+            path: &finding.path,
+            found: None,
+        };
+        let homes = cx.roots_of(SymbolicRoot::CodexHome);
+        let homes: Vec<PathBuf> = homes.map(|root| root.path.clone()).collect();
+        for path in homes
+            .into_iter()
+            .filter(|home| finding.path.starts_with(home))
+        {
+            Home::read(cx, path)?.add_findings(cx, &mut revisited)?;
+        }
+        Ok(Some(
+            revisited.found.unwrap_or_else(|| gone(&facts.supplied)),
+        ))
+    }
+}
+
+/// What a finding rests on once it is no longer where the scan found it.
+fn gone(supplied: &Supplied) -> Supplied {
+    let subject = match &supplied.subject {
+        Subject::Release(release) => Subject::Release(ReleaseFacts {
+            state: ReleaseState::Blocked(GroupGap::Changed),
+            ..release.clone()
+        }),
+        other @ (Subject::Plain | Subject::Worktree(_) | Subject::Semantic(_)) => other.clone(),
+    };
+    let mut values = supplied.values.clone();
+    values.insert(LAYOUT, FactValue::Unknown);
+    Supplied {
+        values,
+        subject,
+        ..supplied.clone()
+    }
+}
+
+/// Where a home's findings go: the scan's sink, or what apply reads again of one finding.
+trait Findings {
+    /// A finding that was read, with what it rests on.
+    fn supplied(
+        &mut self,
+        rule: &Rule,
+        path: &Path,
+        claim: Claim,
+        supplied: Supplied,
+    ) -> Result<(), IntegrationError>;
+
+    /// A finding that can't be read, only reported.
+    fn unread(
+        &mut self,
+        rule: &Rule,
+        path: &Path,
+        evidence: Vec<Evidence>,
+        supplied: Supplied,
+    ) -> Result<(), IntegrationError>;
+}
+
+impl Findings for FindingSink<'_> {
+    fn supplied(
+        &mut self,
+        rule: &Rule,
+        path: &Path,
+        claim: Claim,
+        supplied: Supplied,
+    ) -> Result<(), IntegrationError> {
+        self.add_supplied(rule, path, claim, supplied)
+    }
+
+    fn unread(
+        &mut self,
+        rule: &Rule,
+        path: &Path,
+        evidence: Vec<Evidence>,
+        supplied: Supplied,
+    ) -> Result<(), IntegrationError> {
+        self.add_unread(rule, path, evidence, supplied)
+    }
+}
+
+/// What a home supplies now for one finding of an earlier scan: its rule and path.
+#[derive(Debug)]
+struct Revisited<'finding> {
+    rule: &'finding RuleId,
+    path: &'finding Path,
+    found: Option<Supplied>,
+}
+
+impl Revisited<'_> {
+    fn take(&mut self, rule: &Rule, path: &Path, supplied: Supplied) {
+        if rule.id == *self.rule && path == self.path {
+            self.found = Some(supplied);
+        }
+    }
+}
+
+impl Findings for Revisited<'_> {
+    fn supplied(
+        &mut self,
+        rule: &Rule,
+        path: &Path,
+        _: Claim,
+        supplied: Supplied,
+    ) -> Result<(), IntegrationError> {
+        self.take(rule, path, supplied);
+        Ok(())
+    }
+
+    fn unread(
+        &mut self,
+        rule: &Rule,
+        path: &Path,
+        _: Vec<Evidence>,
+        supplied: Supplied,
+    ) -> Result<(), IntegrationError> {
+        self.take(rule, path, supplied);
         Ok(())
     }
 }
@@ -1364,13 +1495,13 @@ impl Home {
     fn add_findings(
         &self,
         cx: &ScanContext<'_>,
-        sink: &mut FindingSink<'_>,
+        out: &mut dyn Findings,
     ) -> Result<(), IntegrationError> {
-        self.add_store(cx, sink)?;
-        self.add_home_entries(cx, sink)?;
-        self.add_logs(cx, sink)?;
-        self.add_caches(cx, sink)?;
-        self.add_daemon_logs(cx, sink)
+        self.add_store(cx, out)?;
+        self.add_home_entries(cx, out)?;
+        self.add_logs(cx, out)?;
+        self.add_caches(cx, out)?;
+        self.add_daemon_logs(cx, out)
     }
 
     /// Reports `path` under `selector`'s rule. The rule is off this platform when it has
@@ -1378,7 +1509,7 @@ impl Home {
     fn report(
         &self,
         cx: &ScanContext<'_>,
-        sink: &mut FindingSink<'_>,
+        out: &mut dyn Findings,
         selector: &'static str,
         found: Reported<'_>,
     ) -> Result<(), IntegrationError> {
@@ -1398,26 +1529,26 @@ impl Home {
             subject: found.subject,
             ..self.plain(activity)
         };
-        sink.add_supplied(rule, found.path, claim, supplied)
+        out.supplied(rule, found.path, claim, supplied)
     }
 
     /// What the store holds, each entry through the one rule it belongs to.
     fn add_store(
         &self,
         cx: &ScanContext<'_>,
-        sink: &mut FindingSink<'_>,
+        out: &mut dyn Findings,
     ) -> Result<(), IntegrationError> {
         for path in &self.store.strays {
             let found = Reported::unknown(path);
-            self.report(cx, sink, RELEASE_ENTRIES, found)?;
+            self.report(cx, out, RELEASE_ENTRIES, found)?;
         }
         for component in &self.store.components {
             for path in &component.strays {
                 let found = Reported::unknown(path);
-                self.report(cx, sink, RELEASE_ENTRIES, found)?;
+                self.report(cx, out, RELEASE_ENTRIES, found)?;
             }
             for entry in &component.entries {
-                self.add_release_entry(cx, sink, component, entry)?;
+                self.add_release_entry(cx, out, component, entry)?;
             }
         }
         Ok(())
@@ -1426,19 +1557,19 @@ impl Home {
     fn add_release_entry(
         &self,
         cx: &ScanContext<'_>,
-        sink: &mut FindingSink<'_>,
+        out: &mut dyn Findings,
         component: &Component,
         entry: &Entry,
     ) -> Result<(), IntegrationError> {
         match entry {
-            Entry::Published(release) => self.add_published(cx, sink, component, release),
+            Entry::Published(release) => self.add_published(cx, out, component, release),
             Entry::Local(release) => {
                 let found = Reported {
                     path: &release.path,
                     evidence: self.evidence(MANIFEST),
                     subject: Subject::Plain,
                 };
-                self.report(cx, sink, RELEASE_ENTRIES, found)
+                self.report(cx, out, RELEASE_ENTRIES, found)
             }
             Entry::Retired(retired) => {
                 let found = Reported {
@@ -1446,10 +1577,10 @@ impl Home {
                     evidence: Evidence::NoSignature,
                     subject: Subject::Release(self.retired_facts(component, retired)),
                 };
-                self.report(cx, sink, RELEASE_ENTRIES, found)
+                self.report(cx, out, RELEASE_ENTRIES, found)
             }
             Entry::Kept(path) | Entry::OtherLayout(path) | Entry::Unread(path) => {
-                self.report(cx, sink, RELEASE_ENTRIES, Reported::unknown(path))
+                self.report(cx, out, RELEASE_ENTRIES, Reported::unknown(path))
             }
         }
     }
@@ -1459,7 +1590,7 @@ impl Home {
     fn add_published(
         &self,
         cx: &ScanContext<'_>,
-        sink: &mut FindingSink<'_>,
+        out: &mut dyn Findings,
         component: &Component,
         release: &Release,
     ) -> Result<(), IntegrationError> {
@@ -1476,7 +1607,7 @@ impl Home {
                 activity: RELEASE_ACTIVITY,
                 advice: None,
             };
-            return sink.add_supplied(rule, &release.path, claim, supplied);
+            return out.supplied(rule, &release.path, claim, supplied);
         }
         let selected = component.role(&release.name) == ReleaseRole::Active;
         if selected && self.store.is_supported() {
@@ -1487,7 +1618,7 @@ impl Home {
             evidence: self.evidence(MANIFEST),
             subject: Subject::Plain,
         };
-        self.report(cx, sink, RELEASE_ENTRIES, found)
+        self.report(cx, out, RELEASE_ENTRIES, found)
     }
 
     fn release_facts(&self, component: &Component, release: &Release) -> ReleaseFacts {
@@ -1530,7 +1661,7 @@ impl Home {
     fn add_home_entries(
         &self,
         cx: &ScanContext<'_>,
-        sink: &mut FindingSink<'_>,
+        out: &mut dyn Findings,
     ) -> Result<(), IntegrationError> {
         for entry in &self.entries {
             let Some(name) = entry.name.to_str().filter(|name| is_home_entry(name)) else {
@@ -1538,7 +1669,7 @@ impl Home {
             };
             let path = self.path.join(name);
             let found = Reported::known(&path, self.evidence(name));
-            self.report(cx, sink, STORE_ENTRIES, found)?;
+            self.report(cx, out, STORE_ENTRIES, found)?;
         }
         Ok(())
     }
@@ -1548,7 +1679,7 @@ impl Home {
     fn listed(
         &self,
         cx: &ScanContext<'_>,
-        sink: &mut FindingSink<'_>,
+        out: &mut dyn Findings,
         name: &str,
     ) -> Result<Option<Vec<DirEntryMeta>>, IntegrationError> {
         let Some(entry) = self.entries.iter().find(|entry| entry.name == name) else {
@@ -1559,7 +1690,7 @@ impl Home {
         if let Some(Ok(entries)) = listing {
             return Ok(Some(entries));
         }
-        self.report(cx, sink, STORE_ENTRIES, Reported::unknown(&dir))?;
+        self.report(cx, out, STORE_ENTRIES, Reported::unknown(&dir))?;
         Ok(None)
     }
 
@@ -1567,22 +1698,22 @@ impl Home {
     fn add_logs(
         &self,
         cx: &ScanContext<'_>,
-        sink: &mut FindingSink<'_>,
+        out: &mut dyn Findings,
     ) -> Result<(), IntegrationError> {
         let default = self.path.join("log");
-        if let Some(entries) = self.listed(cx, sink, "log")? {
+        if let Some(entries) = self.listed(cx, out, "log")? {
             for entry in &entries {
-                self.add_default_log(cx, sink, &default, entry)?;
+                self.add_default_log(cx, out, &default, entry)?;
             }
         }
         let LogDir::Set(dirs) = &self.log_dir else {
             return Ok(());
         };
         for dir in dirs.placed.iter().filter(|dir| **dir != default) {
-            self.add_configured_logs(cx, sink, dir)?;
+            self.add_configured_logs(cx, out, dir)?;
         }
         for dir in &dirs.unplaced {
-            self.add_unread_logs(cx, sink, dir)?;
+            self.add_unread_logs(cx, out, dir)?;
         }
         Ok(())
     }
@@ -1592,7 +1723,7 @@ impl Home {
     fn add_default_log(
         &self,
         cx: &ScanContext<'_>,
-        sink: &mut FindingSink<'_>,
+        out: &mut dyn Findings,
         dir: &Path,
         entry: &DirEntryMeta,
     ) -> Result<(), IntegrationError> {
@@ -1610,7 +1741,7 @@ impl Home {
             supplied
                 .values
                 .insert(TUI_LOG_WRITER, self.store.tui_log_writer());
-            return sink.add_supplied(rule, &path, claim, supplied);
+            return out.supplied(rule, &path, claim, supplied);
         }
         if entry.name != LOG_FILE && entry.name != LOGIN_LOG {
             return Ok(());
@@ -1620,7 +1751,7 @@ impl Home {
         } else {
             Reported::unknown(&path)
         };
-        self.report(cx, sink, STORE_ENTRIES, found)
+        self.report(cx, out, STORE_ENTRIES, found)
     }
 
     /// The logs of a configured directory. Inside the home they are reported like any
@@ -1629,11 +1760,11 @@ impl Home {
     fn add_configured_logs(
         &self,
         cx: &ScanContext<'_>,
-        sink: &mut FindingSink<'_>,
+        out: &mut dyn Findings,
         dir: &Path,
     ) -> Result<(), IntegrationError> {
         let Ok(entries) = cx.read_dir(dir) else {
-            return self.add_unread_logs(cx, sink, dir);
+            return self.add_unread_logs(cx, out, dir);
         };
         let logs = entries
             .iter()
@@ -1641,7 +1772,7 @@ impl Home {
         for entry in logs {
             let path = dir.join(&entry.name);
             let evidence = self.evidence(&entry.name.to_string_lossy());
-            self.report(cx, sink, STORE_ENTRIES, Reported::known(&path, evidence))?;
+            self.report(cx, out, STORE_ENTRIES, Reported::known(&path, evidence))?;
         }
         Ok(())
     }
@@ -1650,14 +1781,14 @@ impl Home {
     fn add_unread_logs(
         &self,
         cx: &ScanContext<'_>,
-        sink: &mut FindingSink<'_>,
+        out: &mut dyn Findings,
         dir: &Path,
     ) -> Result<(), IntegrationError> {
         let Some(rule) = rule_of(cx, STORE_ENTRIES) else {
             return Ok(());
         };
         let evidence = vec![Evidence::NoSignature];
-        sink.add_unread(rule, dir, evidence, self.plain(HOME_ACTIVITY))
+        out.unread(rule, dir, evidence, self.plain(HOME_ACTIVITY))
     }
 
     /// What `cache/` holds: the catalog's files through their own rule where it applies,
@@ -1665,9 +1796,9 @@ impl Home {
     fn add_caches(
         &self,
         cx: &ScanContext<'_>,
-        sink: &mut FindingSink<'_>,
+        out: &mut dyn Findings,
     ) -> Result<(), IntegrationError> {
-        let Some(entries) = self.listed(cx, sink, "cache")? else {
+        let Some(entries) = self.listed(cx, out, "cache")? else {
             return Ok(());
         };
         let dir = self.path.join("cache");
@@ -1675,10 +1806,10 @@ impl Home {
             let path = dir.join(&entry.name);
             let is_catalog = entry.name == CATALOG_DIR && entry.kind == EntryKind::Dir;
             if let Some(rule) = rule_of(cx, CATALOG).filter(|_| is_catalog) {
-                self.add_catalog(cx, sink, rule, &path)?;
+                self.add_catalog(cx, out, rule, &path)?;
             } else {
                 let evidence = self.evidence(&entry.name.to_string_lossy());
-                self.report(cx, sink, STORE_ENTRIES, Reported::known(&path, evidence))?;
+                self.report(cx, out, STORE_ENTRIES, Reported::known(&path, evidence))?;
             }
         }
         Ok(())
@@ -1688,12 +1819,12 @@ impl Home {
     fn add_catalog(
         &self,
         cx: &ScanContext<'_>,
-        sink: &mut FindingSink<'_>,
+        out: &mut dyn Findings,
         rule: &Rule,
         dir: &Path,
     ) -> Result<(), IntegrationError> {
         let Ok(entries) = cx.read_dir(dir) else {
-            return self.report(cx, sink, STORE_ENTRIES, Reported::unknown(dir));
+            return self.report(cx, out, STORE_ENTRIES, Reported::unknown(dir));
         };
         for entry in entries {
             let path = dir.join(&entry.name);
@@ -1703,9 +1834,9 @@ impl Home {
                     evidence: vec![self.evidence(CATALOG_DIR)],
                     consequence: self.cost(REFETCHED),
                 };
-                sink.add_supplied(rule, &path, claim, self.plain(HOME_ACTIVITY))?;
+                out.supplied(rule, &path, claim, self.plain(HOME_ACTIVITY))?;
             } else {
-                self.report(cx, sink, STORE_ENTRIES, Reported::unknown(&path))?;
+                self.report(cx, out, STORE_ENTRIES, Reported::unknown(&path))?;
             }
         }
         Ok(())
@@ -1716,9 +1847,9 @@ impl Home {
     fn add_daemon_logs(
         &self,
         cx: &ScanContext<'_>,
-        sink: &mut FindingSink<'_>,
+        out: &mut dyn Findings,
     ) -> Result<(), IntegrationError> {
-        let Some(entries) = self.listed(cx, sink, "app-server-daemon")? else {
+        let Some(entries) = self.listed(cx, out, "app-server-daemon")? else {
             return Ok(());
         };
         let dir = self.path.join("app-server-daemon");
@@ -1727,7 +1858,7 @@ impl Home {
             if entry.kind == EntryKind::File && name.ends_with(".stderr.log.previous") {
                 let path = dir.join(&entry.name);
                 let found = Reported::known(&path, self.evidence(&name));
-                self.report(cx, sink, STORE_ENTRIES, found)?;
+                self.report(cx, out, STORE_ENTRIES, found)?;
             }
         }
         Ok(())

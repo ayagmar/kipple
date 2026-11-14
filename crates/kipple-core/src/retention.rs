@@ -45,6 +45,8 @@ named! {
         RetiredRunning = "retired-running",
         /// Part of its store couldn't be read, so its listing may be short.
         Unreadable = "unreadable",
+        /// Its store changed between the scan and reading it again at apply.
+        Changed = "changed",
     }
 }
 
