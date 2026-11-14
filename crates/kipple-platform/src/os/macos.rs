@@ -31,7 +31,7 @@ use crate::roots::under;
 pub(crate) const PLATFORM: Platform = Platform::Macos;
 
 /// Whether Finder hides the entry: its `UF_HIDDEN` flag, as `~/Library` has.
-pub(crate) fn hidden(meta: &std::fs::Metadata) -> bool {
+pub(crate) fn hidden(meta: &fs::Metadata) -> bool {
     use std::os::macos::fs::MetadataExt as _;
     meta.st_flags() & libc::UF_HIDDEN != 0
 }
@@ -552,6 +552,16 @@ pub(crate) const fn inventory() -> Inventory {
     Inventory::Complete
 }
 
+/// macOS has no mount IDs: a mount there is another device.
+pub(crate) const fn mount(_: &Path) -> kipple_core::Mount {
+    kipple_core::Mount::ByDevice
+}
+
+/// macOS has no lock kipple knows to match Codex's installer (spec M4 pinned 13).
+pub(crate) const fn hold_locks(_: &[PathBuf]) -> Result<Vec<fs::File>, kipple_core::LockGap> {
+    Err(kipple_core::LockGap::Unsupported)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -609,14 +619,4 @@ mod tests {
             "a record cut short in its count is unknown"
         );
     }
-}
-
-/// macOS has no mount IDs: a mount there is another device.
-pub(crate) const fn mount(_: &Path) -> kipple_core::Mount {
-    kipple_core::Mount::ByDevice
-}
-
-/// macOS has no lock kipple knows to match Codex's installer (spec M4 pinned 13).
-pub(crate) const fn hold_locks(_: &[PathBuf]) -> Result<Vec<fs::File>, kipple_core::LockGap> {
-    Err(kipple_core::LockGap::Unsupported)
 }
