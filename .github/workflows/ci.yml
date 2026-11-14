@@ -390,6 +390,16 @@ jobs:
           VHS_NO_SANDBOX: "true"
         run: |
           unset KIPPLE_CONFIG
+          # A tape's kipple gets the demo's own PATH (git alone), as every demo run does,
+          # so the recording shows the same findings on any runner and starts nothing
+          # of the runner's but git.
+          mkdir -p "$TAPES/bin"
+          {
+            echo "#!/usr/bin/env bash"
+            echo "PATH=\"\$(cat \"$TAPES/demo/path.txt\")\" exec \"$GITHUB_WORKSPACE/target/debug/kipple\" \"\$@\""
+          } > "$TAPES/bin/kipple"
+          chmod +x "$TAPES/bin/kipple"
+          export PATH="$TAPES/bin:$PATH"
           vhs validate site/tapes/*.tape
           for tape in site/tapes/*.tape; do
             vhs "$tape"
