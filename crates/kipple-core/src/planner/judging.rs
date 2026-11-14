@@ -28,7 +28,8 @@ pub(crate) struct Scene<'scan> {
     scan: &'scan ScanReport,
     /// Each finding's verdict under the current policy, `None` when it wasn't measured.
     verdicts: Vec<Option<Verdict>>,
-    /// What of the host's protects each finding, if anything does.
+    /// What of the host's protects each finding, if anything does: the answer its scan
+    /// gave, so planning and apply never disagree with what the scan showed.
     hosts: Vec<Option<Protection>>,
     /// Findings the host protects, that are Protected or that weren't measured.
     sheltered: Placed,
@@ -138,16 +139,10 @@ impl<'scan> Scene<'scan> {
             cautioned: Placed::default(),
             by_place: HashMap::new(),
         };
-        let owners = scan.owners();
         for (index, finding) in scan.findings.iter().enumerate() {
             let verdict = finding.verdict(judge.policy);
             let lineage = finding.facts.as_ref().map(|facts| &facts.lineage);
-            let host = lineage.and_then(|lineage| {
-                let integration = finding.integration;
-                judge
-                    .protections
-                    .check(&finding.path, lineage, integration, &owners)
-            });
+            let host = finding.facts.as_ref().and_then(|facts| facts.host);
             match (&host, &verdict) {
                 (None, Some(Verdict::Safe)) => {}
                 (None, Some(Verdict::Review(_))) => scene.cautioned.add(index, lineage),

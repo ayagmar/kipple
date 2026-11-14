@@ -639,10 +639,11 @@ fn a_config_made_invalid_after_the_review_opened_runs_nothing() {
 }
 
 // Catches a clean with nowhere to record its run, where nothing could reconcile it
-// after a crash, running anyway: with kipple's own folders unknown nothing can be
-// planned, the review says why, and `y` runs nothing.
+// after a crash, running anyway: with kipple's own folders unknown the host can't show a
+// finding isn't kipple's data, so the scan already holds every one and says why, and
+// `s`, `Enter` and `y` run nothing.
 #[test]
-fn with_an_unknown_data_folder_nothing_runs_and_the_review_says_why() {
+fn with_an_unknown_data_folder_nothing_runs_and_the_scan_says_why() {
     let demo = Demo::without(&["xdg.data", "known.roaming-app-data"]);
     let mut script = filtered_to("acme/api/target", Bucket::Safe);
     script.extend(press(&[Key::Char('s'), Key::Enter, Key::Char('y')]));
@@ -651,12 +652,12 @@ fn with_an_unknown_data_folder_nothing_runs_and_the_review_says_why() {
     let frames = demo.home(script);
 
     assert!(present(&demo.at(ACME).join("debug")), "something ran");
-    let review = &frames.looked[0];
-    assert!(review.contains("Review: clean 0 items"), "{review}");
-    assert!(
-        review.contains("~/projects/clients/acme/api/target: "),
-        "{review}"
-    );
+    let screen = &frames.looked[0];
+    let row = screen
+        .lines()
+        .find(|line| line.contains("clients/acme/api/target"))
+        .unwrap_or_else(|| panic!("no acme target in {screen}"));
+    assert!(row.contains("in a tool's own data"), "{screen}");
 }
 
 #[derive(Debug)]

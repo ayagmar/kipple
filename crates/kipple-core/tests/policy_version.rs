@@ -11,7 +11,7 @@ use std::time::Duration;
 use kipple_core::{
     Activity, ActivityGap, AgentLabel, Checkout, Clause, Consequence, Cost, Digest, FactState,
     Facts, FileIdentity, GitGap, HeldPath, IntegrationId, Level, Lineage, Loss, Method, Modified,
-    NativeKind, POLICY_VERSION, Policy, ProbeError, Proposal, Recovery, Registration,
+    NativeKind, POLICY_VERSION, Policy, ProbeError, Proposal, Protection, Recovery, Registration,
     RegistrationState, ReleaseFacts, ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion,
     Retained, RuleId, RuleSettings, Seen, SemanticFacts, Settlement, Subject, Supplied, ToolGap,
     Tracked, Unmet, WalkGap, WorktreeFacts,
@@ -23,6 +23,7 @@ use kipple_core::{
 const HISTORY: &[(u32, &str)] = &[
     (1, "8465c62ae444a033bfb801d45aca1aed"),
     (2, "85fff6351399322d17e4f1b8ce829ab6"),
+    (3, "b1f12b8aad46b81a3a02d70aaa79d52b"),
 ];
 
 const DAY: u64 = 24 * 60 * 60;
@@ -82,6 +83,7 @@ fn safe() -> Facts {
         unmet: Vec::new(),
         settlement: Settlement::Unsettled,
         integration: IntegrationId("test"),
+        host: None,
     }
 }
 
@@ -256,6 +258,15 @@ fn one_fact_each() -> Vec<(String, Facts)> {
             work_tree: tree.clone(),
         };
     });
+    for protection in Protection::ALL {
+        with(&format!("host-{protection}"), &|f| {
+            f.host = Some(*protection);
+        });
+        with(&format!("report-host-{protection}"), &|f| {
+            f.proposal = Proposal::Report;
+            f.host = Some(*protection);
+        });
+    }
     let gaps = [WalkGap::Unread, WalkGap::OtherFileSystem, WalkGap::Untimed];
     for gap in gaps {
         with(&format!("unwalked-{gap:?}"), &|f| {

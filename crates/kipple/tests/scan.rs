@@ -474,3 +474,197 @@ fn a_venv_holding_an_editable_checkout_is_protected_as_holds_repository() {
     let reasons = venv["verdict"]["reasons"].as_array().unwrap();
     assert!(reasons.contains(&Value::from("holds-repository")), "{venv}");
 }
+
+/// A generic `node_modules` in each of seven agent stores, and in a person's project, as
+/// the PR #19 review placed them, each beside the npm install record that verifies it.
+const IN_STORES: &[&str] = &[
+    "home/.pi/agent/npm",
+    "home/.claude/plugins/marketplaces/m",
+    "home/.claude/debug/proj",
+    "home/.codex/plugins/q",
+    "home/.codex/cache/remote_plugin_catalog/p",
+    "home/.cursor/extensions/e",
+    "home/.cursor-server/extensions/e",
+];
+const IN_A_PROJECT: &str = "home/projects/app";
+
+/// A home with an npm install at each of [`IN_STORES`] and [`IN_A_PROJECT`], an
+/// environment whose roots, the agents' stores among them, point into it, and the home
+/// to give as `--root`, as `kipple scan --root ~` does.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a fixture that fails to build fails the test"
+)]
+fn stores() -> (tempfile::TempDir, Environment, String) {
+    let temp = tempfile::tempdir().unwrap();
+    let mut tree = tree::FixtureTree::new();
+    for at in IN_STORES.iter().chain([&IN_A_PROJECT]) {
+        npm_v11_19_0::project(&mut tree, at);
+    }
+    tree.build_in(temp.path()).unwrap();
+    let now = demo_home::looked_at();
+    let mut file = String::new();
+    let roots = demo_home::ROOTS
+        .iter()
+        .chain(&[("cursor.server", "home/.cursor-server")]);
+    for (name, relative) in roots {
+        writeln!(file, "{name} = {}", temp.path().join(relative).display()).unwrap();
+    }
+    let seconds = now
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    writeln!(file, "now = {seconds}").unwrap();
+    let path = temp.path().join("roots.txt");
+    fs::write(&path, file).unwrap();
+    let env =
+        Environment::from_vars([(OsString::from("KIPPLE_TEST_ROOTS"), path.into_os_string())]);
+    let home = temp.path().join("home").display().to_string();
+    (temp, env, home)
+}
+
+/// Where the `node_modules` of `at` is, by its trailing components, which hold on every
+/// OS whatever form the temp dir's path takes in the report.
+fn node_modules_of(at: &str) -> std::path::PathBuf {
+    Path::new(at)
+        .strip_prefix("home")
+        .unwrap_or_else(|_| Path::new(at))
+        .join("node_modules")
+}
+
+/// Catches a generic artifact inside an agent's closed store shown as Safe by `scan`,
+/// `scan --json`, `explain` and the home screen, and then refused at plan as protected
+/// (PR #19 review): the same host answer holds it at scan, with the reason that names it.
+#[test]
+fn generic_artifact_inside_a_closed_store_is_protected_at_scan() {
+    let (_temp, env, home) = stores();
+
+    let (code, json, _) = kipple(&env, &["scan", "--root", &home, "--json"]);
+
+    assert_eq!(code, ExitCode::SUCCESS);
+    let report: Value = serde_json::from_str(&json).unwrap();
+    let findings = report["findings"].as_array().unwrap();
+    let verdict_of = |at: &str| {
+        let wanted = node_modules_of(at);
+        let finding = findings
+            .iter()
+            .filter(|f| f["rule"] == "builtin.node.node-modules")
+            .find(|f| {
+                let display = f.pointer("/path/display").and_then(Value::as_str).unwrap();
+                Path::new(display).ends_with(&wanted)
+            })
+            .unwrap_or_else(|| panic!("no node_modules at {at} in {json}"));
+        finding["verdict"].clone()
+    };
+    for at in IN_STORES {
+        let verdict = verdict_of(at);
+        assert_eq!(verdict["bucket"], "protected", "{at}: {verdict}");
+        assert_eq!(verdict["reasons"][0], "subresource", "{at}: {verdict}");
+    }
+    let control = verdict_of(IN_A_PROJECT);
+    let reasons = control["reasons"].as_array().unwrap();
+    assert!(
+        !reasons.iter().any(|reason| reason == "subresource"),
+        "a person's project is no tool's store: {control}"
+    );
+    // Windows can't tell whether a `node_modules` is in use (D-050).
+    if !cfg!(windows) {
+        assert_eq!(control["bucket"], "safe", "{control}");
+    }
+}
+
+/// Catches the scan's verdict and the planner's refusal drifting apart again: for every
+/// finding of the same scan, selected whole, none the scan shows Safe or Review is
+/// refused because the host protects it, and each the planner refuses for that is
+/// Protected at scan with the same reason.
+#[test]
+fn scan_and_plan_agree_on_every_closed_finding() {
+    use kipple::config::{self, Settings};
+    use kipple::machine::Machine;
+    use kipple::setup::Builtin;
+    use kipple_core::{
+        CancelToken, EventChannel, Hold, PlanMode, PlanRequest, Selection, Skip, Verdict,
+        event_channel, plan,
+    };
+
+    let (_temp, env, home) = stores();
+    let builtin = Builtin::load().unwrap();
+    let catalog = config::catalog(&builtin);
+    let settings = Settings::load(&env, None, &[home.into()], &catalog).unwrap();
+    let policy = settings.policy.clone();
+    let engine = builtin.engine(&env).unwrap();
+    let cancel = CancelToken::new();
+    let EventChannel { tx, rx } = event_channel(4096, &cancel);
+    let scan = engine.scan(&settings.scan_request(None), &tx, &cancel);
+    drop(rx);
+    let machine = Machine::from_settings(&builtin, &env, settings, None).unwrap();
+    let selection = Selection(scan.findings.iter().map(|f| f.id).collect());
+    let request = PlanRequest {
+        scan: &scan,
+        selection: &selection,
+        mode: PlanMode::Review,
+    };
+
+    let planned = plan(&request, &machine.judge(), &machine.mutation(), &cancel);
+
+    let mut closed = 0;
+    for refused in &planned.refused {
+        let Skip::HostProtected(why) = refused.skip else {
+            continue;
+        };
+        let finding = scan
+            .findings
+            .iter()
+            .find(|f| f.id == refused.finding)
+            .unwrap();
+        let verdict = finding.verdict(&policy).unwrap();
+        let held =
+            matches!(&verdict, Verdict::Protected(holds) if holds.contains(&Hold::from(why)));
+        let reports = matches!(&verdict, Verdict::Protected(holds) if holds == &[Hold::ReportOnly] || holds == &[Hold::Advice]);
+        assert!(
+            held || reports,
+            "{} refused as {why} but {verdict:?} at scan",
+            finding.path.display()
+        );
+        closed += 1;
+    }
+    assert!(
+        closed >= IN_STORES.len(),
+        "every store's node_modules is refused: {:?}",
+        planned.refused
+    );
+}
+
+/// Catches the fix closing what D-076 opens: an agent's own rule in its own open area, on
+/// the demo's verified layouts, keeps the verdict it had.
+#[test]
+fn open_areas_still_open_at_scan() {
+    let (_temp, env) = demo();
+
+    let (_, json, _) = kipple(&env, &["scan", "--json"]);
+
+    let report: Value = serde_json::from_str(&json).unwrap();
+    let findings = report["findings"].as_array().unwrap();
+    let opened = [
+        ("builtin.codex.plugin-catalog-cache", "safe"),
+        ("builtin.codex.legacy-tui-log", "review"),
+        ("builtin.claude-code.closed-debug-logs", "review"),
+    ];
+    for (rule, bucket) in opened {
+        let found: Vec<&Value> = findings.iter().filter(|f| f["rule"] == rule).collect();
+        assert!(!found.is_empty(), "the demo has {rule}");
+        for finding in &found {
+            let reasons = finding["verdict"]["reasons"].as_array().unwrap();
+            assert!(
+                !reasons.iter().any(|reason| reason == "subresource"),
+                "{rule} is in an area its store opens to it: {finding}"
+            );
+        }
+        if std::env::consts::OS == "linux" {
+            assert!(
+                found.iter().any(|f| f["verdict"]["bucket"] == bucket),
+                "{rule} keeps a {bucket} finding on Linux: {found:?}"
+            );
+        }
+    }
+}

@@ -1,8 +1,10 @@
 //! The host's protected sets: what no plan touches, whatever any rule says
 //! (`docs/04-safety-model.md` §3.2, §3.9).
 //!
-//! The planner checks every selected item against them before it merges or freezes
-//! anything, and apply checks again before it runs anything. They hold whether the
+//! The scan asks about every finding once it is measured, and again once every
+//! integration reported ([`Facts::host`](crate::Facts::host)), so its verdict is Protected
+//! wherever they hold. The planner refuses on that same answer before it merges or freezes
+//! anything, and apply on its own scan's before it runs anything. They hold whether the
 //! integration that declared a subresource ran, failed or is absent.
 //!
 //! A state root is closed unless every declaration that reaches a path consents: its owner

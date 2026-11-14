@@ -15,9 +15,10 @@ use std::fmt;
 use std::io::{self, Write};
 use std::path::{self, Component, Path, PathBuf};
 
+use kipple_adapters::builtin;
 use kipple_core::{
-    FileIdentity, FsProbe as _, HeldPath, Level, Lineage, Method, Policy, Resolution, RootSource,
-    Roots, RuleId, RuleSettings, SymbolicRoot, is_within,
+    FileIdentity, FsProbe as _, HeldPath, Lens, Level, Lineage, Method, Policy, Protections,
+    Resolution, RootSource, Roots, RuleId, RuleSettings, ScanRequest, SymbolicRoot, is_within,
 };
 use kipple_platform::{
     CONFIG_FILE, Environment, NoFollowFs, kipple_dirs, read_config, resolve_roots,
@@ -178,6 +179,30 @@ pub struct Settings {
 }
 
 impl Settings {
+    /// What a scan of its roots covers: every integration of `lens`, or all of them, never
+    /// entering a path the config excludes, under the host's protections. Every scan, the
+    /// one apply runs included, is asked for here, so they all protect the same paths.
+    #[must_use]
+    pub fn scan_request(&self, lens: Option<Lens>) -> ScanRequest {
+        ScanRequest {
+            roots: self.roots.clone(),
+            lens,
+            exclude: self.policy.exclude.clone(),
+            protections: self.protections(),
+        }
+    }
+
+    /// The host's protections on its roots: the home directory, kipple's data directory,
+    /// which holds its runs and config, and every built-in integration's state roots,
+    /// whether it runs here or not.
+    fn protections(&self) -> Protections {
+        let roots = &self.roots;
+        let data = kipple_dirs(roots).data.path.ok();
+        Protections::of_host(roots, data.as_deref(), &builtin::descriptors(), &|path| {
+            held_at(path, roots)
+        })
+    }
+
     /// Loads the config `flag` or the environment names, or the default one, and resolves
     /// the roots with the project roots `given` on the command line, if any, else the
     /// config's.

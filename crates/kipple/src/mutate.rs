@@ -157,7 +157,7 @@ enum Format {
 }
 
 /// Refuses a run whose store can't exist: with kipple's data folder unknown, the host's
-/// protections hold every item, which would read as items the system protects.
+/// protections hold every item, which would read as items in a tool's own data.
 fn store_known(settings: &Settings, stderr: &mut dyn Write) -> Result<(), ExitCode> {
     match kipple_dirs(&settings.roots).data.path {
         Ok(_) => Ok(()),

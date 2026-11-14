@@ -38,6 +38,7 @@ fn build_output() -> Facts {
         unmet: Vec::new(),
         settlement: Settlement::Unsettled,
         integration: IntegrationId("test"),
+        host: None,
     }
 }
 

@@ -58,7 +58,7 @@ Status (M2): built. It opens only when there is no config file at the default lo
 
 The Codex line above is the target: until its release rule removes (M4b), Codex's releases show under report only. Inside each bucket, findings are grouped by **Agents**, **Dev** and **System**. A filter switches to one lens. Totals separate *discovered*, *eligible*, *selected* and *estimated immediate reclaim* (Trash counts as zero immediate reclaim). Sizes fill in as they are computed. Known roots appear within 250 ms. Project scanning covers the configured (or default) project roots.
 
-"Protected / report-only" shows *why* for each row in plain words: `in use`, `layout not recognised`, `can't tell if in use`, `report only` or `advice only`, and later `needs grant`. These are distinct reasons, never lumped into one label. The detail pane and `kipple explain` say each as a sentence.
+"Protected / report-only" shows *why* for each row in plain words: `in use`, `layout not recognised`, `can't tell if in use`, `in a tool's own data`, `report only` or `advice only`, and later `needs grant`. These are distinct reasons, never lumped into one label. The detail pane and `kipple explain` say each as a sentence.
 
 The founder chose this bucket layout over a lens-first one in M2 (D-049).
 

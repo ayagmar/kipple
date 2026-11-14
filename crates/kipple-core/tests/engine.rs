@@ -12,19 +12,21 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use kipple_core::{
-    Activity, ActivityGap, Advice, AgentLabel, Allocated, Anchor, Apparent, Bounds, CancelToken,
-    Category, Checkout, Claim, Clause, Clock, Completeness, Consequence, Cost, DirEntryMeta,
-    Engine, EngineError, EntryKind, EntryMeta, EventChannel, EventRx, Evidence, FactKind, FactSpec,
-    FactState, FactValue, Facts, FileIdentity, Finding, FindingSink, FrozenTree, FsProbe, GitGap,
-    GroupKey, Hold, Integration, IntegrationDescriptor, IntegrationError, IntegrationId, Inventory,
-    Lens, Level, Lineage, Measurement, Method, Modified, Name, NativeKind, NodeId, Now, Observer,
-    Omission, OpenedRoot, Operation, OwnerStatus, Platform, Policy, Ports, Predicate, ProbeError,
-    ProcessOutcome, ProcessProbe, ProcessRecord, ProcessSnapshot, Proposal, Recovery, Registration,
+    Activity, ActivityGap, Advice, AgentLabel, Allocated, Anchor, Apparent, Area, Bounds, Bucket,
+    CancelToken, Category, Checkout, Claim, Clause, Clock, Completeness, Consequence, Cost,
+    DirEntryMeta, Engine, EngineError, EntryKind, EntryMeta, EventChannel, EventRx, Evidence,
+    FactKind, FactSpec, FactState, FactValue, Facts, FileIdentity, Finding, FindingSink,
+    FrozenTree, FsProbe, GitGap, GroupKey, HeldPath, Hold, Integration, IntegrationDescriptor,
+    IntegrationError, IntegrationId, Inventory, Lens, Level, Lineage, Measurement, Method,
+    Modified, Name, NativeKind, NodeId, Now, Observer, Omission, OpenArea, OpenedRoot, Operation,
+    OwnerStatus, Platform, Policy, Ports, Predicate, ProbeError, ProcessOutcome, ProcessProbe,
+    ProcessRecord, ProcessSnapshot, Proposal, Protections, Recovery, Registration,
     RegistrationState, ReleaseFacts, ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion,
     RepositoryDir, Rescan as _, ResolvedRoot, Retention, RootLink, RootSource, Roots, Rule, RuleId,
     RuleText, ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Selector,
-    SemanticFacts, Settlement, Sizer, Skip, SpaceEstimate, Subject, Supplied, SymbolicRoot, Test,
-    ToolGap, Tracked, TrackedQuery, UnresolvedRoot, Verdict, WalkGap, WorktreeFacts, event_channel,
+    SemanticFacts, Settlement, Sizer, Skip, SpaceEstimate, StateDeclaration, Subject, Supplied,
+    SymbolicRoot, Test, ToolGap, Tracked, TrackedQuery, Unresolved, UnresolvedRoot, Verdict,
+    WalkGap, WorktreeFacts, event_channel,
 };
 
 /// Ten times the 100 ms cancellation budget: long enough not to flake on a loaded CI
@@ -343,6 +345,7 @@ fn found() -> ScanRequest {
         roots,
         lens: None,
         exclude: Vec::new(),
+        protections: Protections::default(),
     }
 }
 
@@ -620,6 +623,7 @@ fn roots_that_cannot_be_read_are_omissions_and_are_never_handed_to_the_integrati
             roots,
             lens: None,
             exclude: Vec::new(),
+            protections: Protections::default(),
         },
     );
 
@@ -687,6 +691,7 @@ fn an_integration_can_neither_probe_nor_report_anything_outside_its_roots() {
             roots,
             lens: None,
             exclude: Vec::new(),
+            protections: Protections::default(),
         },
     );
 
@@ -830,6 +835,7 @@ fn a_root_resolved_through_a_link_is_read_only_while_it_leads_to_the_same_direct
             roots,
             lens: None,
             exclude: Vec::new(),
+            protections: Protections::default(),
         },
     );
 
@@ -962,6 +968,7 @@ fn project_artifacts_are_found_in_one_walk_that_never_looks_inside_one_or_goes_t
             roots,
             lens: None,
             exclude: Vec::new(),
+            protections: Protections::default(),
         },
     );
 
@@ -2488,6 +2495,7 @@ fn the_walk_lists_each_repository_by_what_its_git_is() {
         roots,
         lens: None,
         exclude: Vec::new(),
+        protections: Protections::default(),
     };
 
     run(&engine, &request);
@@ -2503,5 +2511,172 @@ fn the_walk_lists_each_repository_by_what_its_git_is() {
             repository("/found/linked", EntryKind::File),
             repository("/found/owned", EntryKind::Dir),
         ]
+    );
+}
+
+/// A store of the integration `store`, open inside to `guest`'s findings, as Codex's home
+/// opens `worktrees/` to git.
+const OPEN_TO_GUEST: StateDeclaration = StateDeclaration {
+    root: SymbolicRoot::XdgCache,
+    protected: &[],
+    open: &[OpenArea {
+        at: Area::Inside(""),
+        integrations: &[IntegrationId("guest")],
+    }],
+    delegates: &[],
+    unresolved: Unresolved::HoldOwn,
+};
+
+/// Owns [`OPEN_TO_GUEST`], and says its layout is this.
+#[derive(Debug)]
+struct Store(OwnerStatus);
+
+impl Integration for Store {
+    fn descriptor(&self) -> IntegrationDescriptor {
+        IntegrationDescriptor {
+            roots: &[SymbolicRoot::XdgCache],
+            state: &[OPEN_TO_GUEST],
+            ..descriptor("store")
+        }
+    }
+
+    fn discover(
+        &self,
+        _: &ScanContext<'_>,
+        sink: &mut FindingSink<'_>,
+    ) -> Result<(), IntegrationError> {
+        sink.set_owner_status(self.0);
+        Ok(())
+    }
+}
+
+/// Finds one verified item inside the store, under a rule that removes it.
+#[derive(Debug)]
+struct Guest;
+
+impl Guest {
+    fn rule() -> Rule {
+        Rule {
+            operation: Operation::RemoveFiles(vec![Method::Delete]),
+            ..any_rule("guest")
+        }
+    }
+}
+
+impl Integration for Guest {
+    fn descriptor(&self) -> IntegrationDescriptor {
+        IntegrationDescriptor {
+            roots: &[SymbolicRoot::XdgCache],
+            ..descriptor("guest")
+        }
+    }
+
+    fn discover(
+        &self,
+        _: &ScanContext<'_>,
+        sink: &mut FindingSink<'_>,
+    ) -> Result<(), IntegrationError> {
+        let consequence = Consequence {
+            recovery: Recovery::Automatic,
+            loss: &[],
+            cost: Cost::Low,
+        };
+        let evidence = vec![Evidence::Signature("TAG".to_owned())];
+        sink.add(
+            &Self::rule(),
+            Path::new("/found/item"),
+            evidence,
+            Some(consequence),
+        )
+    }
+}
+
+/// The bucket of the item [`Guest`] finds, in every update the scan streamed and in its
+/// report, when [`Store`] says `status`.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a fixture that fails to build fails the test"
+)]
+fn guest_buckets(status: OwnerStatus) -> (Vec<Bucket>, Bucket) {
+    let known = ["/", "/found", "/found/item", "/home", "/data"];
+    let id = |path: &str| FileIdentity {
+        volume: 1,
+        file: u128::from(u8::try_from(known.iter().position(|k| *k == path).unwrap()).unwrap()),
+    };
+    let fs = FakeFs {
+        no_git: true,
+        identities: known
+            .iter()
+            .map(|path| (PathBuf::from(path), id(path)))
+            .collect(),
+        ..FakeFs::default()
+    };
+    let integrations: Vec<Box<dyn Integration>> = vec![Box::new(Store(status)), Box::new(Guest)];
+    let descriptors: Vec<_> = integrations.iter().map(|i| i.descriptor()).collect();
+    let engine = Engine::new(
+        ports(fs, FakeSizer::default()),
+        integrations,
+        vec![Guest::rule()],
+    )
+    .unwrap();
+    let mut request = found();
+    insert(&mut request.roots, SymbolicRoot::Home, "/home");
+    let held = |path: &Path| HeldPath {
+        forms: vec![path.to_owned()],
+        lineage: Lineage(
+            path.ancestors()
+                .map(|dir| Some(id(dir.to_str().unwrap())))
+                .collect(),
+        ),
+        note: None,
+    };
+    request.protections = Protections::of_host(
+        &request.roots,
+        Some(Path::new("/data")),
+        &descriptors,
+        &held,
+    );
+    let policy = Policy::default();
+    let rule = Guest::rule().id;
+    let item = Path::new("/found/item");
+    let streamed = events_of(&engine, &request)
+        .into_iter()
+        .filter_map(|event| match event {
+            ScanEvent::FindingUpdated { facts, .. } => {
+                Some(policy.verdict(&rule, item, &facts).bucket())
+            }
+            ScanEvent::ScanStarted { .. }
+            | ScanEvent::RootOpened { .. }
+            | ScanEvent::FindingAdded { .. }
+            | ScanEvent::IntegrationCompleted { .. }
+            | ScanEvent::ScanCompleted { .. } => None,
+        })
+        .collect();
+    let report = run(&engine, &request);
+    let finding = report.findings.iter().find(|f| f.path == item).unwrap();
+    (streamed, finding.verdict(&policy).unwrap().bucket())
+}
+
+/// Catches the scan streaming a finding as removable before every owner reported: an
+/// update made while the store's owner hadn't said its layout is supported would show it
+/// open, and the finished scan, with the owner unsupported, would hold it. A finding the
+/// host closes is held in every update; one an owner opens is announced again, open, once
+/// the scan knows.
+#[test]
+fn closed_finding_is_never_streamed_safe() {
+    let (streamed, reported) = guest_buckets(OwnerStatus::Unsupported);
+    assert_eq!(reported, Bucket::Protected);
+    assert!(!streamed.is_empty(), "the item was announced");
+    assert!(
+        streamed.iter().all(|bucket| *bucket == Bucket::Protected),
+        "every update holds what the report holds: {streamed:?}"
+    );
+
+    let (updates, opened) = guest_buckets(OwnerStatus::Supported);
+    assert_ne!(opened, Bucket::Protected, "the supported owner opens it");
+    assert_eq!(
+        updates.last(),
+        Some(&opened),
+        "the last update says what the report does"
     );
 }

@@ -828,7 +828,7 @@
           "$ref": "#/$defs/BucketOut"
         },
         "reasons": {
-          "description": "Why it isn't Safe: for Review, what falls short of the level (`recent`, `recovery`,\n`loss`, `high-cost`); for Protected, what holds it (`disabled`, `kept`, `excluded`,\n`report-only`, `advice`, `unknown-layout`,\n`unknown-consequence`, `unknown-git`, `holds-repository`, `in-use`,\n`unknown-activity`, `unknown-modified`, `retained`, `unsettled`, `fact-unmet`,\n`fact-unknown`, `subject-mismatch`, `tracked-inside-native`). Empty when Safe.",
+          "description": "Why it isn't Safe: for Review, what falls short of the level (`recent`, `recovery`,\n`loss`, `high-cost`); for Protected, what holds it (`disabled`, `kept`, `excluded`,\n`report-only`, `advice`, `unknown-layout`,\n`unknown-consequence`, `unknown-git`, `holds-repository`, `in-use`,\n`unknown-activity`, `unknown-modified`, `retained`, `unsettled`, `fact-unmet`,\n`fact-unknown`, `subject-mismatch`, `tracked-inside-native`, and what the host\nprotects: `file-system-root`, `home`, `subresource`). Empty when Safe.",
           "type": "array",
           "items": {
             "type": "string"

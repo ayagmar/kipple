@@ -648,7 +648,10 @@
         "fact-unmet",
         "fact-unknown",
         "subject-mismatch",
-        "tracked-inside-native"
+        "tracked-inside-native",
+        "file-system-root",
+        "home",
+        "subresource"
       ]
     },
     "JudgementField": {

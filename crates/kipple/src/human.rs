@@ -372,6 +372,18 @@ const fn hold_text(hold: Hold) -> (&'static str, &'static str) {
             "git tracks files in it",
             "git tracks files inside it, and a tool's own command can't leave them out.",
         ),
+        Hold::FileSystemRoot => (
+            "a disk's top folder",
+            "It is the top folder of a disk, which kipple never removes.",
+        ),
+        Hold::Home => (
+            "may hold your home",
+            "Removing it could remove your home folder, or kipple couldn't rule that out.",
+        ),
+        Hold::Subresource => (
+            "in a tool's own data",
+            "It is in data a tool keeps for itself, or kipple's own, and that part isn't open to its rule, or kipple doesn't recognise that tool's version.",
+        ),
     }
 }
 

@@ -14,9 +14,9 @@ use kipple_core::{
     Anchor, Apparent, CancelToken, Checkout, Clock, Completeness, ConfigGate, DirEntryMeta, Engine,
     EntryKind, EntryMeta, EventChannel, FactValue, Finding, FrozenTree, FsProbe, GitGap, Inventory,
     Measurement, NodeId, ObjectId, Observer, Ports, ProbeError, ProcessProbe, ProcessSnapshot,
-    Registration, RegistrationState, ResolvedRoot, RootSource, Roots, ScanReport, ScanRequest,
-    Sizer, SpaceEstimate, SymbolicRoot, TrackedQuery, Unavailable, WorktreePlace, WorktreeQuery,
-    WorktreeState, event_channel,
+    Protections, Registration, RegistrationState, ResolvedRoot, RootSource, Roots, ScanReport,
+    ScanRequest, Sizer, SpaceEstimate, SymbolicRoot, TrackedQuery, Unavailable, WorktreePlace,
+    WorktreeQuery, WorktreeState, event_channel,
 };
 
 /// The real file system, read without following links.
@@ -415,6 +415,10 @@ impl Built {
             roots: self.roots(),
             lens: None,
             exclude: Vec::new(),
+            // This file system reports no identities, so the host can rule nothing out
+            // and protects every finding, as the default does. These tests read the
+            // facts supplied, never a verdict.
+            protections: Protections::default(),
         };
         let report = engine.scan(&request, &events, &cancel);
         drop(rx);
