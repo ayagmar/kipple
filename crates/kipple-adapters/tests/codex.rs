@@ -30,7 +30,7 @@ use kipple_core::{
     Omission, OwnerStatus, Platform, Policy, Proposal, ReleaseRole, ReleaseState, Retained,
     Settlement, UnresolvedRoot, Verdict,
 };
-use tree::Holds;
+use tree::{FixtureTree, Holds};
 
 const V164: &str = "0.164.0";
 const V165: &str = codex_v0_165_0::VERSION;
@@ -2365,4 +2365,219 @@ fn a_process_list_read_again_at_apply_decides() {
     });
     let now = scan.now(OLD).map(|now| now.settlement);
     assert_eq!(now, Ok(kept_blocked(GroupGap::ActivityUnknown)));
+}
+
+/// Catches a release upstream's prune never considers settling as a candidate: one built
+/// for Windows in a Linux store has no `bin/codex` and no `codex` alias, so upstream keeps
+/// it, and kipple only reports it, the older of two too.
+#[test]
+fn foreign_target_release_is_kept() {
+    let target = "x86_64-pc-windows-msvc";
+    let mut scene = verified();
+    let foreign: Vec<String> = ["0.162.1", "0.163.0"]
+        .into_iter()
+        .map(|version| {
+            let path = release(STANDALONE, &format!("{version}-{target}"));
+            codex_v0_166_0::windows_release(&mut scene.tree, &at(&path), version, target);
+            path
+        })
+        .collect();
+
+    let scan = scene.scan();
+
+    for path in &foreign {
+        assert_eq!(scan.rule(path), "release-inventory", "{path}");
+        assert!(is_report(&scan, path), "{path}: expected report only");
+        assert!(
+            has_signature(&scan, path),
+            "{path}: expected a signed release"
+        );
+    }
+    assert_eq!(candidates(&scan), [OLD.to_owned()]);
+}
+
+/// Whether an entry's `codex` alias reads `bin/codex`, as upstream writes it, or another
+/// file of the release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Alias {
+    Program,
+    Other,
+}
+
+/// One entry of a generated store.
+#[derive(Debug, Clone)]
+struct Planted {
+    version: &'static str,
+    target: &'static str,
+    alias: Alias,
+}
+
+impl Planted {
+    fn name(&self) -> String {
+        format!("{}-{}", self.version, self.target)
+    }
+
+    fn path(&self) -> String {
+        release(STANDALONE, &self.name())
+    }
+
+    fn program(&self) -> String {
+        let program = if self.target.contains("windows") {
+            "bin/codex.exe"
+        } else {
+            "bin/codex"
+        };
+        at(&format!("{}/{program}", self.path()))
+    }
+
+    fn write(&self, tree: &mut FixtureTree) {
+        let dir = at(&self.path());
+        if self.target.contains("windows") {
+            codex_v0_166_0::windows_release(tree, &dir, self.version, self.target);
+            return;
+        }
+        match self.alias {
+            Alias::Program => codex_v0_166_0::release(tree, &dir, self.version, self.target),
+            Alias::Other => {
+                let manifest = codex_v0_166_0::manifest(self.version, self.target, "bin/codex");
+                tree.file(&format!("{dir}/codex-package.json"), manifest.as_bytes())
+                    .file(&format!("{dir}/bin/codex"), b"\x7fELF")
+                    .file(&format!("{dir}/bin/other"), b"\x7fELF")
+                    .link(&format!("{dir}/codex"), "bin/other", Holds::AsWritten);
+            }
+        }
+    }
+}
+
+/// A generated store: its entries, the selected one, its rollback, and the one a process
+/// runs, by index.
+#[derive(Debug)]
+struct Planting {
+    entries: Vec<Planted>,
+    active: usize,
+    previous: Option<usize>,
+    running: Option<usize>,
+}
+
+const PLANTED_VERSIONS: [&str; 7] = ["0.160.0", "0.161.0", "0.162.1", "0.163.0", V164, V165, V166];
+const PLANTED_TARGETS: [&str; 5] = [
+    MUSL,
+    MUSL,
+    MUSL,
+    "aarch64-unknown-linux-musl",
+    "x86_64-pc-windows-msvc",
+];
+
+impl Seeded {
+    fn pick<T: Copy>(&mut self, from: &[T]) -> T {
+        from[self.next() % from.len()]
+    }
+
+    fn one_in(&mut self, odds: usize) -> bool {
+        self.next().is_multiple_of(odds)
+    }
+
+    fn other_than(&mut self, count: usize, not: usize) -> Option<usize> {
+        let picked = self.next() % count;
+        (picked != not).then_some(picked)
+    }
+
+    fn planting(&mut self) -> Planting {
+        let mut entries: Vec<Planted> = Vec::new();
+        for _ in 0..3 + self.next() % 5 {
+            let alias = if self.one_in(5) {
+                Alias::Other
+            } else {
+                Alias::Program
+            };
+            let planted = Planted {
+                version: self.pick(&PLANTED_VERSIONS),
+                target: self.pick(&PLANTED_TARGETS),
+                alias,
+            };
+            if entries.iter().all(|entry| entry.name() != planted.name()) {
+                entries.push(planted);
+            }
+        }
+        let active = self.next() % entries.len();
+        let previous = self.other_than(entries.len(), active);
+        let running = (self.one_in(3)).then(|| self.next() % entries.len());
+        Planting {
+            entries,
+            active,
+            previous,
+            running,
+        }
+    }
+}
+
+impl Planting {
+    fn scene(&self) -> Scene {
+        let mut scene = Scene::new();
+        for entry in &self.entries {
+            entry.write(&mut scene.tree);
+        }
+        let selected = self.entries[self.active].name();
+        let previous = self
+            .previous
+            .map_or_else(String::new, |at| self.entries[at].name());
+        scene
+            .select(STANDALONE, &selected)
+            .history(STANDALONE, &selected, &previous);
+        scene
+            .running
+            .extend(self.running.map(|at| self.entries[at].program()));
+        scene
+    }
+
+    /// Whether upstream's prune (`prune_standalone_releases` at `rust-v0.166.0`) would
+    /// consider the entry `at`, from what is on disk: neither selected nor the rollback,
+    /// unused, one of its four targets, `bin/codex` its program and the `codex` alias.
+    fn upstream_considers(&self, at: usize) -> bool {
+        let entry = &self.entries[at];
+        at != self.active
+            && Some(at) != self.previous
+            && Some(at) != self.running
+            && [
+                "aarch64-apple-darwin",
+                "x86_64-apple-darwin",
+                "aarch64-unknown-linux-musl",
+                "x86_64-unknown-linux-musl",
+            ]
+            .contains(&entry.target)
+            && entry.alias == Alias::Program
+    }
+}
+
+/// Whether the finding at `path` settled as a candidate, if there is one.
+fn is_candidate(scan: &Scan, path: &str) -> bool {
+    scan.get(path)
+        .and_then(|finding| finding.facts.as_ref())
+        .is_some_and(|facts| facts.settlement == CANDIDATE)
+}
+
+/// Catches a scan offering what upstream's own prune keeps, over generated stores: each
+/// entry is judged by upstream's reading of what is on disk (its target, its program, its
+/// alias), not by a role kipple assigned, so a release kipple reads the wrong way shows.
+#[test]
+fn no_candidate_is_one_upstream_keeps() {
+    let mut candidates = 0;
+    for seed in 0..96 {
+        let planting = Seeded(seed).planting();
+        let scan = planting.scene().scan();
+        for (at, entry) in planting.entries.iter().enumerate() {
+            if is_candidate(&scan, &entry.path()) {
+                candidates += 1;
+                let considered = planting.upstream_considers(at);
+                assert!(
+                    considered,
+                    "seed {seed}: upstream keeps {entry:?} of {planting:?}"
+                );
+            }
+        }
+    }
+    assert_ne!(
+        candidates, 0,
+        "the generated stores never reach a candidate"
+    );
 }

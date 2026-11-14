@@ -293,6 +293,16 @@ const TARGETS: [&str; 6] = [
     "aarch64-pc-windows-msvc",
 ];
 
+/// The targets upstream's own prune considers (`prune_standalone_releases` in
+/// `install.sh`): a release of any other target, a Windows one in a Linux store say, is
+/// one it keeps, so it is only reported.
+const PRUNED_TARGETS: [&str; 4] = [
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "aarch64-unknown-linux-musl",
+    "x86_64-unknown-linux-musl",
+];
+
 /// A release's manifest, the signature of everything else.
 const MANIFEST: &str = "codex-package.json";
 
@@ -1627,7 +1637,9 @@ impl Home {
         component: &Component,
         release: &Release,
     ) -> Result<(), IntegrationError> {
-        if let Some(rule) = rule_of(cx, RELEASES).filter(|_| self.store.is_readable()) {
+        let pruned = PRUNED_TARGETS.contains(&release.target.as_str());
+        let rule = rule_of(cx, RELEASES).filter(|_| pruned && self.store.is_readable());
+        if let Some(rule) = rule {
             let claim = Claim {
                 evidence: vec![Evidence::Signature(MANIFEST.to_owned())],
                 consequence: Some(REDOWNLOADED),

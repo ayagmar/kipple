@@ -181,7 +181,7 @@ Semantics (`kipple-core/src/retention.rs`, `engine/settle.rs`):
 - A group is a component (`standalone`, `app-server-daemon`) and a target. Kept in each: the release `current` selects, the `previous` that `selection-history` names, every release a process runs, and one an install is bringing in. When the history names no rollback in a group, the newest release left there stays, a prerelease ordering below its release.
 - A release runs when a process's executable lies anywhere under its directory, helpers such as `codex-path/rg` included, or when a process runs a file with the identity of one of its files from elsewhere, as through a hard link. Never by name.
 - What a component records answers for all of its groups. A `current` or `selection-history` that can't be relied on, an install marker (`.staging.*`, `.current.*`, `.migration-current`, `install.lock.d`, `install-lock-*`), a part of the store that can't be read, a process under `.retired.*` and a process that may run any of its releases but can't be inspected each keep every release of the component, as each stops Codex's own prune. A version that can't be ordered keeps its group, and a group with a member left unmeasured stays unsettled, which holds it.
-- A release that fails §3's signature, `local-*`, `.retired.*` and `.staging.*` is never a candidate. A mount inside a release, at a directory or a file, a same-device bind mount included (Linux compares `statx` mount IDs), fails the signature.
+- A release that fails §3's signature, `local-*`, `.retired.*` and `.staging.*` is never a candidate, and neither is a release whose target isn't one of the four upstream's prune considers (`{x86_64,aarch64}-unknown-linux-musl`, `{x86_64,aarch64}-apple-darwin`): a Windows release in a Linux store is only reported. A mount inside a release, at a directory or a file, a same-device bind mount included (Linux compares `statx` mount IDs), fails the signature.
 - The scan takes no lock. Apply takes Codex's locks for one item without waiting and without creating them: `install.lock`, and `app-server-daemon/daemon.lock` for the daemon's store. A missing or held lock skips the item as `installer-busy`. Then it freezes the release, reads the release and every release of its component again (links, history, manifests and listing), takes one new process snapshot and settles them with the scan's code, so the set only shrinks.
 
 Fixtures (`crates/kipple-adapters/tests/codex.rs`, `crates/kipple-core/tests/retention.rs`, `crates/kipple-core/tests/apply/releases.rs`, `crates/kipple-platform/tests/store_lock.rs`, `crates/kipple/tests/codex_gate.rs`):
@@ -191,9 +191,11 @@ Fixtures (`crates/kipple-adapters/tests/codex.rs`, `crates/kipple-core/tests/ret
 - 5+3 releases with one older running (docs/11 M4 Verify): the active, running and rollback releases are kept
 - a pruned store has no candidates; a rollback older than another release is kept, not the newest
 - a link that changes before apply protects the new release
+- a Windows release in a Linux store, and a file bind-mounted inside a release, are only reported
 - incomplete process inventory, `hidepid`, an uninspectable Codex process, a malformed `current` and a staging directory block the group
 - a held or missing install lock, and a held daemon lock, skip the release
 - a property over generated stores: settle never keeps less than a model of Codex's prune
+- a property over generated stores on disk: no candidate is an entry upstream's prune keeps, judged from the entry's target, program and alias
 
 ### Git worktrees (any agent)
 
