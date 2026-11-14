@@ -106,6 +106,7 @@ impl FsProbe for FakeFs {
             Ok(kind) => Ok(EntryMeta {
                 kind,
                 identity: self.identities.get(path).copied(),
+                mount: kipple_core::Mount::ByDevice,
             }),
             Err(kind) => Err(ProbeError::io(path, kind.into())),
         }

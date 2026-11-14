@@ -40,6 +40,7 @@ impl FsProbe for TempFs {
         Ok(EntryMeta {
             kind: kind(meta.file_type()),
             identity: None,
+            mount: kipple_core::Mount::ByDevice,
         })
     }
 

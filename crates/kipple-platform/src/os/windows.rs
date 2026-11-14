@@ -608,3 +608,13 @@ mod tests {
         );
     }
 }
+
+/// Windows has no mount IDs: a mount there is another device.
+pub(crate) const fn mount(_: &Path) -> kipple_core::Mount {
+    kipple_core::Mount::ByDevice
+}
+
+/// Windows has no lock kipple knows to match Codex's installer (spec M4 pinned 13).
+pub(crate) const fn hold_locks(_: &[PathBuf]) -> Result<Vec<fs::File>, kipple_core::LockGap> {
+    Err(kipple_core::LockGap::Unsupported)
+}

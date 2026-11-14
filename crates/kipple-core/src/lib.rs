@@ -166,7 +166,7 @@ pub use policy::{
     Seen, Tracked, Unmet, Verdict, WalkGap,
 };
 pub use probe::{
-    Clock, DirAccess, DirEntryMeta, EntryKind, EntryMeta, FileIdentity, FileSystem, FsProbe,
+    Clock, DirAccess, DirEntryMeta, EntryKind, EntryMeta, FileIdentity, FileSystem, FsProbe, Mount,
     ProbeError, Sizer,
 };
 pub use process::{

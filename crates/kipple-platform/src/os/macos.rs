@@ -5,6 +5,7 @@
 //! `proc_pidinfo` and `KERN_PROCARGS2` give its owner and what else it can be seen using.
 
 use std::ffi::{CStr, OsStr, c_char, c_int, c_void};
+use std::fs;
 use std::io;
 use std::os::unix::ffi::OsStrExt as _;
 use std::path::{Path, PathBuf};
@@ -608,4 +609,14 @@ mod tests {
             "a record cut short in its count is unknown"
         );
     }
+}
+
+/// macOS has no mount IDs: a mount there is another device.
+pub(crate) const fn mount(_: &Path) -> kipple_core::Mount {
+    kipple_core::Mount::ByDevice
+}
+
+/// macOS has no lock kipple knows to match Codex's installer (spec M4 pinned 13).
+pub(crate) const fn hold_locks(_: &[PathBuf]) -> Result<Vec<fs::File>, kipple_core::LockGap> {
+    Err(kipple_core::LockGap::Unsupported)
 }

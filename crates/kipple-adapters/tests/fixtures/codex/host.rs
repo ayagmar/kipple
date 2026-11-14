@@ -24,11 +24,11 @@ use kipple_core::{
     Advice, Anchor, Apparent, CancelToken, Capabilities, Clock, CommandLines, Completeness,
     DirAccess, DirEntryMeta, Engine, EntryKind, EntryMeta, EventChannel, FactValue, Facts,
     FileIdentity, FileSystem, Finding, FrozenTree, FsProbe, GitGap, HeldPath, Hold, IntegrationId,
-    Inventory, Lineage, Measurement, MountNamespace, NodeId, Now, Observer, Omission, OwnerStatus,
-    Owners, Platform, Policy, Ports, ProbeError, ProcessOutcome, ProcessOwner, ProcessProbe,
-    ProcessRecord, ProcessSnapshot, Protections, ReleaseFacts, Rescan as _, ResolvedRoot,
-    RootSource, Roots, ScanReport, ScanRequest, Sizer, Skip, SpaceEstimate, Subject, SymbolicRoot,
-    TrackedQuery, Unread, UnresolvedRoot, Verdict, event_channel,
+    Inventory, Lineage, Measurement, Mount, MountNamespace, NodeId, Now, Observer, Omission,
+    OwnerStatus, Owners, Platform, Policy, Ports, ProbeError, ProcessOutcome, ProcessOwner,
+    ProcessProbe, ProcessRecord, ProcessSnapshot, Protections, ReleaseFacts, Rescan as _,
+    ResolvedRoot, RootSource, Roots, ScanReport, ScanRequest, Sizer, Skip, SpaceEstimate, Subject,
+    SymbolicRoot, TrackedQuery, Unread, UnresolvedRoot, Verdict, event_channel,
 };
 
 /// Where the Codex home is in a tree, as it is by default.
@@ -95,6 +95,9 @@ struct Disk {
     odd: Vec<PathBuf>,
     /// Directories that are mounts: they and everything below them are another volume.
     mounts: Vec<PathBuf>,
+    /// Directories that are bind mounts: they and everything below them are another mount
+    /// of the same volume.
+    binds: Vec<PathBuf>,
     /// Links that read as holding the second path, and not what the OS made of it.
     stored: Vec<(PathBuf, PathBuf)>,
     /// Links an installer made again after the scan, with what each now holds: both what
@@ -146,6 +149,17 @@ impl Disk {
         }
     }
 
+    /// The mount `path` is on, by an ID as Linux gives one.
+    fn mount(&self, path: &Path) -> Mount {
+        if self.mounts.iter().any(|mount| path.starts_with(mount)) {
+            Mount::Id(3)
+        } else if self.binds.iter().any(|bind| path.starts_with(bind)) {
+            Mount::Id(2)
+        } else {
+            Mount::Id(1)
+        }
+    }
+
     /// What Unix records of the link at `path`, whether or not this test can read it.
     fn stamp(path: &Path) -> Result<String, ProbeError> {
         let target = fs::read_link(path).map_err(|e| ProbeError::io(path, e))?;
@@ -176,6 +190,7 @@ impl FsProbe for Disk {
         Ok(EntryMeta {
             kind: self.kind(path, meta.file_type()),
             identity: Some(self.identity(path)),
+            mount: self.mount(path),
         })
     }
 
@@ -470,6 +485,8 @@ pub(crate) struct Scene {
     pub(crate) odd: Vec<String>,
     /// Paths in the tree that are mounts.
     pub(crate) mounts: Vec<String>,
+    /// Paths in the tree that are bind mounts of a directory on the same volume.
+    pub(crate) binds: Vec<String>,
     /// Links that read as holding what the test says.
     pub(crate) stored: Vec<StoredLink>,
     /// Which OS's rules apply.
@@ -501,6 +518,7 @@ impl Scene {
             unlistable: Vec::new(),
             odd: Vec::new(),
             mounts: Vec::new(),
+            binds: Vec::new(),
             stored: Vec::new(),
             platform: Platform::Linux,
             running: Vec::new(),
@@ -570,6 +588,7 @@ impl Scene {
             unlistable: inside(&self.unlistable),
             odd: inside(&self.odd),
             mounts: inside(&self.mounts),
+            binds: inside(&self.binds),
             stored: self
                 .stored
                 .iter()

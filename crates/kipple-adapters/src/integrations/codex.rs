@@ -13,9 +13,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Component as Part, Path, PathBuf};
 
 use kipple_core::{
-    ActivityEvidence, Advice, Area, Claim, Consequence, Cost, DirEntryMeta, EntryKind, Evidence,
-    FactKind, FactSpec, FactValue, Finding, FindingSink, GroupGap, Integration,
-    IntegrationDescriptor, IntegrationError, IntegrationId, IntegrationSelector, Lens, Loss,
+    ActivityEvidence, Advice, Area, Claim, Consequence, Cost, DirEntryMeta, EntryKind, EntryMeta,
+    Evidence, FactKind, FactSpec, FactValue, Finding, FindingSink, GroupGap, Integration,
+    IntegrationDescriptor, IntegrationError, IntegrationId, IntegrationSelector, Lens, Loss, Mount,
     OpenArea, OwnerStatus, Platform, ProbeError, Program, ProtectedEntry, Recovery, ReleaseFacts,
     ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion, Rule, RuleId, ScanContext, Selector,
     StateDeclaration, Subject, Supplied, SymbolicRoot, Unresolved,
@@ -753,7 +753,7 @@ struct Walked {
 }
 
 /// Lists everything below `top`, stopping at nothing a link leads to.
-fn walk(cx: &ScanContext<'_>, top: &Path, mount: Option<u64>) -> Result<Walked, IntegrationError> {
+fn walk(cx: &ScanContext<'_>, top: &Path, mount: Placement) -> Result<Walked, IntegrationError> {
     let mut walked = Walked {
         files: Vec::new(),
         ordinary: true,
@@ -763,8 +763,7 @@ fn walk(cx: &ScanContext<'_>, top: &Path, mount: Option<u64>) -> Result<Walked, 
         if cx.is_cancelled() {
             return Err(IntegrationError::Stopped);
         }
-        let volume = cx.metadata(&dir)?.identity.map(|identity| identity.volume);
-        walked.ordinary = walked.ordinary && volume.is_some() && volume == mount;
+        walked.ordinary = walked.ordinary && mount.holds(&cx.metadata(&dir)?);
         for entry in cx.read_dir(&dir)? {
             let path = dir.join(&entry.name);
             match entry.kind {
@@ -777,6 +776,36 @@ fn walk(cx: &ScanContext<'_>, top: &Path, mount: Option<u64>) -> Result<Walked, 
     }
     walked.files.sort();
     Ok(walked)
+}
+
+/// Where the store lies: its device, and its mount where the platform tells mounts apart
+/// beyond that, since a bind mount shows a directory of the same device.
+#[derive(Debug, Clone, Copy)]
+struct Placement {
+    volume: Option<u64>,
+    mount: Mount,
+}
+
+impl Placement {
+    /// Where the entry `meta` describes lies.
+    fn of(meta: &EntryMeta) -> Self {
+        Self {
+            volume: meta.identity.map(|identity| identity.volume),
+            mount: meta.mount,
+        }
+    }
+
+    /// Whether the entry `meta` describes lies on this mount. A mount that can't be read
+    /// may be another.
+    fn holds(self, meta: &EntryMeta) -> bool {
+        let there = Self::of(meta);
+        let same_mount = match (self.mount, there.mount) {
+            (Mount::Id(ours), Mount::Id(theirs)) => ours == theirs,
+            (Mount::ByDevice, Mount::ByDevice) => true,
+            (Mount::Id(_) | Mount::ByDevice | Mount::Unknown, _) => false,
+        };
+        self.volume.is_some() && there.volume == self.volume && same_mount
+    }
 }
 
 /// What `dir`'s manifest is.
@@ -798,7 +827,7 @@ fn inspect(
     cx: &ScanContext<'_>,
     path: PathBuf,
     name: &str,
-    mount: Option<u64>,
+    mount: Placement,
 ) -> Result<Entry, IntegrationError> {
     let usable = match read_manifest(cx, &path) {
         Ok(ManifestRead::Usable(manifest)) => Some(manifest),
@@ -854,7 +883,7 @@ fn read_alias(cx: &ScanContext<'_>, path: &Path, target: &str) -> Result<bool, P
 fn read_retired(
     cx: &ScanContext<'_>,
     path: PathBuf,
-    mount: Option<u64>,
+    mount: Placement,
 ) -> Result<Entry, IntegrationError> {
     let (files, listed) = match walk(cx, &path, mount) {
         Ok(walked) => (walked.files, true),
@@ -920,7 +949,7 @@ impl Component {
         cx: &ScanContext<'_>,
         name: &'static str,
         dir: PathBuf,
-        mount: Option<u64>,
+        mount: Placement,
     ) -> Result<Self, IntegrationError> {
         let mut component = Self {
             name,
@@ -981,7 +1010,7 @@ impl Component {
     fn read_releases(
         &mut self,
         cx: &ScanContext<'_>,
-        mount: Option<u64>,
+        mount: Placement,
     ) -> Result<(), IntegrationError> {
         let releases = self.dir.join("releases");
         let listing = match cx.metadata(&releases) {
@@ -1015,7 +1044,7 @@ impl Component {
         cx: &ScanContext<'_>,
         releases: &Path,
         entry: &DirEntryMeta,
-        mount: Option<u64>,
+        mount: Placement,
     ) -> Result<(), IntegrationError> {
         let path = releases.join(&entry.name);
         let name = entry.name.to_str().unwrap_or_default();
@@ -1237,7 +1266,7 @@ impl Store {
             return Ok(store);
         };
         entries.sort_by(|a, b| a.name.cmp(&b.name));
-        let mount = meta.identity.map(|identity| identity.volume);
+        let mount = Placement::of(&meta);
         for entry in entries {
             let path = packages.join(&entry.name);
             let known = COMPONENTS.iter().find(|name| entry.name == **name);

@@ -151,6 +151,7 @@ impl FsProbe for TempFs {
         Ok(EntryMeta {
             kind: kind(meta.file_type()),
             identity: Some(identity(path)),
+            mount: kipple_core::Mount::ByDevice,
         })
     }
 
