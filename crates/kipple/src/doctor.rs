@@ -5,19 +5,20 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use kipple_core::{
-    EntryKind, EntryMeta, FsProbe as _, IntegrationId, Inventory, Lens, ProbeError, ProcessClass,
-    ProcessProbe as _, ProcessSnapshot, Resolution, ResolvedRoot, RootSource, SymbolicRoot,
-    ToolStatus, UnresolvedRoot, census,
+    EntryKind, EntryMeta, FsProbe as _, IntegrationId, Inventory, Lens, NativeTool, ProbeError,
+    ProcessClass, ProcessProbe as _, ProcessSnapshot, Resolution, ResolvedRoot, ResolvedTool,
+    RootSource, SymbolicRoot, ToolGap, ToolResolver as _, ToolStatus, UnresolvedRoot, census,
 };
 use kipple_platform::{
-    Environment, KippleDir, KippleDirs, NoFollowFs, OsProcesses, PLATFORM, ToolProbe, kipple_dirs,
-    permission_hint, probe_tools, resolve_roots,
+    Environment, KippleDir, KippleDirs, NoFollowFs, OsProcesses, PLATFORM, PathTools, ToolProbe,
+    kipple_dirs, permission_hint, probe_tools, resolve_roots,
 };
 use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::config::{self, ConfigError, Settings, Source};
 use crate::human::escaped;
+use crate::human::outcome::tool_gap;
 use crate::json::{DOCTOR, LensOut, PathOut, VERSION};
 use crate::setup::{Builtin, BuiltinRule};
 use crate::theme::{Catalog, Ink, Origin, Role};
@@ -38,6 +39,9 @@ pub struct Report {
     pub integrations: Vec<IntegrationRoots>,
     /// Every native tool kipple knows.
     pub tools: Vec<ToolProbe>,
+    /// npm as a semantic plan would run it, found the way apply finds it: its `npm-cli.js`
+    /// and the node beside it, or why there is none. Its cache is under "Roots".
+    pub npm: Result<ResolvedTool, ToolGap>,
     /// The process table, or why it could not be read.
     pub processes: Result<ProcessSnapshot, ProbeError>,
     /// What to suggest when a permission failure was diagnosed.
@@ -132,6 +136,7 @@ pub fn gather(env: &Environment, flag: Option<&Path>, builtin: &Builtin) -> Repo
         roots: checks,
         integrations: integration_roots(builtin),
         tools: probe_tools(env),
+        npm: PathTools::new(env).resolve(NativeTool::Npm),
         processes: OsProcesses.snapshot(),
         permission_hint: permission_hint(),
     }
@@ -319,7 +324,17 @@ impl Report {
             };
             writeln!(out, "  {:<12}{}", tool.program(), escaped(&line))?;
         }
-        Ok(())
+        let line = match &self.npm {
+            Ok(npm) => {
+                let runtime = npm.runtime.as_ref().map(|node| &node.path);
+                let node =
+                    runtime.map_or_else(String::new, |node| format!(" run by {}", node.display()));
+                format!("{}  {}{node}", npm.version, npm.path.display())
+            }
+            Err(gap) => format!("can't be used: {}", tool_gap(*gap)),
+        };
+        let name = NativeTool::Npm.program();
+        writeln!(out, "  {name:<12}{}", escaped(&line))
     }
 
     fn write_processes(&self, out: &mut dyn Write, ink: &Ink) -> io::Result<()> {
@@ -553,11 +568,13 @@ pub struct IntegrationRootsOut {
 pub struct ToolOut {
     /// Its program name.
     pub name: &'static str,
-    /// Where it was found on `PATH`.
+    /// Where it was found on `PATH`: for npm, the `npm-cli.js` that would run.
     pub path: Option<PathOut>,
+    /// What runs it, when it is a script: npm's node.
+    pub runtime: Option<PathOut>,
     /// Its version, when the probe succeeded.
     pub version: Option<String>,
-    /// Why the version probe failed.
+    /// Why the version probe failed, or for npm why it can't be used.
     pub problem: Option<String>,
 }
 
@@ -629,7 +646,12 @@ impl Report {
             },
             roots: self.roots.iter().map(root_out).collect(),
             integrations: self.integrations.iter().map(integration_out).collect(),
-            tools: self.tools.iter().map(tool_out).collect(),
+            tools: self
+                .tools
+                .iter()
+                .map(tool_out)
+                .chain([npm_out(&self.npm)])
+                .collect(),
             processes: processes_out(&self.processes),
             permission_hint: self.permission_hint.filter(|_| self.permission_denied()),
         }
@@ -696,8 +718,29 @@ fn tool_out(ToolProbe { tool, status }: &ToolProbe) -> ToolOut {
     ToolOut {
         name: tool.program(),
         path,
+        runtime: None,
         version,
         problem,
+    }
+}
+
+fn npm_out(npm: &Result<ResolvedTool, ToolGap>) -> ToolOut {
+    let name = NativeTool::Npm.program();
+    match npm {
+        Ok(npm) => ToolOut {
+            name,
+            path: Some(PathOut::new(&npm.path)),
+            runtime: npm.runtime.as_ref().map(|node| PathOut::new(&node.path)),
+            version: Some(npm.version.clone()),
+            problem: None,
+        },
+        Err(gap) => ToolOut {
+            name,
+            path: None,
+            runtime: None,
+            version: None,
+            problem: Some(tool_gap(*gap).to_owned()),
+        },
     }
 }
 

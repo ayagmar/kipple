@@ -10,9 +10,10 @@ use kipple::theme::Ink;
 use kipple::{CANCELLED, exit_code};
 use kipple_adapters::builtin::descriptors;
 use kipple_core::{
-    FileIdentity, HeldPath, IntegrationId, Inventory, Lens, Lineage, Observer, Owners, ProbeError,
-    ProcessSnapshot, Protection, Protections, ResolvedRoot, RootLink, RootSource, Roots,
-    SymbolicRoot, UnresolvedRoot,
+    FileIdentity, Fingerprint, HeldPath, IntegrationId, Inventory, Lens, Lineage, NativeTool,
+    Observer, Owners, ProbeError, ProcessSnapshot, Protection, Protections, ResolvedRoot,
+    ResolvedTool, RootLink, RootSource, Roots, Stamp, SymbolicRoot, ToolFile, ToolGap,
+    UnresolvedRoot,
 };
 use kipple_platform::{KippleDir, KippleDirs};
 
@@ -60,6 +61,7 @@ fn report(cache_error: io::ErrorKind) -> Report {
         }],
         integrations: Vec::new(),
         tools: Vec::new(),
+        npm: Err(ToolGap::Missing),
         processes: Ok(ProcessSnapshot {
             processes: Vec::new(),
             inventory: Inventory::Complete,
@@ -135,6 +137,76 @@ fn a_root_resolved_through_a_link_shows_the_link_and_where_it_leads() {
         PathBuf::from("/mnt/ssd/cache").display()
     );
     assert!(output.contains(&shown), "{output}");
+}
+
+/// npm as the resolver gives it: its script and the node beside it.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a fixture that fails to build fails the test"
+)]
+fn npm() -> ResolvedTool {
+    let stamp = Stamp::new(1_793_458_575, 0).unwrap();
+    let fingerprint = Fingerprint {
+        changed: stamp,
+        modified: stamp,
+        born: None,
+        size: 1,
+    };
+    ResolvedTool {
+        tool: NativeTool::Npm,
+        path: PathBuf::from("/usr/lib/node_modules/npm/bin/npm-cli.js"),
+        identity: FileIdentity { volume: 1, file: 3 },
+        fingerprint,
+        version: "11.20.0".to_owned(),
+        runtime: Some(ToolFile {
+            path: PathBuf::from("/usr/bin/node"),
+            identity: FileIdentity { volume: 1, file: 4 },
+            fingerprint,
+        }),
+    }
+}
+
+/// Catches `doctor` leaving a person unable to tell why npm's cache is held: it shows the
+/// npm a clean would run, both files of it, or why there is none, and where the cache is
+/// and what placed it.
+#[test]
+fn doctor_shows_the_npm_that_would_run_and_where_its_cache_is() {
+    let mut report = report(io::ErrorKind::NotFound);
+    let cache = ResolvedRoot::new(
+        SymbolicRoot::NpmCache,
+        PathBuf::from("/home/u/code/npm-cache"),
+        RootSource::Setting {
+            file: "the user npmrc",
+            key: "cache",
+        },
+    );
+    report.roots.push(RootCheck {
+        root: SymbolicRoot::NpmCache,
+        status: Ok(Probed {
+            meta: Err(ProbeError::io(&cache.path, io::ErrorKind::NotFound.into())),
+            at: cache,
+        }),
+    });
+    report.npm = Ok(npm());
+    let resolved = printed(&report);
+    let json = report.to_json();
+    report.npm = Err(ToolGap::UnverifiedVersion);
+    let gap = printed(&report);
+
+    let pair = format!(
+        "\n  npm         11.20.0  {} run by {}\n",
+        PathBuf::from("/usr/lib/node_modules/npm/bin/npm-cli.js").display(),
+        PathBuf::from("/usr/bin/node").display()
+    );
+    assert!(resolved.contains(&pair), "{resolved}");
+    assert!(resolved.contains("(cache in the user npmrc)"), "{resolved}");
+    let npm_out = json.tools.iter().find(|tool| tool.name == "npm");
+    assert!(
+        npm_out.is_some_and(|tool| tool.runtime.is_some()),
+        "the JSON names its node"
+    );
+    let unverified = "\n  npm         can't be used: kipple hasn't verified that version\n";
+    assert!(gap.contains(unverified), "{gap}");
 }
 
 // Catches the longest root name filling its column and running into what is said of it.

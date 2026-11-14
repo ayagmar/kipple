@@ -276,7 +276,7 @@ const fn lock_gap(gap: LockGap) -> &'static str {
     }
 }
 
-const fn tool_gap(gap: ToolGap) -> &'static str {
+pub(crate) const fn tool_gap(gap: ToolGap) -> &'static str {
     match gap {
         ToolGap::Missing => "it isn't installed",
         ToolGap::Unreadable => "it can't be read",
