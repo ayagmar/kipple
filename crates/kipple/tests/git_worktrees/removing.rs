@@ -3,6 +3,7 @@
 //! runs takes the checkout and nothing else. The removal ships on Linux alone, so a test
 //! that removes returns early elsewhere; one that only judges runs Linux's rules anywhere.
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use kipple_core::{
@@ -12,9 +13,12 @@ use kipple_core::{
 #[cfg(unix)]
 use kipple_core::{Execution, NativeArg, PlanEntry};
 
-use super::{CASES, Case, Head, Repo, Scan, left_behind, orig_head, reset_away, write};
+use super::{
+    CASES, Case, Head, Repo, Scan, UNREFERENCED, left_behind, orig_head, reset_away, visited_after,
+    write,
+};
 use crate::apply::{Approval, Between, REMOVE, removes_here};
-use crate::repo::{Refs, listed};
+use crate::repo::{Moment, Refs, listed};
 
 /// The facts of `finding`, which was measured.
 const fn facts(finding: &Finding) -> &kipple_core::Facts {
@@ -131,6 +135,58 @@ fn diverged(repo: &Repo) {
     commit_in_worktree(repo, "wt.txt");
 }
 
+/// An amend of a commit made in the worktree.
+fn amend(repo: &Repo) {
+    commit_in_worktree(repo, "a.txt");
+    repo.wt(&["commit", "-q", "--amend", "-m", "amended"]);
+}
+
+fn rebase(repo: &Repo) {
+    diverged(repo);
+    repo.wt(&["rebase", "-q", "main"]);
+}
+
+fn pull_rebase(repo: &Repo) {
+    diverged(repo);
+    repo.wt(&["pull", "-q", "--rebase", ".", "main"]);
+}
+
+fn reset_back(repo: &Repo) {
+    commit_in_worktree(repo, "a.txt");
+    repo.wt(&["reset", "-q", "--hard", "HEAD~1"]);
+}
+
+/// Two plain commits a day and two days after the rest, so the worktree's newest reflog
+/// lines are newer than the branch's line that names what the history replaced.
+fn two_commits_later(repo: &Repo) {
+    for (days, name) in [(1, "later.txt"), (2, "latest.txt")] {
+        write(&repo.checkout.join(name), b"x\n");
+        repo.wt(&["add", "--", name]);
+        repo.wt_at(Moment::days_ahead(days), &["commit", "-q", "-m", name]);
+    }
+}
+
+/// A merge that conflicts and is resolved, with rerere on: rerere leaves an empty
+/// `MERGE_RR` in the admin directory.
+fn rerere_merge(repo: &Repo) {
+    repo.git(&["config", "rerere.enabled", "true"]);
+    write(&repo.checkout.join("file.txt"), b"theirs\n");
+    repo.wt(&["commit", "-q", "-a", "-m", "theirs"]);
+    repo.commit("file.txt", b"ours\n");
+    let output = repo.run_git(&repo.checkout, &["merge", "main"]);
+    assert!(!output.status.success(), "the merge conflicts: {output:?}");
+    write(&repo.checkout.join("file.txt"), b"both\n");
+    repo.wt(&["add", "--", "file.txt"]);
+    repo.wt(&["commit", "-q", "--no-edit"]);
+}
+
+/// Commits with a split index, which leaves `sharedindex.<id>` files beside the index.
+fn split_index(repo: &Repo) {
+    repo.git(&["config", "core.splitIndex", "true"]);
+    commit_in_worktree(repo, "a.txt");
+    commit_in_worktree(repo, "b.txt");
+}
+
 /// An ordinary history an agent's worktree may have, which loses nothing when removed.
 struct History {
     name: &'static str,
@@ -155,31 +211,55 @@ const HISTORIES: &[History] = &[
     },
     History {
         name: "amend",
+        set: amend,
+    },
+    History {
+        name: "amend, then two commits",
         set: |repo| {
-            commit_in_worktree(repo, "a.txt");
-            repo.wt(&["commit", "-q", "--amend", "-m", "amended"]);
+            amend(repo);
+            two_commits_later(repo);
         },
     },
     History {
         name: "rebase",
+        set: rebase,
+    },
+    History {
+        name: "rebase, then two commits",
         set: |repo| {
-            diverged(repo);
-            repo.wt(&["rebase", "-q", "main"]);
+            rebase(repo);
+            two_commits_later(repo);
         },
     },
     History {
         name: "pull --rebase",
+        set: pull_rebase,
+    },
+    History {
+        name: "pull --rebase, then two commits",
         set: |repo| {
-            diverged(repo);
-            repo.wt(&["pull", "-q", "--rebase", ".", "main"]);
+            pull_rebase(repo);
+            two_commits_later(repo);
         },
     },
     History {
         name: "reset --hard HEAD~1",
+        set: reset_back,
+    },
+    History {
+        name: "reset --hard HEAD~1, then two commits",
         set: |repo| {
-            commit_in_worktree(repo, "a.txt");
-            repo.wt(&["reset", "-q", "--hard", "HEAD~1"]);
+            reset_back(repo);
+            two_commits_later(repo);
         },
+    },
+    History {
+        name: "rerere on, merge resolved",
+        set: rerere_merge,
+    },
+    History {
+        name: "split index",
+        set: split_index,
     },
     History {
         name: "merge",
@@ -216,10 +296,11 @@ const HISTORIES: &[History] = &[
     },
 ];
 
-/// Catches the gate holding a worktree whose removal loses nothing: after each ordinary
-/// history every fact holds, since a commit it rewrote or reset away is still in a branch's
-/// reflog, which the removal keeps. A failure lists the admin directory, which an unknown
-/// entry would explain on another git.
+/// Catches the gate holding a worktree whose removal loses nothing, and letting one go
+/// whose removal makes gc drop sooner what the worktree's reflogs kept: after each ordinary
+/// history every fact holds, since a commit it rewrote or reset away is named by a branch's
+/// reflog line as new as the worktree's, and the real removal shrinks nothing. A failure
+/// lists the admin directory, which an unknown entry would explain on another git.
 #[test]
 fn ordinary_histories_are_eligible() {
     for history in HISTORIES {
@@ -240,34 +321,98 @@ fn ordinary_histories_are_eligible() {
             "{}: admin directory {entries:?}",
             history.name
         );
+        removal_shrinks_nothing(&repo, history.name);
     }
 }
 
-/// Catches an amend's removal losing the commit it replaced, which the gate let through
-/// because the branch's reflog keeps it: after the real removal git still names it there,
-/// and `fsck` finds it reachable.
-#[test]
-fn an_amended_worktree_removed_keeps_the_replaced_commit() {
+/// That the real removal of `repo`'s worktree, then `gc --prune=now`, leaves every commit
+/// the worktree's reflogs named that git had: removing it must not shorten the time gc
+/// keeps any commit. Only where the removal runs.
+fn removal_shrinks_nothing(repo: &Repo, name: &str) {
     if !removes_here() {
         return;
     }
-    let repo = Repo::new();
-    commit_in_worktree(&repo, "a.txt");
-    let replaced = repo.wt(&["rev-parse", "HEAD"]);
-    let replaced = String::from_utf8_lossy(&replaced).trim().to_owned();
-    repo.wt(&["commit", "-q", "--amend", "-m", "amended"]);
+    let had: Vec<String> = logged_commits(repo)
+        .into_iter()
+        .filter(|id| present(repo, id))
+        .collect();
     let removal = repo.removal();
     let scan = removal.scan();
 
     let ran = removal.remove(&scan, &[scan.finding("wt")]);
 
-    assert!(matches!(ran.outcome(), ItemOutcome::Done(_)), "{ran:#?}");
-    let reflog = repo.git(&["reflog", "show", "--format=%H", "refs/heads/wt"]);
-    let reflog = String::from_utf8_lossy(&reflog);
-    assert!(reflog.contains(&replaced), "{replaced} in {reflog}");
-    let unreachable = repo.git(&["fsck", "--unreachable", "--no-progress"]);
-    let unreachable = String::from_utf8_lossy(&unreachable);
-    assert!(!unreachable.contains(&replaced), "{unreachable}");
+    assert!(
+        matches!(ran.outcome(), ItemOutcome::Done(_)),
+        "{name}: {ran:#?}"
+    );
+    repo.git(&["gc", "-q", "--prune=now"]);
+    let gone: Vec<&String> = had.iter().filter(|id| !present(repo, id)).collect();
+    assert_eq!(gone, Vec::<&String>::new(), "{name}: gone after gc");
+}
+
+/// Every commit id in either column of the worktree's reflogs.
+fn logged_commits(repo: &Repo) -> BTreeSet<String> {
+    let mut ids = BTreeSet::new();
+    let mut pending = vec![repo.admin().join("logs")];
+    while let Some(dir) = pending.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                pending.push(path);
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).unwrap();
+            let columns = text.lines().flat_map(|line| line.split(' ').take(2));
+            ids.extend(
+                columns
+                    .filter(|id| !id.bytes().all(|byte| byte == b'0'))
+                    .map(str::to_owned),
+            );
+        }
+    }
+    ids
+}
+
+/// Whether git has the object `id`.
+fn present(repo: &Repo, id: &str) -> bool {
+    let args = ["cat-file", "-e", id];
+    repo.run_git(&repo.main, &args).status.success()
+}
+
+/// Catches the gate letting a worktree go because a branch's reflog names the commit it
+/// keeps, though that line is older than the worktree's own and gc expires each line by
+/// its time: a commit reset away on the branch 40 or 29 days ago and visited today on a
+/// detached `HEAD`. The worktree is held, and the hold is real: the same history with the
+/// worktree removed by plain git loses the commit to the expiry gc runs two days later,
+/// which keeps it while the worktree is there.
+#[test]
+fn a_commit_an_older_branch_line_names_holds_it() {
+    for days in [40, 29] {
+        let kept = Repo::new();
+        let abandoned = visited_after(&kept, days);
+
+        let scan = kept.removal_on(Platform::Linux).scan();
+
+        let finding = scan.finding("wt");
+        assert_eq!(failed(finding), vec![UNREFERENCED], "{days} days");
+        let removed = Repo::new();
+        let lost = visited_after(&removed, days);
+        removed.wt(&["worktree", "remove", "."]);
+        for repo in [&kept, &removed] {
+            repo.git(&[
+                "reflog",
+                "expire",
+                "--all",
+                "--expire-unreachable=28.days.ago",
+            ]);
+            repo.git(&["gc", "-q", "--prune=now"]);
+        }
+        assert!(
+            present(&kept, &abandoned),
+            "{days} days: kept with the worktree"
+        );
+        assert!(!present(&removed, &lost), "{days} days: lost without it");
+    }
 }
 
 /// A way to leave a commit only the worktree's admin directory names, and the revision
@@ -474,8 +619,10 @@ fn held_at_apply(case: &Case, outcome: &ItemOutcome, now: &Finding) {
     // Which ignored paths a rule removes only a scan settles, so a set that changed since
     // is unknown at apply. A registration rewritten one way is listed at the path it names
     // now, so the one reviewed is gone and nothing of it is known.
+    let unknown = case.value == FactValue::Unknown;
     let hold = match case.fact {
         "worktree.unclassified_ignored" | "registration_state" => Hold::FactUnknown,
+        _ if unknown => Hold::FactUnknown,
         _ => Hold::FactUnmet,
     };
     let by_facts = holds
@@ -497,12 +644,15 @@ fn held_at_apply(case: &Case, outcome: &ItemOutcome, now: &Finding) {
     let failed = failed(now);
     if case.head == Head::Stays {
         let mut expected: Vec<&str> = std::iter::once(case.fact)
+            .filter(|_| !unknown)
             .chain(case.also.iter().copied())
             .collect();
         expected.sort_unstable();
         let mut failed = failed;
         failed.sort_unstable();
         assert_eq!(failed, expected, "{}", case.name);
+    } else if unknown {
+        assert!(unmet(now).contains(&case.fact), "{}: {failed:?}", case.name);
     } else {
         assert!(failed.contains(&case.fact), "{}: {failed:?}", case.name);
     }

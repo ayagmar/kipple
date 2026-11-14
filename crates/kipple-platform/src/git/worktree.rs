@@ -16,18 +16,19 @@
 //! a submodule stops the rest, so `status` never recurses into a config nothing has read.
 //! Only then `status` and what follows.
 
-use std::collections::BTreeSet;
+use std::cmp::Reverse;
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 use std::path::{Path, PathBuf};
 
 use kipple_core::{
-    CancelToken, Checkout, ConfigClass, ConfigGate, EntryKind, FsProbe as _, GitGap, ObjectId,
-    ProbeError, Registration, RegistrationState, WorktreePlace, WorktreeQuery, WorktreeState,
-    WorktreeWitness,
+    CancelToken, Checkout, ConfigClass, ConfigGate, DirEntryMeta, EntryKind, FsProbe as _, GitGap,
+    ObjectId, ProbeError, Registration, RegistrationState, WorktreePlace, WorktreeQuery,
+    WorktreeState, WorktreeWitness,
 };
 
 use super::GitQuery;
-use super::command::{Git, identity, os_string, records};
+use super::command::{Git, config_class, identity, os_string, records};
 use crate::fs_probe::NoFollowFs;
 
 /// The first git with `worktree list --porcelain -z`. Without it a path or a lock reason
@@ -90,6 +91,15 @@ const KNOWN_ENTRIES: [&str; 13] = [
     "modules",
     "reftable",
 ];
+
+/// What rerere leaves in an admin directory after every merge, rebase or cherry-pick it
+/// took part in: empty once nothing is left to resolve. One that lists a conflict is
+/// unknown.
+const MERGE_RR: &str = "MERGE_RR";
+
+/// How a split index's shared part is named, before its id. It is part of the index and
+/// goes with it; an old one git hasn't deleted yet keeps nothing gc would keep.
+const SHARED_INDEX: &str = "sharedindex.";
 
 /// The most read of one reflog or pseudo-ref. Past it what the file names is unknown.
 const NAMES_LIMIT: u64 = 16 * 1024 * 1024;
@@ -178,55 +188,122 @@ fn per_worktree_refs(admin: &Path) -> Result<u64, GitGap> {
     count_of(files_below(&admin.join("refs"))?.len())
 }
 
-/// Every commit the admin directory `admin` names: both columns of each reflog under
-/// `logs/`, and each pseudo-ref of [`PSEUDO_REFS`]. Read as files, which no config changes.
-/// A line that isn't what git writes is an unknown layout.
-fn named_commits(admin: &Path) -> Result<BTreeSet<Vec<u8>>, GitGap> {
-    refuse_reftable(admin)?;
-    let mut named = BTreeSet::new();
-    for name in PSEUDO_REFS {
-        let Some(text) = whole_file(&admin.join(name))? else {
-            continue;
-        };
-        for line in lines(&text) {
-            if line.starts_with(b"ref: ") {
-                continue;
-            }
-            let id = line.split(|byte| *byte == b'\t').next().unwrap_or_default();
-            named.extend(commit(id)?);
-        }
-    }
-    reflogs(&files_below(&admin.join("logs"))?, &mut named)?;
-    Ok(named)
+/// A reflog line's time, in seconds since the epoch, as git wrote it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+struct Stamp(u64);
+
+/// The newest time a reflog line names each commit at.
+type Latest = BTreeMap<Vec<u8>, Stamp>;
+
+/// What an admin directory names.
+struct Named {
+    /// The commits its reflogs under `logs/` name, in either column.
+    logged: Latest,
+    /// The commits its pseudo-refs of [`PSEUDO_REFS`] name, which no reflog dates.
+    pseudo: BTreeSet<Vec<u8>>,
 }
 
-/// Every commit a reflog that outlives the worktree names: the reflogs of the repository's
-/// local branches and the main worktree's `logs/HEAD`, all under the common directory
-/// `common`, read as the admin directory's are. A deleted branch has no reflog.
-fn retained_commits(common: &Path) -> Result<BTreeSet<Vec<u8>>, GitGap> {
+impl Named {
+    /// Reads the admin directory `admin` as files, which no config changes. A line that
+    /// isn't what git writes is an unknown layout.
+    fn read(admin: &Path) -> Result<Self, GitGap> {
+        refuse_reftable(admin)?;
+        let mut pseudo = BTreeSet::new();
+        for name in PSEUDO_REFS {
+            if let Some(text) = whole_file(&admin.join(name))? {
+                pseudo_ref(&text, &mut pseudo)?;
+            }
+        }
+        let mut logged = Latest::new();
+        reflogs(&files_below(&admin.join("logs"))?, &mut logged)?;
+        Ok(Self { logged, pseudo })
+    }
+
+    fn all(&self) -> BTreeSet<Vec<u8>> {
+        self.logged.keys().chain(&self.pseudo).cloned().collect()
+    }
+}
+
+/// The commit each line of the pseudo-ref `text` names, into `named`: its id, then a tab
+/// and more in `FETCH_HEAD`. A symbolic one names a ref, which is read elsewhere.
+fn pseudo_ref(text: &[u8], named: &mut BTreeSet<Vec<u8>>) -> Result<(), GitGap> {
+    for line in lines(text).filter(|line| !line.starts_with(b"ref: ")) {
+        let id = line.split(|byte| *byte == b'\t').next().unwrap_or_default();
+        named.extend(commit(id)?);
+    }
+    Ok(())
+}
+
+/// When a reflog that outlives the worktree last names each commit: the reflogs of the
+/// repository's local branches and the main worktree's `logs/HEAD`, all under the common
+/// directory `common`, read as the admin directory's are. A deleted branch has no reflog.
+fn surviving(common: &Path) -> Result<Latest, GitGap> {
     refuse_reftable(common)?;
     let mut logs = files_below(&common.join("logs/refs/heads"))?;
     let head = common.join("logs/HEAD");
     if whole_file(&head)?.is_some() {
         logs.push(head);
     }
-    let mut retained = BTreeSet::new();
-    reflogs(&logs, &mut retained)?;
-    Ok(retained)
+    let mut latest = Latest::new();
+    reflogs(&logs, &mut latest)?;
+    Ok(latest)
 }
 
-/// Both columns of every line of the reflogs `logs`, into `named`.
-fn reflogs(logs: &[PathBuf], named: &mut BTreeSet<Vec<u8>>) -> Result<(), GitGap> {
+/// Both columns of every line of the reflogs `logs`, into `latest` with the newest time
+/// each is named at.
+fn reflogs(logs: &[PathBuf], latest: &mut Latest) -> Result<(), GitGap> {
     for log in logs {
         let text = whole_file(log)?.ok_or(GitGap::Failed)?;
         for line in lines(&text) {
-            let mut ids = line.splitn(3, |byte| *byte == b' ');
-            for id in [ids.next(), ids.next()] {
-                named.extend(commit(id.ok_or(GitGap::Truncated)?)?);
+            let entry = ReflogLine::parse(line)?;
+            for id in [entry.old, entry.new].into_iter().flatten() {
+                let at = latest.entry(id).or_insert(entry.at);
+                *at = (*at).max(entry.at);
             }
         }
     }
     Ok(())
+}
+
+/// One line of a reflog: `<old> <new> <name> <<email>> <time> <zone>`, then a tab and the
+/// message when there is one.
+struct ReflogLine {
+    old: Option<Vec<u8>>,
+    new: Option<Vec<u8>>,
+    at: Stamp,
+}
+
+impl ReflogLine {
+    fn parse(line: &[u8]) -> Result<Self, GitGap> {
+        let head = line.split(|byte| *byte == b'\t').next().unwrap_or_default();
+        let mut ids = head.splitn(3, |byte| *byte == b' ');
+        let old = commit(ids.next().ok_or(GitGap::Truncated)?)?;
+        let new = commit(ids.next().ok_or(GitGap::Truncated)?)?;
+        let mut ident = ids
+            .next()
+            .ok_or(GitGap::Truncated)?
+            .rsplitn(3, |byte| *byte == b' ');
+        let (Some(zone), Some(time), Some(who)) = (ident.next(), ident.next(), ident.next()) else {
+            return Err(GitGap::Truncated);
+        };
+        let zoned = match zone {
+            [b'+' | b'-', hours @ ..] => hours.len() == 4 && hours.iter().all(u8::is_ascii_digit),
+            _ => false,
+        };
+        if !zoned || !who.ends_with(b">") {
+            return Err(GitGap::Truncated);
+        }
+        let at = std::str::from_utf8(time)
+            .ok()
+            .filter(|time| time.bytes().all(|byte| byte.is_ascii_digit()))
+            .and_then(|time| time.parse().ok())
+            .ok_or(GitGap::Truncated)?;
+        Ok(Self {
+            old,
+            new,
+            at: Stamp(at),
+        })
+    }
 }
 
 /// How many entries of the admin directory `admin` aren't in [`KNOWN_ENTRIES`] or read by
@@ -239,11 +316,36 @@ fn unknown_entries(admin: &Path) -> Result<u64, GitGap> {
         .chain(&LOCKS)
         .chain(&PSEUDO_REFS);
     let known: BTreeSet<&str> = known.copied().collect();
-    let unknown = entries
-        .iter()
-        .filter(|entry| entry.name.to_str().is_none_or(|name| !known.contains(name)))
-        .count();
-    count_of(unknown)
+    let mut unknown = 0;
+    for entry in &entries {
+        let name = entry.name.to_str();
+        if name.is_some_and(|name| known.contains(name)) || left_by_git(admin, entry)? {
+            continue;
+        }
+        unknown += 1;
+    }
+    Ok(unknown)
+}
+
+/// Whether `entry` of the admin directory `admin` is a file git leaves that holds nothing
+/// the removal loses: an empty [`MERGE_RR`], or a split index's shared part.
+fn left_by_git(admin: &Path, entry: &DirEntryMeta) -> Result<bool, GitGap> {
+    let Some(name) = entry.name.to_str() else {
+        return Ok(false);
+    };
+    if entry.kind != EntryKind::File {
+        return Ok(false);
+    }
+    if let Some(id) = name.strip_prefix(SHARED_INDEX) {
+        return Ok(object(id.as_bytes()).is_ok_and(|id| id.is_some()));
+    }
+    if name != MERGE_RR {
+        return Ok(false);
+    }
+    let bytes = NoFollowFs
+        .read_file(&admin.join(name), 1)
+        .map_err(|_| GitGap::Failed)?;
+    Ok(bytes.is_empty())
 }
 
 /// The commit id `bytes` hold, if it isn't all zeroes.
@@ -382,10 +484,11 @@ impl Asking<'_> {
     fn fill(&self, state: &mut WorktreeState) {
         state.place = self.place();
         state.witness = self.witness(&state.place);
-        state.config_gate = self.gate_at(&state.place);
-        if state.config_gate != Ok(ConfigGate::Clear) {
+        let config = self.config();
+        state.config_gate = gate_at(&config, &state.place);
+        let (Ok(ConfigGate::Clear), Ok(Config::Keys(keys))) = (state.config_gate, &config) else {
             return;
-        }
+        };
         state.submodules = self.submodules();
         if state.submodules != Ok(false) {
             return;
@@ -404,7 +507,7 @@ impl Asking<'_> {
         }
         state.hidden_changes = self.hidden_changes();
         state.head_reachable = self.head_reachable();
-        state.unreferenced_commits = self.unreferenced_commits();
+        state.unreferenced_commits = self.unreferenced_commits(keys);
     }
 
     fn ask(&self, tail: &[&str]) -> Result<Vec<u8>, GitGap> {
@@ -425,25 +528,14 @@ impl Asking<'_> {
         has_gitlink(&self.ask_index(&["ls-files", "-z", "--sparse", "--stage"])?)
     }
 
-    /// What the config says, as far as `place` shows git read it. A key it found stands, as
-    /// `core.worktree` does when git places the worktree elsewhere because of it; finding
-    /// none proves nothing unless git could place the worktree.
-    fn gate_at(&self, place: &Result<WorktreePlace, GitGap>) -> Result<ConfigGate, GitGap> {
-        match (self.config_gate(), place) {
-            (Ok(ConfigGate::Clear), Err(gap)) => Err(*gap),
-            (gate, _) => gate,
-        }
-    }
-
-    /// What the config says of what may be asked. A `reftable` directory counts whatever
-    /// the config says, because a change to git's stub file mustn't open it.
-    fn config_gate(&self) -> Result<ConfigGate, GitGap> {
+    /// The config's names, unless a `reftable` directory stops git being asked: it counts
+    /// whatever the config says, because a change to git's stub file mustn't open it.
+    fn config(&self) -> Result<Config, GitGap> {
         if exists(&self.links.admin.join("reftable"))? {
-            return Ok(ConfigGate::Blocked(ConfigClass::RefStorage));
+            return Ok(Config::Reftable);
         }
-        let classes = self.git.config_classes(&self.links.checkout, self.cancel)?;
-        let class = classes.into_iter().next();
-        Ok(class.map_or(ConfigGate::Clear, ConfigGate::Blocked))
+        let keys = self.git.config_names(&self.links.checkout, self.cancel)?;
+        Ok(Config::Keys(keys))
     }
 
     /// Where git places the worktree, which must be where its files place it. Each is
@@ -525,20 +617,137 @@ impl Asking<'_> {
         Ok(!refs.is_empty())
     }
 
-    /// How many commits only the admin directory names, which neither a local branch nor a
-    /// reflog that outlives the removal retains. Local branches are the refs
-    /// [`Self::head_reachable`] counts, since removal deletes no branch (pinned decision 26).
-    /// A commit reachable from an entry of a surviving reflog is retained, as gc keeps it.
-    /// The surviving reflogs are read only when something would otherwise be lost.
-    fn unreferenced_commits(&self) -> Result<u64, GitGap> {
-        let named = named_commits(&self.links.admin)?;
-        let lost = self.beyond_branches(&named, Missing::Unknown)?;
+    /// How many commits the removal would leave to gc sooner than the worktree's own
+    /// reflogs do, counting what they reach that no local branch holds. Removing the
+    /// worktree must not shorten the time gc keeps any commit.
+    ///
+    /// Local branches are the refs [`Self::head_reachable`] counts, since removal deletes
+    /// no branch (pinned decision 26). Past them gc keeps a commit while an unexpired
+    /// reflog entry reaches it, and each entry expires by its own time. So each commit a
+    /// line of the worktree's reflogs names is kept only by a surviving line, of
+    /// [`surviving`], as new as that worktree line or newer, which reaches it. A commit
+    /// any id of such a line reaches is reached by an id the worktree names, which is
+    /// checked in turn, so checking the named ids checks them all. A commit only a
+    /// pseudo-ref names is kept by nothing but a branch: no gc keeps one for it, so it
+    /// is a name the removal deletes. Both sides' entries are of gc's unreachable kind,
+    /// because a commit past every branch is past each reflog's own tip on an eligible
+    /// worktree, and a global `gc.reflogExpire*` key times both alike. A
+    /// `gc.<pattern>.reflogExpire*` key can time a branch's reflog shorter, and makes
+    /// the answer unknown. The surviving reflogs are read only when something would
+    /// otherwise be lost.
+    fn unreferenced_commits(&self, keys: &[Vec<u8>]) -> Result<u64, GitGap> {
+        let named = Named::read(&self.links.admin)?;
+        let lost = self.beyond_branches(&named.all(), Missing::Unknown)?;
         if lost.is_empty() {
             return Ok(0);
         }
-        let retained = retained_commits(&self.links.common)?;
-        let kept = self.beyond_branches(&retained, Missing::Skipped)?;
-        count_of(lost.difference(&kept).count())
+        self.refuse_expiry_per_ref(keys)?;
+        let surviving = surviving(&self.links.common)?;
+        let unkept = self.unkept(&named, &lost, &surviving)?;
+        if unkept.is_empty() {
+            return Ok(0);
+        }
+        count_of(self.beyond_branches(&unkept, Missing::Unknown)?.len())
+    }
+
+    /// The commits of `lost` the admin directory names itself that no line of `surviving`
+    /// keeps as long. Each is checked from the newest worktree time down, and the
+    /// surviving ids as new as each time are added to what is kept only when a commit
+    /// isn't kept yet, so a usual worktree asks git nothing more.
+    fn unkept(
+        &self,
+        named: &Named,
+        lost: &BTreeSet<Vec<u8>>,
+        surviving: &Latest,
+    ) -> Result<BTreeSet<Vec<u8>>, GitGap> {
+        let mut unkept = BTreeSet::new();
+        let mut due = Vec::new();
+        let all = named.all();
+        for id in all.intersection(lost) {
+            match named.logged.get(id) {
+                None => {
+                    unkept.insert(id.clone());
+                }
+                Some(at) if surviving.get(id) >= Some(at) => {}
+                Some(at) => due.push(Due { at: *at, id }),
+            }
+        }
+        due.sort_unstable_by_key(|due| Reverse(due.at));
+        let mut newest: Vec<Due<'_>> = surviving
+            .iter()
+            .map(|(id, at)| Due { at: *at, id })
+            .collect();
+        newest.sort_unstable_by_key(|line| Reverse(line.at));
+        let mut newest = newest.into_iter().peekable();
+        let mut kept = BTreeSet::new();
+        for Due { at, id } in due {
+            if kept.contains(id) {
+                continue;
+            }
+            let mut ask = BTreeSet::new();
+            while let Some(line) = newest.next_if(|line| line.at >= at) {
+                ask.insert(line.id.clone());
+            }
+            if !ask.is_empty() {
+                kept.extend(self.beyond_branches(&ask, Missing::Skipped)?);
+            }
+            if !kept.contains(id) {
+                unkept.insert(id.clone());
+            }
+        }
+        Ok(unkept)
+    }
+
+    /// Refuses a config with a `gc.<pattern>.reflogExpire` or
+    /// `gc.<pattern>.reflogExpireUnreachable` key, read here, in the main worktree's own
+    /// config or in another worktree's: gc run from there times a branch's reflog by it.
+    /// Its value isn't read.
+    fn refuse_expiry_per_ref(&self, keys: &[Vec<u8>]) -> Result<(), GitGap> {
+        let mut found = keys.iter().any(|key| expiry_per_ref(key));
+        if !found
+            && keys
+                .iter()
+                .any(|key| key.eq_ignore_ascii_case(b"extensions.worktreeconfig"))
+        {
+            for file in self.other_worktree_configs()? {
+                let theirs =
+                    self.git
+                        .config_file_names(&self.links.checkout, &file, self.cancel)?;
+                found = found || theirs.iter().any(|key| expiry_per_ref(key));
+            }
+        }
+        if found {
+            return Err(GitGap::Unsupported);
+        }
+        Ok(())
+    }
+
+    /// The `config.worktree` of every other worktree of the repository that has one: the
+    /// main worktree's in the common directory, and each linked one's in its admin directory.
+    fn other_worktree_configs(&self) -> Result<Vec<PathBuf>, GitGap> {
+        let common = &self.links.common;
+        let mut candidates = vec![common.join("config.worktree")];
+        let admins = common.join("worktrees");
+        let entries = match NoFollowFs.read_dir(&admins) {
+            Ok(entries) => entries,
+            Err(error) if absent(&error) => Vec::new(),
+            Err(_) => return Err(GitGap::Failed),
+        };
+        for entry in entries {
+            let admin = admins.join(&entry.name);
+            if !same_file(&admin, &self.links.admin)? {
+                candidates.push(admin.join("config.worktree"));
+            }
+        }
+        let mut configs = Vec::new();
+        for file in candidates {
+            match kind(&file)? {
+                None => {}
+                Some(EntryKind::File) => configs.push(file),
+                Some(_) => return Err(GitGap::Failed),
+            }
+        }
+        Ok(configs)
     }
 
     /// Every commit reachable from `ids` that no local branch holds. Each batch's commits
@@ -572,6 +781,53 @@ impl Asking<'_> {
         }
         Ok(found)
     }
+}
+
+/// A commit and a time a reflog line names it at.
+struct Due<'id> {
+    at: Stamp,
+    id: &'id Vec<u8>,
+}
+
+/// What the config is, as far as kipple reads it.
+enum Config {
+    /// The worktree is reftable's, so git isn't asked.
+    Reftable,
+    /// The names of its keys, never their values.
+    Keys(Vec<Vec<u8>>),
+}
+
+/// What the config says of what may be asked, as far as `place` shows git read it. A key it
+/// found stands, as `core.worktree` does when git places the worktree elsewhere because of
+/// it; finding none proves nothing unless git could place the worktree.
+fn gate_at(
+    config: &Result<Config, GitGap>,
+    place: &Result<WorktreePlace, GitGap>,
+) -> Result<ConfigGate, GitGap> {
+    let gate = match config {
+        Err(gap) => return Err(*gap),
+        Ok(Config::Reftable) => return Ok(ConfigGate::Blocked(ConfigClass::RefStorage)),
+        Ok(Config::Keys(keys)) => keys
+            .iter()
+            .find_map(|name| config_class(name))
+            .map_or(ConfigGate::Clear, ConfigGate::Blocked),
+    };
+    match (gate, place) {
+        (ConfigGate::Clear, Err(gap)) => Err(*gap),
+        (gate, _) => Ok(gate),
+    }
+}
+
+/// Whether the config key `name` is a `gc.<pattern>.reflogExpire` or
+/// `gc.<pattern>.reflogExpireUnreachable`, which times the reflogs of some refs alone. Git
+/// prints a key's section and variable in lowercase.
+fn expiry_per_ref(name: &[u8]) -> bool {
+    let name = String::from_utf8_lossy(name).to_ascii_lowercase();
+    let Some(rest) = name.strip_prefix("gc.") else {
+        return false;
+    };
+    rest.rsplit_once('.')
+        .is_some_and(|(_, variable)| matches!(variable, "reflogexpire" | "reflogexpireunreachable"))
 }
 
 /// What a commit id git doesn't have means to a query.
@@ -1055,6 +1311,64 @@ mod tests {
         ];
         for (name, class) in cases {
             assert_eq!(config_class(name.as_bytes()), class, "{name}");
+        }
+    }
+
+    /// Catches a key that times some reflogs alone missed for its spelling or a pattern
+    /// holding dots, and a global one, which times every reflog alike, holding every
+    /// repository that sets it.
+    #[test]
+    fn a_key_timing_some_reflogs_alone_is_found() {
+        let cases = [
+            ("gc.refs/heads/*.reflogexpireunreachable", true),
+            ("gc.refs/heads/*.reflogexpire", true),
+            ("GC.Refs/Heads/a.b.ReflogExpire", true),
+            ("gc.HEAD.reflogexpire", true),
+            ("gc.reflogexpire", false),
+            ("gc.reflogexpireunreachable", false),
+            ("gc.auto", false),
+            ("gc.refs/heads/*.auto", false),
+            ("core.reflogexpire", false),
+        ];
+        for (name, per_ref) in cases {
+            assert_eq!(expiry_per_ref(name.as_bytes()), per_ref, "{name}");
+        }
+    }
+
+    /// Catches a reflog line's time taken from its message or its author's name, and a line
+    /// git doesn't write read as a time: the time is what gc expires the line by.
+    #[test]
+    fn a_reflog_line_is_dated_by_its_own_time() {
+        let (old, new) = ("a".repeat(40), "b".repeat(40));
+        let dated = [
+            (
+                format!("{old} {new} A B <a@b> 1700000000 +0100\tcommit: 1 +0000"),
+                1_700_000_000,
+            ),
+            (format!("{old} {new} Ann 99 <a@b> 12 -0500"), 12),
+            (format!("{old} {new} <a@b> 0 +0000\tmerge 5 +0000"), 0),
+        ];
+        for (line, at) in dated {
+            assert_eq!(
+                ReflogLine::parse(line.as_bytes()).map(|line| line.at),
+                Ok(Stamp(at)),
+                "{line}"
+            );
+        }
+        let unread = [
+            format!("{old} {new} A <a@b> 1700000000\tmsg"),
+            format!("{old} {new} A <a@b> 17x0 +0000"),
+            format!("{old} {new} A <a@b> 1 0000"),
+            format!("{old} {new} A a@b 1 +0000"),
+            format!("{old} {new} A <a@b> 99999999999999999999999 +0000"),
+            format!("{old} {new}"),
+            format!("{old} A <a@b> 1 +0000"),
+        ];
+        for line in unread {
+            assert!(
+                ReflogLine::parse(line.as_bytes()).is_err(),
+                "{line} isn't read"
+            );
         }
     }
 

@@ -6,6 +6,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::Arc;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use kipple_adapters::builtin;
 use kipple_core::{
@@ -111,20 +112,30 @@ impl Repo {
     }
 
     pub(crate) fn git_in(&self, dir: &Path, args: &[&str]) -> Vec<u8> {
-        let output = self.run_git(dir, args);
-        assert!(
-            output.status.success(),
-            "the fixture's git {args:?} succeeds: {output:?}"
-        );
-        output.stdout
+        succeeded(args, self.run_git(dir, args))
+    }
+
+    /// Runs git in the linked worktree, recording `moment` as the time of every commit and
+    /// reflog entry it writes.
+    pub(crate) fn wt_at(&self, moment: Moment, args: &[&str]) -> Vec<u8> {
+        let mut command = self.command(&self.checkout, args);
+        let date = format!("@{} +0000", moment.0);
+        command
+            .env("GIT_COMMITTER_DATE", &date)
+            .env("GIT_AUTHOR_DATE", &date);
+        succeeded(args, command.output().unwrap())
     }
 
     /// Runs the host's git with the test's isolation.
+    pub(crate) fn run_git(&self, dir: &Path, args: &[&str]) -> Output {
+        self.command(dir, args).output().unwrap()
+    }
+
     #[expect(
         clippy::disallowed_methods,
         reason = "a fixture builds its own repository with the host's git"
     )]
-    pub(crate) fn run_git(&self, dir: &Path, args: &[&str]) -> Output {
+    fn command(&self, dir: &Path, args: &[&str]) -> Command {
         let hooks = format!(
             "core.hooksPath={}",
             self.temp.path().join("hooks").display()
@@ -142,9 +153,8 @@ impl Repo {
             .env("HOME", self.temp.path().join("home"))
             .env("XDG_CONFIG_HOME", self.temp.path().join("home"))
             .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", self.temp.path().join("gitconfig"))
-            .output()
-            .unwrap()
+            .env("GIT_CONFIG_GLOBAL", self.temp.path().join("gitconfig"));
+        command
     }
 
     /// What a scan runs in: the host's `PATH` and nothing of the user's.
@@ -180,6 +190,35 @@ impl Repo {
     pub(crate) fn scan_in(&self, env: &Environment) -> Scan {
         scan_of(env, self.roots(env))
     }
+}
+
+const DAY: u64 = 24 * 60 * 60;
+
+/// A time git records, in seconds since the epoch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Moment(pub(crate) u64);
+
+impl Moment {
+    /// `days` days before now.
+    pub(crate) fn days_ago(days: u64) -> Self {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        Self(now.as_secs() - days * DAY)
+    }
+
+    /// `days` days after now.
+    pub(crate) fn days_ahead(days: u64) -> Self {
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap();
+        Self(now.as_secs() + days * DAY)
+    }
+}
+
+/// The output of the fixture's git `args`, which must have succeeded.
+fn succeeded(args: &[&str], output: Output) -> Vec<u8> {
+    assert!(
+        output.status.success(),
+        "the fixture's git {args:?} succeeds: {output:?}"
+    );
+    output.stdout
 }
 
 /// Scans `roots` as given, with nothing of their spelling resolved.

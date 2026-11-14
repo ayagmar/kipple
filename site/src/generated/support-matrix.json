@@ -835,7 +835,7 @@
           "name": "worktree.unreferenced_commits",
           "kind": "count",
           "selector": "registered-linked-worktrees",
-          "meaning": "commits only its own reflog or pseudo-refs name, which no local branch or surviving branch reflog keeps"
+          "meaning": "commits its own reflog or pseudo-refs name that gc would drop sooner once it is gone: no local branch holds them, and no surviving reflog names them as recently"
         },
         {
           "name": "worktree.unknown_admin_entries",

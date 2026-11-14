@@ -114,18 +114,45 @@ impl Git {
     }
 
     /// The class of each key the config at `dir` names that kipple stops at, in git's order.
-    /// Names only, with includes, because a value can hold a credential.
     pub(super) fn config_classes(
         &self,
         dir: &Path,
         cancel: &CancelToken,
     ) -> Result<Vec<ConfigClass>, GitGap> {
+        let names = self.config_names(dir, cancel)?;
+        Ok(names.iter().filter_map(|name| config_class(name)).collect())
+    }
+
+    /// The name of each key the config at `dir` holds, in git's order. Names only, with
+    /// includes, because a value can hold a credential.
+    pub(super) fn config_names(
+        &self,
+        dir: &Path,
+        cancel: &CancelToken,
+    ) -> Result<Vec<Vec<u8>>, GitGap> {
         let tail = ["config", "--includes", "--null", "--name-only", "--list"];
-        let names = self.ask(dir, &tail, cancel)?;
-        Ok(records(&names)?
-            .into_iter()
-            .filter_map(config_class)
-            .collect())
+        let tail: Vec<&OsStr> = tail.iter().map(OsStr::new).collect();
+        names_of(&self.run(dir, Matching::Exact, &tail, cancel)?.stdout)
+    }
+
+    /// The name of each key the config file `file` holds with its includes, asked from
+    /// `dir`, as [`Self::config_names`] reads them.
+    pub(super) fn config_file_names(
+        &self,
+        dir: &Path,
+        file: &Path,
+        cancel: &CancelToken,
+    ) -> Result<Vec<Vec<u8>>, GitGap> {
+        let tail = [
+            OsStr::new("config"),
+            OsStr::new("--file"),
+            file.as_os_str(),
+            OsStr::new("--includes"),
+            OsStr::new("--null"),
+            OsStr::new("--name-only"),
+            OsStr::new("--list"),
+        ];
+        names_of(&self.run(dir, Matching::Exact, &tail, cancel)?.stdout)
     }
 
     /// The work tree git finds from `dir`, as it prints it.
@@ -232,6 +259,11 @@ pub(super) fn config_class(name: &[u8]) -> Option<ConfigClass> {
         ("extensions", "refstorage") => Some(ConfigClass::RefStorage),
         _ => None,
     }
+}
+
+/// The names `config --null --name-only` printed, one a record.
+fn names_of(stdout: &[u8]) -> Result<Vec<Vec<u8>>, GitGap> {
+    Ok(records(stdout)?.into_iter().map(<[u8]>::to_vec).collect())
 }
 
 /// The records of output that ends each one in a NUL.

@@ -19,7 +19,7 @@ use kipple_platform::GitQuery;
 
 #[cfg(unix)]
 use crate::repo::scan_of;
-use crate::repo::{Refs, Repo, Scan, write};
+use crate::repo::{Moment, Refs, Repo, Scan, write};
 
 /// Catches a false block: every row reads clear on a clean worktree, or nothing could
 /// ever be eligible once m4c gives these rules predicates.
@@ -174,6 +174,56 @@ fn orig_head(repo: &Repo) {
     let left = repo.wt(&["rev-parse", "HEAD@{1}"]);
     write(&repo.admin().join("ORIG_HEAD"), &left);
     write(&repo.admin().join("logs/HEAD"), b"");
+}
+
+/// Two commits made on the worktree's branch and reset away `days` days ago, so the
+/// branch's reflog last names them then, and the first visited today on a detached `HEAD`
+/// and left: the worktree's own reflog names it today, which gc keeps 30 days from now.
+/// Returns the one visited.
+pub(crate) fn visited_after(repo: &Repo, days: u64) -> String {
+    let then = Moment::days_ago(days);
+    repo.wt_at(then, &["commit", "-q", "--allow-empty", "-m", "abandoned"]);
+    let abandoned = repo.wt(&["rev-parse", "HEAD"]);
+    let abandoned = String::from_utf8_lossy(&abandoned).trim().to_owned();
+    repo.wt_at(then, &["commit", "-q", "--allow-empty", "-m", "on top"]);
+    repo.wt_at(then, &["reset", "-q", "--hard", "HEAD~2"]);
+    repo.wt(&["checkout", "-q", "--detach", &abandoned]);
+    repo.wt(&["checkout", "-q", "wt"]);
+    abandoned
+}
+
+/// The branch's reflog line older than the worktree's visit, past gc's 30 days.
+fn stale_branch_line(repo: &Repo) {
+    visited_after(repo, 40);
+}
+
+/// A config that expires every branch's unreachable reflog entries at once, and an amend:
+/// the branch's reflog names the replaced commit, for no time at all.
+fn expiry_per_branch(repo: &Repo) {
+    repo.git(&["config", "gc.refs/heads/*.reflogExpireUnreachable", "now"]);
+    repo.wt(&["commit", "-q", "--allow-empty", "-m", "first"]);
+    repo.wt(&["commit", "-q", "--amend", "--allow-empty", "-m", "amended"]);
+}
+
+/// The same key in the main worktree's own `config.worktree`, which gc run there reads.
+fn expiry_per_branch_in_main(repo: &Repo) {
+    repo.git(&["config", "extensions.worktreeConfig", "true"]);
+    let key = "gc.refs/heads/*.reflogExpireUnreachable";
+    repo.git(&["config", "--worktree", key, "now"]);
+    repo.wt(&["commit", "-q", "--allow-empty", "-m", "first"]);
+    repo.wt(&["commit", "-q", "--amend", "--allow-empty", "-m", "amended"]);
+}
+
+/// A stash popped onto a commit it conflicts with, with rerere on: rerere records the
+/// conflict in `MERGE_RR`, and no operation marker is left.
+fn rerere_conflict(repo: &Repo) {
+    repo.git(&["config", "rerere.enabled", "true"]);
+    write(&repo.checkout.join("file.txt"), b"stashed\n");
+    repo.wt(&["stash", "-q"]);
+    write(&repo.checkout.join("file.txt"), b"committed\n");
+    repo.wt(&["commit", "-q", "-a", "-m", "committed"]);
+    let output = repo.run_git(&repo.checkout, &["stash", "pop"]);
+    assert!(!output.status.success(), "the stash conflicts: {output:?}");
 }
 
 fn own_config(repo: &Repo) {
@@ -396,6 +446,33 @@ const CASES: &[Case] = &[
             notes_merge_stopped,
             OPERATION,
             FactValue::Bool(true),
+        )
+    },
+    case(
+        "branch's reflog line older than the worktree's visit",
+        stale_branch_line,
+        UNREFERENCED,
+        FactValue::Count(1),
+    ),
+    moving(
+        "reflog expiry set for branches alone",
+        expiry_per_branch,
+        UNREFERENCED,
+        FactValue::Unknown,
+    ),
+    moving(
+        "reflog expiry set for branches in the main worktree's own config",
+        expiry_per_branch_in_main,
+        UNREFERENCED,
+        FactValue::Unknown,
+    ),
+    Case {
+        also: &["git.tracked_changes"],
+        ..moving(
+            "rerere conflict left",
+            rerere_conflict,
+            "worktree.unknown_admin_entries",
+            FactValue::Count(1),
         )
     },
     case(

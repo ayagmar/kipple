@@ -119,8 +119,8 @@ const FACTS: &[FactSpec] = &[
     fact(
         "worktree.unreferenced_commits",
         FactKind::Count,
-        "commits only its own reflog or pseudo-refs name, which no local branch or surviving \
-         branch reflog keeps",
+        "commits its own reflog or pseudo-refs name that gc would drop sooner once it is \
+         gone: no local branch holds them, and no surviving reflog names them as recently",
     ),
     fact(
         "worktree.unknown_admin_entries",
