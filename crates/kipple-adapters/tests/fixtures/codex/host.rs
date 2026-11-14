@@ -716,8 +716,26 @@ impl Built {
             roots: self.roots(),
             lens: None,
             exclude: Vec::new(),
+            protections: self.protections(),
         };
         (engine, request)
+    }
+
+    /// The host's protections, as the binary composes them: every built-in integration's
+    /// state roots and kipple's data directory, each as the disk identifies it.
+    fn protections(&self) -> Protections {
+        let held = |at: &Path| HeldPath {
+            forms: vec![at.to_owned()],
+            lineage: self.lineage(at),
+            note: None,
+        };
+        let data = self.temp.path().join("data");
+        Protections::of_host(&self.roots(), Some(&data), &builtin::descriptors(), &held)
+    }
+
+    fn lineage(&self, path: &Path) -> Lineage {
+        let identity = |dir: &Path| Some(self.disk.identity(dir));
+        Lineage(path.ancestors().map(identity).collect())
     }
 }
 
@@ -896,18 +914,10 @@ impl Scan {
 
     /// Whether the host keeps `integration` away from `path` in the home, with `owners`.
     pub(crate) fn closes(&self, path: &str, integration: IntegrationId, owners: &Owners) -> bool {
-        let roots = self.built.roots();
-        let held = |at: &Path| HeldPath {
-            forms: vec![at.to_owned()],
-            lineage: self.lineage(at),
-            note: None,
-        };
-        let data = self.built.temp.path().join("data");
-        let descriptors = builtin::descriptors();
-        let protections = Protections::of_host(&roots, Some(&data), &descriptors, &held);
         let full = self.built.home().join(path);
-        let lineage = self.lineage(&full);
-        protections
+        let lineage = self.built.lineage(&full);
+        self.built
+            .protections()
             .check(&full, &lineage, integration, owners)
             .is_some()
     }
@@ -915,11 +925,6 @@ impl Scan {
     /// [`Self::closes`], for Codex in this scan.
     pub(crate) fn closed(&self, path: &str) -> bool {
         self.closes(path, IntegrationId("codex"), &self.report.owners())
-    }
-
-    fn lineage(&self, path: &Path) -> Lineage {
-        let identity = |dir: &Path| Some(self.built.disk.identity(dir));
-        Lineage(path.ancestors().map(identity).collect())
     }
 
     /// `owners` of this scan, with `integration` supported too.

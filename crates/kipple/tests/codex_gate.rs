@@ -222,11 +222,20 @@ impl Gate {
     }
 
     fn request(&self) -> ScanRequest {
+        let roots = self.roots();
+        let data = self.data();
+        let protections = Protections::of_host(&roots, Some(&data), &builtin::descriptors(), &held);
         ScanRequest {
-            roots: self.roots(),
+            roots,
             lens: None,
             exclude: Vec::new(),
+            protections,
         }
+    }
+
+    /// kipple's data directory, where runs are stored.
+    fn data(&self) -> PathBuf {
+        self.temp.path().join("kipple")
     }
 
     /// What a scan of `rules` through `fs` finds now.
@@ -251,7 +260,7 @@ impl Gate {
         let request = self.request();
         let rescan = engine.rescan(&request);
         let env = Environment::from_vars(Vec::new());
-        let data = self.temp.path().join("kipple");
+        let data = self.data();
         let git = GitQuery::new(&env);
         let mutation = MutationPorts {
             freezer: &ConfinedFs,
@@ -268,14 +277,11 @@ impl Gate {
             rules: BTreeMap::new(),
             config: None,
         };
-        let protections =
-            Protections::of_host(&request.roots, Some(&data), &builtin::descriptors(), &held);
         let session = Session {
             judge: Judge {
                 rules: &rules,
                 policy: &policy,
                 methods: &methods,
-                protections: &protections,
             },
             store: &FileRunStore::new(Some(data), Arc::new(Long)),
             ports: ApplyPorts {

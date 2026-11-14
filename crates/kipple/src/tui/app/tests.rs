@@ -120,6 +120,7 @@ fn safe() -> Facts {
         unmet: Vec::new(),
         settlement: kipple_core::Settlement::Unsettled,
         integration: IntegrationId("test"),
+        host: None,
     }
 }
 

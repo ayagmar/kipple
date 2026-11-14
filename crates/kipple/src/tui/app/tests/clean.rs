@@ -48,8 +48,8 @@ use kipple_core::{
     Found, IntegrationId, ItemEvent, ItemId, ItemMethod, ItemOutcome, JudgementField, Left,
     LeftCount, LeftReason, NativeKind, NativeTool, ObjectId, PlanMode, Platform, Proposal, Receipt,
     ReceiptItem, Reconciled, Registration, RegistrationState, Removed, ResolvedTool, RunId,
-    ScanEvent, ScanReport, ScanRequest, Selection, Skip, SpaceEstimate, Subject, WorktreeFacts,
-    WorktreeWitness, event_channel, prepare_clean,
+    ScanEvent, ScanReport, Selection, Skip, SpaceEstimate, Subject, WorktreeFacts, WorktreeWitness,
+    event_channel, prepare_clean,
 };
 use kipple_platform::{Environment, PLATFORM};
 use tempfile::TempDir;
@@ -158,11 +158,7 @@ impl Home {
     fn scan(&self) -> ScanReport {
         let settings = self.settings();
         let engine = self.builtin.engine(&self.env).unwrap();
-        let request = ScanRequest {
-            roots: settings.roots,
-            lens: None,
-            exclude: settings.policy.exclude,
-        };
+        let request = settings.scan_request(None);
         let cancel = CancelToken::new();
         let EventChannel {
             tx: events,

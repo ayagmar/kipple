@@ -4,7 +4,7 @@
 //! fails to build until it is.
 
 use kipple_core::{
-    ApplyError, Cause, Dropped, Ending, ErrorCode, Found, GitGap, JudgementField, LeftReason,
+    ApplyError, Cause, Dropped, Ending, ErrorCode, Found, GitGap, Hold, JudgementField, LeftReason,
     LockGap, Measured, Method, NativeEnd, RestoreResult, Restoring, RunState, Skip, Status, Stop,
     StoreRefusal, ToolGap, Unjudged, Unreadable, Unsupported,
 };
@@ -55,7 +55,7 @@ pub(crate) fn skip(skip: &Skip) -> String {
         Skip::NotStarted(why) => stop(*why).to_owned(),
         Skip::RootChanged => "the folder it is in isn't the one scanned".to_owned(),
         Skip::Unjudged(why) => unjudged(*why).to_owned(),
-        Skip::HostProtected(_) => "your system protects it".to_owned(),
+        Skip::HostProtected(why) => format!("it is Protected: {}", hold(Hold::from(*why))),
         Skip::HoldsProtected { .. } => "it holds something Protected".to_owned(),
         Skip::NotGranted => "its rule comes from a pack that isn't granted".to_owned(),
         Skip::Conflict(_) => "it overlaps another item".to_owned(),

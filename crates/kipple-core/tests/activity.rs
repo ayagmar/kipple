@@ -385,6 +385,7 @@ impl Host {
             roots: self.roots(),
             lens: None,
             exclude: Vec::new(),
+            protections: kipple_core::Protections::default(),
         }
     }
 

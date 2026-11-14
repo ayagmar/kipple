@@ -11,6 +11,7 @@ use std::time::Duration;
 use crate::integration::IntegrationId;
 use crate::native::NativeKind;
 use crate::probe::{FileIdentity, ProbeError};
+use crate::protect::Protection;
 use crate::retention::Settlement;
 use crate::root::SymbolicRoot;
 use crate::rule::{Method, RuleId};
@@ -291,6 +292,11 @@ pub struct Facts {
     pub settlement: Settlement,
     /// The integration that found it, which the worktree exception is keyed on.
     pub integration: IntegrationId,
+    /// What the host protects it as, whatever any rule says (04 §3.2, §3.9):
+    /// [`Protections::check`](crate::Protections::check) over its path, lineage and
+    /// integration. Only the scan asks, with the owners known when it asked, and asks
+    /// again once every integration reported; planning and apply read this answer.
+    pub host: Option<Protection>,
 }
 
 /// A predicate of a rule that a finding doesn't satisfy.
@@ -388,6 +394,28 @@ named! {
         SubjectMismatch = "subject-mismatch",
         /// git tracks entries inside it, and a native command can't leave them out.
         TrackedInsideNative = "tracked-inside-native",
+        /// It is a file system's root directory.
+        FileSystemRoot = "file-system-root",
+        /// It is the home directory or a directory holding it, or that can't be ruled
+        /// out.
+        Home = "home",
+        /// It is at, inside or above a tool's own state that isn't open to its rule
+        /// (04 §3.9), or kipple's own data.
+        Subresource = "subresource",
+        /// kipple's data folder or a tool's state root has no path, so it can't be shown
+        /// to be outside them.
+        Unlocated = "unlocated",
+    }
+}
+
+impl From<Protection> for Hold {
+    fn from(protection: Protection) -> Self {
+        match protection {
+            Protection::FileSystemRoot => Self::FileSystemRoot,
+            Protection::Home => Self::Home,
+            Protection::Subresource => Self::Subresource,
+            Protection::Unlocated => Self::Unlocated,
+        }
     }
 }
 
@@ -522,7 +550,7 @@ pub(crate) fn starts_with(path: &Path, base: &Path) -> bool {
 /// every verdict over every kind of fact and config hold, and fails unless the current
 /// pair is its newest row. A changed verdict bumps this and appends a row, and review holds
 /// rows to append-only: the test sees only the rows as they are.
-pub const POLICY_VERSION: u32 = 2;
+pub const POLICY_VERSION: u32 = 3;
 
 /// Everything the user configured that decides buckets (`docs/03-functional-spec.md` §6).
 ///
@@ -649,8 +677,6 @@ impl Policy {
     }
 }
 
-/// Every reason the facts make the finding ineligible. Unknown never makes it Review: it
-/// holds.
 /// Whether what `facts` proposes goes with what its integration says the finding is. A
 /// report or advice removes nothing, so anything goes with it.
 fn paired(facts: &Facts) -> bool {
@@ -688,13 +714,16 @@ pub(crate) fn replaces_own_git(
         && integration == IntegrationId::GIT
 }
 
+/// Every reason the facts make the finding ineligible. Unknown never makes it Review: it
+/// holds. A rule that only reports is held for that alone, wherever it is; one that
+/// removes is held first by what the host protects.
 fn fact_holds(facts: &Facts) -> Vec<Hold> {
     match facts.proposal {
         Proposal::Report => return vec![Hold::ReportOnly],
         Proposal::Advice => return vec![Hold::Advice],
         Proposal::Remove(_) | Proposal::RemoveRelease(_) | Proposal::Native(_) => {}
     }
-    let mut holds = Vec::new();
+    let mut holds: Vec<Hold> = facts.host.map(Hold::from).into_iter().collect();
     if !paired(facts) {
         holds.push(Hold::SubjectMismatch);
     }

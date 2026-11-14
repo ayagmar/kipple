@@ -217,6 +217,9 @@ fn a_secret_in_a_process_title_never_reaches_json_or_the_detail_lines() {
             roots,
             lens: None,
             exclude: Vec::new(),
+            // The host protects every finding, as the default does: these tests read
+            // the facts, which its answer leaves as they are.
+            protections: kipple_core::Protections::default(),
         };
         let cancel = CancelToken::new();
         let EventChannel { tx, rx } = event_channel(1024, &cancel);

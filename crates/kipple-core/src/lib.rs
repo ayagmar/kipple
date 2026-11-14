@@ -175,7 +175,7 @@ pub use process::{
 };
 pub use protect::{
     Area, OpenArea, OwnerStatus, Owners, ProtectedEntry, Protection, Protections, StateDeclaration,
-    StateRoot, Unresolved,
+    StateRoot, Unlocated, Unresolved,
 };
 pub use retention::{
     GroupGap, ReleaseFacts, ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion, ReleaseView,
