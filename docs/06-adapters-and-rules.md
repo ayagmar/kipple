@@ -1,6 +1,6 @@
 # Integrations and rules
 
-Status: partly built. §3 is the normative schema v1 contract, and its validator exists since M1 (`kipple_adapters::pack::validate`, tested against every error case below). The rule types live in `kipple-core`. The built-in integrations of §5a, their packs in `rules/` and the advice of §6 for pacman, journald and Claude Code exist since M1, and their findings are classified into buckets since M2. The other TOML examples have been parse-checked only.
+Status: partly built. §3 is the normative schema v1 contract, and its validator exists since M1 (`kipple_adapters::pack::validate`, tested against every error case below). The rule types live in `kipple-core`. The built-in integrations of §5a, their packs in `rules/` and the advice of §6 for pacman, journald and Claude Code exist since M1, and their findings are classified into buckets since M2. Since M4a the Codex, Claude Code, Pi, Cursor and git integrations discover and report as §5a says, and the closed logs of Claude Code and Pi, Codex's old TUI log and its plugin catalog cache are removable on Linux; Codex's releases and every git worktree stay `report`. The other TOML examples have been parse-checked only.
 
 ## 1. Two layers
 
@@ -139,13 +139,15 @@ How the codes apply to the cases the table leaves open: a value outside a fixed 
 
 ### Codex stale releases (keep active + running + pending + 1 per component/channel)
 
+Today `builtin.codex.stale-releases` is a `report` rule with no requirements and no retention: kipple reads both release stores, supplies the facts below and reports each release, and removes none. The rule below is what it becomes when releases are removed (M4b), and its `requirements` and `retention` are not accepted on a `report` rule until then.
+
 ```toml
 [[rule]]
 id = "builtin.codex.stale-releases"
 integration = "codex"
-title = "Inactive Codex releases"
+title = "Codex releases"
 category = "release-install"
-description = "Old Codex releases kept after updates. The active, running and one rollback release per component are always kept."
+description = "Releases left after an update. The selected, previous, running and pending releases are always kept."
 why = "Codex keeps every downloaded release after self-updating."
 loss = "The removed versions; Codex re-downloads a version only if you install it again."
 
@@ -157,7 +159,6 @@ selection = "verified-release-directories"
 layout = "supported"
 inventory = "complete"
 installer_activity = "idle"
-process_observation = "complete"
 
 [rule.retention]
 group_by = ["component", "target"]
@@ -189,15 +190,16 @@ Fixtures needed:
 
 ### Git worktrees (any agent)
 
-Worktrees are handled by a **generic Git integration** that labels which agent made each one (by location such as `.claude/worktrees/`, or by branch naming where it's verifiable), because agents of every brand leave them behind. In the one public report we found, 12 of 13 abandoned worktrees (13.8 GB in total) came from an agent other than Claude Code ([claude-code#26725 comment](https://github.com/anthropics/claude-code/issues/26725#issuecomment-5284720631), 2026-08-13). Claude Code's own `cleanupPeriodDays` sweep also removes *its* orphaned worktrees past that age, and kipple explains this instead of competing with it. Discovery uses `git worktree list --porcelain -z`.
+Worktrees are handled by a **generic Git integration** that labels which agent made each one by location alone, such as `.claude/worktrees/`, because agents of every brand leave them behind and a branch name proves nothing. In the one public report we found, 12 of 13 abandoned worktrees (13.8 GB in total) came from an agent other than Claude Code ([claude-code#26725 comment](https://github.com/anthropics/claude-code/issues/26725#issuecomment-5284720631), 2026-08-13). Claude Code's own `cleanupPeriodDays` sweep also removes *its* orphaned worktrees past that age, and kipple explains this instead of competing with it. Discovery uses `git worktree list --porcelain -z`, from git 2.36, and the facts about each worktree come from real git, with the repository config gate of 04 §6 clear before any command that reads an object.
 
-There are three states and they get different treatment:
+There are four states, and each path gets exactly one finding. When several repositories list a path, as a copy of a repository does, the one git names from inside the checkout speaks for it. Every rule here is `report` today, so nothing is removed yet.
 
 | State | Treatment |
 | --- | --- |
-| Registered and present | Removable only via `builtin.git.worktree-remove`, which requires all of: linked (not main), not locked, no submodules, registration valid both ways, no tracked changes, no untracked files, no unclassified ignored files, idle, HEAD reachable from a retained local ref. Uses `git worktree remove` without `--force`, never deletes branches, no undo. |
-| Registered but missing | Report-only. Reclaims nothing. Shows a `git worktree prune` advice line, because missing may mean unmounted or moved. |
-| Present but unregistered | Report-only. May hold unique commits. Repair advice. |
+| Registered and present | Removable only via `builtin.git.worktree-remove`, once that rule ships, which requires all of: linked (not main), not locked, no submodules, registration valid both ways, repository config gate clear, no tracked changes, no untracked files, no hidden changes, no unclassified ignored files, no operation in progress, no per-worktree refs, index not locked, idle, HEAD reachable from a retained local ref, git at least 2.39.5. Uses `git worktree remove` without `--force`, never deletes branches, no undo. |
+| Registered but missing | Report-only. Reclaims nothing. Shows a `git worktree prune --dry-run` advice line, because missing may mean unmounted or moved. |
+| Registered but invalid | Report-only. What is on disk doesn't match the registration, or two records print one path. Review by hand; never prune, which drops the admin directory of a checkout still on disk. |
+| Present but unregistered | Report-only. May hold unique commits. `git worktree repair` is advised only when the registration names a checkout that is gone. A copy of a live worktree, or a checkout that lost its repository, gets review-by-hand advice with no command. |
 
 `node_modules`, `target` and similar directories inside any worktree are separate findings through the normal artifact rules. They can be reclaimed even when the worktree itself cannot.
 
@@ -220,7 +222,7 @@ kind = "report"
 
 ## 5. v0.1 catalog
 
-"Mutable" here depends on verifying the upstream layout and passing the native safety fixtures on each advertised OS. Anything that fails or is unknown stays blocked.
+"Mutable" here depends on verifying the upstream layout and passing the native safety fixtures on each advertised OS. Anything that fails or is unknown stays blocked. The table is the v0.1 target; §5a says what is built.
 
 Every integration descriptor declares its **protected subresources** (04 §3.9), its **upstream root precedence** (05 §1) and the **consequence facts** it can prove (04 §2a).
 
@@ -228,7 +230,7 @@ Every integration descriptor declares its **protected subresources** (04 §3.9),
 | --- | --- | --- |
 | Codex | Inactive releases per component and channel; closed diagnostic logs; verified ephemeral artifacts | Histories, state DBs, plugin and runtime stores until proven disposable, credentials and config, active or unknown versions |
 | Git worktrees (any agent) | Artifacts inside worktrees; strictly eligible registered linked-worktree removal (§4) | Registration anomalies (report plus `prune --dry-run` advice), dirty, locked or unreachable HEAD |
-| Claude Code | Closed debug logs | Sessions, checkpoints and file history, memory, plugins, skills and config; broken or dirty worktrees. Version cleanup after layout verification |
+| Claude Code | Closed debug logs | Sessions, checkpoints and file history, memory, plugins, skills and config; broken or dirty worktrees; installed versions, which the installer prunes and a stale lock can't prove unused |
 | Pi | Logs and ephemeral files only where upstream identifies them | Sessions, packages, extensions, cloned repos, auth and config |
 | Cursor | Project artifacts under roots; tool cache and logs only if separated from history | Workspace DBs, local history, model and embedding stores, release installs |
 | Cargo | Project `target/` (honouring the resolved target dir and busy evidence) | Registry and git stores (Cargo auto-GC; advice shown) |
@@ -241,7 +243,7 @@ Every integration descriptor declares its **protected subresources** (04 §3.9),
 
 ### 5a. Built today
 
-The Cargo, Node and Python rules propose `remove-files` with `delete` or `trash`; the trash, pacman and journald rules only report. kipple finds, sizes and classifies each finding into its bucket (D-047), and `kipple clean` and the home screen remove only what a reviewed plan holds, through the executor. Each integration lists the upstream versions its fixtures were built from, and `kipple rules` and the generated support matrix show them. The consequence column is what the integration verified for a finding whose layout it recognised (04 §2a); an unrecognised layout and a report-only finding have none.
+The Cargo, Node and Python rules propose `remove-files` with `delete` or `trash`, and so do, on Linux only, the closed-log rules of Claude Code and Pi, Codex's old TUI log and its plugin catalog cache; the trash, pacman, journald, git and npm rules, Cursor's and the release rules of Codex only report. kipple finds, sizes and classifies each finding into its bucket (D-047), and `kipple clean` and the home screen remove only what a reviewed plan holds, through the executor. Each integration lists the upstream versions its fixtures were built from, and `kipple rules` and the generated support matrix show them. The consequence column is what the integration verified for a finding whose layout it recognised (04 §2a); an unrecognised layout and a report-only finding have none.
 
 | Integration | Lens | Finds | Evidence | Consequence | Verified against |
 | --- | --- | --- | --- | --- | --- |
@@ -251,8 +253,12 @@ The Cargo, Node and Python rules propose `remove-files` with `delete` or `trash`
 | Trash | system | the trash root, when not empty: on Linux the home trash's `files`, where the trashed files are (Linux, macOS) | the root | — (report only) | freedesktop Trash spec 1.0 |
 | Pacman | system | the package cache, when not empty (Linux) | the root | — (report only, advice) | pacman 7.1.0 |
 | journald | system | the persistent journal, when not empty (Linux) | the root | — (report only, advice) | systemd 262 |
-| Claude Code | agents | nothing yet; advice only | — | — | Claude Code settings docs, checked 2026-10-11 |
-| Codex, Git worktrees, npm, Pi, Cursor | agents, except npm (dev) | nothing yet: each has its descriptor, its closed roots and its rules as `report` | — | — | nothing yet |
+| Claude Code | agents | on Linux, the debug logs of closed sessions; everywhere, installed versions and the rest of its store, reported only; advice | the verified install layout and no open session marker naming the log | `none` for the logs, loses `history`, Review at every level; versions: `redownload`, loses `rollback-ability` | Claude Code 2.1.318 |
+| Codex | agents | the release stores, every release reported; on Linux, `log/codex-tui.log` and the plugin catalog cache files; its logs and caches, reported only; advice | the selected release of a verified version in a store of a known layout | the log: `none`, loses `history`, Review at every level; the cache: `automatic`, loses `cache-warmth` | Codex 0.165.0, 0.166.0 |
+| Pi | agents | on Linux, four named logs of the agent directory; its store, reported only | the verified install layout and an idle installer | `none`, loses `history`, Review at every level | Pi 1.5.0 |
+| Cursor | agents | on Windows, its application data, reported only; advice | none: nothing is verified, so it opens nothing | — (report only, advice) | nothing verified |
+| Git worktrees | agents | each linked worktree of the repositories under a project root or an agent's location, and each checkout none of them lists, with what git says of it | the facts git gave, past the roots | — (report only) | git 2.56.0 |
+| npm | dev | nothing yet: it has its descriptor, its closed roots and its rules as `report` | — | — | nothing yet |
 
 A `target`, `node_modules` or `.venv` with no recognised signature is still reported, with `no-signature` evidence, so an unknown layout is visible but can never become eligible. A candidate that can't be listed, including a `__pycache__`, is reported with no layout evidence at all. Generic `dirs-matching` and `files-matching` rules from third-party packs are validated but not evaluated before M5.
 
@@ -261,12 +267,13 @@ Roadmap integrations, each added only with layout fixtures: Gemini CLI, OpenCode
 ## 6. Advice catalog (v0.1)
 
 Advice is text plus an exact command or config snippet, checked against supported tool versions, and never run by kipple. An integration gives it once and each finding it applies to names it: a report-only finding that names advice proposes `advice` instead of `report`, and one that doesn't still proposes `report`.
-- Claude Code (built): `cleanupPeriodDays` (default 30, minimum 1; `0` fails validation). Show the resolved value and its source, or "unknown" if it can't be determined. Explain the exceptions: memory directories, `history.jsonl`, Desktop and Cowork transcripts (`desktopSessionCleanupPeriodDays`), `--bare` sessions, and versions before v2.1.228 deleting memory files. Source: code.claude.com settings reference and claude-directory docs, checked 2026-10-11.
-- Codex: `history.max_bytes` caps `history.jsonl` by dropping the oldest entries. It does *not* bound session rollouts (`sessions/`, `archived_sessions/`), which have no documented retention.
+- Claude Code (built): `cleanupPeriodDays` (default 30, minimum 1; `0` fails validation). Show the resolved value and its source, or "unknown" if it can't be determined. Explain the exceptions: memory directories, `history.jsonl` (except under a HIPAA setting), Desktop and Cowork transcripts (`desktopSessionCleanupPeriodDays`), `--bare` sessions, and versions before v2.1.228 deleting memory files. Managed, project and command-line settings override the user setting and aren't read. Source: code.claude.com settings reference and claude-directory docs, checked 2026-11-06.
+- Codex (built): `history.max_bytes` caps `history.jsonl` by dropping the oldest entries. It does *not* bound session rollouts (`sessions/`, `archived_sessions/`), which have no documented retention.
+- Cursor (built): `Delete Old Chats…` and `GC Agent KV Blobs` for its chat database, and `cursor.worktreeMaxCount` and `cursor.worktreeCleanupIntervalHours` for the worktrees it removes itself. kipple reports those worktrees and doesn't read Cursor's settings. Source: cursor.com docs, checked 2026-11-06.
 - pacman (built): `paccache -rk N` and `paccache.timer`, with the ArchWiki rollback caveat
 - journald (built): `SystemMaxUse=` or `journalctl --rotate --vacuum-size` (vacuuming alone never touches the active files), checked against systemd 262's `journalctl(1)`
 - Cargo: global cache auto-GC (`cache.auto-clean-frequency`)
-- git worktrees: `git worktree prune` and `git worktree repair` for registration anomalies
+- git worktrees (built): `git worktree prune --dry-run --verbose` for a registration whose checkout is gone, and `git worktree repair` only when the registration names a checkout that moved; a copy of a live worktree gets review-by-hand text and no command
 
 ## 7. Integration fixtures
 
