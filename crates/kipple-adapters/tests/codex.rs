@@ -2331,9 +2331,10 @@ fn scan_takes_no_lock() {
 }
 
 /// Catches apply settling a release beside a finding its scan stopped short of: that one
-/// may be a release of the group, the selected one even, so the group stays unsettled.
+/// may be a release of the group, the selected one even, and a process may run it, so
+/// apply, which never measured it, keeps the whole component.
 #[test]
-fn a_release_the_apply_scan_left_unread_leaves_the_group_unsettled() {
+fn a_release_the_apply_scan_left_unread_keeps_the_component() {
     let mut scan = verified().scan();
     let active = scan.built.home().join(ACTIVE);
     for finding in &mut scan.report.findings {
@@ -2344,7 +2345,7 @@ fn a_release_the_apply_scan_left_unread_leaves_the_group_unsettled() {
 
     let now = scan.now(OLD).map(|now| now.settlement);
 
-    assert_eq!(now, Ok(Settlement::Unsettled));
+    assert_eq!(now, Ok(kept_blocked(GroupGap::ActivityUnknown)));
 }
 
 /// Catches apply trusting the scan's process list once the probe fails: a list with gaps
@@ -2394,6 +2395,64 @@ fn foreign_target_release_is_kept() {
         );
     }
     assert_eq!(candidates(&scan), [OLD.to_owned()]);
+}
+
+/// Catches an installer without `flock(1)`, whose lock is the directory `install.lock.d`
+/// that kipple's lock doesn't conflict with, going unseen at apply: one made since the
+/// scan is read again after the item's locks and keeps every release of the component.
+#[test]
+fn install_lock_dir_made_before_the_item_holds() {
+    let scan = verified().scan();
+    assert_eq!(scan.facts(OLD).settlement, CANDIDATE);
+    let mut lock = FixtureTree::new();
+    lock.dir(&at(&format!("{}/install.lock.d", component(STANDALONE))));
+    scan.add(&lock);
+
+    let now = scan.now(OLD).map(|now| now.settlement);
+
+    assert_eq!(now, Ok(kept_blocked(GroupGap::InstallerBusy)));
+}
+
+/// Catches apply settling among the members its scan had: a `.retired.*` entry an install
+/// set aside after the scan, a Codex still running from it, is no member there, so apply
+/// would remove a release a scan at that moment keeps. Apply never measured the entry, so
+/// it keeps the component on that, where a scan now names the process.
+#[test]
+fn a_retired_entry_that_appears_mid_run_keeps_the_component() {
+    let scan = verified().scan();
+    assert_eq!(scan.facts(OLD).settlement, CANDIDATE);
+    let retired = release(STANDALONE, ".retired.AbCdEfGh");
+    let mut set_aside = FixtureTree::new();
+    let dir = at(&format!("{retired}/release"));
+    codex_v0_166_0::release(&mut set_aside, &dir, "0.163.0", MUSL);
+    scan.add(&set_aside);
+    scan.show(|shown| shown.running.push(format!("{dir}/bin/codex")));
+
+    let now = scan.now(OLD).map(|now| now.settlement);
+
+    assert_eq!(now, Ok(kept_blocked(GroupGap::ActivityUnknown)));
+    let rescanned = scan.built.scan();
+    let fresh = rescanned.facts(OLD).settlement;
+    assert_eq!(fresh, kept_blocked(GroupGap::RetiredRunning));
+}
+
+/// Pins a release removed beside the item since the scan, by another prune or by this run:
+/// apply settles among what is there now, as a scan at that moment does, so the item is
+/// still a candidate rather than held for a change that leaves its own place as it was.
+#[test]
+fn a_peer_removed_by_someone_else_mid_run_settles_afresh() {
+    let scan = five_plus_three().scan();
+    let older = of(STANDALONE, "0.162.1");
+    let old = of(STANDALONE, V164);
+    assert_eq!(
+        candidates(&scan),
+        [of(DAEMON, V164), older.clone(), old.clone()]
+    );
+
+    scan.remove(&older);
+
+    assert_eq!(scan.now(&old).map(|now| now.settlement), Ok(CANDIDATE));
+    assert_eq!(candidates(&scan.built.scan()), [of(DAEMON, V164), old]);
 }
 
 /// Whether an entry's `codex` alias reads `bin/codex`, as upstream writes it, or another
@@ -2579,5 +2638,122 @@ fn no_candidate_is_one_upstream_keeps() {
     assert_ne!(
         candidates, 0,
         "the generated stores never reach a candidate"
+    );
+}
+
+/// What changes between two items of a run.
+#[derive(Debug, Clone, Copy)]
+enum Change {
+    /// An install adds a release.
+    Install,
+    /// An install selects another release.
+    Flip,
+    /// An install sets a release aside, a process still running from it or not.
+    Retire(Running),
+    /// This run, or another prune, removes an entry.
+    Remove,
+    /// The process list comes back with gaps.
+    FailedProbe,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Running {
+    Yes,
+    No,
+}
+
+const CHANGES: [Change; 6] = [
+    Change::Install,
+    Change::Flip,
+    Change::Retire(Running::Yes),
+    Change::Retire(Running::No),
+    Change::Remove,
+    Change::FailedProbe,
+];
+
+impl Seeded {
+    fn change(&mut self, planting: &Planting, scan: &Scan) -> Change {
+        let change = self.pick(&CHANGES);
+        let count = planting.entries.len();
+        match change {
+            Change::Install => {
+                let planted = Planted {
+                    version: "0.167.0",
+                    target: self.pick(&PLANTED_TARGETS),
+                    alias: Alias::Program,
+                };
+                let mut tree = FixtureTree::new();
+                planted.write(&mut tree);
+                scan.add(&tree);
+            }
+            Change::Flip => {
+                let selected = &planting.entries[self.next() % count];
+                let previous = planting.entries[planting.active].name();
+                scan.select(STANDALONE, &selected.name(), &previous);
+            }
+            Change::Retire(running) => {
+                let dir = at(&release(STANDALONE, ".retired.Generated/release"));
+                let mut tree = FixtureTree::new();
+                codex_v0_166_0::release(&mut tree, &dir, "0.159.0", MUSL);
+                scan.add(&tree);
+                if matches!(running, Running::Yes) {
+                    scan.show(|shown| shown.running.push(format!("{dir}/bin/codex")));
+                }
+            }
+            Change::Remove => {
+                // This run's own removals are of candidates; another prune's are of any.
+                let paths: Vec<String> = planting.entries.iter().map(Planted::path).collect();
+                let candidates: Vec<&String> = paths
+                    .iter()
+                    .filter(|path| is_candidate(scan, path))
+                    .collect();
+                let path = if candidates.is_empty() || self.one_in(3) {
+                    &paths[self.next() % count]
+                } else {
+                    candidates[self.next() % candidates.len()]
+                };
+                scan.remove(path);
+            }
+            Change::FailedProbe => scan.show(|shown| {
+                shown.inventory = Inventory::Partial {
+                    reason: "hidepid".to_owned(),
+                };
+            }),
+        }
+        change
+    }
+}
+
+/// Catches apply admitting what a scan at that moment keeps, over generated stores and a
+/// generated change between two items of a run (an install, a flip, an entry set aside,
+/// one removed, a process list with gaps): apply settles among the store as it is now.
+#[test]
+fn apply_never_admits_what_a_fresh_settle_keeps() {
+    let mut admitted = 0;
+    for seed in 0..256 {
+        let mut rng = Seeded(seed);
+        let planting = rng.planting();
+        let scan = planting.scene().scan();
+        let change = rng.change(&planting, &scan);
+        let rescanned = scan.built.scan();
+        for entry in &planting.entries {
+            let path = entry.path();
+            if scan.get(&path).is_none() {
+                continue;
+            }
+            let now = scan.now(&path).map(|now| now.settlement);
+            if now == Ok(CANDIDATE) {
+                admitted += 1;
+                let fresh = is_candidate(&rescanned, &path);
+                assert!(
+                    fresh,
+                    "seed {seed}: {change:?} keeps {entry:?} of {planting:?}"
+                );
+            }
+        }
+    }
+    assert_ne!(
+        admitted, 0,
+        "apply never admits anything in the generated runs"
     );
 }

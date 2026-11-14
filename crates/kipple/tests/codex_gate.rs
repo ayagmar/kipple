@@ -31,10 +31,11 @@ use kipple_core::{
     ApplyPorts, CancelToken, CleanRequest, Clock, Confirmed, DirEntryMeta, Ending, Engine,
     EntryMeta, EventChannel, Finding, Finished, FsProbe, GroupGap, HeldPath, IntegrationId,
     Inventory, ItemOutcome, Judge, Lineage, LockGap, Method, Methods, MutationPorts, Observer,
-    PlanMode, Platform, Policy, Ports, ProbeError, ProcessProbe, ProcessSnapshot, Protections,
-    ReleaseFacts, ReleaseRole, ReleaseState, ResolvedRoot, RootSource, Roots, Rule, ScanReport,
-    ScanRequest, Selection, Session, Skip, StoreLocks as _, Subject, SymbolicRoot, Unavailable,
-    event_channel, prepare_clean, run_prepared,
+    PlanMode, Platform, Policy, Ports, ProbeError, ProcessOutcome, ProcessOwner, ProcessProbe,
+    ProcessRecord, ProcessSnapshot, Protections, ReleaseFacts, ReleaseRole, ReleaseState,
+    ResolvedRoot, RootSource, Roots, Rule, ScanReport, ScanRequest, Selection, Session, Settlement,
+    Skip, StoreLocks as _, Subject, SymbolicRoot, Unavailable, event_channel, prepare_clean,
+    run_prepared,
 };
 use kipple_platform::{
     ConfinedFs, ConfinedTrash, Environment, FileLocks, FileRunStore, GitQuery, NativeCommands,
@@ -74,14 +75,31 @@ impl Clock for Long {
     }
 }
 
-/// Nothing runs: what the host's own processes are is no business of a test.
+/// What runs: a Codex of the user from each program, and nothing else, since what the
+/// host's own processes are is no business of a test.
 #[derive(Debug)]
-struct Idle;
+struct Runs(Vec<PathBuf>);
 
-impl ProcessProbe for Idle {
+impl ProcessProbe for Runs {
     fn snapshot(&self) -> Result<ProcessSnapshot, ProbeError> {
+        let mut processes = Vec::new();
+        for (pid, program) in (3000..).zip(&self.0) {
+            let identity = NoFollowFs.metadata(program)?.identity.unwrap();
+            let outcome = ProcessOutcome::Identified {
+                path: program.clone(),
+                identity,
+                deleted: false,
+            };
+            processes.push(ProcessRecord {
+                owner: ProcessOwner::CurrentUser,
+                argv: Ok(vec!["codex".into()]),
+                env_paths: Ok(Vec::new()),
+                mapped_files: Ok(Vec::new()),
+                ..ProcessRecord::new(pid, outcome)
+            });
+        }
         Ok(ProcessSnapshot {
-            processes: Vec::new(),
+            processes,
             inventory: Inventory::Complete,
             observer: Observer::PLAIN,
         })
@@ -130,18 +148,58 @@ fn stamp(link: &Path) -> io::Result<String> {
 /// The demo's Codex home with a neighbour for each file, in a temp dir.
 struct Gate {
     temp: TempDir,
+    /// The programs, relative to the home, a Codex of the user runs from.
+    running: Vec<String>,
 }
 
 impl Gate {
     fn new() -> Self {
+        Self::with(|_| {})
+    }
+
+    /// The demo's home with what `add` adds to it.
+    fn with(add: impl FnOnce(&mut FixtureTree)) -> Self {
         let temp = tempfile::tempdir().unwrap();
         let mut tree = FixtureTree::new();
         codex_demo::demo(&mut tree);
         tree.file(&format!("{}/{LOGIN_LOG}", codex_demo::HOME), b"login\n")
             .file(&format!("{}/{OTHER_CATALOG}", codex_demo::HOME), b"{}");
+        add(&mut tree);
         tree.build_in(temp.path()).unwrap();
         codex_demo::selection_history(temp.path(), stamp).unwrap();
-        Self { temp }
+        Self {
+            temp,
+            running: Vec::new(),
+        }
+    }
+
+    /// The store of `docs/11-delivery-plan.md` M4's Verify list: five standalone releases,
+    /// 0.166.0 selected after 0.165.0, and a Codex running from 0.163.0.
+    fn five_releases() -> Self {
+        let mut gate = Self::with(|tree| {
+            for version in ["0.162.1", "0.163.0"] {
+                let dir = format!("{}/{}", codex_demo::HOME, release_of(version));
+                codex_v0_165_0::release(tree, &dir, version, TARGET);
+            }
+        });
+        gate.running
+            .push(format!("{}/bin/codex", release_of("0.163.0")));
+        gate
+    }
+
+    /// An engine of `rules` over `fs`, seeing what runs.
+    fn engine(&self, fs: Box<dyn FsProbe>, rules: Vec<Rule>) -> Engine {
+        let running = self.running.iter().map(|path| self.home().join(path));
+        engine(fs, rules, Box::new(Runs(running.collect())))
+    }
+
+    /// The names of the store's releases left.
+    fn releases_left(&self) -> BTreeSet<String> {
+        let releases = self.home().join("packages/standalone/releases");
+        fs::read_dir(releases)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect()
     }
 
     fn home(&self) -> PathBuf {
@@ -175,7 +233,7 @@ impl Gate {
     fn scan(&self, fs: Box<dyn FsProbe>, rules: Vec<Rule>) -> ScanReport {
         let cancel = CancelToken::new();
         let EventChannel { tx, rx } = event_channel(4096, &cancel);
-        let report = engine(fs, rules).scan(&self.request(), &tx, &cancel);
+        let report = self.engine(fs, rules).scan(&self.request(), &tx, &cancel);
         drop(rx);
         report
     }
@@ -183,8 +241,13 @@ impl Gate {
     /// Takes `finding` of `report` through a plan a person saw, the real executor and a run
     /// stored below the temp dir.
     fn delete(&self, report: &ScanReport, finding: &Finding) -> Finished {
+        self.delete_all(report, &[finding])
+    }
+
+    /// Takes `findings` of `report` through one run, as [`delete`](Self::delete) does one.
+    fn delete_all(&self, report: &ScanReport, findings: &[&Finding]) -> Finished {
         let rules = rules_of(PLATFORM);
-        let engine = engine(Box::new(NoFollowFs), rules.clone());
+        let engine = self.engine(Box::new(NoFollowFs), rules.clone());
         let request = self.request();
         let rescan = engine.rescan(&request);
         let env = Environment::from_vars(Vec::new());
@@ -222,7 +285,7 @@ impl Gate {
             codec: &OsNames,
         };
         let cancel = CancelToken::new();
-        let selection = Selection(BTreeSet::from([finding.id]));
+        let selection = Selection(findings.iter().map(|finding| finding.id).collect());
         let clean = CleanRequest {
             scan: report,
             selection: &selection,
@@ -270,7 +333,7 @@ fn rules_of(platform: Platform) -> Vec<Rule> {
         .collect()
 }
 
-fn engine(fs: Box<dyn FsProbe>, rules: Vec<Rule>) -> Engine {
+fn engine(fs: Box<dyn FsProbe>, rules: Vec<Rule>, processes: Box<dyn ProcessProbe>) -> Engine {
     let integrations = builtin::integrations()
         .into_iter()
         .filter(|integration| integration.descriptor().id == IntegrationId("codex"))
@@ -279,7 +342,7 @@ fn engine(fs: Box<dyn FsProbe>, rules: Vec<Rule>) -> Engine {
     let ports = Ports {
         fs,
         sizer: Box::new(Walker::new().unwrap()),
-        processes: Box::new(Idle),
+        processes,
         clock: Box::new(Long),
         tracked: Box::new(GitQuery::new(&env)),
         tools: Box::new(Unavailable),
@@ -438,16 +501,64 @@ fn the_stale_release_goes_under_codexs_lock() {
         !present(&gate.home().join(STALE_RELEASE)),
         "the stale release is gone"
     );
-    let releases = gate.home().join("packages/standalone/releases");
-    let left: BTreeSet<String> = fs::read_dir(releases)
-        .unwrap()
-        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
     assert_eq!(
-        left,
-        BTreeSet::from([
-            "0.165.0-x86_64-unknown-linux-musl".to_owned(),
-            "0.166.0-x86_64-unknown-linux-musl".to_owned(),
-        ])
+        gate.releases_left(),
+        BTreeSet::from([name("0.165.0"), name("0.166.0")])
     );
+}
+
+/// Catches a run removing at most one release of a component: the release a run reaches
+/// second must settle among what is there once the first is gone, so the 5+3 store's two
+/// stale standalone releases both go in one run, and the running, rollback and selected
+/// ones stay.
+#[test]
+fn two_stale_releases_of_one_component_go_in_one_run() {
+    if PLATFORM != Platform::Linux {
+        return;
+    }
+    let gate = Gate::five_releases();
+    let report = gate.scan(Box::new(NoFollowFs), rules_of(PLATFORM));
+    let stale = [release_of("0.162.1"), release_of("0.164.0")];
+    let findings: Vec<&Finding> = stale.iter().map(|path| at(&gate, &report, path)).collect();
+    let candidates: Vec<&PathBuf> = report
+        .findings
+        .iter()
+        .filter(|finding| {
+            let settlement = finding.facts.as_ref().map(|facts| facts.settlement);
+            settlement == Some(Settlement::Candidate)
+        })
+        .map(|finding| &finding.path)
+        .collect();
+    let expected: Vec<&PathBuf> = findings.iter().map(|finding| &finding.path).collect();
+    assert_eq!(
+        candidates, expected,
+        "the scan offers the two stale releases only"
+    );
+
+    let finished = gate.delete_all(&report, &findings);
+
+    assert_eq!(finished.ending, Ending::Done, "{finished:#?}");
+    let outcomes = finished.receipt.items.iter().map(|item| &item.outcome);
+    for outcome in outcomes {
+        assert!(
+            matches!(outcome, ItemOutcome::Done(_)),
+            "expected each removed: {outcome:?}"
+        );
+    }
+    assert_eq!(
+        gate.releases_left(),
+        BTreeSet::from([name("0.163.0"), name("0.165.0"), name("0.166.0")])
+    );
+}
+
+const TARGET: &str = "x86_64-unknown-linux-musl";
+
+/// The release `version` of the store's own target.
+fn name(version: &str) -> String {
+    format!("{version}-{TARGET}")
+}
+
+/// The release `version` of the standalone store, relative to the home.
+fn release_of(version: &str) -> String {
+    format!("packages/standalone/releases/{}", name(version))
 }

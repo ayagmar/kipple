@@ -15,10 +15,10 @@ use std::path::{Component as Part, Path, PathBuf};
 use kipple_core::{
     ActivityEvidence, Advice, Area, Claim, Consequence, Cost, DirEntryMeta, EntryKind, EntryMeta,
     Evidence, FactKind, FactSpec, FactValue, Finding, FindingSink, GroupGap, Integration,
-    IntegrationDescriptor, IntegrationError, IntegrationId, IntegrationSelector, Lens, Loss, Mount,
-    OpenArea, OwnerStatus, Platform, ProbeError, Program, ProtectedEntry, Recovery, ReleaseFacts,
-    ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion, Rule, RuleId, ScanContext, Selector,
-    StateDeclaration, Subject, Supplied, SymbolicRoot, Unresolved,
+    IntegrationDescriptor, IntegrationError, IntegrationId, IntegrationSelector, Lens, Listed,
+    Loss, Mount, OpenArea, OwnerStatus, Platform, ProbeError, Program, ProtectedEntry, Recovery,
+    ReleaseFacts, ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion, Reread, Rule, RuleId,
+    ScanContext, Selector, StateDeclaration, Subject, Supplied, SymbolicRoot, Unresolved,
 };
 use serde_json::Value as Json;
 use toml::de::{DeTable, DeValue};
@@ -416,6 +416,39 @@ impl Integration for Codex {
             revisited.found.unwrap_or_else(|| gone(&facts.supplied)),
         ))
     }
+
+    /// Reads every home again, through the code the scan read them with, and gives every
+    /// entry of the release `finding`'s component as a scan would find it now: its
+    /// releases and retired entries, each carrying what the component's markers and
+    /// records say. Everything else reads nothing as a group.
+    fn revisit_group(
+        &self,
+        cx: &ScanContext<'_>,
+        finding: &Finding,
+    ) -> Result<Option<Vec<Reread>>, IntegrationError> {
+        let release = finding
+            .facts
+            .as_ref()
+            .and_then(|facts| match &facts.supplied.subject {
+                Subject::Release(release) => Some(release),
+                Subject::Plain | Subject::Worktree(_) | Subject::Semantic(_) => None,
+            });
+        let Some(release) = release else {
+            return Ok(None);
+        };
+        let mut group = Group {
+            component: &release.group.component,
+            read: Vec::new(),
+        };
+        let homes: Vec<PathBuf> = cx
+            .roots_of(SymbolicRoot::CodexHome)
+            .map(|root| root.path.clone())
+            .collect();
+        for path in homes {
+            Home::read(cx, path)?.add_findings(cx, &mut group)?;
+        }
+        Ok(Some(group.read))
+    }
 }
 
 /// What a finding rests on once it is no longer where the scan found it.
@@ -515,6 +548,54 @@ impl Findings for Revisited<'_> {
         supplied: Supplied,
     ) -> Result<(), IntegrationError> {
         self.take(rule, path, supplied);
+        Ok(())
+    }
+}
+
+/// Every entry of one component a home lists now, as apply reads it again.
+#[derive(Debug)]
+struct Group<'finding> {
+    component: &'finding str,
+    read: Vec<Reread>,
+}
+
+impl Group<'_> {
+    fn take(&mut self, rule: &Rule, path: &Path, supplied: Supplied, listed: Listed) {
+        let ours = matches!(
+            &supplied.subject,
+            Subject::Release(release) if release.group.component == self.component
+        );
+        if ours {
+            self.read.push(Reread {
+                rule: rule.id.clone(),
+                path: path.to_path_buf(),
+                supplied,
+                listed,
+            });
+        }
+    }
+}
+
+impl Findings for Group<'_> {
+    fn supplied(
+        &mut self,
+        rule: &Rule,
+        path: &Path,
+        _: Claim,
+        supplied: Supplied,
+    ) -> Result<(), IntegrationError> {
+        self.take(rule, path, supplied, Listed::Read);
+        Ok(())
+    }
+
+    fn unread(
+        &mut self,
+        rule: &Rule,
+        path: &Path,
+        _: Vec<Evidence>,
+        supplied: Supplied,
+    ) -> Result<(), IntegrationError> {
+        self.take(rule, path, supplied, Listed::Unread);
         Ok(())
     }
 }

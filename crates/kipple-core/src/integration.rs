@@ -20,7 +20,7 @@ use crate::policy::Consequence;
 use crate::probe::{DirEntryMeta, EntryKind, EntryMeta, FsProbe, ProbeError};
 use crate::protect::{OwnerStatus, StateDeclaration};
 use crate::root::{ResolvedRoot, SymbolicRoot};
-use crate::rule::{FactSpec, Lens, Operation, Platform, Rule, Selector};
+use crate::rule::{FactSpec, Lens, Operation, Platform, Rule, RuleId, Selector};
 use crate::supplied::{AdviceId, Claim, Supplied};
 use crate::tracked::GitGap;
 use crate::worktree::{AgentLabel, WorktreeQuery};
@@ -256,6 +256,45 @@ pub trait Integration: fmt::Debug + Send + Sync {
         let _ = (cx, finding);
         Ok(None)
     }
+
+    /// Reads again, in one reading, everything `finding` of an apply's scan is decided
+    /// among: for a release, every entry of its component as it is now, `finding` among them
+    /// while it is still there. Apply settles from this alone, so what this run or anyone
+    /// else changed since the scan counts. `None` means it reads no such group, which apply
+    /// refuses for a [`Release`](crate::Subject::Release). A failure holds the item.
+    ///
+    /// # Errors
+    /// When what the group rests on can't be read.
+    fn revisit_group(
+        &self,
+        cx: &ScanContext<'_>,
+        finding: &Finding,
+    ) -> Result<Option<Vec<Reread>>, IntegrationError> {
+        let _ = (cx, finding);
+        Ok(None)
+    }
+}
+
+/// One finding as its integration would make it now.
+#[derive(Debug, Clone)]
+pub struct Reread {
+    /// The rule it would be found by.
+    pub rule: RuleId,
+    /// Where it is.
+    pub path: PathBuf,
+    /// What the integration supplies for it now.
+    pub supplied: Supplied,
+    /// Whether its facts were read, the way a scan would report it.
+    pub listed: Listed,
+}
+
+/// Whether a finding read again was read whole.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Listed {
+    /// Its facts were read.
+    Read,
+    /// It is there but its facts can't be read: a scan would report it without facts.
+    Unread,
 }
 
 /// The read-only view an integration gets during a scan.

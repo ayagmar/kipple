@@ -756,6 +756,21 @@ impl Scan {
         fs::write(dir.join("selection-history"), history).unwrap();
     }
 
+    /// Writes `tree` into the host after the scan, as an installer does.
+    pub(crate) fn add(&self, tree: &FixtureTree) {
+        tree.build_in(self.built.temp.path()).unwrap();
+    }
+
+    /// Removes the directory `path`, relative to the home, after the scan, as this run or
+    /// another prune does.
+    pub(crate) fn remove(&self, path: &str) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the test plays a release removed between two items of a run"
+        )]
+        fs::remove_dir_all(self.built.home().join(path)).unwrap();
+    }
+
     /// Changes what the process probe shows from here on.
     pub(crate) fn show(&self, change: impl FnOnce(&mut Shown)) {
         change(
