@@ -832,6 +832,24 @@
           "meaning": "whether a local branch holds its HEAD"
         },
         {
+          "name": "worktree.unreferenced_commits",
+          "kind": "count",
+          "selector": "registered-linked-worktrees",
+          "meaning": "commits its own reflog or pseudo-refs name that gc would drop sooner once it is gone: no local branch holds them, and no surviving reflog names them as recently"
+        },
+        {
+          "name": "worktree.unknown_admin_entries",
+          "kind": "count",
+          "selector": "registered-linked-worktrees",
+          "meaning": "files in its admin directory (`.git/worktrees/<name>`) kipple doesn't recognise, which removing it would delete unread"
+        },
+        {
+          "name": "worktree.own_config",
+          "kind": "bool",
+          "selector": "registered-linked-worktrees",
+          "meaning": "whether it has config of its own (`config.worktree`), which goes with it"
+        },
+        {
           "name": "git_inventory",
           "kind": "enum",
           "values": [
@@ -862,7 +880,7 @@
           "platform": "linux",
           "discover": true,
           "report": true,
-          "mutate": false
+          "mutate": true
         },
         {
           "platform": "macos",
@@ -949,12 +967,69 @@
     {
       "id": "npm",
       "lens": "dev",
-      "verified": [],
-      "facts": [],
+      "verified": [
+        "npm 11.20.0",
+        "npm 12.2.1"
+      ],
+      "facts": [
+        {
+          "name": "layout",
+          "kind": "enum",
+          "values": [
+            "supported",
+            "unknown"
+          ],
+          "selector": null,
+          "meaning": "whether `_cacache` is a directory holding cacache's `index-v5/` and `content-v2/`"
+        },
+        {
+          "name": "npm.executable_verified",
+          "kind": "bool",
+          "selector": "npm-download-cache",
+          "meaning": "whether the first npm on `PATH` of a verified version is its own `npm-cli.js` and the node beside it, neither of them a script"
+        },
+        {
+          "name": "npm.version_supported",
+          "kind": "enum",
+          "values": [
+            "supported",
+            "unsupported"
+          ],
+          "selector": "npm-download-cache",
+          "meaning": "whether that npm is a verified version and its node is one it supports"
+        },
+        {
+          "name": "cache.is_link",
+          "kind": "bool",
+          "selector": "npm-download-cache",
+          "meaning": "whether `_cacache` itself is a link"
+        }
+      ],
       "protected": [
         {
           "root": "npm.cache",
-          "entries": [],
+          "entries": [
+            {
+              "path": "_npx",
+              "matches": "exact"
+            },
+            {
+              "path": "_logs",
+              "matches": "exact"
+            },
+            {
+              "path": "_prebuilds",
+              "matches": "exact"
+            },
+            {
+              "path": "_tuf",
+              "matches": "exact"
+            },
+            {
+              "path": "_update-notifier-last-checked",
+              "matches": "exact"
+            }
+          ],
           "delegates": []
         },
         {
@@ -965,7 +1040,16 @@
           ]
         }
       ],
-      "open": [],
+      "open": [
+        {
+          "root": "npm.cache",
+          "path": "_cacache",
+          "reaches": "exact",
+          "integrations": [
+            "npm"
+          ]
+        }
+      ],
       "rules": [
         "builtin.npm.cache",
         "builtin.npm.inventory"
@@ -973,20 +1057,20 @@
       "platforms": [
         {
           "platform": "linux",
-          "discover": false,
-          "report": false,
-          "mutate": false
+          "discover": true,
+          "report": true,
+          "mutate": true
         },
         {
           "platform": "macos",
-          "discover": false,
-          "report": false,
+          "discover": true,
+          "report": true,
           "mutate": false
         },
         {
           "platform": "windows",
-          "discover": false,
-          "report": false,
+          "discover": true,
+          "report": true,
           "mutate": false
         }
       ]

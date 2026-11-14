@@ -29,10 +29,11 @@ use kipple_core::{
     Activity, Allocated, Anchor, ApplyError, CancelToken, Component, DeleteOp, EffectSink,
     EntryKind, EntrySnapshot, ErrorCode, Executor, FileIdentity, FileSystemClass, Finding, Finish,
     Forgotten, Freed, Freeze, Freezer, FrozenTree, GitGap, HeldLocks, Intent, ItemId, ItemOutcome,
-    Journal, LeftReason, LocalFileSystem, LockGap, LockState, Locked, NodeId, Now, Plan, RelPath,
-    Rescan, RestoreRequest, RunId, RunStore, ScanReport, Scope, Skip, SlotState, SpaceEstimate,
-    StoreLocks, StoreRefusal, TrackedQuery, TrashBackend, TrashDir, TrashOp, TrashSlot, Trashed,
-    TreeBuilder, Volume,
+    Journal, LeftReason, LocalFileSystem, LockGap, LockState, Locked, NativeEnd, NativeExit,
+    NativeOp, NativeOutput, NativeRunner, NativeStatus, NodeId, Now, Plan, Postcondition,
+    Registration, RelPath, Rescan, RestoreRequest, RunId, RunStore, ScanReport, Scope, Skip,
+    SlotState, SpaceEstimate, StoreLocks, StoreRefusal, TrackedQuery, TrashBackend, TrashDir,
+    TrashOp, TrashSlot, Trashed, TreeBuilder, Volume, WorktreeQuery, WorktreeState,
 };
 
 use crate::codec::TestCodec;
@@ -159,6 +160,52 @@ pub(crate) struct State {
     pub(crate) runs: BTreeMap<RunId, Files>,
     /// Another kipple holds the store's lock.
     pub(crate) busy: bool,
+    /// What a tool's command does when the runner starts it.
+    pub(crate) script: Script,
+    /// What git lists for each repository, by its main worktree's path, or why it can't
+    /// say. A command that removes a whole worktree takes its registration out.
+    pub(crate) worktrees: BTreeMap<PathBuf, Result<Vec<Registration>, GitGap>>,
+    /// Everything a tool's command printed or was given, as the runner saw it: what a
+    /// test searches the stored records for.
+    pub(crate) printed: Vec<NativeOutput>,
+}
+
+/// What a tool's command does, as the scripted runner plays it.
+#[derive(Debug, Clone)]
+pub(crate) struct Script {
+    /// It never starts, failing with this: nothing ran.
+    pub(crate) refusal: Option<ErrorCode>,
+    /// How many of the target's entries it removes, deepest first, before it ends: all of
+    /// them when unset. A crash at [`Crash::AfterRemovals`] stops it partway, as kipple
+    /// dying while its child ran.
+    pub(crate) removes: Option<usize>,
+    /// How it ends.
+    pub(crate) status: NativeStatus,
+    /// What the runner sees of its postcondition: whether the target is gone when unset.
+    pub(crate) postcondition: Option<Postcondition>,
+    /// Whether the sync barrier held.
+    pub(crate) synced: Result<(), ApplyError>,
+    /// What it prints.
+    pub(crate) output: NativeOutput,
+    /// Set while it runs: a person pressing Ctrl+C once, which waits for it.
+    pub(crate) interrupts: Option<CancelToken>,
+}
+
+impl Default for Script {
+    fn default() -> Self {
+        Self {
+            refusal: None,
+            removes: None,
+            status: NativeStatus::Ended(NativeEnd {
+                exit: Some(0),
+                signal: None,
+            }),
+            postcondition: None,
+            synced: Ok(()),
+            output: NativeOutput::default(),
+            interrupts: None,
+        }
+    }
 }
 
 /// The machine. It is every mutation port and, through [`World::journal`], the journal.
@@ -502,6 +549,102 @@ impl TrackedQuery for World {
     }
 }
 
+impl NativeRunner for World {
+    fn run(&self, op: &NativeOp) -> Result<NativeExit, ApplyError> {
+        let script = self.state().script.clone();
+        if let Some(code) = script.refusal {
+            return Err(ApplyError::new(code));
+        }
+        let target = op.target();
+        self.started(target.item());
+        if let Some(cancel) = &script.interrupts {
+            cancel.cancel();
+        }
+        let at = target.anchor().path();
+        // Deepest first, as a tool removing a tree does, whatever the review froze.
+        let mut paths: Vec<RelPath> = self
+            .state()
+            .targets
+            .get(&at)
+            .map(|disk| disk.entries.keys().cloned().collect())
+            .unwrap_or_default();
+        paths.reverse();
+        paths.truncate(script.removes.unwrap_or(usize::MAX));
+        for path in paths {
+            self.remove_natively(target.item(), &at, path);
+        }
+        let mut state = self.state();
+        let gone = !state.targets.contains_key(&at);
+        let registered = op.registered().map(Path::to_path_buf);
+        let listed = op
+            .repository()
+            .filter(|_| gone)
+            .and_then(|repository| state.worktrees.get_mut(repository));
+        if let Some(Ok(listed)) = listed {
+            listed.retain(|registration| {
+                registration.path != at && Some(&registration.path) != registered.as_ref()
+            });
+        }
+        state.printed.push(script.output.clone());
+        let met = if gone {
+            Postcondition::Met
+        } else {
+            Postcondition::Unmet
+        };
+        Ok(NativeExit {
+            status: script.status,
+            postcondition: script.postcondition.unwrap_or(met),
+            synced: script.synced,
+            output: script.output,
+        })
+    }
+}
+
+impl World {
+    /// Removes `path` of the target at `at` as `item`'s command does: whatever is there,
+    /// unchecked. Crashes after it when a crash is due.
+    fn remove_natively(&self, item: ItemId, at: &Path, path: RelPath) {
+        let mut state = self.state();
+        let Some(disk) = state.targets.get_mut(at) else {
+            return;
+        };
+        disk.entries.remove(&path);
+        if disk.entries.is_empty() {
+            state.targets.remove(at);
+        }
+        state.removals.push(Removal {
+            item,
+            target: at.to_path_buf(),
+            path,
+        });
+        if state.crash == Some(Crash::AfterRemovals(state.removals.len())) {
+            crash(state);
+        }
+    }
+}
+
+impl WorktreeQuery for World {
+    fn list(&self, repository: &Path, cancel: &CancelToken) -> Result<Vec<Registration>, GitGap> {
+        let state = self.state();
+        if let Some(log) = &state.log {
+            log.lock().unwrap().push("list");
+        }
+        if cancel.is_cancelled() {
+            // git, stopped by the cancel, said nothing.
+            return Err(GitGap::Failed);
+        }
+        state
+            .worktrees
+            .get(repository)
+            .cloned()
+            .unwrap_or(Err(GitGap::Unsupported))
+    }
+
+    fn inspect(&self, _: &Registration, _: &CancelToken) -> WorktreeState {
+        WorktreeState::unknown(GitGap::Unsupported)
+    }
+}
+
 /// The scan apply runs, with the activity it judges each item by now: the scan's own
 /// when `activity` is unset.
 #[derive(Debug, Clone)]
@@ -510,8 +653,10 @@ pub(crate) struct Rescanned {
     pub(crate) activity: Option<Activity>,
     /// Refuses every item, as a reading that failed does.
     pub(crate) refuses: Option<Skip>,
-    /// Says when each item is read again.
+    /// Says when each item is read again, and measured.
     pub(crate) log: Option<Log>,
+    /// What a native item's target measures, before its run and after.
+    pub(crate) size: Option<SpaceEstimate>,
 }
 
 /// What happened, in order, across the fakes that share it.
@@ -542,7 +687,10 @@ impl Rescan for Rescanned {
     }
 
     fn size(&self, _: &Path, _: &CancelToken) -> Option<SpaceEstimate> {
-        None
+        if let Some(log) = &self.log {
+            log.lock().unwrap().push("size");
+        }
+        self.size
     }
 }
 

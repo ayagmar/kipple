@@ -454,7 +454,13 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unchecked_system": 0
       },
       "category": "source-worktree",
-      "consequence": null,
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
       "evidence": [
         {
           "agent": "codex",
@@ -477,7 +483,8 @@ expression: "serde_json::to_string_pretty(&report)?"
       "verdict": {
         "bucket": "protected",
         "reasons": [
-          "report-only"
+          "fact-unmet",
+          "fact-unknown"
         ]
       }
     },
@@ -487,7 +494,53 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unchecked_system": 0
       },
       "category": "source-worktree",
-      "consequence": null,
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
+      "evidence": [
+        {
+          "agent": "codex",
+          "kind": "worktree"
+        }
+      ],
+      "integration": "git",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.codex/worktrees/cd34/app"
+      },
+      "rule": "builtin.git.worktree-remove",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 61,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "review",
+        "reasons": [
+          "recovery",
+          "loss"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "source-worktree",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
       "evidence": [
         {
           "agent": "herdr",
@@ -510,7 +563,8 @@ expression: "serde_json::to_string_pretty(&report)?"
       "verdict": {
         "bucket": "protected",
         "reasons": [
-          "report-only"
+          "fact-unmet",
+          "fact-unknown"
         ]
       }
     },
@@ -520,7 +574,13 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unchecked_system": 0
       },
       "category": "source-worktree",
-      "consequence": null,
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
       "evidence": [
         {
           "agent": "unknown",
@@ -543,7 +603,8 @@ expression: "serde_json::to_string_pretty(&report)?"
       "verdict": {
         "bucket": "protected",
         "reasons": [
-          "report-only"
+          "fact-unmet",
+          "fact-unknown"
         ]
       }
     },
@@ -553,7 +614,13 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unchecked_system": 0
       },
       "category": "source-worktree",
-      "consequence": null,
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
       "evidence": [
         {
           "agent": "claude-code",
@@ -576,7 +643,8 @@ expression: "serde_json::to_string_pretty(&report)?"
       "verdict": {
         "bucket": "protected",
         "reasons": [
-          "report-only"
+          "fact-unmet",
+          "fact-unknown"
         ]
       }
     },
@@ -586,7 +654,13 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unchecked_system": 0
       },
       "category": "source-worktree",
-      "consequence": null,
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
       "evidence": [
         {
           "agent": "claude-code",
@@ -609,7 +683,8 @@ expression: "serde_json::to_string_pretty(&report)?"
       "verdict": {
         "bucket": "protected",
         "reasons": [
-          "report-only"
+          "fact-unmet",
+          "fact-unknown"
         ]
       }
     },
@@ -619,7 +694,13 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unchecked_system": 0
       },
       "category": "source-worktree",
-      "consequence": null,
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
       "evidence": [
         {
           "agent": "claude-code",
@@ -642,7 +723,8 @@ expression: "serde_json::to_string_pretty(&report)?"
       "verdict": {
         "bucket": "protected",
         "reasons": [
-          "report-only"
+          "fact-unmet",
+          "fact-unknown"
         ]
       }
     },
@@ -1277,6 +1359,113 @@ expression: "serde_json::to_string_pretty(&report)?"
       "verdict": {
         "bucket": "safe",
         "reasons": []
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "package-cache",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "cache-warmth",
+          "offline-ability"
+        ],
+        "recovery": "redownload"
+      },
+      "evidence": [
+        {
+          "entry": "_cacache/index-v5",
+          "kind": "signature"
+        }
+      ],
+      "integration": "npm",
+      "lens": "dev",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.npm/_cacache"
+      },
+      "rule": "builtin.npm.cache",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 65659,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "fact-unmet",
+          "fact-unknown"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "package-cache",
+      "consequence": null,
+      "evidence": [
+        {
+          "entry": "_logs",
+          "kind": "signature"
+        }
+      ],
+      "integration": "npm",
+      "lens": "dev",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.npm/_logs"
+      },
+      "rule": "builtin.npm.inventory",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 14,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "package-cache",
+      "consequence": null,
+      "evidence": [
+        {
+          "entry": "_npx",
+          "kind": "signature"
+        }
+      ],
+      "integration": "npm",
+      "lens": "dev",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.npm/_npx"
+      },
+      "rule": "builtin.npm.inventory",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 90,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
       }
     },
     {

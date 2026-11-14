@@ -145,6 +145,39 @@ jobs:
             Write-Warning 'ReFS is not available on this runner; its test is skipped'
           }
 
+      # The npm contract runs the real `npm cache clean` of each verified npm on a fixture
+      # cache (crates/kipple-platform/tests/native/npm.rs). Each variable names a prefix
+      # holding that npm and a node inside its `engines`; the tests fail without them.
+      - name: Install node for the npm contract (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26.13.0"
+          package-manager-cache: false
+
+      # Each npm is the registry's tarball, checked against its SHA-256 and unpacked where
+      # an install would put it. Nothing is installed through a package manager.
+      - name: Unpack the verified npm versions (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node="$(command -v node)"
+          unpack() {
+            local version="$1" sum="$2"
+            local prefix="$RUNNER_TEMP/npm-$version"
+            local tarball="$RUNNER_TEMP/npm-$version.tgz"
+            curl --fail --silent --show-error --location \
+              --output "$tarball" "https://registry.npmjs.org/npm/-/npm-$version.tgz"
+            echo "$sum  $tarball" | sha256sum --check --strict
+            mkdir -p "$prefix/lib/node_modules/npm" "$prefix/bin"
+            tar -xzf "$tarball" -C "$prefix/lib/node_modules/npm" --strip-components=1
+            ln -s "$node" "$prefix/bin/node"
+            echo "KIPPLE_TEST_NPM_${version//./_}=$prefix" >> "$GITHUB_ENV"
+          }
+          unpack 11.20.0 d1a92f40e6c407b84c3a00c3cf978a10b24fd42f153c527e2016cef7bb34a483
+          unpack 12.2.1 228bd64aaef23270dbdbd2cf3d5ef5c467602ef38c4066246cef1984adab9a67
+
       # The runner VM is disposable, so the native-backend tests may read its real state.
       - name: Run the native-backend tests
         run: cargo xtask test-native
@@ -170,6 +203,58 @@ jobs:
 
       - name: Check advisories, licenses, bans and sources
         run: cargo deny check
+
+  # Worktree removal runs on any git from 2.39.5 up (WORKTREE_REMOVE_OLDEST), and the
+  # runners' git is far newer. This job builds that oldest git from its checksummed
+  # source, puts it first on PATH and runs the worktree gate, removal and swap tests on
+  # it; KIPPLE_EXPECT_GIT makes them fail on any other git.
+  git-floor:
+    name: git 2.39.5
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-nextest@0.9.146
+
+      - name: Build git 2.39.5
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball="$RUNNER_TEMP/git-2.39.5.tar.xz"
+          curl --fail --silent --show-error --location --output "$tarball" \
+            https://mirrors.edge.kernel.org/pub/software/scm/git/git-2.39.5.tar.xz
+          echo "c58da92c378df4a986ca33266897a7397e86c22ee266a284d8c2432c39066b59  $tarball" \
+            | sha256sum --check --strict
+          mkdir "$RUNNER_TEMP/git-src"
+          tar -xJf "$tarball" -C "$RUNNER_TEMP/git-src" --strip-components=1
+          # git 2.39.5 predates C23, which newer compilers default to: its own
+          # `unreachable` clashes with the keyword-like macro there.
+          make -C "$RUNNER_TEMP/git-src" -j"$(nproc)" prefix="$RUNNER_TEMP/git-2.39.5" \
+            CFLAGS="-g -O2 -std=gnu17" \
+            NO_CURL=1 NO_EXPAT=1 NO_GETTEXT=1 NO_OPENSSL=1 NO_PERL=1 NO_PYTHON=1 NO_TCLTK=1 \
+            install
+          echo "$RUNNER_TEMP/git-2.39.5/bin" >> "$GITHUB_PATH"
+
+      - name: Run the worktree tests on git 2.39.5
+        shell: bash
+        env:
+          KIPPLE_EXPECT_GIT: "2.39.5"
+        run: |
+          set -euo pipefail
+          git --version
+          cargo nextest run --locked -p kipple --test git_worktrees
+          cargo nextest run --locked -p kipple --profile native -E 'package(kipple) & binary(native)'
+          cargo nextest run --locked -p kipple-platform --test git
 
   # The workflows and shell scripts, which `cargo xtask check` doesn't read. actionlint also
   # runs shellcheck on every `run:` block, and finds the pinned shellcheck first on PATH.
@@ -305,6 +390,16 @@ jobs:
           VHS_NO_SANDBOX: "true"
         run: |
           unset KIPPLE_CONFIG
+          # A tape's kipple gets the demo's own PATH (git alone), as every demo run does,
+          # so the recording shows the same findings on any runner and starts nothing
+          # of the runner's but git.
+          mkdir -p "$TAPES/bin"
+          {
+            echo "#!/usr/bin/env bash"
+            echo "PATH=\"\$(cat \"$TAPES/demo/path.txt\")\" exec \"$GITHUB_WORKSPACE/target/debug/kipple\" \"\$@\""
+          } > "$TAPES/bin/kipple"
+          chmod +x "$TAPES/bin/kipple"
+          export PATH="$TAPES/bin:$PATH"
           vhs validate site/tapes/*.tape
           for tape in site/tapes/*.tape; do
             vhs "$tape"

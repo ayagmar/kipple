@@ -80,6 +80,8 @@ struct Demo {
     temp: TempDir,
     roots: PathBuf,
     config: PathBuf,
+    /// The `PATH` every run of it gets: the host's git and nothing else.
+    path: OsString,
 }
 
 impl Demo {
@@ -107,10 +109,12 @@ impl Demo {
         fs::write(&roots, file).unwrap();
         let config = temp.path().join("config.toml");
         fs::write(&config, "").unwrap();
+        let path = demo_home::path(temp.path()).unwrap();
         Self {
             temp,
             roots,
             config,
+            path,
         }
     }
 
@@ -119,9 +123,9 @@ impl Demo {
     }
 
     /// The machine the roots file describes, with its config named by `KIPPLE_CONFIG`,
-    /// and `PATH`, so git can be asked.
+    /// and the demo's `PATH`, so git can be asked and nothing else of the host's can start.
     fn env(&self) -> Environment {
-        let mut vars = vec![
+        Environment::from_vars([
             (
                 OsString::from("KIPPLE_TEST_ROOTS"),
                 self.roots.clone().into_os_string(),
@@ -130,9 +134,8 @@ impl Demo {
                 OsString::from(config::VAR),
                 self.config.clone().into_os_string(),
             ),
-        ];
-        vars.extend(std::env::var_os("PATH").map(|path| (OsString::from("PATH"), path)));
-        Environment::from_vars(vars)
+            (OsString::from("PATH"), self.path.clone()),
+        ])
     }
 
     /// kipple's data directory in the demo, as the run store has it on this system.

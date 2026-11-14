@@ -5,19 +5,20 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use kipple_core::{
-    EntryKind, EntryMeta, FsProbe as _, IntegrationId, Inventory, Lens, ProbeError, ProcessClass,
-    ProcessProbe as _, ProcessSnapshot, Resolution, ResolvedRoot, RootSource, SymbolicRoot,
-    ToolStatus, UnresolvedRoot, census,
+    EntryKind, EntryMeta, FsProbe as _, IntegrationId, Inventory, Lens, NativeKind, NativeTool,
+    Operation, ProbeError, ProcessClass, ProcessSnapshot, Resolution, ResolvedRoot, ResolvedTool,
+    RootSource, SymbolicRoot, ToolGap, ToolResolver as _, ToolStatus, UnresolvedRoot, census,
 };
 use kipple_platform::{
-    Environment, KippleDir, KippleDirs, NoFollowFs, OsProcesses, PLATFORM, ToolProbe, kipple_dirs,
-    permission_hint, probe_tools, resolve_roots,
+    Environment, KippleDir, KippleDirs, NoFollowFs, PLATFORM, PathTools, ToolProbe, kipple_dirs,
+    permission_hint, probe_tools, processes, resolve_roots,
 };
 use schemars::JsonSchema;
 use serde::Serialize;
 
 use crate::config::{self, ConfigError, Settings, Source};
 use crate::human::escaped;
+use crate::human::outcome::{native_tool, native_tool_gap, native_tool_not_needed};
 use crate::json::{DOCTOR, LensOut, PathOut, VERSION};
 use crate::setup::{Builtin, BuiltinRule};
 use crate::theme::{Catalog, Ink, Origin, Role};
@@ -38,10 +39,58 @@ pub struct Report {
     pub integrations: Vec<IntegrationRoots>,
     /// Every native tool kipple knows.
     pub tools: Vec<ToolProbe>,
+    /// npm as a clean of its cache would run it, where a rule cleans it. Its cache is
+    /// under "Roots".
+    pub npm: NpmCheck,
     /// The process table, or why it could not be read.
     pub processes: Result<ProcessSnapshot, ProbeError>,
     /// What to suggest when a permission failure was diagnosed.
     pub permission_hint: Option<&'static str>,
+}
+
+/// What `doctor` knows of npm.
+#[derive(Debug)]
+pub enum NpmCheck {
+    /// No rule cleans npm's cache on this platform, so npm isn't looked for and nothing
+    /// of it runs.
+    NotNeeded,
+    /// npm as a clean would run it, or why none can.
+    Looked(Box<LookedNpm>),
+}
+
+/// npm as apply finds it: its `npm-cli.js` and the node beside it, or why there is none.
+#[derive(Debug)]
+pub struct LookedNpm {
+    /// The pair a clean would run, or why none can.
+    pub tool: Result<ResolvedTool, ToolGap>,
+    /// The version of the first npm kipple could read, when none can run.
+    pub found: Option<String>,
+    /// The versions kipple runs, from its integration's `verified` list.
+    pub verified: &'static [&'static str],
+}
+
+/// npm where a built-in rule cleans its cache on this platform. Looking starts
+/// `<node> --version` and nothing of npm; where no rule cleans it, nothing starts.
+fn npm_check(env: &Environment, builtin: &Builtin) -> NpmCheck {
+    let clean = Operation::Native(NativeKind::NpmCacheClean);
+    let mut rules = builtin.rules().map(|BuiltinRule { rule, .. }| rule);
+    let Some(rule) =
+        rules.find(|rule| rule.operation == clean && rule.platforms.contains(&PLATFORM))
+    else {
+        return NpmCheck::NotNeeded;
+    };
+    let descriptor = builtin
+        .descriptors
+        .iter()
+        .find(|d| d.id == rule.integration);
+    let tools = PathTools::new(env);
+    let tool = tools.resolve(NativeTool::Npm);
+    let found = tool.as_ref().err().and_then(|_| tools.npm_version_found());
+    NpmCheck::Looked(Box::new(LookedNpm {
+        tool,
+        found,
+        verified: descriptor.map_or(&[], |descriptor| descriptor.verified),
+    }))
 }
 
 /// Where the config comes from, and whether it can be used.
@@ -132,7 +181,8 @@ pub fn gather(env: &Environment, flag: Option<&Path>, builtin: &Builtin) -> Repo
         roots: checks,
         integrations: integration_roots(builtin),
         tools: probe_tools(env),
-        processes: OsProcesses.snapshot(),
+        npm: npm_check(env, builtin),
+        processes: processes(env).snapshot(),
         permission_hint: permission_hint(),
     }
 }
@@ -307,7 +357,7 @@ impl Report {
         heading(out, ink, "Native tools")?;
         for ToolProbe { tool, status } in &self.tools {
             let line = match status {
-                ToolStatus::NotFound => "not found on PATH".to_owned(),
+                ToolStatus::NotFound => crate::human::outcome::TOOL_NOT_ON_PATH.to_owned(),
                 ToolStatus::Found {
                     path,
                     version: Ok(version),
@@ -319,7 +369,12 @@ impl Report {
             };
             writeln!(out, "  {:<12}{}", tool.program(), escaped(&line))?;
         }
-        Ok(())
+        let line = match &self.npm {
+            NpmCheck::NotNeeded => native_tool_not_needed(PLATFORM.name()),
+            NpmCheck::Looked(npm) => native_tool(&npm.tool, npm.found.as_deref(), npm.verified),
+        };
+        let name = NativeTool::Npm.program();
+        writeln!(out, "  {name:<12}{}", escaped(&line))
     }
 
     fn write_processes(&self, out: &mut dyn Write, ink: &Ink) -> io::Result<()> {
@@ -553,11 +608,13 @@ pub struct IntegrationRootsOut {
 pub struct ToolOut {
     /// Its program name.
     pub name: &'static str,
-    /// Where it was found on `PATH`.
+    /// Where it was found on `PATH`: for npm, the `npm-cli.js` that would run.
     pub path: Option<PathOut>,
+    /// What runs it, when it is a script: npm's node.
+    pub runtime: Option<PathOut>,
     /// Its version, when the probe succeeded.
     pub version: Option<String>,
-    /// Why the version probe failed.
+    /// Why the version probe failed, or for npm why it can't be used.
     pub problem: Option<String>,
 }
 
@@ -629,7 +686,12 @@ impl Report {
             },
             roots: self.roots.iter().map(root_out).collect(),
             integrations: self.integrations.iter().map(integration_out).collect(),
-            tools: self.tools.iter().map(tool_out).collect(),
+            tools: self
+                .tools
+                .iter()
+                .map(tool_out)
+                .chain([npm_out(&self.npm)])
+                .collect(),
             processes: processes_out(&self.processes),
             permission_hint: self.permission_hint.filter(|_| self.permission_denied()),
         }
@@ -696,8 +758,45 @@ fn tool_out(ToolProbe { tool, status }: &ToolProbe) -> ToolOut {
     ToolOut {
         name: tool.program(),
         path,
+        runtime: None,
         version,
         problem,
+    }
+}
+
+fn npm_out(npm: &NpmCheck) -> ToolOut {
+    let name = NativeTool::Npm.program();
+    let looked = match npm {
+        NpmCheck::NotNeeded => {
+            return ToolOut {
+                name,
+                path: None,
+                runtime: None,
+                version: None,
+                problem: Some(native_tool_not_needed(PLATFORM.name())),
+            };
+        }
+        NpmCheck::Looked(looked) => looked,
+    };
+    match &looked.tool {
+        Ok(tool) => ToolOut {
+            name,
+            path: Some(PathOut::new(&tool.path)),
+            runtime: tool.runtime.as_ref().map(|node| PathOut::new(&node.path)),
+            version: Some(tool.version.clone()),
+            problem: None,
+        },
+        Err(gap) => ToolOut {
+            name,
+            path: None,
+            runtime: None,
+            version: looked.found.clone(),
+            problem: Some(native_tool_gap(
+                *gap,
+                looked.found.as_deref(),
+                looked.verified,
+            )),
+        },
     }
 }
 

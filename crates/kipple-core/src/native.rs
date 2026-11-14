@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 use crate::authorize::NativeOp;
 use crate::cancel::CancelToken;
 use crate::capability::NativeTool;
+use crate::frozen::Fingerprint;
 use crate::outcome::{ApplyError, ErrorCode};
 use crate::plan::Anchor;
 use crate::probe::FileIdentity;
@@ -42,6 +43,17 @@ named! {
         UnverifiedVersion = "tool-unverified-version",
         /// It isn't the file, or the version, a person reviewed.
         Changed = "tool-changed",
+        /// It is a script that names its interpreter (`#!`), such as a wrapper or a
+        /// version manager's shim: what runs is another program, so kipple never starts it.
+        Script = "tool-script",
+        /// It is laid out in a way kipple doesn't know, such as npm packaged outside
+        /// `lib/node_modules/npm`, so what it would run can't be told.
+        UnknownLayout = "tool-unknown-layout",
+        /// The runtime it runs with isn't there: npm with no `node` in its own install.
+        NoRuntime = "tool-no-runtime",
+        /// Its runtime is a version the tool itself doesn't support: a node outside npm's
+        /// `engines`.
+        UnsupportedRuntime = "tool-unsupported-runtime",
     }
 }
 
@@ -52,6 +64,9 @@ pub struct ToolFile {
     pub path: PathBuf,
     /// Its identity, which a run compares before it starts.
     pub identity: FileIdentity,
+    /// What changes when it is rewritten in place, or another file takes its inode, which
+    /// a run compares beside its identity.
+    pub fingerprint: Fingerprint,
 }
 
 /// A native tool as found on this machine.
@@ -63,6 +78,9 @@ pub struct ResolvedTool {
     pub path: PathBuf,
     /// Its executable's identity.
     pub identity: FileIdentity,
+    /// What changes when its executable is rewritten in place, or another file takes its
+    /// inode.
+    pub fingerprint: Fingerprint,
     /// Its version, as it reported it.
     pub version: String,
     /// What runs it, when it is a script.
@@ -204,6 +222,13 @@ pub enum NativeStatus {
     Ended(NativeEnd),
     /// It missed its deadline, and kipple killed its own child (D-038).
     TimedOut(NativeEnd),
+    /// It started, and then kipple couldn't wait for it or read what it printed, so it
+    /// killed its own child: `stopped` is how that child ended, or `None` when even that
+    /// failed and it may still run.
+    Lost {
+        /// How the child ended once kipple stopped it.
+        stopped: Option<NativeEnd>,
+    },
 }
 
 named! {
@@ -216,6 +241,46 @@ named! {
     }
 }
 
+/// What a native command printed, up to the runner's bound on each stream. Kept in memory
+/// only and shown once the command ends: never stored, never in JSON (04 §8a).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NativeOutput {
+    /// Its standard output.
+    pub stdout: Printed,
+    /// Its standard error.
+    pub stderr: Printed,
+}
+
+/// One stream a native command printed on, as the runner kept it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Printed {
+    /// The bytes kept.
+    pub bytes: Vec<u8>,
+    /// Whether they are all it printed.
+    pub kept: Kept,
+}
+
+/// How much of a stream the runner kept.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Kept {
+    /// All of it.
+    #[default]
+    All,
+    /// Only its start: it went past the runner's bound, or the rest couldn't be read.
+    Start,
+}
+
+impl Printed {
+    /// `bytes`, all a stream printed.
+    #[must_use]
+    pub const fn all(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            kept: Kept::All,
+        }
+    }
+}
+
 /// What the runner saw of a native command it started.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeExit {
@@ -225,10 +290,37 @@ pub struct NativeExit {
     pub postcondition: Postcondition,
     /// Whether its effect is durable: nothing is done without this barrier.
     pub synced: Result<(), ApplyError>,
-    /// The start of its standard output. Kept in memory only, never stored.
-    pub stdout: Vec<u8>,
-    /// The start of its standard error. Kept in memory only, never stored.
-    pub stderr: Vec<u8>,
+    /// What it printed.
+    pub output: NativeOutput,
+}
+
+impl NativeStatus {
+    /// How the process ended, whether or not it missed its deadline: neither code nor
+    /// signal when it was lost and couldn't be stopped.
+    #[must_use]
+    pub const fn end(self) -> NativeEnd {
+        match self {
+            Self::Ended(end) | Self::TimedOut(end) | Self::Lost { stopped: Some(end) } => end,
+            Self::Lost { stopped: None } => NativeEnd {
+                exit: None,
+                signal: None,
+            },
+        }
+    }
+}
+
+impl NativeEnd {
+    /// Whether it exited by itself with code 0.
+    #[must_use]
+    pub const fn succeeded(self) -> bool {
+        matches!(
+            self,
+            Self {
+                exit: Some(0),
+                signal: None
+            }
+        )
+    }
 }
 
 /// Finds a native tool. Read-only and never cached, so apply sees the present.
@@ -243,10 +335,11 @@ pub trait ToolResolver: fmt::Debug + Send + Sync {
 /// Runs an authorized native command. Only the platform implements it, and nothing else
 /// starts one.
 pub trait NativeRunner: fmt::Debug + Send + Sync {
-    /// Starts `op`, waits for it and makes its effect durable.
+    /// Starts `op`, waits for it and makes its effect durable. Once the command started
+    /// this returns how it ended, [`NativeStatus::Lost`] included.
     ///
     /// # Errors
-    /// When it didn't start: nothing ran.
+    /// Only when it didn't start: nothing ran.
     fn run(&self, op: &NativeOp) -> Result<NativeExit, ApplyError>;
 }
 

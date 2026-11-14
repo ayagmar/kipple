@@ -65,6 +65,7 @@ fn reconcile_all(world: &World, config: &Config) -> Ending {
         activity: None,
         refuses: None,
         log: None,
+        size: None,
     };
     let session = Session {
         judge: config.judge(),

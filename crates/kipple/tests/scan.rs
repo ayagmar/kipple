@@ -365,7 +365,9 @@ fn a_project_root_given_twice_or_through_its_parent_finds_each_artifact_once() {
     );
 
     assert_eq!(code, ExitCode::SUCCESS);
-    assert_eq!(finding_paths(&alone).len(), 9, "{alone}");
+    // Nine artifacts in the projects, and npm's three cache entries, which no project
+    // root decides.
+    assert_eq!(finding_paths(&alone).len(), 12, "{alone}");
     assert_eq!(finding_paths(&repeated), finding_paths(&alone));
     assert_eq!(finding_paths(&parent), finding_paths(&alone));
 }

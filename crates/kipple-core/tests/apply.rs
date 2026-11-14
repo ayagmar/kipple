@@ -258,9 +258,9 @@ const fn ports(world: &World) -> MutationPorts<'_> {
         executor: world,
         trash: world,
         tracked: world,
-        runner: &Unavailable,
+        runner: world,
         locks: &Unavailable,
-        worktrees: &Unavailable,
+        worktrees: world,
     }
 }
 
@@ -301,6 +301,7 @@ fn rescanned(scan: &ScanReport) -> Rescanned {
         activity: None,
         refuses: None,
         log: None,
+        size: None,
     }
 }
 

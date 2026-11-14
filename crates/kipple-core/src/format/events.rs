@@ -149,11 +149,12 @@ fn kind(event: &ApplyEvent, codec: &dyn NameCodec) -> EventKindOut {
             items: *items as u64,
         },
         ApplyEvent::Item { run, event } => match event {
-            ItemEvent::Started { item } => EventKindOut::ItemStarted {
+            ItemEvent::Started { item, .. } => EventKindOut::ItemStarted {
                 run: run.as_str().to_owned(),
                 item: item.0,
             },
-            ItemEvent::Ended { item, outcome } => EventKindOut::ItemEnded {
+            // A command's output stays out of every event: it is shown, never written.
+            ItemEvent::Ended { item, outcome, .. } => EventKindOut::ItemEnded {
                 run: run.as_str().to_owned(),
                 item: item.0,
                 outcome: OutcomeOut::of(outcome, codec),

@@ -2,251 +2,24 @@
 
 #[cfg(unix)]
 mod programs;
+mod removing;
 
 use std::collections::BTreeSet;
-use std::ffi::OsString;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
 
-use kipple_adapters::builtin;
 use kipple_core::{
-    CancelToken, Checkout, Engine, EventChannel, FactValue, Finding, Inventory, Observer, Ports,
-    ProbeError, ProcessProbe, ProcessSnapshot, Registration, RegistrationState, Roots, ScanReport,
-    ScanRequest, SymbolicRoot, WorktreeQuery as _, event_channel,
+    CancelToken, Checkout, FactValue, Registration, RegistrationState, WorktreeQuery as _,
 };
-use kipple_platform::{
-    Environment, GitQuery, NoFollowFs, PathTools, SystemClock, Walker, resolve_roots,
-};
-use tempfile::TempDir;
+#[cfg(unix)]
+use kipple_core::{Roots, SymbolicRoot};
+use kipple_platform::GitQuery;
 
-/// A host running nothing, so a scan's activity never depends on this machine.
-#[derive(Debug)]
-struct NoProcesses;
-
-impl ProcessProbe for NoProcesses {
-    fn snapshot(&self) -> Result<ProcessSnapshot, ProbeError> {
-        Ok(ProcessSnapshot {
-            processes: Vec::new(),
-            inventory: Inventory::Complete,
-            observer: Observer::PLAIN,
-        })
-    }
-}
-
-/// Which `git init` a repository starts from.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Refs {
-    Files,
-    Reftable,
-}
-
-/// A repository at `projects/app` with one commit, and the test's own git setup.
-#[derive(Debug)]
-struct Repo {
-    temp: TempDir,
-    main: PathBuf,
-    checkout: PathBuf,
-}
-
-impl Repo {
-    /// A repository with no linked worktree yet.
-    fn bare_bones(refs: Refs) -> Self {
-        let temp = TempDir::new().unwrap();
-        for dir in ["home", "hooks", "projects/app"] {
-            fs::create_dir_all(temp.path().join(dir)).unwrap();
-        }
-        fs::write(temp.path().join("gitconfig"), b"").unwrap();
-        let main = temp.path().join("projects/app");
-        let checkout = temp.path().join("projects/wt");
-        let repo = Self {
-            temp,
-            main,
-            checkout,
-        };
-        match refs {
-            Refs::Files => repo.git(&["init", "-q", "-b", "main"]),
-            Refs::Reftable => repo.git(&["init", "-q", "-b", "main", "--ref-format=reftable"]),
-        };
-        repo.commit("file.txt", b"contents\n");
-        repo
-    }
-
-    /// A repository with a clean linked worktree at `projects/wt`.
-    fn new() -> Self {
-        Self::linked(Refs::Files)
-    }
-
-    fn linked(refs: Refs) -> Self {
-        let repo = Self::bare_bones(refs);
-        repo.add_worktree();
-        repo
-    }
-
-    fn add_worktree(&self) {
-        self.git(&["worktree", "add", "-q", "-b", "wt", "../wt"]);
-    }
-
-    fn commit(&self, name: &str, bytes: &[u8]) {
-        fs::write(self.main.join(name), bytes).unwrap();
-        self.git(&["add", "--", name]);
-        self.git(&["commit", "-q", "-m", name]);
-    }
-
-    fn projects(&self) -> PathBuf {
-        self.temp.path().join("projects")
-    }
-
-    /// The linked worktree's admin directory.
-    fn admin(&self) -> PathBuf {
-        self.main.join(".git/worktrees/wt")
-    }
-
-    /// Runs git in the main worktree.
-    fn git(&self, args: &[&str]) -> Vec<u8> {
-        self.git_in(&self.main, args)
-    }
-
-    /// Runs git in the linked worktree.
-    fn wt(&self, args: &[&str]) -> Vec<u8> {
-        self.git_in(&self.checkout, args)
-    }
-
-    fn git_in(&self, dir: &Path, args: &[&str]) -> Vec<u8> {
-        let output = self.run_git(dir, args);
-        assert!(
-            output.status.success(),
-            "the fixture's git {args:?} succeeds: {output:?}"
-        );
-        output.stdout
-    }
-
-    /// Runs the host's git with the test's isolation.
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "a fixture builds its own repository with the host's git"
-    )]
-    fn run_git(&self, dir: &Path, args: &[&str]) -> Output {
-        let hooks = format!(
-            "core.hooksPath={}",
-            self.temp.path().join("hooks").display()
-        );
-        let mut command = Command::new("git");
-        command
-            .current_dir(dir)
-            .args(["-c", &hooks, "-c", "user.name=t", "-c", "user.email=t@t"])
-            .args(args);
-        let inherited = std::env::vars_os().map(|(name, _)| name);
-        for name in inherited.filter(|name| name.to_string_lossy().starts_with("GIT_")) {
-            command.env_remove(name);
-        }
-        command
-            .env("HOME", self.temp.path().join("home"))
-            .env("XDG_CONFIG_HOME", self.temp.path().join("home"))
-            .env("GIT_CONFIG_NOSYSTEM", "1")
-            .env("GIT_CONFIG_GLOBAL", self.temp.path().join("gitconfig"))
-            .output()
-            .unwrap()
-    }
-
-    /// What a scan runs in: the host's `PATH` and nothing of the user's.
-    fn env(&self) -> Environment {
-        self.env_with(std::env::var_os("PATH").unwrap_or_default())
-    }
-
-    fn env_with(&self, path: OsString) -> Environment {
-        let home = self.temp.path().join("home").into_os_string();
-        let host = std::env::var_os("SystemRoot").map(|root| ("SystemRoot".into(), root));
-        let vars = [
-            (OsString::from("PATH"), path),
-            (OsString::from("HOME"), home.clone()),
-            (OsString::from("USERPROFILE"), home),
-        ];
-        Environment::from_vars(vars.into_iter().chain(host))
-    }
-
-    /// Only the project root the test made: no other integration's root is reached.
-    fn roots(&self, env: &Environment) -> Roots {
-        let resolved = resolve_roots(env, &[self.projects()]);
-        let mut roots = Roots::default();
-        for root in resolved.all(SymbolicRoot::ProjectRoots) {
-            roots.add(SymbolicRoot::ProjectRoots, root.clone());
-        }
-        roots
-    }
-
-    fn scan(&self) -> Scan {
-        self.scan_in(&self.env())
-    }
-
-    fn scan_in(&self, env: &Environment) -> Scan {
-        let packs = builtin::packs(&semver::Version::new(0, 0, 0)).unwrap();
-        let rules = packs.into_iter().flat_map(|pack| pack.rules).collect();
-        let ports = Ports {
-            fs: Box::new(NoFollowFs),
-            sizer: Box::new(Walker::new().unwrap()),
-            processes: Box::new(NoProcesses),
-            clock: Box::new(SystemClock),
-            tracked: Box::new(GitQuery::new(env)),
-            tools: Box::new(PathTools::new(env)),
-            worktrees: Box::new(GitQuery::new(env)),
-        };
-        let engine = Engine::new(ports, builtin::integrations(), rules).unwrap();
-        let cancel = CancelToken::new();
-        let EventChannel { tx: events, rx } = event_channel(4096, &cancel);
-        let request = ScanRequest {
-            roots: self.roots(env),
-            lens: None,
-            exclude: Vec::new(),
-            // The host protects every finding, as the default does: these tests read
-            // the facts, which its answer leaves as they are.
-            protections: kipple_core::Protections::default(),
-        };
-        let report = engine.scan(&request, &events, &cancel);
-        drop(rx);
-        Scan(report)
-    }
-}
-
-/// What a scan found.
-#[derive(Debug)]
-struct Scan(ScanReport);
-
-impl Scan {
-    /// The one git finding whose path ends in `projects/<name>`.
-    fn finding(&self, name: &str) -> &Finding {
-        let tail = Path::new("projects").join(name);
-        let found: Vec<_> = self
-            .0
-            .findings
-            .iter()
-            .filter(|f| f.integration.0 == "git" && f.path.ends_with(&tail))
-            .collect();
-        assert_eq!(
-            found.len(),
-            1,
-            "one finding at {name}: {:?}",
-            self.0.findings
-        );
-        found.first().copied().unwrap()
-    }
-
-    /// The fact `fact` of the finding at `projects/<name>`.
-    fn fact_at(&self, name: &str, fact: &str) -> FactValue {
-        let facts = self.finding(name).facts.as_ref().unwrap();
-        *facts.supplied.values.get(fact).unwrap()
-    }
-
-    /// The fact `fact` of the worktree at `projects/wt`.
-    fn fact(&self, fact: &str) -> FactValue {
-        self.fact_at("wt", fact)
-    }
-}
-
-fn write(path: &Path, bytes: &[u8]) {
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(path, bytes).unwrap();
-}
+#[cfg(unix)]
+use crate::repo::scan_of;
+use crate::repo::{Moment, Refs, Repo, Scan, write};
 
 /// Catches a false block: every row reads clear on a clean worktree, or nothing could
 /// ever be eligible once m4c gives these rules predicates.
@@ -268,6 +41,9 @@ fn a_clean_worktree_reads_clear_on_every_row() {
         ("worktree.per_worktree_refs", FactValue::Count(0)),
         ("worktree.index_locked", FactValue::Bool(false)),
         ("worktree.head_reachable", FactValue::Bool(true)),
+        ("worktree.unreferenced_commits", FactValue::Count(0)),
+        ("worktree.own_config", FactValue::Bool(false)),
+        ("worktree.unknown_admin_entries", FactValue::Count(0)),
     ] {
         assert_eq!(scan.fact(fact), value, "{fact}");
     }
@@ -284,6 +60,16 @@ struct Case {
     at: &'static str,
     fact: &'static str,
     value: FactValue,
+    head: Head,
+    /// Facts the state also fails, beside the one it exists to show.
+    also: &'static [&'static str],
+}
+
+/// What reaching a case does to the reviewed worktree's `HEAD`, which the witness holds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Head {
+    Stays,
+    Moves,
 }
 
 const fn case(name: &'static str, set: fn(&Repo), fact: &'static str, value: FactValue) -> Case {
@@ -293,15 +79,30 @@ const fn case(name: &'static str, set: fn(&Repo), fact: &'static str, value: Fac
         at: "wt",
         fact,
         value,
+        head: Head::Stays,
+        also: &[],
+    }
+}
+
+/// A case whose state is reached by moving the worktree's `HEAD`.
+const fn moving(name: &'static str, set: fn(&Repo), fact: &'static str, value: FactValue) -> Case {
+    Case {
+        head: Head::Moves,
+        ..case(name, set, fact, value)
     }
 }
 
 const IGNORED: &str = "worktree.unclassified_ignored";
 const OPERATION: &str = "worktree.operation_in_progress";
 const LOCKED_INDEX: &str = "worktree.index_locked";
+const UNREFERENCED: &str = "worktree.unreferenced_commits";
 
+/// A `.gitignore` that ignores itself too, so nothing here is untracked.
 fn ignored_file(repo: &Repo) {
-    write(&repo.checkout.join(".gitignore"), b"local.env\n");
+    write(
+        &repo.checkout.join(".gitignore"),
+        b"/.gitignore\nlocal.env\n",
+    );
     write(&repo.checkout.join("local.env"), b"x\n");
 }
 
@@ -311,14 +112,14 @@ fn excluded_file(repo: &Repo) {
 }
 
 fn ignored_repository(repo: &Repo) {
-    write(&repo.checkout.join(".gitignore"), b"scratch/\n");
+    write(&repo.main.join(".git/info/exclude"), b"scratch/\n");
     let nested = repo.checkout.join("scratch");
     fs::create_dir(&nested).unwrap();
     repo.git_in(&nested, &["init", "-q"]);
 }
 
 fn nested_worktree(repo: &Repo) {
-    write(&repo.checkout.join(".gitignore"), b"scratch/\n");
+    write(&repo.main.join(".git/info/exclude"), b"scratch/\n");
     repo.git(&["worktree", "add", "-q", "-b", "n", "../wt/scratch/nested"]);
 }
 
@@ -347,6 +148,112 @@ fn unreachable_head(repo: &Repo) {
     repo.wt(&["checkout", "-q", "--detach"]);
     write(&repo.checkout.join("file.txt"), b"changed\n");
     repo.wt(&["commit", "-q", "-a", "-m", "lost"]);
+}
+
+/// A commit made on a detached `HEAD`, then left by switching back to the branch: only the
+/// worktree's reflog names it.
+fn left_behind(repo: &Repo) {
+    repo.wt(&["checkout", "-q", "--detach"]);
+    repo.wt(&["commit", "-q", "--allow-empty", "-m", "left behind"]);
+    repo.wt(&["checkout", "-q", "wt"]);
+}
+
+/// A commit made on a detached `HEAD`, then reset away: only the worktree's reflog and
+/// `ORIG_HEAD` name it.
+fn reset_away(repo: &Repo) {
+    repo.wt(&["checkout", "-q", "--detach"]);
+    repo.wt(&["commit", "-q", "--allow-empty", "-m", "reset away"]);
+    repo.wt(&["reset", "-q", "--hard", "main"]);
+}
+
+/// A commit made on a detached `HEAD` and left, which `ORIG_HEAD` names as a reset or a
+/// merge leaves it, with the worktree's reflog emptied: only `ORIG_HEAD` names it among
+/// what the removal deletes, and no branch's reflog does.
+fn orig_head(repo: &Repo) {
+    left_behind(repo);
+    let left = repo.wt(&["rev-parse", "HEAD@{1}"]);
+    write(&repo.admin().join("ORIG_HEAD"), &left);
+    write(&repo.admin().join("logs/HEAD"), b"");
+}
+
+/// Two commits made on the worktree's branch and reset away `days` days ago, so the
+/// branch's reflog last names them then, and the first visited today on a detached `HEAD`
+/// and left: the worktree's own reflog names it today, which gc keeps 30 days from now.
+/// Returns the one visited.
+pub(crate) fn visited_after(repo: &Repo, days: u64) -> String {
+    let then = Moment::days_ago(days);
+    repo.wt_at(then, &["commit", "-q", "--allow-empty", "-m", "abandoned"]);
+    let abandoned = repo.wt(&["rev-parse", "HEAD"]);
+    let abandoned = String::from_utf8_lossy(&abandoned).trim().to_owned();
+    repo.wt_at(then, &["commit", "-q", "--allow-empty", "-m", "on top"]);
+    repo.wt_at(then, &["reset", "-q", "--hard", "HEAD~2"]);
+    repo.wt(&["checkout", "-q", "--detach", &abandoned]);
+    repo.wt(&["checkout", "-q", "wt"]);
+    abandoned
+}
+
+/// The branch's reflog line older than the worktree's visit, past gc's 30 days.
+fn stale_branch_line(repo: &Repo) {
+    visited_after(repo, 40);
+}
+
+/// A config that expires every branch's unreachable reflog entries at once, and an amend:
+/// the branch's reflog names the replaced commit, for no time at all.
+fn expiry_per_branch(repo: &Repo) {
+    repo.git(&["config", "gc.refs/heads/*.reflogExpireUnreachable", "now"]);
+    repo.wt(&["commit", "-q", "--allow-empty", "-m", "first"]);
+    repo.wt(&["commit", "-q", "--amend", "--allow-empty", "-m", "amended"]);
+}
+
+/// The same key in the main worktree's own `config.worktree`, which gc run there reads.
+fn expiry_per_branch_in_main(repo: &Repo) {
+    repo.git(&["config", "extensions.worktreeConfig", "true"]);
+    let key = "gc.refs/heads/*.reflogExpireUnreachable";
+    repo.git(&["config", "--worktree", key, "now"]);
+    repo.wt(&["commit", "-q", "--allow-empty", "-m", "first"]);
+    repo.wt(&["commit", "-q", "--amend", "--allow-empty", "-m", "amended"]);
+}
+
+/// A per-branch reflog expiry behind a conditional include that holds on `main`, where
+/// gc runs, and not on the worktree's branch, where kipple asks.
+pub(crate) fn expiry_behind_include(repo: &Repo) {
+    let file = b"[gc \"refs/heads/*\"]\n\treflogExpireUnreachable = now\n\treflogExpire = now\n";
+    write(&repo.main.join(".git/exp.cfg"), file);
+    repo.git(&["config", "includeIf.onbranch:main.path", "exp.cfg"]);
+}
+
+/// A stash popped onto a commit it conflicts with, with rerere on: rerere records the
+/// conflict in `MERGE_RR`, and no operation marker is left.
+fn rerere_conflict(repo: &Repo) {
+    repo.git(&["config", "rerere.enabled", "true"]);
+    write(&repo.checkout.join("file.txt"), b"stashed\n");
+    repo.wt(&["stash", "-q"]);
+    write(&repo.checkout.join("file.txt"), b"committed\n");
+    repo.wt(&["commit", "-q", "-a", "-m", "committed"]);
+    let output = repo.run_git(&repo.checkout, &["stash", "pop"]);
+    assert!(!output.status.success(), "the stash conflicts: {output:?}");
+}
+
+fn own_config(repo: &Repo) {
+    repo.git(&["config", "extensions.worktreeConfig", "true"]);
+    repo.wt(&["config", "--worktree", "user.name", "Agent"]);
+}
+
+/// The pseudo-ref `name` an operation writes, naming the worktree's own commit.
+fn pseudo_ref(repo: &Repo, name: &str) {
+    write(&repo.admin().join(name), &repo.wt(&["rev-parse", "HEAD"]));
+}
+
+/// A notes merge stopped on a conflict: its partial commit, the ref it merges into and the
+/// notes being resolved are in the admin directory alone.
+fn notes_merge_stopped(repo: &Repo) {
+    repo.wt(&["notes", "--ref=x", "add", "-m", "one", "HEAD"]);
+    repo.wt(&["notes", "--ref=y", "add", "-m", "two", "HEAD"]);
+    let output = repo.run_git(&repo.checkout, &["notes", "--ref=x", "merge", "y"]);
+    assert!(
+        !output.status.success(),
+        "the notes merge stops: {output:?}"
+    );
 }
 
 fn one_way_registration(repo: &Repo) {
@@ -395,7 +302,7 @@ const CASES: &[Case] = &[
         "ignored by .gitignore",
         ignored_file,
         IGNORED,
-        FactValue::Count(1),
+        FactValue::Count(2),
     ),
     case(
         "ignored by info/exclude",
@@ -427,7 +334,7 @@ const CASES: &[Case] = &[
         "git.hidden_changes",
         FactValue::Count(1),
     ),
-    case(
+    moving(
         "real rebase",
         rebase_stopped,
         OPERATION,
@@ -453,19 +360,19 @@ const CASES: &[Case] = &[
     ),
     case(
         "cherry-pick",
-        |repo| write(&repo.admin().join("CHERRY_PICK_HEAD"), b"x\n"),
+        |repo| pseudo_ref(repo, "CHERRY_PICK_HEAD"),
         OPERATION,
         FactValue::Bool(true),
     ),
     case(
         "revert",
-        |repo| write(&repo.admin().join("REVERT_HEAD"), b"x\n"),
+        |repo| pseudo_ref(repo, "REVERT_HEAD"),
         OPERATION,
         FactValue::Bool(true),
     ),
     case(
         "merge",
-        |repo| write(&repo.admin().join("MERGE_HEAD"), b"x\n"),
+        |repo| pseudo_ref(repo, "MERGE_HEAD"),
         OPERATION,
         FactValue::Bool(true),
     ),
@@ -507,19 +414,97 @@ const CASES: &[Case] = &[
         "worktree.per_worktree_refs",
         FactValue::Count(1),
     ),
-    case(
+    moving(
         "unreachable detached HEAD",
         unreachable_head,
         "worktree.head_reachable",
         FactValue::Bool(false),
     ),
     Case {
-        name: "unborn branch",
-        set: unborn,
         at: "unborn",
-        fact: "worktree.head_reachable",
-        value: FactValue::Bool(false),
+        ..moving(
+            "unborn branch",
+            unborn,
+            "worktree.head_reachable",
+            FactValue::Bool(false),
+        )
     },
+    case(
+        "commit only the reflog names",
+        left_behind,
+        UNREFERENCED,
+        FactValue::Count(1),
+    ),
+    moving(
+        "commit reset away from a detached HEAD",
+        reset_away,
+        UNREFERENCED,
+        FactValue::Count(1),
+    ),
+    case(
+        "commit only ORIG_HEAD names",
+        orig_head,
+        UNREFERENCED,
+        FactValue::Count(1),
+    ),
+    Case {
+        also: &[UNREFERENCED],
+        ..case(
+            "stopped notes merge",
+            notes_merge_stopped,
+            OPERATION,
+            FactValue::Bool(true),
+        )
+    },
+    case(
+        "branch's reflog line older than the worktree's visit",
+        stale_branch_line,
+        UNREFERENCED,
+        FactValue::Count(1),
+    ),
+    moving(
+        "reflog expiry set for branches alone",
+        expiry_per_branch,
+        UNREFERENCED,
+        FactValue::Unknown,
+    ),
+    moving(
+        "reflog expiry set for branches in the main worktree's own config",
+        expiry_per_branch_in_main,
+        UNREFERENCED,
+        FactValue::Unknown,
+    ),
+    moving(
+        "reflog expiry behind a conditional include, then amend",
+        |repo| {
+            expiry_behind_include(repo);
+            repo.wt(&["commit", "-q", "--allow-empty", "-m", "first"]);
+            repo.wt(&["commit", "-q", "--amend", "--allow-empty", "-m", "amended"]);
+        },
+        UNREFERENCED,
+        FactValue::Unknown,
+    ),
+    Case {
+        also: &["git.tracked_changes"],
+        ..moving(
+            "rerere conflict left",
+            rerere_conflict,
+            "worktree.unknown_admin_entries",
+            FactValue::Count(1),
+        )
+    },
+    case(
+        "file git may add to the admin directory",
+        |repo| write(&repo.admin().join("SOMETHING_NEW"), b"x\n"),
+        "worktree.unknown_admin_entries",
+        FactValue::Count(1),
+    ),
+    case(
+        "config of its own",
+        own_config,
+        "worktree.own_config",
+        FactValue::Bool(true),
+    ),
     case(
         "one-way registration",
         one_way_registration,
@@ -1168,5 +1153,101 @@ fn a_repository_moved_in_reach_keeps_one_finding_per_worktree() {
     assert_eq!(
         scan.fact("registration_state"),
         FactValue::Enum(RegistrationState::RegisteredInvalid.name())
+    );
+}
+
+/// The project root `projects`, reached as `<temp>/link/projects` through a link to the
+/// temp dir, as a root below a linked home or macOS's `/var` is: git, asked from there,
+/// prints every path it resolved, which is outside the root as the scan opened it.
+#[cfg(unix)]
+fn through_a_link(repo: &Repo) -> PathBuf {
+    let link = repo.temp.path().join("link");
+    std::os::unix::fs::symlink(repo.temp.path(), &link).unwrap();
+    link.join("projects")
+}
+
+#[cfg(unix)]
+fn linked_root(repo: &Repo, root: &Path) -> Scan {
+    let mut roots = Roots::default();
+    let projects = SymbolicRoot::ProjectRoots;
+    let source = kipple_core::RootSource::CommandLine;
+    let resolved = kipple_core::ResolvedRoot::new(projects, root.to_owned(), source);
+    roots.add(projects, Ok(resolved));
+    scan_of(&repo.env(), roots)
+}
+
+/// Catches every worktree read as unread on a linked root, the default on macOS's temp
+/// dirs and on a `~/projects` that is a link: git prints the resolved path, outside the
+/// root, so the worktree was only reported, and apart from the artifacts inside it.
+#[cfg(unix)]
+#[test]
+fn worktree_under_a_linked_root_is_found_by_the_roots_spelling() {
+    let repo = Repo::new();
+    let root = through_a_link(&repo);
+
+    let scan = linked_root(&repo, &root);
+
+    let git: Vec<_> = scan
+        .0
+        .findings
+        .iter()
+        .filter(|f| f.integration.0 == "git")
+        .collect();
+    assert_eq!(git.len(), 1, "one finding: {git:?}");
+    let finding = git.first().unwrap();
+    assert_eq!(finding.path, root.join("wt"), "the root's spelling");
+    assert_ne!(finding.rule.0, "builtin.git.worktree-anomalies");
+    assert!(
+        finding.size.is_some(),
+        "it was read and measured: {finding:?}"
+    );
+    let facts = &finding.facts.as_ref().unwrap().supplied.values;
+    assert_eq!(
+        facts.get("registration_state"),
+        Some(&FactValue::Enum(
+            RegistrationState::RegisteredPresent.name()
+        ))
+    );
+    assert_eq!(
+        facts.get("worktree.unclassified_ignored"),
+        Some(&FactValue::Count(0))
+    );
+}
+
+/// Catches a copy standing for the worktree whose `.git` it hard-links: the file is the
+/// worktree's own, so its identity matches, but the registration names another directory,
+/// and the copy's own state would be shown at the worktree's place, while the worktree
+/// itself had no finding.
+#[cfg(unix)]
+#[test]
+fn a_hard_linked_git_file_never_stands_for_the_worktree() {
+    let repo = Repo::new();
+    let copy = repo.projects().join("aside/wt");
+    fs::create_dir_all(&copy).unwrap();
+    fs::hard_link(repo.checkout.join(".git"), copy.join(".git")).unwrap();
+    let root = through_a_link(&repo);
+
+    let scan = linked_root(&repo, &root);
+
+    let at = |path: &Path| {
+        let mut found = scan.0.findings.iter().filter(|f| f.path == path);
+        let finding = found.next().unwrap();
+        assert!(found.next().is_none(), "one finding at {}", path.display());
+        *finding
+            .facts
+            .as_ref()
+            .unwrap()
+            .supplied
+            .values
+            .get("registration_state")
+            .unwrap()
+    };
+    assert_eq!(
+        at(&root.join("wt")),
+        FactValue::Enum(RegistrationState::RegisteredPresent.name())
+    );
+    assert_eq!(
+        at(&root.join("aside/wt")),
+        FactValue::Enum(RegistrationState::PresentUnregistered.name())
     );
 }

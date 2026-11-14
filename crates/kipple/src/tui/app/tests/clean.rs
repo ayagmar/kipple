@@ -36,27 +36,28 @@ use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{MAIN_SEPARATOR, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, SystemTime};
 
 use kipple_core::{
-    AgentLabel, Allocated, Apparent, ApplyEvent, CancelToken, Checkout, CleanRequest, Completeness,
-    Effect as Ran, Ending, EventChannel, FileEffect, FileIdentity, Finding, FindingId, Finished,
-    Found, IntegrationId, ItemEvent, ItemId, ItemMethod, ItemOutcome, JudgementField, Left,
-    LeftCount, LeftReason, NativeKind, NativeTool, ObjectId, PlanMode, Platform, Proposal, Receipt,
-    ReceiptItem, Reconciled, Registration, RegistrationState, Removed, ResolvedTool, RunId,
-    ScanEvent, ScanReport, Selection, Skip, SpaceEstimate, Subject, WorktreeFacts, WorktreeWitness,
-    event_channel, prepare_clean,
+    AgentLabel, Allocated, Apparent, ApplyEvent, CancelToken, Checkout, Clause, CleanRequest,
+    Completeness, Effect as Ran, Ending, EventChannel, FactState, FileEffect, FileIdentity,
+    Finding, FindingId, Fingerprint, Finished, Found, IntegrationId, ItemEvent, ItemId, ItemMethod,
+    ItemOutcome, JudgementField, Kept, Left, LeftCount, LeftReason, Measured, NativeEffect,
+    NativeEnd, NativeKind, NativeOutput, NativeTool, ObjectId, PlanMode, Platform, Policy, Printed,
+    Proposal, Receipt, ReceiptItem, Reconciled, Registration, RegistrationState, Removed,
+    ResolvedTool, RunId, ScanEvent, ScanReport, Selection, Skip, SpaceEstimate, Stamp, Subject,
+    Tracked, Unmet, WorktreeFacts, WorktreeWitness, event_channel, prepare_clean,
 };
 use kipple_platform::{Environment, PLATFORM};
 use tempfile::TempDir;
 
 use super::{Paint, look, press, screen, to, typed};
 use crate::config::{self, Settings};
-use crate::human::{native, receipt, review};
+use crate::human::{self, native, receipt, review};
 use crate::machine::Machine;
 use crate::mutate::prompt_shows;
 use crate::setup::Builtin;
@@ -103,16 +104,19 @@ impl Home {
         let roots = temp.path().join("roots.txt");
         fs::write(&roots, file).unwrap();
         let config_file = temp.path().join("config.toml");
-        // The roots file, the config named by `KIPPLE_CONFIG`, and `PATH`, so git can be
-        // asked.
-        let mut vars = vec![
+        // The roots file, the config named by `KIPPLE_CONFIG`, and the demo's `PATH`, so
+        // git can be asked and nothing else of the host's can start.
+        let vars = [
             (OsString::from("KIPPLE_TEST_ROOTS"), roots.into_os_string()),
             (
                 OsString::from(config::VAR),
                 config_file.clone().into_os_string(),
             ),
+            (
+                OsString::from("PATH"),
+                demo_home::path(temp.path()).unwrap(),
+            ),
         ];
-        vars.extend(std::env::var_os("PATH").map(|path| (OsString::from("PATH"), path)));
         let home = Self {
             temp,
             env: Environment::from_vars(vars),
@@ -605,6 +609,12 @@ fn native_scan(home: &Home) -> ScanReport {
         tool: NativeTool::Git,
         path: PathBuf::from("/usr/bin/git"),
         identity,
+        fingerprint: Fingerprint {
+            changed: Stamp::new(1, 0).unwrap(),
+            modified: Stamp::new(1, 0).unwrap(),
+            born: None,
+            size: 1,
+        },
         version: "2.56.0".to_owned(),
         runtime: None,
     };
@@ -618,7 +628,7 @@ fn native_scan(home: &Home) -> ScanReport {
             bare: false,
         },
         state: RegistrationState::RegisteredPresent,
-        repository: finding.path.clone(),
+        repository: finding.path.with_file_name("main-repo"),
         admin: None,
         witness: Ok(witness),
         ignored: Ok(Vec::new()),
@@ -657,6 +667,11 @@ fn a_native_plan_says_it_cannot_be_undone_at_the_prompt_and_in_the_review() {
     let prompt = prompt_shows(&prepared.review(), &report, &machine.settings().policy).join("\n");
     assert!(prompt.contains(native::NATIVE_CANNOT_UNDO), "{prompt}");
     assert!(prompt.contains("worktree remove"), "{prompt}");
+    assert!(
+        prompt.contains("a worktree of ")
+            && prompt.contains("main-repo, detached at aaaaaaa; no branch is removed"),
+        "the repository and what it has checked out: {prompt}"
+    );
 
     let mut app = home.scanning(&report, 160, 48);
     app.update(Msg::Finished {
@@ -672,6 +687,148 @@ fn a_native_plan_says_it_cannot_be_undone_at_the_prompt_and_in_the_review() {
         review.contains("--no-optional-locks") && review.contains("rust-app"),
         "the command and what it acts on, which may wrap: {review}"
     );
+    assert!(
+        review.contains("main-repo") && review.contains("aaaaaaa"),
+        "the repository and the commit, which may wrap: {review}"
+    );
+}
+
+// Catches the person reviewing a worktree's removal told that git tracks nothing inside
+// it, and a held one explained by fact names alone: the detail and `explain` both read
+// these lines.
+#[test]
+fn a_worktrees_detail_says_it_is_a_checkout_and_what_each_check_means() {
+    let home = Home::new("");
+    let mut report = native_scan(&home);
+    let finding = report
+        .findings
+        .iter_mut()
+        .find(|finding| finding.path.ends_with(RUST_APP))
+        .unwrap();
+    finding.integration = IntegrationId::GIT;
+    let facts = finding.facts.as_mut().unwrap();
+    facts.tracked = Tracked::NoRepository;
+    let unmet = |fact| Unmet {
+        fact,
+        clause: Clause::Eligibility,
+        state: FactState::Failed,
+    };
+    facts.unmet = vec![
+        unmet("worktree.head_reachable"),
+        unmet("git.untracked_files"),
+    ];
+
+    let lines = human::facts(finding, &Policy::default());
+
+    let said = |label| -> Vec<&str> {
+        lines
+            .iter()
+            .filter(|line| line.label == label)
+            .map(|line| line.text.as_str())
+            .collect()
+    };
+    let git = said("Git").join("");
+    assert!(
+        git.contains("checkout of its own") && !git.contains("tracks nothing"),
+        "{git}"
+    );
+    assert_eq!(
+        said("Eligibility"),
+        [
+            "worktree.head_reachable isn't met: whether a local branch holds its HEAD",
+            "git.untracked_files isn't met: untracked, non-ignored files in the enclosing \
+             work tree",
+        ]
+    );
+}
+
+// Catches the command line and the TUI saying a tool's command differently, either one
+// leaving out what it printed or passing its escapes to the terminal, and the command
+// line printing it on stdout, which is data (pinned 32; AGENTS.md 12, 17).
+#[test]
+fn cli_and_tui_show_the_same_native_lines() {
+    let home = Home::new("");
+    let report = native_scan(&home);
+    let checkout = report
+        .findings
+        .iter()
+        .find(|finding| finding.path.ends_with(RUST_APP))
+        .unwrap()
+        .path
+        .clone();
+    let output = NativeOutput {
+        stdout: Printed::all(b"Removing worktree\n".to_vec()),
+        stderr: Printed {
+            bytes: b"warning: \x1b[31mred\x1b[0m\n".to_vec(),
+            kept: Kept::Start,
+        },
+    };
+    let done = ItemOutcome::Done(Ran::Native(NativeEffect {
+        exit: NativeEnd {
+            exit: Some(0),
+            signal: None,
+        },
+        reclaimed: Measured::Unknown,
+    }));
+    let item = |event| ApplyEvent::Item {
+        run: run_id(),
+        event,
+    };
+    let started = item(ItemEvent::Started {
+        item: ItemId(0),
+        method: ItemMethod::Native,
+        path: checkout.clone(),
+    });
+    let ended = item(ItemEvent::Ended {
+        item: ItemId(0),
+        outcome: Box::new(done),
+        output: Some(Box::new(output.clone())),
+    });
+    let printed = native::output_lines(&checkout, &output);
+    assert_eq!(
+        printed.len(),
+        5,
+        "a heading and a line for each stream, and the cut said"
+    );
+
+    let [stdout, stderr] = crate::mutate::said_while_running(&[started.clone(), ended.clone()]);
+    assert_eq!(stdout, b"", "nothing on stdout");
+    let stderr = String::from_utf8(stderr).unwrap();
+    let starting = review::working_on(ItemMethod::Native, &checkout);
+    assert!(stderr.contains(&starting), "{stderr}");
+    for line in &printed {
+        assert!(stderr.contains(line.as_str()), "{line:?} in {stderr}");
+    }
+    assert!(
+        !stderr.contains('\x1b'),
+        "no escape reaches the terminal: {stderr:?}"
+    );
+
+    let mut app = home.scanning(&report, 160, 48);
+    app.update(Msg::Finished {
+        report: Arc::new(report),
+        elapsed: Duration::from_millis(1_240),
+    });
+    select(&mut app, &[RUST_APP]);
+    press(&mut app, &[Key::Enter]);
+    home.plan(&mut app);
+    press(&mut app, &[Key::Char('y')]);
+    app.take_effect();
+    app.update(Msg::Applied(Box::new(ApplyEvent::RunStarted {
+        run: run_id(),
+        items: 1,
+    })));
+    app.update(Msg::Applied(Box::new(started)));
+    let running = text(&app, 160, 48);
+    let (said, _) = starting.split_once(" on ").unwrap();
+    assert!(running.contains(said), "{running}");
+    app.update(Msg::Applied(Box::new(ended)));
+    let shown = text(&app, 160, 48);
+    for line in &printed {
+        // The screen reads every path separator as `/`, and an escape as `\u{1b}` holds one.
+        let line = line.trim_end().replace(MAIN_SEPARATOR, "/");
+        assert!(shown.contains(&line), "{line:?} in {shown}");
+    }
 }
 
 // Catches the key bar's selection total (which counts what planning refused) showing
@@ -728,7 +885,11 @@ fn started(app: &mut App, run: &RunId) {
     })));
     app.update(Msg::Applied(Box::new(ApplyEvent::Item {
         run: run.clone(),
-        event: ItemEvent::Started { item: ItemId(0) },
+        event: ItemEvent::Started {
+            item: ItemId(0),
+            method: ItemMethod::Trash,
+            path: PathBuf::from("item"),
+        },
     })));
 }
 
@@ -914,11 +1075,16 @@ fn applying(home: &Home, width: u16, height: u16) -> App {
         event: ItemEvent::Ended {
             item: ItemId(0),
             outcome: Box::new(done),
+            output: None,
         },
     })));
     app.update(Msg::Applied(Box::new(ApplyEvent::Item {
         run: run_id(),
-        event: ItemEvent::Started { item: ItemId(1) },
+        event: ItemEvent::Started {
+            item: ItemId(1),
+            method: ItemMethod::Trash,
+            path: PathBuf::from("item"),
+        },
     })));
     app
 }
