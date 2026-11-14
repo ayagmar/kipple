@@ -23,16 +23,16 @@ use std::time::Duration;
 
 use codec::TestCodec;
 use kipple_core::{
-    Activity, ActivityGap, Allocated, Apparent, ApplyRequest, Area, Authorization, CancelToken,
-    Category, Completeness, Conflict, ConflictKind, Consequence, Cost, EntryKind, EntrySnapshot,
-    ErrorCode, Evidence, Facts, FileIdentity, FileSystemClass, Finding, FindingId, Fingerprint,
-    Found, HeldPath, Hold, IntegrationId, IntegrationReport, ItemOutcome, Judge, JudgementField,
-    LeftReason, Level, Lineage, Loss, Method, Methods, Modified, MutationPorts, OpenArea,
-    OpenedRoot, Operation, OwnerStatus, Plan, PlanEntry, PlanMode, PlanRequest, Planned, Platform,
-    Policy, Proposal, Protection, Protections, Receipt, Recovery, RelPath, Rule, RuleId,
-    RuleSettings, RuleText, ScanOutcome, ScanReport, Scope, Selection, Selector, Skip,
-    SpaceEstimate, Stamp, Standing, StateDeclaration, StateRoot, Status, Stop, SymbolicRoot,
-    Tracked, Unavailable, Unjudged, Unresolved, Unsupported, apply, plan, reconcile,
+    Activity, ActivityGap, Allocated, Apparent, ApplyRequest, Authorization, CancelToken, Category,
+    Completeness, Conflict, ConflictKind, Consequence, Cost, EntryKind, EntrySnapshot, ErrorCode,
+    Evidence, Facts, FileIdentity, FileSystemClass, Finding, FindingId, Fingerprint, Found,
+    HeldPath, Hold, IntegrationId, IntegrationReport, ItemOutcome, Judge, JudgementField,
+    LeftReason, Level, Lineage, Loss, Method, Methods, Modified, MutationPorts, OpenedRoot,
+    Operation, OwnerStatus, Plan, PlanEntry, PlanMode, PlanRequest, Planned, Platform, Policy,
+    Proposal, Protection, Receipt, Recovery, RelPath, Rule, RuleId, RuleSettings, RuleText,
+    ScanOutcome, ScanReport, Scope, Selection, Selector, Skip, SpaceEstimate, Stamp, Standing,
+    Status, Stop, SymbolicRoot, Tracked, Unavailable, Unjudged, Unsupported, apply, plan,
+    reconcile,
 };
 use kipple_core::{ApplyPorts, Depth, Reconciled, Recorders, RunRead, StoredRun, read_run};
 use kipple_core::{
@@ -177,6 +177,7 @@ fn safe(lineage: Lineage) -> Facts {
         unmet: Vec::new(),
         settlement: kipple_core::Settlement::Unsettled,
         integration: IntegrationId("test"),
+        host: None,
     }
 }
 
@@ -222,25 +223,12 @@ fn scan_of(items: &[Item]) -> ScanReport {
     }
 }
 
-/// The home directory as the host protects it.
-fn protections() -> Protections {
-    Protections {
-        home: Some(HeldPath {
-            forms: vec![PathBuf::from(HOME)],
-            lineage: Lineage(vec![Some(HOME_ID), Some(HOME_PARENT), Some(FS_ROOT)]),
-            note: None,
-        }),
-        ..Protections::default()
-    }
-}
-
 /// The config a scenario plans and applies under.
 #[derive(Debug, Clone)]
 struct Config {
     rules: Vec<Rule>,
     policy: Policy,
     methods: Methods,
-    protections: Protections,
 }
 
 impl Config {
@@ -252,7 +240,6 @@ impl Config {
             ],
             policy: Policy::default(),
             methods: Methods::default(),
-            protections: protections(),
         }
     }
 
@@ -261,7 +248,6 @@ impl Config {
             rules: &self.rules,
             policy: &self.policy,
             methods: &self.methods,
-            protections: &self.protections,
         }
     }
 }
@@ -1195,104 +1181,24 @@ fn no_new_operation_can_run_yet() {
     );
 }
 
-/// Catches the planner asking about a state root with the wrong integration, or without
-/// the owners of the scan it is judging.
+/// Catches a plan that removes what its scan found the host protects, or that freezes one
+/// before refusing it (04 §3.2, §3.9; pinned 12): the planner refuses on the scan's own
+/// answer, so the two can't disagree.
 #[test]
-fn a_state_root_opens_only_to_the_integration_it_names_while_its_owner_is_supported() {
-    const OPEN_TO_CARGO: StateDeclaration = StateDeclaration {
-        root: SymbolicRoot::CodexHome,
-        protected: &[],
-        open: &[OpenArea {
-            at: Area::Inside(""),
-            integrations: &[CARGO],
-        }],
-        delegates: &[],
-        unresolved: Unresolved::HoldOwn,
-    };
+fn what_the_scan_found_the_host_protects_is_refused_before_anything_is_frozen() {
     let (item, target) = project(0, 100, TARGET);
     let world = world_of(&[(item.clone(), target)]);
-    let mut config = Config::new();
-    config.protections.state.push(StateRoot {
-        owner: OTHER,
-        declaration: OPEN_TO_CARGO,
-        held: HeldPath {
-            forms: vec![home("p0")],
-            lineage: Lineage(vec![Some(id(99))]),
-            note: None,
-        },
-    });
-    let mut scan = scan_of(&[item]);
+    for protection in Protection::ALL.iter().copied() {
+        let mut scan = scan_of(std::slice::from_ref(&item));
+        scan.findings[0].facts.as_mut().unwrap().host = Some(protection);
 
-    let closed = plan_all(&scan, &config, &world, PlanMode::Review);
-    assert_eq!(
-        refusals(&closed),
-        [(FindingId(0), Skip::HostProtected(Protection::Subresource))]
-    );
+        let planned = plan_all(&scan, &Config::new(), &world, PlanMode::Review);
 
-    scan.integrations.push(IntegrationReport {
-        id: OTHER,
-        omissions: Vec::new(),
-        advice: Vec::new(),
-        opened: Vec::new(),
-        owner: OwnerStatus::Supported,
-    });
-    let open = plan_all(&scan, &config, &world, PlanMode::Review);
-    assert_eq!(refusals(&open), []);
-}
-
-/// Catches a plan that could remove the home directory, a file system's root or a
-/// declared subresource, or that freezes one before refusing it (04 §3.2, §3.9;
-/// pinned 12).
-#[test]
-fn the_host_protects_home_roots_and_subresources_before_anything_is_frozen() {
-    let home_dir = Path::new(HOME);
-    let mut itself = finding(0, &at(home_dir, HOME_ID, &[]));
-    itself.facts.as_mut().unwrap().lineage =
-        Lineage(vec![Some(HOME_ID), Some(HOME_PARENT), Some(FS_ROOT)]);
-    let mut above = finding(1, &at(home_dir.parent().unwrap(), HOME_PARENT, &[]));
-    above.facts.as_mut().unwrap().lineage = Lineage(vec![Some(HOME_PARENT), Some(FS_ROOT)]);
-    let mut root = finding(2, &at(home_dir.ancestors().last().unwrap(), FS_ROOT, &[]));
-    root.facts.as_mut().unwrap().lineage = Lineage(vec![Some(FS_ROOT)]);
-    let (item, target) = project(0, 100, TARGET);
-    let inside = finding(3, &item);
-    let world = world_of(&[(item, target)]);
-    let mut scan = scan_of(&[]);
-    scan.findings = vec![itself, above, root, inside];
-    scan.integrations = vec![IntegrationReport {
-        id: CARGO,
-        omissions: Vec::new(),
-        advice: Vec::new(),
-        opened: vec![home_root()],
-        owner: OwnerStatus::Unsupported,
-    }];
-    let mut config = Config::new();
-    config.protections.subresources.push(HeldPath {
-        forms: vec![home("p0")],
-        lineage: Lineage(vec![Some(id(99))]),
-        note: None,
-    });
-    let planned = plan_all(&scan, &config, &world, PlanMode::Review);
-    assert_eq!(
-        refusals(&planned),
-        [
-            (FindingId(0), Skip::HostProtected(Protection::Home)),
-            (FindingId(1), Skip::HostProtected(Protection::Home)),
-            (
-                FindingId(2),
-                Skip::HostProtected(Protection::FileSystemRoot)
-            ),
-            (FindingId(3), Skip::HostProtected(Protection::Subresource)),
-        ]
-    );
-    config.protections = Protections::default();
-    let unknown_home = plan_all(&scan, &config, &world, PlanMode::Review);
-    assert!(
-        unknown_home
-            .refused
-            .iter()
-            .all(|refused| matches!(refused.skip, Skip::HostProtected(_))),
-        "with home unknown, nothing can be shown not to hold it"
-    );
+        assert_eq!(
+            refusals(&planned),
+            [(FindingId(0), Skip::HostProtected(protection))]
+        );
+    }
     assert_eq!(world.state().freezes, 0);
 }
 
@@ -1433,16 +1339,18 @@ fn aliases_with_two_methods_conflict() {
 
 /// Catches a merge that discards a protection (04 §3.10; 11 M3's overlap regression
 /// "an alias across a protected root"): an alias that is in use, or that the host
-/// protects, holds the item even when only the other is selected.
+/// protects, holds the item even when only the other is selected. The host's answer
+/// for an alias is about this very directory, so the item is refused as protected
+/// itself, not as holding something.
 #[test]
 fn an_unselected_alias_keeps_its_protection() {
     let (world, item, alias) = aliases();
     let scan = scan_of(&[item, alias.clone()]);
     let mut busy = scan.clone();
     busy.findings[1].facts.as_mut().unwrap().activity = in_use();
-    let planned = plan_some(&busy, &[0], &Config::new(), &world);
+    let refused = plan_some(&busy, &[0], &Config::new(), &world);
     assert_eq!(
-        refusals(&planned),
+        refusals(&refused),
         [(
             FindingId(0),
             Skip::HoldsProtected {
@@ -1451,20 +1359,18 @@ fn an_unselected_alias_keeps_its_protection() {
             }
         )]
     );
-    let mut config = Config::new();
-    config.protections.subresources.push(HeldPath {
-        forms: vec![home("link")],
-        lineage: Lineage(vec![Some(id(55))]),
-        note: None,
-    });
-    let across = plan_some(&scan, &[0], &config, &world);
+    let mut across = scan;
+    across.findings[1].facts.as_mut().unwrap().host = Some(Protection::Subresource);
+    let across = plan_some(&across, &[0], &Config::new(), &world);
     assert_eq!(
         refusals(&across),
         [(FindingId(0), Skip::HostProtected(Protection::Subresource))]
     );
 }
 
-/// Catches an item removed while another finding inside it is in use (04 §3.10, §4).
+/// Catches an item removed while another finding inside it is in use or host-protected
+/// (04 §3.10, §4, §3.9), and an item refused for what it holds said to be protected
+/// itself, which `scan` contradicts by showing it Safe.
 #[test]
 fn a_protected_finding_inside_an_item_holds_it() {
     let (item, target) = project(0, 100, TARGET);
@@ -1474,16 +1380,30 @@ fn a_protected_finding_inside_an_item_holds_it() {
         &[id(103), id(100), id(99)],
     );
     let world = world_of(&[(item.clone(), target)]);
-    let mut scan = scan_of(&[item, tool.clone()]);
-    scan.findings[1].facts.as_mut().unwrap().activity = in_use();
-    let planned = plan_some(&scan, &[0], &Config::new(), &world);
+    let scan = scan_of(&[item, tool.clone()]);
+    let mut busy = scan.clone();
+    busy.findings[1].facts.as_mut().unwrap().activity = in_use();
+    let refused = plan_some(&busy, &[0], &Config::new(), &world);
+    assert_eq!(
+        refusals(&refused),
+        [(
+            FindingId(0),
+            Skip::HoldsProtected {
+                path: tool.path.clone(),
+                holds: vec![Hold::InUse],
+            }
+        )]
+    );
+    let mut closed = scan;
+    closed.findings[1].facts.as_mut().unwrap().host = Some(Protection::Subresource);
+    let planned = plan_some(&closed, &[0], &Config::new(), &world);
     assert_eq!(
         refusals(&planned),
         [(
             FindingId(0),
             Skip::HoldsProtected {
                 path: tool.path,
-                holds: vec![Hold::InUse],
+                holds: vec![Hold::Subresource],
             }
         )]
     );

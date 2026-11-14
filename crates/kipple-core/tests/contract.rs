@@ -1078,6 +1078,7 @@ fn facts() -> Facts {
         unmet: Vec::new(),
         settlement: kipple_core::Settlement::Unsettled,
         integration: kipple_core::IntegrationId("test"),
+        host: None,
     }
 }
 

@@ -455,7 +455,7 @@ fn an_unresolved_agent_path_holds_every_log() {
 
     assert_eq!(
         scan.protection(&debug_log(), PI),
-        Some(Protection::Subresource)
+        Some(Protection::Unlocated)
     );
 }
 

@@ -133,7 +133,9 @@ fn venv_negatives(tree: &mut FixtureTree) {
 
 /// What each integration found in `report`, a line per finding: its rule, path below the
 /// fixture, category, evidence, proposal, layout, consequence and the holds its facts
-/// give at the default policy. No identity or time, which change from run to run.
+/// give at the default policy. No identity or time, which change from run to run, and
+/// not what the host protects: that is the host's answer, not the integration's, and
+/// `POLICY_VERSION` versions how it holds a finding.
 fn lines(base: &std::path::Path, report: &ScanReport, into: &mut BTreeMap<String, String>) {
     let policy = kipple_core::Policy::default();
     for finding in &report.findings {
@@ -141,6 +143,10 @@ fn lines(base: &std::path::Path, report: &ScanReport, into: &mut BTreeMap<String
         let parts: Vec<_> = below.iter().map(|part| part.to_string_lossy()).collect();
         let relative = parts.join("/");
         let facts = finding.facts.as_ref().map(|facts| {
+            let facts = &kipple_core::Facts {
+                host: None,
+                ..facts.clone()
+            };
             let verdict = policy.verdict(&finding.rule, &finding.path, facts);
             format!(
                 "{:?} {} {:?} {:?}",

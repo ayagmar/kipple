@@ -8,7 +8,7 @@ use std::thread;
 
 use kipple_core::{
     Bucket, CancelToken, Engine, EventChannel, FindingId, IntegrationId, Lens, Policy, RuleId,
-    ScanEvent, ScanReport, ScanRequest, Sequenced, event_channel,
+    ScanEvent, ScanReport, Sequenced, event_channel,
 };
 
 use crate::config::Settings;
@@ -30,16 +30,6 @@ pub(crate) struct Scanned {
     pub(crate) streamed: io::Result<()>,
 }
 
-/// What a scan of the roots of `settings` covers: every integration of `lens`, or all of
-/// them, never entering a path the config excludes.
-pub(crate) fn request(settings: &Settings, lens: Option<Lens>) -> ScanRequest {
-    ScanRequest {
-        roots: settings.roots.clone(),
-        lens,
-        exclude: settings.policy.exclude.clone(),
-    }
-}
-
 /// Runs a scan of the roots of `settings` over `engine`, never entering a path the config
 /// excludes, passing each event to `on_event` as it arrives. When `on_event` fails, the
 /// scan is cancelled and its error returned with the partial report. `cancel` stops it
@@ -51,7 +41,7 @@ pub(crate) fn run(
     on_event: &mut dyn FnMut(Sequenced) -> io::Result<()>,
     cancel: &CancelToken,
 ) -> Scanned {
-    let request = request(settings, lens);
+    let request = settings.scan_request(lens);
     let cancel = cancel.clone();
     let EventChannel {
         tx: events,

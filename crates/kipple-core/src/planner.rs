@@ -27,7 +27,6 @@ use crate::outcome::{ApplyError, ErrorCode, Skip, Stop};
 use crate::plan::{ItemId, ItemMethod, MethodChoice, Plan, PlanEntry, Selection, Standing};
 use crate::policy::{Hold, Policy, Tracked, Verdict};
 use crate::probe::EntryKind;
-use crate::protect::Protections;
 use crate::rule::{Method, Rule, RuleId};
 use crate::store_lock::StoreLocks;
 use crate::tracked::{GitGap, TrackedQuery, holds_repository};
@@ -36,8 +35,9 @@ use crate::worktree::WorktreeQuery;
 
 /// What decides how a finding is judged and removed now.
 ///
-/// The rules, the policy, the methods chosen and the host's protections. Planning and
-/// apply each take the current one, so a change between them is seen.
+/// The rules, the policy and the methods chosen. Planning and apply each take the current
+/// one, so a change between them is seen. The host's protections are the scan's
+/// ([`Facts::host`](crate::Facts::host)): apply scans again, so they are fresh there too.
 #[derive(Debug, Clone, Copy)]
 pub struct Judge<'config> {
     /// Every rule loaded.
@@ -46,8 +46,6 @@ pub struct Judge<'config> {
     pub policy: &'config Policy,
     /// The methods chosen.
     pub methods: &'config Methods,
-    /// The host's protected paths.
-    pub protections: &'config Protections,
 }
 
 /// The removal methods chosen, from the command line and the config

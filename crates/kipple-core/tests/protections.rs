@@ -447,7 +447,10 @@ fn unresolved_npm_root_blocks_only_npm() {
         Protections::of_host(&roots, Some(&data), &[descriptor(NPM, &[NPM_CACHE])], &held);
     let owners = supported(&[NPM, CARGO]);
 
-    assert_eq!(check(&protections, "/home/u/x", NPM, &owners), SUBRESOURCE);
+    assert_eq!(
+        check(&protections, "/home/u/x", NPM, &owners),
+        Some(Protection::Unlocated)
+    );
     assert_eq!(check(&protections, "/home/u/x", CARGO, &owners), None);
 }
 
@@ -542,5 +545,25 @@ fn a_finding_with_an_unknown_ancestry_gets_no_consent() {
     assert_eq!(
         protections.check(&path, &unknown, GIT, &owners),
         SUBRESOURCE
+    );
+}
+
+/// Catches a finding that could take the home directory with it getting through: home
+/// itself, a directory above it, a file system's root, and every finding once home is
+/// unknown, since none can be shown not to hold it (04 §3.2).
+#[test]
+fn home_what_holds_it_and_a_file_system_root_are_protected() {
+    let protections = host(&[], &[]);
+    let owners = Owners::default();
+    let at = |path| check(&protections, path, CARGO, &owners);
+
+    assert_eq!(at("/home/u"), Some(Protection::Home));
+    assert_eq!(at("/home"), Some(Protection::Home));
+    assert_eq!(at("/"), Some(Protection::FileSystemRoot));
+    assert_eq!(at("/home/u/code/target"), None);
+    let unknown = Protections::default();
+    assert_eq!(
+        check(&unknown, "/home/u/code/target", CARGO, &owners),
+        Some(Protection::Home)
     );
 }

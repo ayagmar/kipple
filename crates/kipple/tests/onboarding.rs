@@ -47,7 +47,7 @@ use kipple::theme::{Catalog, Colours, Glyphs};
 use kipple::tui::Appearance;
 use kipple::tui::{self, Input, Key, Keys, LevelTotals, first_run_due, level_totals};
 use kipple::{Cli, Io, USAGE};
-use kipple_core::{CancelToken, EventChannel, Finding, Level, ScanRequest, event_channel};
+use kipple_core::{CancelToken, EventChannel, Finding, Level, event_channel};
 use kipple_platform::Environment;
 use ratatui::Terminal;
 use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
@@ -107,11 +107,7 @@ fn settings(env: &Environment, builtin: &Builtin) -> Settings {
 )]
 fn scan(env: &Environment, builtin: &Builtin, settings: &Settings) -> Vec<Finding> {
     let engine = builtin.engine(env).unwrap();
-    let request = ScanRequest {
-        roots: settings.roots.clone(),
-        lens: None,
-        exclude: settings.policy.exclude.clone(),
-    };
+    let request = settings.scan_request(None);
     let cancel = CancelToken::new();
     let EventChannel {
         tx: events,

@@ -474,3 +474,377 @@ fn a_venv_holding_an_editable_checkout_is_protected_as_holds_repository() {
     let reasons = venv["verdict"]["reasons"].as_array().unwrap();
     assert!(reasons.contains(&Value::from("holds-repository")), "{venv}");
 }
+
+/// A generic `node_modules` in each of seven agent stores, and in a person's project, as
+/// the PR #19 review placed them, each beside the npm install record that verifies it.
+const IN_STORES: &[&str] = &[
+    "home/.pi/agent/npm",
+    "home/.claude/plugins/marketplaces/m",
+    "home/.claude/debug/proj",
+    "home/.codex/plugins/q",
+    "home/.codex/cache/remote_plugin_catalog/p",
+    "home/.cursor/extensions/e",
+    "home/.cursor-server/extensions/e",
+];
+const IN_A_PROJECT: &str = "home/projects/app";
+
+/// How a test changes one root of [`npm_home`] from where `demo-home` puts it.
+#[derive(Clone, Copy)]
+enum Root {
+    /// At this path below the temp dir.
+    At(&'static str),
+    /// Set to a relative path, which kipple can't use, as with `CODEX_HOME=codex`.
+    Relative,
+    /// Not set at all.
+    Unset,
+}
+
+/// A home with an npm install at each of `projects`, an environment whose roots point
+/// into it as `demo-home`'s do but for `changes`, and the home to give as `--root`, as
+/// `kipple scan --root ~` does.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a fixture that fails to build fails the test"
+)]
+fn npm_home(
+    projects: &[&str],
+    changes: &[(&'static str, Root)],
+) -> (tempfile::TempDir, Environment, String) {
+    let temp = tempfile::tempdir().unwrap();
+    let mut tree = tree::FixtureTree::new();
+    for at in projects {
+        npm_v11_19_0::project(&mut tree, at);
+    }
+    for (_, change) in changes {
+        if let Root::At(at) = change {
+            tree.dir(at);
+        }
+    }
+    tree.build_in(temp.path()).unwrap();
+    let unchanged = demo_home::ROOTS
+        .iter()
+        .filter(|(name, _)| !changes.iter().any(|(changed, _)| changed == name))
+        .map(|(name, relative)| (*name, Root::At(relative)));
+    let mut file = String::new();
+    for (name, root) in unchanged.chain(changes.iter().copied()) {
+        match root {
+            Root::At(at) => writeln!(file, "{name} = {}", temp.path().join(at).display()),
+            Root::Relative => writeln!(file, "{name} = {name}"),
+            Root::Unset => Ok(()),
+        }
+        .unwrap();
+    }
+    let seconds = demo_home::looked_at()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    writeln!(file, "now = {seconds}").unwrap();
+    let path = temp.path().join("roots.txt");
+    fs::write(&path, file).unwrap();
+    let env =
+        Environment::from_vars([(OsString::from("KIPPLE_TEST_ROOTS"), path.into_os_string())]);
+    let home = temp.path().join("home").display().to_string();
+    (temp, env, home)
+}
+
+/// [`npm_home`] with an install at each of [`IN_STORES`] and [`IN_A_PROJECT`], and the
+/// agents' stores among its roots.
+fn stores() -> (tempfile::TempDir, Environment, String) {
+    let projects: Vec<&str> = IN_STORES.iter().copied().chain([IN_A_PROJECT]).collect();
+    npm_home(
+        &projects,
+        &[("cursor.server", Root::At("home/.cursor-server"))],
+    )
+}
+
+/// Where the `node_modules` of `at` is, by its trailing components, which hold on every
+/// OS whatever form the temp dir's path takes in the report.
+fn node_modules_of(at: &str) -> std::path::PathBuf {
+    Path::new(at)
+        .strip_prefix("home")
+        .unwrap_or_else(|_| Path::new(at))
+        .join("node_modules")
+}
+
+/// Catches a generic artifact inside an agent's closed store shown as Safe by `scan`,
+/// `scan --json`, `explain` and the home screen, and then refused at plan as protected
+/// (PR #19 review): the same host answer holds it at scan, with the reason that names it.
+#[test]
+fn generic_artifact_inside_a_closed_store_is_protected_at_scan() {
+    let (_temp, env, home) = stores();
+
+    let (code, json, _) = kipple(&env, &["scan", "--root", &home, "--json"]);
+
+    assert_eq!(code, ExitCode::SUCCESS);
+    let report: Value = serde_json::from_str(&json).unwrap();
+    let findings = report["findings"].as_array().unwrap();
+    let verdict_of = |at: &str| {
+        let wanted = node_modules_of(at);
+        let finding = findings
+            .iter()
+            .filter(|f| f["rule"] == "builtin.node.node-modules")
+            .find(|f| {
+                let display = f.pointer("/path/display").and_then(Value::as_str).unwrap();
+                Path::new(display).ends_with(&wanted)
+            })
+            .unwrap_or_else(|| panic!("no node_modules at {at} in {json}"));
+        finding["verdict"].clone()
+    };
+    for at in IN_STORES {
+        let verdict = verdict_of(at);
+        assert_eq!(verdict["bucket"], "protected", "{at}: {verdict}");
+        assert_eq!(verdict["reasons"][0], "subresource", "{at}: {verdict}");
+    }
+    let control = verdict_of(IN_A_PROJECT);
+    let reasons = control["reasons"].as_array().unwrap();
+    assert!(
+        !reasons.iter().any(|reason| reason == "subresource"),
+        "a person's project is no tool's store: {control}"
+    );
+    // Windows can't tell whether a `node_modules` is in use (D-050).
+    if kipple_platform::PLATFORM != kipple_core::Platform::Windows {
+        assert_eq!(control["bucket"], "safe", "{control}");
+    }
+}
+
+/// Catches the scan's verdict and the planner's refusal drifting apart again: for every
+/// finding of the same scan, selected whole, none the scan shows Safe or Review is
+/// refused because the host protects it, and each the planner refuses for that is
+/// Protected at scan with the same reason.
+#[test]
+fn scan_and_plan_agree_on_every_closed_finding() {
+    use kipple::config::{self, Settings};
+    use kipple::machine::Machine;
+    use kipple::setup::Builtin;
+    use kipple_core::{
+        CancelToken, EventChannel, Hold, PlanMode, PlanRequest, Selection, Skip, Verdict,
+        event_channel, plan,
+    };
+
+    let (_temp, env, home) = stores();
+    let builtin = Builtin::load().unwrap();
+    let catalog = config::catalog(&builtin);
+    let settings = Settings::load(&env, None, &[home.into()], &catalog).unwrap();
+    let policy = settings.policy.clone();
+    let engine = builtin.engine(&env).unwrap();
+    let cancel = CancelToken::new();
+    let EventChannel { tx, rx } = event_channel(4096, &cancel);
+    let scan = engine.scan(&settings.scan_request(None), &tx, &cancel);
+    drop(rx);
+    let machine = Machine::from_settings(&builtin, &env, settings, None).unwrap();
+    let selection = Selection(scan.findings.iter().map(|f| f.id).collect());
+    let request = PlanRequest {
+        scan: &scan,
+        selection: &selection,
+        mode: PlanMode::Review,
+    };
+
+    let planned = plan(&request, &machine.judge(), &machine.mutation(), &cancel);
+
+    let mut closed = 0;
+    for refused in &planned.refused {
+        let Skip::HostProtected(why) = refused.skip else {
+            continue;
+        };
+        let finding = scan
+            .findings
+            .iter()
+            .find(|f| f.id == refused.finding)
+            .unwrap();
+        let verdict = finding.verdict(&policy).unwrap();
+        let held =
+            matches!(&verdict, Verdict::Protected(holds) if holds.contains(&Hold::from(why)));
+        let reports = matches!(&verdict, Verdict::Protected(holds) if holds == &[Hold::ReportOnly] || holds == &[Hold::Advice]);
+        assert!(
+            held || reports,
+            "{} refused as {why} but {verdict:?} at scan",
+            finding.path.display()
+        );
+        closed += 1;
+    }
+    assert!(
+        closed >= IN_STORES.len(),
+        "every store's node_modules is refused: {:?}",
+        planned.refused
+    );
+}
+
+/// Catches the fix closing what D-076 opens: an agent's own rule in its own open area, on
+/// the demo's verified layouts, keeps the verdict it had. These rules remove on Linux
+/// alone (spec M4 pinned 39), so off Linux the scan has none of their findings.
+#[test]
+fn open_areas_still_open_at_scan() {
+    let (_temp, env) = demo();
+
+    let (_, json, _) = kipple(&env, &["scan", "--json"]);
+
+    let report: Value = serde_json::from_str(&json).unwrap();
+    let findings = report["findings"].as_array().unwrap();
+    let opened = [
+        ("builtin.codex.plugin-catalog-cache", "safe"),
+        ("builtin.codex.legacy-tui-log", "review"),
+        ("builtin.claude-code.closed-debug-logs", "review"),
+    ];
+    for (rule, bucket) in opened {
+        let found: Vec<&Value> = findings.iter().filter(|f| f["rule"] == rule).collect();
+        if kipple_platform::PLATFORM != kipple_core::Platform::Linux {
+            assert!(found.is_empty(), "{rule} runs on Linux alone: {found:?}");
+            continue;
+        }
+        assert!(!found.is_empty(), "the demo has {rule}");
+        for finding in &found {
+            let reasons = finding["verdict"]["reasons"].as_array().unwrap();
+            assert!(
+                !reasons.iter().any(|reason| reason == "subresource"),
+                "{rule} is in an area its store opens to it: {finding}"
+            );
+        }
+        assert!(
+            found.iter().any(|f| f["verdict"]["bucket"] == bucket),
+            "{rule} keeps a {bucket} finding on Linux: {found:?}"
+        );
+    }
+}
+
+/// The `Looks in` row of `kipple explain <rule>`.
+#[expect(
+    clippy::panic,
+    reason = "a rule explained without the row fails the test"
+)]
+fn looks_in(env: &Environment, rule: &str) -> String {
+    let (code, out, _) = kipple(env, &["explain", rule]);
+    assert_eq!(code, ExitCode::SUCCESS, "{out}");
+    let line = out
+        .lines()
+        .find(|line| line.trim_start().starts_with("Looks in"));
+    let line = line.unwrap_or_else(|| panic!("no Looks in row in {out}"));
+    line.trim_start()
+        .trim_start_matches("Looks in")
+        .trim()
+        .to_owned()
+}
+
+/// Catches `explain` naming a git rule's own root alone, so a person reading it concludes
+/// kipple doesn't read the agents' worktree locations (PR #19 review), and a rule whose
+/// integration adds no root naming its own twice.
+#[test]
+fn explain_names_every_root_a_git_rule_reads() {
+    let (_temp, env) = demo();
+
+    assert_eq!(
+        looks_in(&env, "builtin.git.worktree-remove"),
+        "config.project-roots, git.agent-locations"
+    );
+    assert_eq!(
+        looks_in(&env, "builtin.cargo.target"),
+        "config.project-roots"
+    );
+}
+
+/// The verdict `kipple scan --root <home> --json` gives the `node_modules` of `at`, or
+/// `Null` when the report has none there.
+fn node_modules_verdict(env: &Environment, home: &str, at: &str) -> Value {
+    let (code, json, err) = kipple(env, &["scan", "--root", home, "--json"]);
+    assert_eq!(code, ExitCode::SUCCESS, "{err}");
+    verdict_at(&json, at)
+}
+
+/// The verdict of the `node_modules` of `at` in the scan report `json`, or `Null`.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a report that doesn't parse fails the test"
+)]
+fn verdict_at(json: &str, at: &str) -> Value {
+    let report: Value = serde_json::from_str(json).unwrap();
+    let wanted = node_modules_of(at);
+    let findings = report.get("findings").and_then(Value::as_array);
+    let found = findings.into_iter().flatten().find(|f| {
+        f.pointer("/path/display")
+            .and_then(Value::as_str)
+            .is_some_and(|display| Path::new(display).ends_with(&wanted))
+    });
+    found
+        .and_then(|f| f.get("verdict"))
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Whether `verdict` is Protected and names `reason`, and doesn't name `not`.
+fn held_for(verdict: &Value, reason: &str, not: &str) -> bool {
+    let reasons = verdict.get("reasons").and_then(Value::as_array);
+    let named = |name: &str| reasons.is_some_and(|all| all.iter().any(|r| r == name));
+    let bucket = verdict.get("bucket").and_then(Value::as_str);
+    bucket == Some("protected") && named(reason) && !named(not)
+}
+
+/// Catches a project shown as in a tool's own data when kipple only can't find its own
+/// data folder, which sends a person looking for a tool that isn't there: it is
+/// Protected as `unlocated`, the reason that says to check where the folder is. On
+/// Windows the config folder is in the same known folder as the data folder, so without
+/// a named config the scan stops first, at exit 2, and says how to name one.
+#[test]
+fn an_unknown_data_folder_holds_a_project_as_unlocated() {
+    let unset = [
+        ("xdg.data", Root::Unset),
+        ("known.roaming-app-data", Root::Unset),
+    ];
+    let (temp, env, home) = npm_home(&[IN_A_PROJECT], &unset);
+    let config = temp.path().join("config.toml");
+    fs::write(&config, "").unwrap();
+    let config = config.display().to_string();
+
+    let (code, json, err) = kipple(&env, &["scan", "--root", &home, "--json"]);
+    let named = kipple(
+        &env,
+        &["--config", &config, "scan", "--root", &home, "--json"],
+    );
+
+    if kipple_platform::PLATFORM == kipple_core::Platform::Windows {
+        assert_eq!(code, ExitCode::from(USAGE), "{err}");
+        assert!(err.contains("config directory is unknown"), "{err}");
+    } else {
+        assert_eq!(code, ExitCode::SUCCESS, "{err}");
+        let verdict = verdict_at(&json, IN_A_PROJECT);
+        assert!(
+            held_for(&verdict, "unlocated", "subresource"),
+            "expected Protected as unlocated: {verdict}"
+        );
+    }
+    assert_eq!(named.0, ExitCode::SUCCESS, "{}", named.2);
+    let verdict = verdict_at(&named.1, IN_A_PROJECT);
+    assert!(
+        held_for(&verdict, "unlocated", "subresource"),
+        "expected Protected as unlocated with a named config: {verdict}"
+    );
+}
+
+/// Catches a `CODEX_HOME` kipple can't use either opening a person's project, where
+/// Codex's credentials may be, or calling the project Codex's own data: it is Protected
+/// as `unlocated`.
+#[test]
+fn an_unusable_codex_home_holds_a_project_as_unlocated() {
+    let (_temp, env, home) = npm_home(&[IN_A_PROJECT], &[("codex.home", Root::Relative)]);
+
+    let verdict = node_modules_verdict(&env, &home, IN_A_PROJECT);
+
+    assert!(
+        held_for(&verdict, "unlocated", "subresource"),
+        "expected Protected as unlocated: {verdict}"
+    );
+}
+
+/// Catches a finding that holds a tool's store removed with the store inside it, or held
+/// for a reason that says the location is unknown when kipple knows exactly where the
+/// store is: it is Protected as `subresource`.
+#[test]
+fn a_finding_above_a_state_root_holds_as_subresource() {
+    let store = "home/projects/app/node_modules/.cursor-server";
+    let (_temp, env, home) = npm_home(&[IN_A_PROJECT], &[("cursor.server", Root::At(store))]);
+
+    let verdict = node_modules_verdict(&env, &home, IN_A_PROJECT);
+
+    assert!(
+        held_for(&verdict, "subresource", "unlocated"),
+        "expected Protected as subresource: {verdict}"
+    );
+}

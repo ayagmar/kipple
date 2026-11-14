@@ -762,7 +762,11 @@
         "fact-unmet",
         "fact-unknown",
         "subject-mismatch",
-        "tracked-inside-native"
+        "tracked-inside-native",
+        "file-system-root",
+        "home",
+        "subresource",
+        "unlocated"
       ]
     },
     "ItemMethod": {
@@ -1128,7 +1132,8 @@
       "enum": [
         "file-system-root",
         "home",
-        "subresource"
+        "subresource",
+        "unlocated"
       ]
     },
     "ReceiptItemOut": {

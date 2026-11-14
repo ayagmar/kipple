@@ -13,8 +13,8 @@ use kipple_adapters::builtin;
 use kipple_core::{
     Anchor, Apparent, CancelToken, Clock, Completeness, DirEntryMeta, Engine, EntryKind, EntryMeta,
     EventChannel, FrozenTree, FsProbe, GitGap, Inventory, Measurement, NodeId, Observer, Ports,
-    ProbeError, ProcessProbe, ProcessSnapshot, ResolvedRoot, RootSource, Roots, ScanReport,
-    ScanRequest, Sizer, SpaceEstimate, SymbolicRoot, TrackedQuery, event_channel,
+    ProbeError, ProcessProbe, ProcessSnapshot, Protections, ResolvedRoot, RootSource, Roots,
+    ScanReport, ScanRequest, Sizer, SpaceEstimate, SymbolicRoot, TrackedQuery, event_channel,
 };
 
 /// The real file system, read without following links: enough to run the integrations
@@ -190,6 +190,10 @@ pub(crate) fn scan_built(temp: tempfile::TempDir) -> Scanned {
             roots,
             lens: None,
             exclude: Vec::new(),
+            // This file system reports no identities, so the host can rule nothing out
+            // and protects every finding, as the default does. What these tests read is
+            // what the integrations say.
+            protections: Protections::default(),
         },
         &events,
         &cancel,
