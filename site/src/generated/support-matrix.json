@@ -832,6 +832,18 @@
           "meaning": "whether a local branch holds its HEAD"
         },
         {
+          "name": "worktree.unreferenced_commits",
+          "kind": "count",
+          "selector": "registered-linked-worktrees",
+          "meaning": "commits only its own reflog or pseudo-refs name, which no local branch holds"
+        },
+        {
+          "name": "worktree.own_config",
+          "kind": "bool",
+          "selector": "registered-linked-worktrees",
+          "meaning": "whether it has config of its own (`config.worktree`), which goes with it"
+        },
+        {
           "name": "git_inventory",
           "kind": "enum",
           "values": [

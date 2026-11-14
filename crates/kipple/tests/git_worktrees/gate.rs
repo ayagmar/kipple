@@ -41,6 +41,8 @@ fn a_clean_worktree_reads_clear_on_every_row() {
         ("worktree.per_worktree_refs", FactValue::Count(0)),
         ("worktree.index_locked", FactValue::Bool(false)),
         ("worktree.head_reachable", FactValue::Bool(true)),
+        ("worktree.unreferenced_commits", FactValue::Count(0)),
+        ("worktree.own_config", FactValue::Bool(false)),
     ] {
         assert_eq!(scan.fact(fact), value, "{fact}");
     }
@@ -57,6 +59,14 @@ struct Case {
     at: &'static str,
     fact: &'static str,
     value: FactValue,
+    head: Head,
+}
+
+/// What reaching a case does to the reviewed worktree's `HEAD`, which the witness holds.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Head {
+    Stays,
+    Moves,
 }
 
 const fn case(name: &'static str, set: fn(&Repo), fact: &'static str, value: FactValue) -> Case {
@@ -66,15 +76,29 @@ const fn case(name: &'static str, set: fn(&Repo), fact: &'static str, value: Fac
         at: "wt",
         fact,
         value,
+        head: Head::Stays,
+    }
+}
+
+/// A case whose state is reached by moving the worktree's `HEAD`.
+const fn moving(name: &'static str, set: fn(&Repo), fact: &'static str, value: FactValue) -> Case {
+    Case {
+        head: Head::Moves,
+        ..case(name, set, fact, value)
     }
 }
 
 const IGNORED: &str = "worktree.unclassified_ignored";
 const OPERATION: &str = "worktree.operation_in_progress";
 const LOCKED_INDEX: &str = "worktree.index_locked";
+const UNREFERENCED: &str = "worktree.unreferenced_commits";
 
+/// A `.gitignore` that ignores itself too, so nothing here is untracked.
 fn ignored_file(repo: &Repo) {
-    write(&repo.checkout.join(".gitignore"), b"local.env\n");
+    write(
+        &repo.checkout.join(".gitignore"),
+        b"/.gitignore\nlocal.env\n",
+    );
     write(&repo.checkout.join("local.env"), b"x\n");
 }
 
@@ -84,14 +108,14 @@ fn excluded_file(repo: &Repo) {
 }
 
 fn ignored_repository(repo: &Repo) {
-    write(&repo.checkout.join(".gitignore"), b"scratch/\n");
+    write(&repo.main.join(".git/info/exclude"), b"scratch/\n");
     let nested = repo.checkout.join("scratch");
     fs::create_dir(&nested).unwrap();
     repo.git_in(&nested, &["init", "-q"]);
 }
 
 fn nested_worktree(repo: &Repo) {
-    write(&repo.checkout.join(".gitignore"), b"scratch/\n");
+    write(&repo.main.join(".git/info/exclude"), b"scratch/\n");
     repo.git(&["worktree", "add", "-q", "-b", "n", "../wt/scratch/nested"]);
 }
 
@@ -120,6 +144,40 @@ fn unreachable_head(repo: &Repo) {
     repo.wt(&["checkout", "-q", "--detach"]);
     write(&repo.checkout.join("file.txt"), b"changed\n");
     repo.wt(&["commit", "-q", "-a", "-m", "lost"]);
+}
+
+/// A commit made on a detached `HEAD`, then left by switching back to the branch: only the
+/// worktree's reflog names it.
+fn left_behind(repo: &Repo) {
+    repo.wt(&["checkout", "-q", "--detach"]);
+    repo.wt(&["commit", "-q", "--allow-empty", "-m", "left behind"]);
+    repo.wt(&["checkout", "-q", "wt"]);
+}
+
+/// A commit made on a detached `HEAD`, then reset away: only the worktree's reflog and
+/// `ORIG_HEAD` name it.
+fn reset_away(repo: &Repo) {
+    repo.wt(&["checkout", "-q", "--detach"]);
+    repo.wt(&["commit", "-q", "--allow-empty", "-m", "reset away"]);
+    repo.wt(&["reset", "-q", "--hard", "main"]);
+}
+
+/// A commit reset off the branch, with the worktree's reflog emptied: only `ORIG_HEAD`
+/// names it among what the removal deletes.
+fn orig_head(repo: &Repo) {
+    repo.wt(&["commit", "-q", "--allow-empty", "-m", "undone"]);
+    repo.wt(&["reset", "-q", "--hard", "HEAD~"]);
+    write(&repo.admin().join("logs/HEAD"), b"");
+}
+
+fn own_config(repo: &Repo) {
+    repo.git(&["config", "extensions.worktreeConfig", "true"]);
+    repo.wt(&["config", "--worktree", "user.name", "Agent"]);
+}
+
+/// The pseudo-ref `name` an operation writes, naming the worktree's own commit.
+fn pseudo_ref(repo: &Repo, name: &str) {
+    write(&repo.admin().join(name), &repo.wt(&["rev-parse", "HEAD"]));
 }
 
 fn one_way_registration(repo: &Repo) {
@@ -168,7 +226,7 @@ const CASES: &[Case] = &[
         "ignored by .gitignore",
         ignored_file,
         IGNORED,
-        FactValue::Count(1),
+        FactValue::Count(2),
     ),
     case(
         "ignored by info/exclude",
@@ -200,7 +258,7 @@ const CASES: &[Case] = &[
         "git.hidden_changes",
         FactValue::Count(1),
     ),
-    case(
+    moving(
         "real rebase",
         rebase_stopped,
         OPERATION,
@@ -226,19 +284,19 @@ const CASES: &[Case] = &[
     ),
     case(
         "cherry-pick",
-        |repo| write(&repo.admin().join("CHERRY_PICK_HEAD"), b"x\n"),
+        |repo| pseudo_ref(repo, "CHERRY_PICK_HEAD"),
         OPERATION,
         FactValue::Bool(true),
     ),
     case(
         "revert",
-        |repo| write(&repo.admin().join("REVERT_HEAD"), b"x\n"),
+        |repo| pseudo_ref(repo, "REVERT_HEAD"),
         OPERATION,
         FactValue::Bool(true),
     ),
     case(
         "merge",
-        |repo| write(&repo.admin().join("MERGE_HEAD"), b"x\n"),
+        |repo| pseudo_ref(repo, "MERGE_HEAD"),
         OPERATION,
         FactValue::Bool(true),
     ),
@@ -280,19 +338,45 @@ const CASES: &[Case] = &[
         "worktree.per_worktree_refs",
         FactValue::Count(1),
     ),
-    case(
+    moving(
         "unreachable detached HEAD",
         unreachable_head,
         "worktree.head_reachable",
         FactValue::Bool(false),
     ),
     Case {
-        name: "unborn branch",
-        set: unborn,
         at: "unborn",
-        fact: "worktree.head_reachable",
-        value: FactValue::Bool(false),
+        ..moving(
+            "unborn branch",
+            unborn,
+            "worktree.head_reachable",
+            FactValue::Bool(false),
+        )
     },
+    case(
+        "commit only the reflog names",
+        left_behind,
+        UNREFERENCED,
+        FactValue::Count(1),
+    ),
+    moving(
+        "commit reset away from a detached HEAD",
+        reset_away,
+        UNREFERENCED,
+        FactValue::Count(1),
+    ),
+    case(
+        "commit only ORIG_HEAD names",
+        orig_head,
+        UNREFERENCED,
+        FactValue::Count(1),
+    ),
+    case(
+        "config of its own",
+        own_config,
+        "worktree.own_config",
+        FactValue::Bool(true),
+    ),
     case(
         "one-way registration",
         one_way_registration,

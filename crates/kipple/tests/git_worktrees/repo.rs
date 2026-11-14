@@ -246,6 +246,16 @@ impl Scan {
     }
 }
 
+/// Whether git still lists a worktree whose path ends in `projects/<name>`.
+pub(crate) fn listed(repo: &Repo, name: &str) -> bool {
+    let tail = Path::new("projects").join(name);
+    let listed = repo.git(&["worktree", "list", "--porcelain", "-z"]);
+    listed
+        .split(|byte| *byte == 0)
+        .filter_map(|record| record.strip_prefix(b"worktree "))
+        .any(|path| Path::new(&*String::from_utf8_lossy(path)).ends_with(&tail))
+}
+
 pub(crate) fn write(path: &Path, bytes: &[u8]) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, bytes).unwrap();

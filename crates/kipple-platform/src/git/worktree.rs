@@ -16,6 +16,7 @@
 //! a submodule stops the rest, so `status` never recurses into a config nothing has read.
 //! Only then `status` and what follows.
 
+use std::collections::BTreeSet;
 use std::io;
 use std::path::{Path, PathBuf};
 
@@ -49,6 +50,28 @@ const OPERATIONS: [&str; 7] = [
 
 /// The locks git takes in an admin directory while it changes the index or `HEAD`.
 const LOCKS: [&str; 2] = ["index.lock", "HEAD.lock"];
+
+/// The pseudo-refs git writes in a worktree's own admin directory that name commits by id,
+/// on every git from the removal floor up. `AUTO_MERGE` names a tree, not a commit, and is
+/// there only while a merge stopped on conflicts, which an operation in progress holds.
+const PSEUDO_REFS: [&str; 9] = [
+    "HEAD",
+    "ORIG_HEAD",
+    "FETCH_HEAD",
+    "MERGE_HEAD",
+    "CHERRY_PICK_HEAD",
+    "REVERT_HEAD",
+    "REBASE_HEAD",
+    "BISECT_HEAD",
+    "BISECT_EXPECTED_REV",
+];
+
+/// The most read of one reflog or pseudo-ref. Past it what the file names is unknown.
+const NAMES_LIMIT: u64 = 16 * 1024 * 1024;
+
+/// How many commits one `rev-list` is given, so its arguments stay well inside Windows'
+/// command-line limit.
+const COMMITS_PER_ASK: usize = 400;
 
 impl GitQuery {
     /// The git that may answer about worktrees.
@@ -94,6 +117,7 @@ impl WorktreeQuery for GitQuery {
             operation_in_progress: operation_in_progress(&links.admin),
             per_worktree_refs: per_worktree_refs(&links.admin),
             index_locked: any_of(&links.admin, &LOCKS),
+            own_config: exists(&links.admin.join("config.worktree")),
             ..WorktreeState::unknown(git.as_ref().map_or_else(|gap| *gap, |_| GitGap::Failed))
         };
         if let Ok(git) = git {
@@ -125,7 +149,52 @@ fn link_is_gone(dir: &Path) -> Result<bool, GitGap> {
 /// How many refs the admin directory `admin` holds.
 fn per_worktree_refs(admin: &Path) -> Result<u64, GitGap> {
     refuse_reftable(admin)?;
-    files_below(&admin.join("refs"))
+    count_of(files_below(&admin.join("refs"))?.len())
+}
+
+/// Every commit the admin directory `admin` names: both columns of each reflog under
+/// `logs/`, and each pseudo-ref of [`PSEUDO_REFS`]. Read as files, which no config changes.
+/// A line that isn't what git writes is an unknown layout.
+fn named_commits(admin: &Path) -> Result<BTreeSet<Vec<u8>>, GitGap> {
+    refuse_reftable(admin)?;
+    let mut named = BTreeSet::new();
+    for name in PSEUDO_REFS {
+        let Some(text) = whole_file(&admin.join(name))? else {
+            continue;
+        };
+        for line in lines(&text) {
+            if line.starts_with(b"ref: ") {
+                continue;
+            }
+            let id = line.split(|byte| *byte == b'\t').next().unwrap_or_default();
+            named.extend(commit(id)?);
+        }
+    }
+    for log in files_below(&admin.join("logs"))? {
+        let text = whole_file(&log)?.ok_or(GitGap::Failed)?;
+        for line in lines(&text) {
+            let mut ids = line.splitn(3, |byte| *byte == b' ');
+            for id in [ids.next(), ids.next()] {
+                named.extend(commit(id.ok_or(GitGap::Truncated)?)?);
+            }
+        }
+    }
+    Ok(named)
+}
+
+/// The commit id `bytes` hold, if it isn't all zeroes.
+fn commit(bytes: &[u8]) -> Result<Option<Vec<u8>>, GitGap> {
+    Ok(object(bytes)?.map(|_| bytes.to_vec()))
+}
+
+/// The lines of `text`, without the empty one after its last line ending.
+fn lines(text: &[u8]) -> impl Iterator<Item = &[u8]> {
+    text.split(|byte| *byte == b'\n')
+        .filter(|line| !line.is_empty())
+}
+
+fn count_of(len: usize) -> Result<u64, GitGap> {
+    u64::try_from(len).map_err(|_| GitGap::Truncated)
 }
 
 /// Whether what an operation leaves is in the admin directory `admin`.
@@ -271,6 +340,7 @@ impl Asking<'_> {
         }
         state.hidden_changes = self.hidden_changes();
         state.head_reachable = self.head_reachable();
+        state.unreferenced_commits = self.unreferenced_commits();
     }
 
     fn ask(&self, tail: &[&str]) -> Result<Vec<u8>, GitGap> {
@@ -389,6 +459,32 @@ impl Asking<'_> {
             "refs/heads/",
         ])?;
         Ok(!refs.is_empty())
+    }
+
+    /// How many commits only the admin directory names, which no local branch holds: the
+    /// same refs as [`Self::head_reachable`], since removal deletes no branch and nothing
+    /// else of the repository's is sure to stay (pinned decision 26). Each batch's commits
+    /// are collected, so one reachable from two batches counts once.
+    fn unreferenced_commits(&self) -> Result<u64, GitGap> {
+        let named = named_commits(&self.links.admin)?;
+        let named: Vec<&str> = named
+            .iter()
+            .map(|id| std::str::from_utf8(id).map_err(|_| GitGap::Truncated))
+            .collect::<Result<_, _>>()?;
+        let mut lost = BTreeSet::new();
+        for batch in named.chunks(COMMITS_PER_ASK) {
+            let mut tail = vec!["rev-list"];
+            tail.extend(batch);
+            tail.extend(["--not", "--branches", "--"]);
+            let stdout = self.ask(&tail)?;
+            if !stdout.is_empty() && !stdout.ends_with(b"\n") {
+                return Err(GitGap::Truncated);
+            }
+            for line in lines(&stdout) {
+                lost.extend(commit(line)?);
+            }
+        }
+        count_of(lost.len())
     }
 }
 
@@ -605,9 +701,26 @@ fn any_of(dir: &Path, names: &[&str]) -> Result<bool, GitGap> {
     Ok(false)
 }
 
-/// How many entries that aren't directories are below `dir`, which may not be there.
-fn files_below(dir: &Path) -> Result<u64, GitGap> {
-    let mut files = 0;
+/// The whole regular file at `path`, if anything is there. Anything else, or more than
+/// [`NAMES_LIMIT`], is a gap.
+fn whole_file(path: &Path) -> Result<Option<Vec<u8>>, GitGap> {
+    match kind(path)? {
+        None => return Ok(None),
+        Some(EntryKind::File) => {}
+        Some(_) => return Err(GitGap::Failed),
+    }
+    let bytes = NoFollowFs
+        .read_file(path, NAMES_LIMIT + 1)
+        .map_err(|_| GitGap::Failed)?;
+    if count_of(bytes.len())? > NAMES_LIMIT {
+        return Err(GitGap::Truncated);
+    }
+    Ok(Some(bytes))
+}
+
+/// The entries that aren't directories below `dir`, which may not be there.
+fn files_below(dir: &Path) -> Result<Vec<PathBuf>, GitGap> {
+    let mut files = Vec::new();
     let mut pending = vec![dir.to_owned()];
     while let Some(at) = pending.pop() {
         let entries = match NoFollowFs.read_dir(&at) {
@@ -619,7 +732,7 @@ fn files_below(dir: &Path) -> Result<u64, GitGap> {
             if entry.kind == EntryKind::Dir {
                 pending.push(at.join(entry.name));
             } else {
-                files += 1;
+                files.push(at.join(entry.name));
             }
         }
     }

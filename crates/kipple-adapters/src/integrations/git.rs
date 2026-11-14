@@ -116,6 +116,16 @@ const FACTS: &[FactSpec] = &[
         FactKind::Bool,
         "whether a local branch holds its HEAD",
     ),
+    fact(
+        "worktree.unreferenced_commits",
+        FactKind::Count,
+        "commits only its own reflog or pseudo-refs name, which no local branch holds",
+    ),
+    fact(
+        "worktree.own_config",
+        FactKind::Bool,
+        "whether it has config of its own (`config.worktree`), which goes with it",
+    ),
     FactSpec {
         name: "git_inventory",
         kind: FactKind::Enum(&["complete"]),
@@ -130,12 +140,14 @@ const FACTS: &[FactSpec] = &[
     },
 ];
 
-/// The oldest git the removal is proven on: the one `gate` runs on in CI.
+/// The oldest git the removal is proven on. CI's old-git job builds this tag and runs the
+/// worktree tests with it first on `PATH`, and `gate_ran_on_the_expected_git` fails there
+/// unless the git those tests found is this one.
 const WORKTREE_REMOVE_OLDEST: [u64; 3] = [2, 39, 5];
 
-/// What removing a checkout costs: its ignored and untracked inputs and its reflog don't
-/// come back, though the branch keeps its commits, and nothing says how long rebuilding
-/// what was in it takes. Never Safe, at any level.
+/// What removing a checkout costs: its ignored inputs and its reflog don't come back,
+/// though the branches keep every commit it named (or it is held), and nothing says how long
+/// rebuilding what was in it takes. Never Safe, at any level.
 const REMOVED: Consequence = Consequence {
     recovery: Recovery::None,
     loss: &[Loss::History],
@@ -991,6 +1003,11 @@ fn facts(
         ),
         ("worktree.index_locked", flag(&state.index_locked)),
         ("worktree.head_reachable", flag(&state.head_reachable)),
+        (
+            "worktree.unreferenced_commits",
+            count(&state.unreferenced_commits),
+        ),
+        ("worktree.own_config", flag(&state.own_config)),
         ("git_inventory", FactValue::Enum("complete")),
         (
             "storage_availability",

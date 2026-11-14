@@ -3,9 +3,10 @@
 
 use std::os::unix::fs::PermissionsExt as _;
 
-use super::removing::{has_branch, listed, reviewed_argv};
+use super::removing::{has_branch, reviewed_argv};
 use super::*;
 use crate::apply::removes_here;
+use crate::repo::listed;
 use kipple_core::{
     GIT_ISOLATION, GitGap, ItemOutcome, NativeArg, Omission, Tracked, TrackedQuery as _,
     WorktreeQuery as _,

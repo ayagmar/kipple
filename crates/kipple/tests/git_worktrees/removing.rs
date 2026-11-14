@@ -3,18 +3,18 @@
 //! runs takes the checkout and nothing else. The removal ships on Linux alone, so a test
 //! that removes returns early elsewhere; one that only judges runs Linux's rules anywhere.
 
-use std::path::Path;
+use std::time::Duration;
 
 use kipple_core::{
-    Confirmed, Ending, FactValue, Finding, ItemOutcome, Level, NativeKind, PlanMode, Platform,
-    Policy, Proposal, Skip, Verdict,
+    Confirmed, Consequence, Cost, Ending, FactState, FactValue, Finding, Hold, ItemOutcome, Level,
+    Loss, Modified, NativeKind, PlanMode, Platform, Policy, Proposal, Recovery, Skip, Verdict,
 };
 #[cfg(unix)]
 use kipple_core::{Execution, NativeArg, PlanEntry};
 
-use super::{CASES, Case, Repo, Scan, write};
+use super::{CASES, Case, Head, Repo, Scan, left_behind, orig_head, reset_away, write};
 use crate::apply::{Approval, Between, REMOVE, removes_here};
-use crate::repo::Refs;
+use crate::repo::{Refs, listed};
 
 /// The facts of `finding`, which was measured.
 const fn facts(finding: &Finding) -> &kipple_core::Facts {
@@ -46,16 +46,6 @@ fn verdicts(finding: &Finding) -> Vec<Verdict> {
 
 const fn is_review(verdict: &Verdict) -> bool {
     matches!(verdict, Verdict::Review(_))
-}
-
-/// Whether git still lists a worktree whose path ends in `projects/<name>`.
-pub(super) fn listed(repo: &Repo, name: &str) -> bool {
-    let tail = Path::new("projects").join(name);
-    let listed = repo.git(&["worktree", "list", "--porcelain", "-z"]);
-    listed
-        .split(|byte| *byte == 0)
-        .filter_map(|record| record.strip_prefix(b"worktree "))
-        .any(|path| Path::new(&*String::from_utf8_lossy(path)).ends_with(&tail))
 }
 
 /// Whether the branch `name` is still there.
@@ -116,6 +106,58 @@ fn held_by(scan: &Scan, case: &Case) {
     }
 }
 
+/// A way to leave a commit only the worktree's admin directory names, and the revision
+/// that names it there.
+struct Lost {
+    name: &'static str,
+    set: fn(&Repo),
+    names: &'static str,
+}
+
+/// Catches a commit only the worktree's admin directory names lost with it, as git leaves
+/// one after a commit on a detached `HEAD` and a switch or reset away, or a reset whose
+/// commit only `ORIG_HEAD` names: git shows no branch holds it, and the worktree is held on
+/// that fact alone.
+#[test]
+fn a_commit_only_the_worktree_names_holds_it() {
+    let states = [
+        Lost {
+            name: "switched back",
+            set: left_behind,
+            names: "HEAD@{1}",
+        },
+        Lost {
+            name: "reset away",
+            set: reset_away,
+            names: "HEAD@{1}",
+        },
+        Lost {
+            name: "ORIG_HEAD",
+            set: orig_head,
+            names: "ORIG_HEAD",
+        },
+    ];
+    for Lost { name, set, names } in states {
+        let repo = Repo::new();
+        set(&repo);
+        let lost = repo.wt(&["rev-parse", names]);
+        let lost = String::from_utf8_lossy(&lost).trim().to_owned();
+        let holding = repo.git(&["for-each-ref", "--contains", &lost, "refs/heads/"]);
+        assert_eq!(holding, b"", "{name}: no branch holds {lost}");
+
+        let scan = repo.removal_on(Platform::Linux).scan();
+
+        let finding = scan.finding("wt");
+        let unreferenced = scan.fact_at("wt", "worktree.unreferenced_commits");
+        assert_eq!(unreferenced, FactValue::Count(1), "{name}");
+        assert_eq!(
+            failed(finding),
+            vec!["worktree.unreferenced_commits"],
+            "{name}"
+        );
+    }
+}
+
 /// A worktree of a Node project whose dependencies are installed: `node_modules/` is
 /// ignored, and Node's rule removes it.
 fn with_dependencies() -> Repo {
@@ -152,9 +194,10 @@ fn clean_worktree_with_a_classified_ignored_artifact_is_eligible() {
     }
 }
 
-/// Catches the gate passing on a git other than the floor it is there to prove: the step
-/// that builds 2.39.5 sets `KIPPLE_EXPECT_GIT`, and a stale build or a `PATH` that finds
-/// another git fails here. Without it, as on any other run, it checks nothing.
+/// Catches the old-git job passing on a git other than the floor it is there to prove: that
+/// job sets `KIPPLE_EXPECT_GIT`, and then a stale build or a `PATH` that finds another git
+/// fails here, since every test in this binary finds git on `PATH` as this one does. A run
+/// that doesn't set it proves nothing about the floor, and this test says nothing there.
 #[test]
 fn gate_ran_on_the_expected_git() {
     let Some(expected) = std::env::var_os("KIPPLE_EXPECT_GIT") else {
@@ -219,7 +262,10 @@ fn after_review(case: &Case) -> fn(&Repo) {
 }
 
 /// Catches a fact checked only at review: each state that holds a worktree, reached after
-/// the person said yes, holds it at apply, and the checkout stays as it was left.
+/// the person said yes, holds it at apply for that fact, and the checkout stays as it was
+/// left. A fresh scan shows the state reads unmet on the case's fact alone, so the item
+/// held for an unmet fact was held for it. A case reached by moving `HEAD` may be caught by
+/// the witness first, and a stopped rebase leaves changes beside the operation.
 #[test]
 fn each_gate_fact_rechecked_at_apply() {
     if !removes_here() {
@@ -236,15 +282,65 @@ fn each_gate_fact_rechecked_at_apply() {
         let changed = repo.clone();
         let ran = removal.remove_changed(&scan, &[finding], Box::new(move || set(&changed)));
 
-        assert!(
-            matches!(ran.outcome(), ItemOutcome::Skipped(_)),
-            "{}: {:?}",
-            case.name,
-            ran.outcome()
-        );
+        let now = repo.removal().scan();
+        held_at_apply(case, ran.outcome(), now.finding("wt"));
         assert!(repo.checkout.join("file.txt").exists(), "{}", case.name);
         assert!(repo.checkout.join(".git").exists(), "{}", case.name);
     }
+}
+
+/// That `outcome` is the hold `case` causes, `now` being the worktree scanned afresh in the
+/// state the case left. A row that stops git's questions, a submodule's, leaves the rows
+/// after it unknown beside it.
+#[expect(clippy::panic, reason = "an item that isn't held fails the test")]
+fn held_at_apply(case: &Case, outcome: &ItemOutcome, now: &Finding) {
+    let witnessed =
+        case.head == Head::Moves && *outcome == ItemOutcome::Skipped(Skip::WitnessChanged);
+    if witnessed {
+        return;
+    }
+    let ItemOutcome::Skipped(Skip::Protected(holds)) = outcome else {
+        panic!("{}: {outcome:?}", case.name);
+    };
+    // Which ignored paths a rule removes only a scan settles, so a set that changed since
+    // is unknown at apply. A registration rewritten one way is listed at the path it names
+    // now, so the one reviewed is gone and nothing of it is known.
+    let hold = match case.fact {
+        "worktree.unclassified_ignored" | "registration_state" => Hold::FactUnknown,
+        _ => Hold::FactUnmet,
+    };
+    let by_facts = holds
+        .iter()
+        .all(|held| matches!(held, Hold::FactUnmet | Hold::FactUnknown));
+    assert!(
+        holds.contains(&hold) && by_facts,
+        "{}: {holds:?}",
+        case.name
+    );
+    if now.rule.0 != REMOVE {
+        assert_eq!(
+            case.fact, "registration_state",
+            "{}: {:?}",
+            case.name, now.rule
+        );
+        return;
+    }
+    let failed = failed(now);
+    if case.head == Head::Stays {
+        assert_eq!(failed, vec![case.fact], "{}", case.name);
+    } else {
+        assert!(failed.contains(&case.fact), "{}: {failed:?}", case.name);
+    }
+}
+
+/// The facts of `finding` that are known and not what its rule accepts.
+fn failed(finding: &Finding) -> Vec<&'static str> {
+    facts(finding)
+        .unmet
+        .iter()
+        .filter(|unmet| unmet.state == FactState::Failed)
+        .map(|unmet| unmet.fact)
+        .collect()
 }
 
 /// Catches a registration replaced under the same path read as the one reviewed: the
@@ -580,15 +676,23 @@ fn worktree_removal_is_review_at_every_level_and_tui_only() {
     let removal = repo.removal();
     let scan = removal.scan();
     let finding = scan.finding("wt");
-    assert!(
-        verdicts(finding).iter().all(is_review),
-        "{:?}",
-        verdicts(finding)
-    );
     assert_eq!(
         facts(finding).proposal,
         Proposal::Native(NativeKind::GitWorktreeRemove)
     );
+    // The consequence alone makes it Review: judged as a year old, so nothing recent does.
+    let consequence = Consequence {
+        recovery: Recovery::None,
+        loss: &[Loss::History],
+        cost: Cost::Unknown,
+    };
+    assert_eq!(facts(finding).consequence, Some(consequence));
+    let mut aged = facts(finding).clone();
+    aged.modified = Modified::Ago(Duration::from_hours(365 * 24));
+    for level in Level::ALL {
+        let verdict = Policy::at(*level).verdict(&finding.rule, &finding.path, &aged);
+        assert!(is_review(&verdict), "{level:?}: {verdict:?}");
+    }
 
     for mode in [PlanMode::Safe, PlanMode::SafeFiles, PlanMode::SafeOnly] {
         let between = Between::Review(Box::new(|| {}));
