@@ -205,7 +205,8 @@ fn node_outside_engines_blocks() {
     let prefix = install(temp.path(), "old", &old);
     assert_eq!(
         resolve(&[prefix.join("bin")]),
-        Err(ToolGap::UnverifiedVersion)
+        Err(ToolGap::UnsupportedRuntime),
+        "the npm is verified; its node isn't one it accepts"
     );
     assert_eq!(
         started(&prefix),
@@ -257,11 +258,47 @@ fn first_verified_pair_runs_when_two_majors_share_a_cache() {
     );
 }
 
-/// Catches reading npm's settings by running npm, which writes and rotates its logs: a
-/// scan resolves the cache from files alone, and the resolver starts only its node,
-/// for `--version`.
+/// Catches an install without a node of its own read as no npm at all, and npm packaged
+/// outside `lib/node_modules/npm` (Debian's `/usr/share/nodejs/npm`) read as a script
+/// that starts another program: either sends a person looking for the wrong fix.
 #[test]
-fn scan_and_doctor_start_no_npm_process() {
+fn an_install_without_its_node_or_in_another_layout_says_which() {
+    let temp = TempDir::new().unwrap();
+    let mut tree = FixtureTree::new();
+    npm_v11_20_0::install(&mut tree, "bare");
+    let debian = "debian/share/nodejs/npm";
+    tree.file(
+        &format!("{debian}/package.json"),
+        b"{\"name\":\"npm\",\"version\":\"11.20.0\"}",
+    )
+    .file(
+        &format!("{debian}/bin/npm-cli.js"),
+        b"#!/usr/bin/env node\n",
+    )
+    .link(
+        "debian/bin/npm",
+        "../share/nodejs/npm/bin/npm-cli.js",
+        tree::Holds::AsWritten,
+    );
+    tree.build_in(temp.path()).unwrap();
+    let root = temp.path().canonicalize().unwrap();
+    for script in [
+        "bare/lib/node_modules/npm/bin/npm-cli.js",
+        "debian/share/nodejs/npm/bin/npm-cli.js",
+    ] {
+        fs::set_permissions(root.join(script), fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    assert_eq!(resolve(&[root.join("bare/bin")]), Err(ToolGap::NoRuntime));
+    let packaged = resolve(&[root.join("debian/bin")]);
+    assert_eq!(packaged, Err(ToolGap::UnknownLayout));
+}
+
+/// Catches reading npm's settings by running npm, which writes and rotates its logs:
+/// placing the cache reads files alone, and the resolver starts only its node, for
+/// `--version`. `crates/kipple/tests/npm.rs` holds the same for a scan and `doctor`.
+#[test]
+fn placing_the_cache_runs_nothing_and_resolving_starts_only_node() {
     let temp = TempDir::new().unwrap();
     let prefix = install(temp.path(), "npm", &V12);
     let home = temp.path().join("home");

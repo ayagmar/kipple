@@ -279,7 +279,12 @@ fn absorbed(earlier: &mut ResolvedRoot, resolved: &ResolvedRoot) -> bool {
 fn upstream_roots(env: &Environment) -> Roots {
     #[cfg(feature = "test-roots")]
     if let Some(file) = crate::test_host::file(env) {
-        return crate::test_host::roots(file);
+        let mut roots = crate::test_host::roots(file);
+        if crate::test_host::npm_cache_from_npmrc(file) {
+            let cache = npm_cache(env, &roots);
+            roots.insert(SymbolicRoot::NpmCache, cache);
+        }
+        return roots;
     }
     let mut roots = os::resolve_roots(env);
     let root = SymbolicRoot::ClaudeConfig;
@@ -342,9 +347,11 @@ fn agent_roots(env: &Environment, roots: &mut Roots) {
     }
 }
 
-/// npm's cache, where its variables and npmrc files put it, read as the npm found first on
-/// `PATH` reads them (`tools/npmrc.rs`). Anything kipple can't read as npm does leaves it
-/// unknown, which holds npm's own findings; `npm.default-cache` stays closed either way.
+/// npm's cache, where its variables and npmrc files put it, read as the first npm on
+/// `PATH` that kipple verified reads them, else the first it can read (`tools/npmrc.rs`).
+/// A person's own npm may be an earlier one on `PATH`, with other npmrc files. Anything
+/// kipple can't read as npm does leaves it unknown, which holds npm's own findings;
+/// `npm.default-cache` stays closed either way.
 fn npm_cache(env: &Environment, roots: &Roots) -> Result<ResolvedRoot, UnresolvedRoot> {
     let home = match roots.get(SymbolicRoot::Home) {
         Some(Ok(home)) => Some(home.path.as_path()),

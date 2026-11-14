@@ -5,8 +5,8 @@
 
 use kipple_core::{
     ApplyError, Cause, Dropped, Ending, ErrorCode, Found, GitGap, Hold, JudgementField, LeftReason,
-    LockGap, Measured, Method, NativeEnd, RestoreResult, Restoring, RunState, Skip, Status, Stop,
-    StoreRefusal, ToolGap, Unjudged, Unreadable, Unsupported,
+    LockGap, Measured, Method, NativeEnd, ResolvedTool, RestoreResult, Restoring, RunState, Skip,
+    Status, Stop, StoreRefusal, ToolGap, Unjudged, Unreadable, Unsupported,
 };
 
 use super::{caution, hold};
@@ -284,7 +284,56 @@ pub(crate) const fn tool_gap(gap: ToolGap) -> &'static str {
         ToolGap::UnverifiedVersion => "kipple hasn't verified that version",
         ToolGap::Changed => "it isn't what you reviewed",
         ToolGap::Script => "it is a script that starts another program, which kipple never runs",
+        ToolGap::UnknownLayout => {
+            "it isn't laid out as an install kipple knows (npm's is `lib/node_modules/npm`), so \
+             what it would run can't be told"
+        }
+        ToolGap::NoRuntime => {
+            "its install has no node of its own (`bin/node` beside `bin/npm`), the only node \
+             kipple runs it with"
+        }
+        ToolGap::UnsupportedRuntime => {
+            "its node is a version outside the `engines` range npm itself accepts"
+        }
     }
+}
+
+/// What `doctor` and `explain` say of the tool a native command would run: its version,
+/// its file and what runs it, or why none can. For a version kipple hasn't verified, the
+/// version `found` and the ones it runs, from its integration's `verified` list.
+pub(crate) fn native_tool(
+    tool: &Result<ResolvedTool, ToolGap>,
+    found: Option<&str>,
+    verified: &[&str],
+) -> String {
+    match tool {
+        Ok(tool) => {
+            let runtime = tool.runtime.as_ref().map_or_else(String::new, |node| {
+                format!(" run by {}", node.path.display())
+            });
+            format!("{}  {}{runtime}", tool.version, tool.path.display())
+        }
+        Err(gap) => format!("can't be used: {}", native_tool_gap(*gap, found, verified)),
+    }
+}
+
+/// Why the tool a native command would run can't be used. For a version kipple hasn't
+/// verified, the version `found` and the ones it runs, from its integration's `verified`.
+pub(crate) fn native_tool_gap(gap: ToolGap, found: Option<&str>, verified: &[&str]) -> String {
+    if gap != ToolGap::UnverifiedVersion {
+        return tool_gap(gap).to_owned();
+    }
+    let runs = verified.join(" or ");
+    found.map_or_else(
+        || format!("kipple runs only {runs}, not the version found"),
+        |version| format!("it is version {version}, and kipple runs only {runs}"),
+    )
+}
+
+/// What `doctor` says of a tool it doesn't look for, because no rule on `platform` runs
+/// it: the cache it cleans elsewhere is only reported here.
+pub(crate) fn native_tool_not_needed(platform: &str) -> String {
+    format!("not looked for: its cache is only reported on {platform}")
 }
 
 /// How a restore ended.

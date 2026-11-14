@@ -97,7 +97,7 @@ impl PathTools {
         let engines = install.engines.as_deref().ok_or(ToolGap::UnknownVersion)?;
         let version = node_version(&install.located.node, &self.env)?;
         if !engines::satisfied(engines, version).ok_or(ToolGap::UnknownVersion)? {
-            return Err(ToolGap::UnverifiedVersion);
+            return Err(ToolGap::UnsupportedRuntime);
         }
         Ok(ResolvedTool {
             tool: NativeTool::Npm,
@@ -111,6 +111,19 @@ impl PathTools {
                 fingerprint: node.fingerprint,
             }),
         })
+    }
+}
+
+impl PathTools {
+    /// The version of the first npm on `PATH` whose files kipple can read, verified or
+    /// not: what `doctor` and `explain` name when no npm can run. Reads files only.
+    #[must_use]
+    pub fn npm_version_found(&self) -> Option<String> {
+        npm_installs(&self.env)
+            .into_iter()
+            .flatten()
+            .next()
+            .map(|install| install.version)
     }
 }
 
@@ -184,24 +197,35 @@ fn npm_installs(env: &Environment) -> Vec<Result<NpmInstall, ToolGap>> {
 
 /// The npm `found` on `PATH` leads to: `npm-cli.js` in a package under `lib/node_modules`,
 /// or a `bin/npm` beside such a package, as an install keeps a wrapper (on Windows,
-/// `npm.cmd` beside `node_modules`). A version manager's shim or any other program is
-/// refused as a script that starts another program: kipple can't tell which npm it picks.
+/// `npm.cmd` beside `node_modules`). An `npm-cli.js` anywhere else, such as Debian's
+/// `/usr/share/nodejs/npm`, is a layout kipple doesn't know; a version manager's shim or
+/// any other program is refused as a script that starts another program, since kipple
+/// can't tell which npm it picks. An install with no node of its own has no runtime.
 fn npm_install(found: &Path) -> Result<NpmInstall, ToolGap> {
     let physical = os::physical(found).map_err(|_| ToolGap::Unreadable)?;
-    let (prefix, script) = npm_layout(&physical).ok_or(ToolGap::Script)?;
+    let Some((prefix, script)) = npm_layout(&physical) else {
+        let script = physical
+            .file_name()
+            .is_some_and(|name| name == "npm-cli.js");
+        return Err(if script {
+            ToolGap::UnknownLayout
+        } else {
+            ToolGap::Script
+        });
+    };
     let script = os::physical(&script).map_err(|error| absent_or(&error, ToolGap::Script))?;
     let package = script
         .ancestors()
         .nth(2)
         .filter(|_| script.ends_with(Path::new("node_modules/npm/bin/npm-cli.js")))
-        .ok_or(ToolGap::Script)?
+        .ok_or(ToolGap::UnknownLayout)?
         .to_path_buf();
     let node = if cfg!(windows) {
         prefix.join("node.exe")
     } else {
         prefix.join("bin").join("node")
     };
-    let node = os::physical(&node).map_err(|error| absent_or(&error, ToolGap::Missing))?;
+    let node = os::physical(&node).map_err(|error| absent_or(&error, ToolGap::NoRuntime))?;
     let manifest = manifest(&package)?;
     Ok(NpmInstall {
         located: npmrc::Install { package, node },

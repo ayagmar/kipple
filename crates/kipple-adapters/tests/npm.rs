@@ -173,8 +173,28 @@ fn tag_alone_is_unknown() {
     );
 }
 
-/// Catches a linked `_cacache` read through its link: npm would empty the directory it
-/// leads to, wherever that is.
+/// That `_cacache` was only reported: under the inventory, with an unknown layout, held
+/// as report only, and with no npm asked for, since no clean could run on it.
+fn only_reported(scan: &Scan) {
+    assert_eq!(scan.found(CACHE), Vec::<String>::new());
+    let reported = scan.found(INVENTORY);
+    assert!(
+        reported.contains(&CACACHE.to_owned()),
+        "_cacache is reported: {reported:?}"
+    );
+    assert_eq!(scan.fact(CACACHE, "layout"), Some(UNKNOWN_LAYOUT));
+    assert_eq!(scan.finding(CACACHE).evidence, [Evidence::NoSignature]);
+    assert_eq!(scan.holds(CACACHE), [Hold::ReportOnly]);
+    assert_eq!(
+        subject(scan, CACACHE),
+        Subject::Plain,
+        "npm wasn't asked for"
+    );
+    assert_eq!(scan.owner(NPM), OwnerStatus::Unsupported);
+}
+
+/// Catches a linked `_cacache` read through its link, or offered: npm would empty the
+/// directory it leads to, wherever that is.
 #[test]
 fn linked_cacache_blocks() {
     let mut tree = FixtureTree::new();
@@ -184,20 +204,7 @@ fn linked_cacache_blocks() {
 
     let scan = host(tree).scan();
 
-    assert_eq!(
-        scan.fact(CACACHE, "cache.is_link"),
-        Some(FactValue::Bool(true))
-    );
-    assert_eq!(scan.fact(CACACHE, "layout"), Some(UNKNOWN_LAYOUT));
-    assert_eq!(scan.owner(NPM), OwnerStatus::Unsupported);
-    let holds = scan.holds(CACACHE);
-    assert!(
-        holds.contains(&Hold::FactUnmet) && holds.contains(&Hold::UnknownLayout),
-        "a link fails the rule, found {holds:?}"
-    );
-    let facts = scan.finding(CACACHE).facts.as_ref().unwrap();
-    let unmet: Vec<_> = facts.unmet.iter().map(|unmet| unmet.fact).collect();
-    assert_eq!(unmet, ["cache.is_link", "layout"]);
+    only_reported(&scan);
 }
 
 /// Catches a later cacache's layout, or anything else in `_cacache`, taken for the one
@@ -211,17 +218,7 @@ fn unknown_cache_format_blocks() {
 
     let scan = host(tree).scan();
 
-    assert_eq!(scan.fact(CACACHE, "layout"), Some(UNKNOWN_LAYOUT));
-    assert_eq!(
-        scan.fact(CACACHE, "cache.is_link"),
-        Some(FactValue::Bool(false))
-    );
-    assert_eq!(scan.owner(NPM), OwnerStatus::Unsupported);
-    let holds = scan.holds(CACACHE);
-    assert!(
-        holds.contains(&Hold::FactUnmet) && holds.contains(&Hold::UnknownLayout),
-        "an unknown format fails the rule, found {holds:?}"
-    );
+    only_reported(&scan);
 }
 
 /// Catches `_npx` or `_logs` offered with the cache: `_npx` holds the packages `npx` runs
@@ -403,10 +400,28 @@ fn the_tool_is_supplied_as_the_facts_that_decide() {
             &[Hold::FactUnmet][..],
         ),
         (
+            Err(ToolGap::UnsupportedRuntime),
+            FactValue::Bool(true),
+            FactValue::Enum("unsupported"),
+            &[Hold::FactUnmet][..],
+        ),
+        (
             Err(ToolGap::UnknownVersion),
             FactValue::Bool(true),
             FactValue::Unknown,
             &[Hold::FactUnknown][..],
+        ),
+        (
+            Err(ToolGap::NoRuntime),
+            FactValue::Bool(false),
+            FactValue::Unknown,
+            unmet_and_unknown,
+        ),
+        (
+            Err(ToolGap::UnknownLayout),
+            FactValue::Bool(false),
+            FactValue::Unknown,
+            unmet_and_unknown,
         ),
         (
             Err(ToolGap::Missing),

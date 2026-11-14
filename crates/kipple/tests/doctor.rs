@@ -5,7 +5,9 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use kipple::doctor::{ConfigStatus, IntegrationRoots, Probed, Report, RootCheck};
+use kipple::doctor::{
+    ConfigStatus, IntegrationRoots, LookedNpm, NpmCheck, Probed, Report, RootCheck,
+};
 use kipple::theme::Ink;
 use kipple::{CANCELLED, exit_code};
 use kipple_adapters::builtin::descriptors;
@@ -61,7 +63,7 @@ fn report(cache_error: io::ErrorKind) -> Report {
         }],
         integrations: Vec::new(),
         tools: Vec::new(),
-        npm: Err(ToolGap::Missing),
+        npm: NpmCheck::NotNeeded,
         processes: Ok(ProcessSnapshot {
             processes: Vec::new(),
             inventory: Inventory::Complete,
@@ -187,11 +189,12 @@ fn doctor_shows_the_npm_that_would_run_and_where_its_cache_is() {
             at: cache,
         }),
     });
-    report.npm = Ok(npm());
+    report.npm = looked(Ok(npm()), None);
     let resolved = printed(&report);
     let json = report.to_json();
-    report.npm = Err(ToolGap::UnverifiedVersion);
+    report.npm = looked(Err(ToolGap::UnverifiedVersion), Some("12.2.2"));
     let gap = printed(&report);
+    let gap_json = report.to_json();
 
     let pair = format!(
         "\n  npm         11.20.0  {} run by {}\n",
@@ -205,8 +208,64 @@ fn doctor_shows_the_npm_that_would_run_and_where_its_cache_is() {
         npm_out.is_some_and(|tool| tool.runtime.is_some()),
         "the JSON names its node"
     );
-    let unverified = "\n  npm         can't be used: kipple hasn't verified that version\n";
+    let unverified = "\n  npm         can't be used: it is version 12.2.2, and kipple runs only npm \
+                      11.20.0 or npm 12.2.1\n";
     assert!(gap.contains(unverified), "{gap}");
+    let found = gap_json.tools.iter().find(|tool| tool.name == "npm");
+    assert_eq!(
+        found.and_then(|tool| tool.version.as_deref()),
+        Some("12.2.2"),
+        "the JSON names the version read"
+    );
+}
+
+/// Catches a gap worded as something it isn't: an npm installed without a node of its
+/// own read as not installed, Debian's layout as a script, a node outside `engines` as
+/// an npm version kipple hasn't verified, and a platform where nothing runs npm shown as
+/// one where it would.
+#[test]
+fn doctor_says_what_keeps_npm_from_running() {
+    let mut report = report(io::ErrorKind::NotFound);
+    let cases = [
+        (ToolGap::NoRuntime, "has no node of its own"),
+        (
+            ToolGap::UnknownLayout,
+            "isn't laid out as an install kipple knows",
+        ),
+        (
+            ToolGap::UnsupportedRuntime,
+            "its node is a version outside the `engines`",
+        ),
+    ];
+    for (gap, said) in cases {
+        report.npm = looked(Err(gap), Some("11.20.0"));
+
+        let output = printed(&report);
+
+        let line = output.lines().find(|line| line.starts_with("  npm "));
+        assert!(
+            line.is_some_and(|line| line.contains(said)),
+            "{gap:?}: {output}"
+        );
+    }
+    report.npm = NpmCheck::NotNeeded;
+    let output = printed(&report);
+    assert!(
+        output.contains("npm         not looked for: its cache is only reported on"),
+        "{output}"
+    );
+}
+
+/// What looking for npm gave, with the versions the npm integration runs.
+fn looked(tool: Result<ResolvedTool, ToolGap>, found: Option<&str>) -> NpmCheck {
+    let npm = descriptors()
+        .into_iter()
+        .find(|d| d.id == IntegrationId("npm"));
+    NpmCheck::Looked(Box::new(LookedNpm {
+        tool,
+        found: found.map(str::to_owned),
+        verified: npm.map_or(&[], |npm| npm.verified),
+    }))
 }
 
 // Catches the longest root name filling its column and running into what is said of it.

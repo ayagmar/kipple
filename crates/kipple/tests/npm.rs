@@ -31,18 +31,16 @@ use std::time::{Duration, SystemTime};
 
 use clap::Parser as _;
 use kipple::config::{self, Settings};
-use kipple::doctor::{ConfigStatus, Probed, Report, RootCheck};
 use kipple::setup::Builtin;
 use kipple::theme::{Catalog, Colours, Glyphs, Ink};
 use kipple::tui::{self, Appearance, Input, Key, Keys};
 use kipple::{Answers, Cli, Io, Person};
 use kipple_adapters::builtin::descriptors;
 use kipple_core::{
-    CancelToken, FsProbe as _, HeldPath, IntegrationId, Inventory, Lineage, NativeTool, Observer,
-    Owners, Platform, ProcessSnapshot, Protections, Resolution, Roots, SymbolicRoot,
-    ToolResolver as _, Waited,
+    CancelToken, FsProbe as _, HeldPath, IntegrationId, Lineage, Owners, Platform, Protections,
+    Resolution, Roots, SymbolicRoot, Waited,
 };
-use kipple_platform::{Environment, NoFollowFs, PLATFORM, PathTools, kipple_dirs, resolve_roots};
+use kipple_platform::{Environment, NoFollowFs, PLATFORM, resolve_roots};
 use ratatui::Terminal;
 use ratatui::backend::{Backend, ClearType, TestBackend, WindowSize};
 use ratatui::buffer::Cell;
@@ -130,11 +128,12 @@ impl Machine {
             ("xdg.cache", "home/.cache"),
             ("xdg.data", "home/.local/share"),
             ("xdg.state", "home/.local/state"),
-            ("npm.cache", "home/.npm"),
             ("npm.default-cache", "home/.npm"),
         ] {
             writeln!(file, "{name} = {}", at.join(relative).display()).unwrap();
         }
+        // The cache is placed from the npmrc files and variables, as a real run places it.
+        writeln!(file, "npm.cache = npmrc").unwrap();
         // The cache was filled two months ago: outside every level's recent window.
         let now = SystemTime::now() + Duration::from_hours(24 * 60);
         let seconds = now.duration_since(SystemTime::UNIX_EPOCH).unwrap();
@@ -158,6 +157,7 @@ impl Machine {
     }
 
     /// The machine as a run sees it: the roots file, the home, and `PATH` with npm alone.
+    /// The roots file places npm's cache through the real npmrc reader.
     fn env(&self) -> Environment {
         let vars = [
             ("KIPPLE_TEST_ROOTS", self.roots.clone().into_os_string()),
@@ -444,6 +444,105 @@ fn a_cache_moved_by_npmrc_keeps_node_out_of_npx() {
     );
 }
 
+/// What `_cacache` is in a cache the npmrc moved to `~/moved`.
+#[derive(Clone, Copy, Debug)]
+enum Cacache {
+    /// The directory npm writes, which the rule could clean.
+    Supported,
+    /// A link to such a directory.
+    Link,
+    /// A file.
+    File,
+    /// A directory in a format kipple doesn't know.
+    UnknownLayout,
+}
+
+/// Catches npm, or its node for anything but `--version`, started by a scan or `doctor`, or
+/// a version check for a cache the rule could never clean (reviewer a: `add_cache` resolved
+/// npm for a linked cache): `doctor` and a real scan through the engine start exactly one
+/// `<node> --version` each, only on Linux, and the scan only for a `_cacache` directory in
+/// the format the rule cleans.
+#[test]
+fn scan_and_doctor_start_no_npm_process() {
+    let builtin = Builtin::load().unwrap();
+    for cacache in [
+        Cacache::Supported,
+        Cacache::Link,
+        Cacache::File,
+        Cacache::UnknownLayout,
+    ] {
+        let machine = Machine::new(&format!("{}cache=~/moved\n", npmrc()));
+        let mut tree = FixtureTree::new();
+        match cacache {
+            Cacache::Supported => npm_v11_20_0::cache(&mut tree, "home/moved"),
+            Cacache::Link => {
+                tree.link(
+                    "home/moved/_cacache",
+                    "../.npm/_cacache",
+                    tree::Holds::AsWritten,
+                );
+            }
+            Cacache::File => {
+                tree.file("home/moved/_cacache", b"");
+            }
+            Cacache::UnknownLayout => {
+                tree.file("home/moved/_cacache/content-v1/ab", b"");
+            }
+        }
+        tree.build_in(&machine.at).unwrap();
+
+        let _report = kipple::doctor::gather(&machine.env(), None, &builtin);
+        let by_doctor = machine.started().len();
+        let scan = machine.run(&["scan"]);
+        let by_scan = machine.started().len() - by_doctor;
+
+        assert_eq!(scan.code, ExitCode::SUCCESS, "{cacache:?}: {}", scan.err);
+        let checks = usize::from(CLEANS);
+        let expected = if matches!(cacache, Cacache::Supported) {
+            checks
+        } else {
+            0
+        };
+        assert_eq!((by_doctor, by_scan), (checks, expected), "{cacache:?}");
+        for line in machine.started() {
+            assert_eq!(line.split('\t').next(), Some("--version"), "{cacache:?}");
+        }
+    }
+}
+
+/// Catches a held cache that never says which npm was found or which versions kipple runs
+/// (reviewer c): `explain` on the cache names the npm a clean would run, and for npm
+/// 12.2.2, that version and the versions the integration verified.
+#[test]
+fn explain_names_the_npm_and_what_kipple_runs() {
+    let verified = Machine::new(&npmrc());
+    let newer = Machine::new(&npmrc());
+    let package = newer.at("npm/lib/node_modules/npm/package.json");
+    let manifest = fs::read_to_string(&package).unwrap();
+    fs::write(&package, manifest.replace(npm_v11_20_0::VERSION, "12.2.2")).unwrap();
+    let cacache = verified.cacache().display().to_string();
+
+    let ran = verified.run(&["explain", &cacache]);
+    let held = newer.run(&["explain", &newer.cacache().display().to_string()]);
+
+    assert_eq!(ran.code, ExitCode::SUCCESS, "{}", ran.err);
+    let script = verified.at("npm/lib/node_modules/npm/bin/npm-cli.js");
+    let node = verified.at("npm/bin/node");
+    let runs = format!(
+        "npm 11.20.0  {} run by {}",
+        script.display(),
+        node.display()
+    );
+    let refused =
+        "npm can't be used: it is version 12.2.2, and kipple runs only npm 11.20.0 or npm 12.2.1";
+    if CLEANS {
+        assert!(ran.out.contains(&runs), "{}", ran.out);
+        assert!(held.out.contains(refused), "{}", held.out);
+    } else {
+        assert!(!ran.out.contains("npm-cli.js"), "{}", ran.out);
+    }
+}
+
 /// Catches a semantic plan that never reaches its command, runs one other than the review
 /// showed, or takes more than `_cacache`: from scan to receipt through the command line
 /// and through the home screen, a person who reviewed `npm cache clean` and said yes gets
@@ -460,7 +559,11 @@ fn semantic_plan_end_to_end() {
 
     assert_eq!(scan.code, ExitCode::SUCCESS, "{}", scan.err);
     let cacache = cli.cacache().display().to_string();
-    let line = scan.out.lines().find(|line| line.ends_with(&cacache));
+    // A row reads size, bucket, rule, path, and off Linux "(report only)" after it.
+    let line = scan
+        .out
+        .lines()
+        .find(|line| line.split_whitespace().any(|word| word == cacache));
     let rule = if CLEANS { CACHE } else { INVENTORY };
     assert!(line.is_some_and(|line| line.contains(rule)), "{}", scan.out);
     for machine in [&cli, &screen] {
@@ -594,11 +697,12 @@ fn yes_never_runs_it() {
 
 /// Catches a registry token in an `.npmrc` copied into what kipple says or keeps: npm's
 /// configuration is read for the cache's place alone. Every way the user npmrc can fail
-/// holds the token beside the failing line, and neither the roots, `doctor`, a scan, a
-/// clean's prompt and receipt, the journal and run files, nor the command npm is given
-/// carries it.
+/// holds the token beside the failing line, and for each, with the cache placed by the
+/// real reader, neither the roots, `doctor`, a scan, a clean's prompt and receipt, the
+/// journal and run files, nor the command npm is given carries it.
 #[test]
 fn token_in_npmrc_appears_nowhere() {
+    let builtin = Builtin::load().unwrap();
     let token = format!("//registry.npmjs.org/:_authToken={TOKEN}\n");
     let npmrcs = [
         npmrc(),
@@ -607,69 +711,50 @@ fn token_in_npmrc_appears_nowhere() {
         format!("{token}cache=\"{TOKEN}\n"),
         format!("{token}cache=~/one\nCACHE=~/{TOKEN}\n"),
     ];
-    for npmrc in npmrcs {
-        let machine = Machine::new(&npmrc);
-        let roots = resolve_roots(&machine.resolved_env(), &[]);
-        let mut said = format!("{roots:?}");
-        for Resolution { resolved, .. } in roots.iter() {
-            if let Err(error) = resolved {
-                writeln!(said, "{error}").unwrap();
-            }
+    for (index, npmrc) in npmrcs.iter().enumerate() {
+        let machine = Machine::new(npmrc);
+        let mut said = String::new();
+        for env in [machine.env(), machine.resolved_env()] {
+            said.push_str(&roots_said(&resolve_roots(&env, &[])));
         }
-        let report = doctor(&machine, &roots);
+        let report = kipple::doctor::gather(&machine.env(), None, &builtin);
         let mut printed = Vec::new();
         report.write_to(&mut printed, &Ink::plain()).unwrap();
         said.push_str(&String::from_utf8(printed).unwrap());
         said.push_str(&serde_json::to_string(&report.to_json()).unwrap());
+        let scan = machine.run(&["scan", "--json"]);
+        let cleaned = machine.answer(&["clean"], "y\n");
+        let history = machine.run(&["history", "--json"]);
+        for text in [
+            scan.out,
+            scan.err,
+            cleaned.out,
+            cleaned.err,
+            history.out,
+            history.err,
+        ] {
+            said.push_str(&text);
+        }
+        said.push_str(&machine.stored());
+        said.push_str(&machine.started().join("\n"));
 
         assert!(!said.contains(TOKEN), "{npmrc}: {said}");
+        let placed = index == 0;
+        assert_eq!(
+            machine.cacache().exists(),
+            !(placed && CLEANS),
+            "{npmrc}: only a cache the reader placed is cleaned"
+        );
     }
-    let machine = Machine::new(&npmrc());
-    let scan = machine.run(&["scan", "--json"]);
-    let cleaned = machine.answer(&["clean"], "y\n");
-    let history = machine.run(&["history", "--json"]);
-    for (what, text) in [
-        ("scan", scan.out + &scan.err),
-        ("clean", cleaned.out + &cleaned.err),
-        ("history", history.out + &history.err),
-        ("stored", machine.stored()),
-        ("npm", machine.started().join("\n")),
-    ] {
-        assert!(!text.contains(TOKEN), "{what}: {text}");
-    }
-    assert!(
-        !machine.cacache().exists() || !CLEANS,
-        "the clean didn't run"
-    );
 }
 
-/// `doctor`'s report of `roots` on `machine`, as `kipple doctor` builds it, without the
-/// process table it also reads.
-fn doctor(machine: &Machine, roots: &Roots) -> Report {
-    let env = machine.resolved_env();
-    let checks = roots
-        .iter()
-        .map(|Resolution { root, resolved }| RootCheck {
-            root,
-            status: resolved.clone().map(|at| Probed {
-                meta: NoFollowFs.metadata(&at.path),
-                at,
-            }),
-        })
-        .collect();
-    Report {
-        dirs: kipple_dirs(roots),
-        config_file: None,
-        config: ConfigStatus::default(),
-        roots: checks,
-        integrations: Vec::new(),
-        tools: Vec::new(),
-        npm: PathTools::new(&env).resolve(NativeTool::Npm),
-        processes: Ok(ProcessSnapshot {
-            processes: Vec::new(),
-            inventory: Inventory::Complete,
-            observer: Observer::PLAIN,
-        }),
-        permission_hint: None,
+/// `roots` as a test can read them, with each error worded as kipple words it.
+fn roots_said(roots: &Roots) -> String {
+    let mut said = format!("{roots:?}");
+    for Resolution { resolved, .. } in roots.iter() {
+        if let Err(error) = resolved {
+            writeln!(said, "{error}").unwrap();
+        }
     }
+    said
 }

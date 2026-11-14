@@ -273,9 +273,13 @@ fn cache_values(
 const fn tool_values(tool: &Result<ResolvedTool, ToolGap>) -> (FactValue, FactValue) {
     match tool {
         Ok(_) => (FactValue::Bool(true), SUPPORTED),
-        Err(ToolGap::UnverifiedVersion) => (FactValue::Bool(true), UNSUPPORTED),
+        Err(ToolGap::UnverifiedVersion | ToolGap::UnsupportedRuntime) => {
+            (FactValue::Bool(true), UNSUPPORTED)
+        }
         Err(ToolGap::UnknownVersion) => (FactValue::Bool(true), FactValue::Unknown),
-        Err(ToolGap::Missing | ToolGap::Script) => (FactValue::Bool(false), FactValue::Unknown),
+        Err(ToolGap::Missing | ToolGap::Script | ToolGap::UnknownLayout | ToolGap::NoRuntime) => {
+            (FactValue::Bool(false), FactValue::Unknown)
+        }
         Err(ToolGap::Unreadable | ToolGap::Changed) => (FactValue::Unknown, FactValue::Unknown),
     }
 }
@@ -287,9 +291,10 @@ const fn semantic(tool: Result<ResolvedTool, ToolGap>) -> Subject {
     })
 }
 
-/// Adds `_cacache` when it is there: under the download cache's rule where it runs, with
-/// the tool that would clean it, and under the inventory where it doesn't. npm isn't asked
-/// for unless the rule runs.
+/// Adds `_cacache` when it is there: under the download cache's rule where it runs and
+/// its layout is recognised, with the tool that would clean it, and under the inventory
+/// otherwise. npm is looked for only then, so a link, a file or a layout kipple doesn't
+/// know starts no process.
 fn add_cache(
     cx: &ScanContext<'_>,
     sink: &mut FindingSink<'_>,
@@ -306,13 +311,13 @@ fn add_cache(
     } else {
         Evidence::NoSignature
     };
-    let Some(rule) = rule_of(cx, DOWNLOAD_CACHE) else {
+    let (Some(rule), true) = (rule_of(cx, DOWNLOAD_CACHE), recognised) else {
         return report(cx, sink, &path, evidence, cache.layout);
     };
     let tool = cx.tool(NativeTool::Npm);
     let claim = Claim {
         evidence: vec![evidence],
-        consequence: recognised.then_some(DOWNLOADS),
+        consequence: Some(DOWNLOADS),
     };
     let supplied = Supplied {
         values: cache_values(cache, &tool),
