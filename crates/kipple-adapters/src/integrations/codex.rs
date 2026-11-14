@@ -752,7 +752,8 @@ struct Walked {
     ordinary: bool,
 }
 
-/// Lists everything below `top`, stopping at nothing a link leads to.
+/// Lists everything below `top`, stopping at nothing a link leads to. A directory or a file
+/// that lies off `mount` leaves it not ordinary.
 fn walk(cx: &ScanContext<'_>, top: &Path, mount: Placement) -> Result<Walked, IntegrationError> {
     let mut walked = Walked {
         files: Vec::new(),
@@ -768,7 +769,10 @@ fn walk(cx: &ScanContext<'_>, top: &Path, mount: Placement) -> Result<Walked, In
             let path = dir.join(&entry.name);
             match entry.kind {
                 EntryKind::Dir => pending.push(path),
-                EntryKind::File => walked.files.push(path),
+                EntryKind::File => {
+                    walked.ordinary = walked.ordinary && mount.holds(&cx.metadata(&path)?);
+                    walked.files.push(path);
+                }
                 EntryKind::Symlink if path == top.join("codex") => {}
                 EntryKind::Symlink | EntryKind::Other => walked.ordinary = false,
             }
@@ -779,7 +783,7 @@ fn walk(cx: &ScanContext<'_>, top: &Path, mount: Placement) -> Result<Walked, In
 }
 
 /// Where the store lies: its device, and its mount where the platform tells mounts apart
-/// beyond that, since a bind mount shows a directory of the same device.
+/// beyond that, since a bind mount shows a directory or a file of the same device.
 #[derive(Debug, Clone, Copy)]
 struct Placement {
     volume: Option<u64>,

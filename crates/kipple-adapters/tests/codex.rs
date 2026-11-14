@@ -628,6 +628,7 @@ fn damaged_cases() -> Vec<(&'static str, Scene)> {
     });
     let mount = plain_release(|scene, dir| scene.mounts.push(format!("{dir}/codex-resources")));
     let bind = plain_release(|scene, dir| scene.binds.push(format!("{dir}/codex-resources")));
+    let file_bind = plain_release(|scene, dir| scene.binds.push(format!("{dir}/bin/codex")));
     let mut linked = verified();
     linked
         .tree
@@ -640,6 +641,7 @@ fn damaged_cases() -> Vec<(&'static str, Scene)> {
         ("a FIFO inside", fifo),
         ("a mount inside", mount),
         ("a bind mount of the same device inside", bind),
+        ("a file bind mounted inside", file_bind),
         ("itself a link", linked),
     ]
 }
