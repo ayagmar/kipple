@@ -161,6 +161,17 @@ fn path_of(finding: &Value) -> PathBuf {
     )
 }
 
+/// The path of each finding of `report` in a project below the demo's `home/projects`:
+/// what the project roots decide, unlike npm's cache, which shares the Dev lens.
+fn project_findings(report: &Value) -> Vec<PathBuf> {
+    findings(report)
+        .iter()
+        .filter(|f| f["lens"] == "dev")
+        .map(path_of)
+        .filter(|p| p.ancestors().any(|a| a.ends_with("home/projects")))
+        .collect()
+}
+
 #[expect(
     clippy::unwrap_used,
     reason = "a fixture that fails to build fails the test"
@@ -760,11 +771,7 @@ fn the_configs_project_roots_replace_the_defaults_and_a_missing_one_is_an_omissi
     let report = scan_with(&env, &demo.config("roots.toml", text));
     let web = demo.path("home/projects/web");
 
-    let dev: Vec<PathBuf> = findings(&report)
-        .iter()
-        .filter(|f| f["lens"] == "dev")
-        .map(path_of)
-        .collect();
+    let dev = project_findings(&report);
     assert_ne!(dev.len(), 0);
     assert!(
         dev.iter().all(|p| p.ends_with("web/node_modules")),
@@ -832,14 +839,10 @@ fn an_empty_list_of_project_roots_scans_no_project_and_only_root_replaces_it() {
         "an empty list scans no project root"
     );
 
-    let dev = |report: &Value| {
-        findings(report)
-            .iter()
-            .filter(|f| f["lens"] == "dev")
-            .map(path_of)
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(dev(&scan_with(&env, &file)), Vec::<PathBuf>::new());
+    assert_eq!(
+        project_findings(&scan_with(&env, &file)),
+        Vec::<PathBuf>::new()
+    );
     // `--root` still replaces it.
     let (code, out, err) = kipple(
         &env,
@@ -853,7 +856,7 @@ fn an_empty_list_of_project_roots_scans_no_project_and_only_root_replaces_it() {
         ],
     );
     assert_eq!(code, ExitCode::SUCCESS, "{err}");
-    let given = dev(&serde_json::from_str(&out).unwrap());
+    let given = project_findings(&serde_json::from_str(&out).unwrap());
     assert_ne!(given.len(), 0);
     assert!(
         given.iter().all(|p| p.ends_with("web/node_modules")),

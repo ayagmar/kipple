@@ -79,16 +79,19 @@ fn signature(name: &str) -> Evidence {
     Evidence::Signature(name.to_owned())
 }
 
-#[test]
-fn every_supported_layout_in_the_demo_home_is_found_with_its_evidence_and_nothing_inside_one() {
-    let Scanned { temp, report } = scan(&demo_home::tree(demo_home::looked_at()));
+/// A finding as the demo-home test compares it: its rule, its path and its evidence.
+type Layout = (String, String, Vec<Evidence>);
 
-    let mut found = found(temp.path(), &report);
-    found.retain(|(rule, ..)| !an_agents(rule));
-    found.sort();
-    let root = |name| vec![Evidence::Root(SymbolicRoot::from_name(name).unwrap())];
+fn layouts(rows: Vec<(&str, &str, Vec<Evidence>)>) -> Vec<Layout> {
+    rows.into_iter()
+        .map(|(rule, path, evidence)| (rule.to_owned(), path.to_owned(), evidence))
+        .collect()
+}
+
+/// What the demo home's projects hold.
+fn demo_projects() -> Vec<Layout> {
     let project = |file: &str, sign: Evidence| vec![marker(file), sign];
-    let mut expected = vec![
+    layouts(vec![
         (
             "builtin.cargo.target",
             "home/projects/clients/acme/api/target",
@@ -98,11 +101,6 @@ fn every_supported_layout_in_the_demo_home_is_found_with_its_evidence_and_nothin
             "builtin.cargo.target",
             "home/projects/rust-app/target",
             project("Cargo.toml", signature("CACHEDIR.TAG")),
-        ),
-        (
-            "builtin.journald.journal",
-            "var/log/journal",
-            root("journald.journal"),
         ),
         (
             "builtin.node.node-modules",
@@ -125,11 +123,6 @@ fn every_supported_layout_in_the_demo_home_is_found_with_its_evidence_and_nothin
             project("package.json", signature(".package-lock.json")),
         ),
         (
-            "builtin.pacman.cache",
-            "var/cache/pacman/pkg",
-            root("pacman.cache"),
-        ),
-        (
             "builtin.python.bytecode",
             "home/projects/tool/pkg/__pycache__",
             vec![signature("*.pyc")],
@@ -144,15 +137,58 @@ fn every_supported_layout_in_the_demo_home_is_found_with_its_evidence_and_nothin
             "home/projects/uvproj/.venv",
             project("pyproject.toml", signature("pyvenv.cfg")),
         ),
+    ])
+}
+
+/// What the demo home's caches and system locations hold.
+#[expect(
+    clippy::unwrap_used,
+    reason = "each root named here is one of kipple's"
+)]
+fn demo_caches() -> Vec<Layout> {
+    let root = |name| vec![Evidence::Root(SymbolicRoot::from_name(name).unwrap())];
+    layouts(vec![
+        (
+            "builtin.journald.journal",
+            "var/log/journal",
+            root("journald.journal"),
+        ),
+        (
+            "builtin.npm.cache",
+            "home/.npm/_cacache",
+            vec![signature("_cacache/index-v5")],
+        ),
+        (
+            "builtin.npm.inventory",
+            "home/.npm/_logs",
+            vec![signature("_logs")],
+        ),
+        (
+            "builtin.npm.inventory",
+            "home/.npm/_npx",
+            vec![signature("_npx")],
+        ),
+        (
+            "builtin.pacman.cache",
+            "var/cache/pacman/pkg",
+            root("pacman.cache"),
+        ),
         (
             "builtin.trash.contents",
             "home/.local/share/Trash/files",
             root("trash"),
         ),
-    ]
-    .into_iter()
-    .map(|(rule, path, evidence)| (rule.to_owned(), path.to_owned(), evidence))
-    .collect::<Vec<_>>();
+    ])
+}
+
+#[test]
+fn every_supported_layout_in_the_demo_home_is_found_with_its_evidence_and_nothing_inside_one() {
+    let Scanned { temp, report } = scan(&demo_home::tree(demo_home::looked_at()));
+
+    let mut found = found(temp.path(), &report);
+    found.retain(|(rule, ..)| !an_agents(rule));
+    found.sort();
+    let mut expected = [demo_projects(), demo_caches()].concat();
     expected.sort();
     assert_eq!(found, expected);
     // This scan has no git to ask, so git says what it couldn't list.

@@ -33,8 +33,15 @@ mod uv_v0_12_23;
 #[path = "../../kipple-adapters/tests/fixtures/python/venv_v3_14_8.rs"]
 mod venv_v3_14_8;
 
+#[cfg(unix)]
+#[path = "../../kipple-adapters/tests/fixtures/npm/fake_node.rs"]
+mod fake_node;
+
 #[path = "clean/confirm.rs"]
 mod confirm;
+#[cfg(unix)]
+#[path = "clean/demo_path.rs"]
+mod demo_path;
 #[path = "clean/profile.rs"]
 mod profile;
 
@@ -62,6 +69,8 @@ const DAY: Duration = Duration::from_hours(24);
 struct Demo {
     temp: TempDir,
     roots: PathBuf,
+    /// The `PATH` every run of it gets: the host's git and nothing else.
+    path: OsString,
     /// The time every run of it is looked at.
     now: SystemTime,
 }
@@ -82,21 +91,29 @@ impl Demo {
         writeln!(file, "now = {seconds}").unwrap();
         let roots = temp.path().join("roots.txt");
         fs::write(&roots, file).unwrap();
-        Self { temp, roots, now }
+        let path = demo_home::path(temp.path()).unwrap();
+        Self {
+            temp,
+            roots,
+            path,
+            now,
+        }
     }
 
     fn at(&self, relative: &str) -> PathBuf {
         self.temp.path().join(relative)
     }
 
-    /// The environment a run sees: the roots file, and `PATH`, so git can be asked.
+    /// The environment a run sees: the roots file, and the demo's `PATH`, so git can be
+    /// asked and nothing else of the host's can start.
     fn env(&self) -> Environment {
-        let mut vars = vec![(
-            OsString::from("KIPPLE_TEST_ROOTS"),
-            self.roots.clone().into_os_string(),
-        )];
-        vars.extend(std::env::var_os("PATH").map(|path| (OsString::from("PATH"), path)));
-        Environment::from_vars(vars)
+        Environment::from_vars([
+            (
+                OsString::from("KIPPLE_TEST_ROOTS"),
+                self.roots.clone().into_os_string(),
+            ),
+            (OsString::from("PATH"), self.path.clone()),
+        ])
     }
 
     /// Runs `kipple <args>` with nobody to answer.

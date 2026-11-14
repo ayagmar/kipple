@@ -1,6 +1,6 @@
 # Architecture
 
-Status: partly built. The core ports, `Engine::scan` with its events and the shared project walk (§2, §3), the platform's root resolution, probes, walker and capability probes (§1, §3), the built-in integrations, and the `scan`, `rules`, `explain` and `doctor` commands exist since M1. The core's mutation contract (§2, the mutation contract), with planning, apply and reconciliation, and the platform's `ConfinedFs` and `ConfinedTrash`, which implement its `Freezer`, `Executor` and `TrashBackend`, exist since M3a, and the `clean`, `plan`, `apply`, `history` and `restore` commands call them since M3b, with the platform's `FileRunStore` keeping runs under kipple's data directory; the TUI's review and result screens and the profile commands use them since M3c, with the platform's `FileProfileStore`. Since M4a the platform's `GitQuery` also answers the worktree port, and the engine settles a worktree's ignored paths once every integration has run. The Rust in §2 shows the signatures as they are, and items marked *planned* are sketches that have not been compiled. Nothing is frozen yet.
+Status: partly built. The core ports, `Engine::scan` with its events and the shared project walk (§2, §3), the platform's root resolution, probes, walker and capability probes (§1, §3), the built-in integrations, and the `scan`, `rules`, `explain` and `doctor` commands exist since M1. The core's mutation contract (§2, the mutation contract), with planning, apply and reconciliation, and the platform's `ConfinedFs` and `ConfinedTrash`, which implement its `Freezer`, `Executor` and `TrashBackend`, exist since M3a, and the `clean`, `plan`, `apply`, `history` and `restore` commands call them since M3b, with the platform's `FileRunStore` keeping runs under kipple's data directory; the TUI's review and result screens and the profile commands use them since M3c, with the platform's `FileProfileStore`. Since M4a the platform's `GitQuery` also answers the worktree port, and the engine settles a worktree's ignored paths once every integration has run. Since M4b the engine settles Codex's releases by retention at scan and again at apply, through `Integration::revisit_group` under the platform's `FileLocks`. Since M4c a native item runs through `NativeRunner`, which the platform's `NativeCommands` implements on Linux only, with its tool found by `PathTools` and its facts read again by `Integration::revisit` right before it starts. The Rust in §2 shows the signatures as they are, and items marked *planned* are sketches that have not been compiled. Nothing is frozen yet.
 
 ## 1. Workspace
 
@@ -110,6 +110,24 @@ pub trait RunStore: Debug + Send + Sync {   // bytes only: the core encodes, dec
     fn create(&self, lock: &Locked, plan: &[u8], first: &[u8]) -> Result<RunId, StoreRefusal>;
     fn append(&self, lock: &Locked, run: &RunId, at: u64, line: &[u8]) -> Result<u64, ApplyError>;  // truncates to `at` first
 }
+
+// M4: a tool's own command (D-073, D-081)
+pub trait ToolResolver: Debug + Send + Sync {   // never cached, so apply sees the present
+    fn resolve(&self, tool: NativeTool) -> Result<ResolvedTool, ToolGap>;   // path, identity, fingerprint, version, runtime
+}
+
+pub trait WorktreeQuery: Debug + Send + Sync {  // git's worktrees (D-075)
+    fn list(&self, repository: &Path, cancel: &CancelToken) -> Result<Vec<Registration>, GitGap>;  // main first
+    fn inspect(&self, registration: &Registration, cancel: &CancelToken) -> WorktreeState;   // every row a Result
+}
+
+pub trait NativeRunner: Debug + Send + Sync {   // the only way a tool's own command starts
+    fn run(&self, op: &NativeOp) -> Result<NativeExit, ApplyError>;
+}
+
+pub trait StoreLocks: Debug + Send + Sync {     // a tool's own locks, for one removal
+    fn try_hold(&self, paths: &[PathBuf]) -> Result<HeldLocks, LockGap>;
+}
 ```
 
 `Ports` also holds the `TrackedQuery`, which the scan asks how many files an item inside a repository holds that git tracks. Every durable write returns once it is synced: each file and the directories its name is in (`F_FULLFSYNC` on macOS; on Windows files are written through and directories flushed, D-065). The platform's `GitQuery` answers it (D-066): git found once on the absolute entries of `PATH`, as `doctor` finds it, at least 2.32, checked to be the same file before each run, and run through the runner (64 MiB of output at most, a deadline, cancellable) from the work tree with no system, global or XDG config, its fsmonitor and hooks off, no pager, no optional locks and no correction of a mistyped command into an alias (`help.autocorrect=0`). It asks the work tree kipple's walk found and every directory above it with a `.git` of its own, and leaves out what any of them tracks. For each, `rev-parse --show-toplevel` must name that work tree by file identity; `config --includes --null --name-only --list` is read first and must name nothing that makes the repository a promisor, because `ls-files` can start a fetch in one and a fetch reaches programs the isolation doesn't cover, so what a partial clone holds is held on every git; then `ls-files -z --cached --full-name`, with `--sparse` from git 2.36, is asked, with one literal pathspec, about the item's path up to its first name git might not match as the file system does (a byte past ASCII, or on Windows a name other than the one the directory is stored under), and about that name's directory otherwise, ignoring ASCII case where a directory on the asked path folds it. Each path it returns is resolved handle-relative from the work tree without following a link: one that doesn't reach the item by identity is another path and is passed over, and below the item each is matched to a frozen entry by identity. `FileRunStore` is the run store (§5). `Ports` also holds `ToolResolver`, which finds a native tool and is never cached, and `WorktreeQuery`, which asks git about a repository's worktrees (`list` gives its registrations, main first, and `inspect` what each one is now, every fact a `Result` so one git couldn't prove stays unknown); an integration reaches them through `ScanContext::tool` and `ScanContext::worktrees`. `MutationPorts` holds what apply alone needs: `NativeRunner`, the only way a tool's own command starts, `StoreLocks`, which takes a tool's own locks for one removal, and the same `WorktreeQuery`. On the platform these are `PathTools`, `NativeCommands`, `FileLocks` and `GitQuery`. `PathTools` finds git on the absolute entries of `PATH`, named by the file it leads to, with its identity, fingerprint and version, refuses a `#!` script (`ToolGap::Script`), and finds npm as the first `npm-cli.js` on `PATH` in a layout it knows whose version kipple verified, run by the node of its own prefix (`<prefix>/bin/node`), which must not be a `#!` script and must answer `--version` within 2 s with a version npm's `engines` accept; a gap names which part failed (`ToolGap`). `NativeCommands` starts both commands on Linux through the runner's `invoke_to_end`, from a `CheckedDir` the confined walk opened, and refuses every start elsewhere (04 §6). `invoke_to_end` fails only when the child didn't start; after that a failed wait or read kills and reaps the child and returns `Finish::Lost`, which reaches core as `NativeStatus::Lost`. Each stream comes back as `Printed`, with `Kept` saying whether it is all the command printed. `GitQuery` answers `WorktreeQuery::list` and `inspect` since M4a, from git 2.36 (older git is `GitGap::TooOld` for these queries only), through the same isolation and the repository config gate of 04 §6, and a failed or unreadable answer is a `GitGap`, never an empty list. `Unavailable` is core's version of all four, and answers a worktree question with a gap.
@@ -145,6 +163,10 @@ Only the core decides what may change, and only the platform changes it (04 §1)
 pub trait Integration: Debug + Send + Sync {
     fn descriptor(&self) -> IntegrationDescriptor;   // id, lens, platforms, roots, selectors, artifacts, owner files, verified versions
     fn discover(&self, cx: &ScanContext<'_>, sink: &mut FindingSink<'_>) -> Result<(), IntegrationError>;
+    fn revisit(&self, cx: &ScanContext<'_>, finding: &Finding)
+        -> Result<Option<Supplied>, IntegrationError>;        // at apply; default Ok(None): the apply scan's facts stand
+    fn revisit_group(&self, cx: &ScanContext<'_>, finding: &Finding)
+        -> Result<Option<Vec<Reread>>, IntegrationError>;     // at apply, a release's whole component; default Ok(None)
 }
 ```
 
@@ -222,6 +244,7 @@ planned: IntegrationProgress, PlanReady, ItemStarted, ItemCompleted(outcome), Ap
 | Config | platform config dir | TOML |
 | Runs | platform data dir `runs/<id>/` (`plan`, `journal.jsonl`), locked by `runs/.lock` | per mutating command, the plan with each item's frozen tree stored first (`kipple.stored-plan/v1`; trees in `kipple.frozen-tree` v1: about 40 bytes an entry plus each distinct name's length, so 40 MB for a million entries with repeated names and 73 MB when every name is unique, D-063), then an append-only journal, intent before effect (`kipple.journal/v1`, D-065) |
 | Profiles | platform data dir `profiles/<name>.json` | one strict JSON document per profile (`kipple.profile/v1`), replaced whole |
+| npm's configuration boundary | platform data dir `native/npm/` (`prefix/`, `logs/`, `userconfig`, `globalconfig`) | made before `npm cache clean` starts, reached without following a link, and all four must be empty, so no file a person edits changes what npm does (04 §6) |
 | Packs | data dir `packs/<id>/<version>/` | exact manifest bytes |
 | Lock and grants | data dir `packs.lock` | TOML with digests, sources and grants |
 | Scan cache (planned, not built) | platform cache dir | versioned binary, safe to delete |
@@ -238,7 +261,7 @@ Every on-disk format carries a schema version. A newer unknown version is read-o
 
 - Core policy and planning are unit-tested with fake ports and built `FactSet`s. No disk is involved.
 - Integrations are tested against `FixtureTree` layouts in `crates/kipple-adapters/tests/fixtures/` (see 06 §7), through the engine over a small std-based probe.
-- The platform executor and trash get disposable integration tests on each native OS in CI.
+- The platform executor and trash get disposable integration tests on each native OS in CI. Native commands are tested against the real tools: a worktree's removal and each row of its gate with the host's git in the CLI's end-to-end tests (`crates/kipple/tests/git_worktrees/`), and npm's clean in the `native` profile's contract test on real npm 11.20.0 and 12.2.1, which CI's native job installs from checksummed tarballs.
 - The CLI gets end-to-end tests on `demo-home` with every root redirected by the `test-roots` override: `kipple::run` in-process for the event stream, broken pipe and `explain`, and the built binary's `scan --json` at each carefulness level against a per-platform `insta` snapshot in `cargo xtask verify-demo`.
 - The TUI gets state-transition tests and `insta` snapshots of rendered buffers at 80×24 and 160×48, fed with scan events built in the test (`crates/kipple/src/tui/app/tests.rs`). One report built there is also written by the CLI's human output, and the tree must show the same bucket names, totals, sizes and reasons (`tui/app/tests/parity.rs`).
 

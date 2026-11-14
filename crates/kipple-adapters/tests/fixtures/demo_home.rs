@@ -1,8 +1,9 @@
 //! `demo-home`: the one shared tree used by the end-to-end tests, the docs demo and the
 //! tapes (`docs/06-adapters-and-rules.md` §7), built from the upstream layout fixtures.
 
+use std::ffi::OsString;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use super::tree::{self, FixtureTree};
@@ -30,6 +31,10 @@ mod codex_v0_166_0;
 mod cursor_demo;
 #[path = "git/demo.rs"]
 mod git_demo;
+#[path = "npm/demo.rs"]
+mod npm_demo;
+#[path = "npm/v11_20_0.rs"]
+pub(crate) mod npm_v11_20_0;
 #[path = "pi/demo.rs"]
 mod pi_demo;
 #[path = "pi/v1_5_0.rs"]
@@ -66,9 +71,67 @@ pub(crate) const ROOTS: &[(&str, &str)] = &[
     ("git.agent-locations", "home/.cursor/worktrees"),
     ("git.agent-locations", "home/conductor/workspaces"),
     ("git.agent-locations", "home/.herdr/worktrees"),
+    ("npm.cache", "home/.npm"),
+    ("npm.default-cache", "home/.npm"),
     ("pacman.cache", "var/cache/pacman/pkg"),
     ("journald.journal", "var/log/journal"),
 ];
+
+// Not every crate that builds the demo runs it, or lays out npm's install beside it as a
+// host's would be; naming these here keeps `dead_code` off them in those.
+const _: () = {
+    let _ = path;
+    let _ = npm_v11_20_0::install;
+    let _ = npm_v11_20_0::NODE;
+};
+
+/// The `PATH` a run on the demo built in `dir` gets: one directory that holds the host's
+/// git and nothing else, so a scan can ask git about the demo's worktrees and can start no
+/// other program of the host's, npm and node included (AGENTS.md 8). Every host then shows
+/// the same demo: npm's cache, say, is held on Linux for the missing tool. The directory is
+/// made below `dir` on first use. A host with no git is an error, not an empty `PATH`.
+pub(crate) fn path(dir: &Path) -> io::Result<OsString> {
+    let git = host_git()?;
+    git_dir(dir, &git).map(PathBuf::into_os_string)
+}
+
+/// The first `git` on the absolute entries of the process's `PATH`, as kipple finds it.
+fn host_git() -> io::Result<PathBuf> {
+    let name = format!("git{}", std::env::consts::EXE_SUFFIX);
+    std::env::var_os("PATH")
+        .iter()
+        .flat_map(std::env::split_paths)
+        .filter(|entry| entry.is_absolute())
+        .map(|entry| entry.join(&name))
+        .find(|candidate| candidate.is_file())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "no git on PATH: a demo-home run needs the host's git",
+            )
+        })
+}
+
+/// `<dir>/tools/git`, holding a link named `git` to `git`.
+#[cfg(unix)]
+fn git_dir(dir: &Path, git: &Path) -> io::Result<PathBuf> {
+    let tools = dir.join("tools").join("git");
+    std::fs::create_dir_all(&tools)?;
+    match std::os::unix::fs::symlink(git, tools.join("git")) {
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+        made => made?,
+    }
+    Ok(tools)
+}
+
+/// The host git's own directory: a lone `git.exe` link can't find its DLLs. No npm is
+/// looked for off Linux, so whatever else that directory holds changes nothing.
+#[cfg(windows)]
+fn git_dir(_: &Path, git: &Path) -> io::Result<PathBuf> {
+    git.parent()
+        .map(Path::to_path_buf)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "git has no directory"))
+}
 
 const DAY: Duration = Duration::from_hours(24);
 
@@ -107,6 +170,7 @@ pub(crate) fn tree(now: SystemTime) -> FixtureTree {
     tree.after_build(codex_selection_history);
     cursor_demo::demo(&mut tree);
     git_demo::demo(&mut tree);
+    npm_demo::demo(&mut tree);
     pi_demo::demo(&mut tree);
     tree.modified("home", now - 41 * DAY)
         .modified("var", now - 41 * DAY)
