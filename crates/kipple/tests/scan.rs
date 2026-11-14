@@ -488,29 +488,53 @@ const IN_STORES: &[&str] = &[
 ];
 const IN_A_PROJECT: &str = "home/projects/app";
 
-/// A home with an npm install at each of [`IN_STORES`] and [`IN_A_PROJECT`], an
-/// environment whose roots, the agents' stores among them, point into it, and the home
-/// to give as `--root`, as `kipple scan --root ~` does.
+/// How a test changes one root of [`npm_home`] from where `demo-home` puts it.
+#[derive(Clone, Copy)]
+enum Root {
+    /// At this path below the temp dir.
+    At(&'static str),
+    /// Set to a relative path, which kipple can't use, as with `CODEX_HOME=codex`.
+    Relative,
+    /// Not set at all.
+    Unset,
+}
+
+/// A home with an npm install at each of `projects`, an environment whose roots point
+/// into it as `demo-home`'s do but for `changes`, and the home to give as `--root`, as
+/// `kipple scan --root ~` does.
 #[expect(
     clippy::unwrap_used,
     reason = "a fixture that fails to build fails the test"
 )]
-fn stores() -> (tempfile::TempDir, Environment, String) {
+fn npm_home(
+    projects: &[&str],
+    changes: &[(&'static str, Root)],
+) -> (tempfile::TempDir, Environment, String) {
     let temp = tempfile::tempdir().unwrap();
     let mut tree = tree::FixtureTree::new();
-    for at in IN_STORES.iter().chain([&IN_A_PROJECT]) {
+    for at in projects {
         npm_v11_19_0::project(&mut tree, at);
     }
-    tree.build_in(temp.path()).unwrap();
-    let now = demo_home::looked_at();
-    let mut file = String::new();
-    let roots = demo_home::ROOTS
-        .iter()
-        .chain(&[("cursor.server", "home/.cursor-server")]);
-    for (name, relative) in roots {
-        writeln!(file, "{name} = {}", temp.path().join(relative).display()).unwrap();
+    for (_, change) in changes {
+        if let Root::At(at) = change {
+            tree.dir(at);
+        }
     }
-    let seconds = now
+    tree.build_in(temp.path()).unwrap();
+    let unchanged = demo_home::ROOTS
+        .iter()
+        .filter(|(name, _)| !changes.iter().any(|(changed, _)| changed == name))
+        .map(|(name, relative)| (*name, Root::At(relative)));
+    let mut file = String::new();
+    for (name, root) in unchanged.chain(changes.iter().copied()) {
+        match root {
+            Root::At(at) => writeln!(file, "{name} = {}", temp.path().join(at).display()),
+            Root::Relative => writeln!(file, "{name} = {name}"),
+            Root::Unset => Ok(()),
+        }
+        .unwrap();
+    }
+    let seconds = demo_home::looked_at()
         .duration_since(SystemTime::UNIX_EPOCH)
         .unwrap()
         .as_secs();
@@ -521,6 +545,16 @@ fn stores() -> (tempfile::TempDir, Environment, String) {
         Environment::from_vars([(OsString::from("KIPPLE_TEST_ROOTS"), path.into_os_string())]);
     let home = temp.path().join("home").display().to_string();
     (temp, env, home)
+}
+
+/// [`npm_home`] with an install at each of [`IN_STORES`] and [`IN_A_PROJECT`], and the
+/// agents' stores among its roots.
+fn stores() -> (tempfile::TempDir, Environment, String) {
+    let projects: Vec<&str> = IN_STORES.iter().copied().chain([IN_A_PROJECT]).collect();
+    npm_home(
+        &projects,
+        &[("cursor.server", Root::At("home/.cursor-server"))],
+    )
 }
 
 /// Where the `node_modules` of `at` is, by its trailing components, which hold on every
@@ -701,5 +735,86 @@ fn explain_names_every_root_a_git_rule_reads() {
     assert_eq!(
         looks_in(&env, "builtin.cargo.target"),
         "config.project-roots"
+    );
+}
+
+/// The verdict `kipple scan --root <home> --json` gives the `node_modules` of `at`, or
+/// `Null` when the report has none there.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a report that doesn't parse fails the test"
+)]
+fn node_modules_verdict(env: &Environment, home: &str, at: &str) -> Value {
+    let (code, json, _) = kipple(env, &["scan", "--root", home, "--json"]);
+    assert_eq!(code, ExitCode::SUCCESS, "{json}");
+    let report: Value = serde_json::from_str(&json).unwrap();
+    let wanted = node_modules_of(at);
+    let findings = report.get("findings").and_then(Value::as_array);
+    let found = findings.into_iter().flatten().find(|f| {
+        f.pointer("/path/display")
+            .and_then(Value::as_str)
+            .is_some_and(|display| Path::new(display).ends_with(&wanted))
+    });
+    found
+        .and_then(|f| f.get("verdict"))
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Whether `verdict` is Protected and names `reason`, and doesn't name `not`.
+fn held_for(verdict: &Value, reason: &str, not: &str) -> bool {
+    let reasons = verdict.get("reasons").and_then(Value::as_array);
+    let named = |name: &str| reasons.is_some_and(|all| all.iter().any(|r| r == name));
+    let bucket = verdict.get("bucket").and_then(Value::as_str);
+    bucket == Some("protected") && named(reason) && !named(not)
+}
+
+/// Catches a project shown as in a tool's own data when kipple only can't find its own
+/// data folder, which sends a person looking for a tool that isn't there: it is
+/// Protected as `unlocated`, the reason that says to check where the folder is.
+#[test]
+fn an_unknown_data_folder_holds_a_project_as_unlocated() {
+    let unset = [
+        ("xdg.data", Root::Unset),
+        ("known.roaming-app-data", Root::Unset),
+    ];
+    let (_temp, env, home) = npm_home(&[IN_A_PROJECT], &unset);
+
+    let verdict = node_modules_verdict(&env, &home, IN_A_PROJECT);
+
+    assert!(
+        held_for(&verdict, "unlocated", "subresource"),
+        "expected Protected as unlocated: {verdict}"
+    );
+}
+
+/// Catches a `CODEX_HOME` kipple can't use either opening a person's project, where
+/// Codex's credentials may be, or calling the project Codex's own data: it is Protected
+/// as `unlocated`.
+#[test]
+fn an_unusable_codex_home_holds_a_project_as_unlocated() {
+    let (_temp, env, home) = npm_home(&[IN_A_PROJECT], &[("codex.home", Root::Relative)]);
+
+    let verdict = node_modules_verdict(&env, &home, IN_A_PROJECT);
+
+    assert!(
+        held_for(&verdict, "unlocated", "subresource"),
+        "expected Protected as unlocated: {verdict}"
+    );
+}
+
+/// Catches a finding that holds a tool's store removed with the store inside it, or held
+/// for a reason that says the location is unknown when kipple knows exactly where the
+/// store is: it is Protected as `subresource`.
+#[test]
+fn a_finding_above_a_state_root_holds_as_subresource() {
+    let store = "home/projects/app/node_modules/.cursor-server";
+    let (_temp, env, home) = npm_home(&[IN_A_PROJECT], &[("cursor.server", Root::At(store))]);
+
+    let verdict = node_modules_verdict(&env, &home, IN_A_PROJECT);
+
+    assert!(
+        held_for(&verdict, "subresource", "unlocated"),
+        "expected Protected as subresource: {verdict}"
     );
 }

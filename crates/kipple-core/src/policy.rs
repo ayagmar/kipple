@@ -402,6 +402,9 @@ named! {
         /// It is at, inside or above a tool's own state that isn't open to its rule
         /// (04 §3.9), or kipple's own data.
         Subresource = "subresource",
+        /// kipple's data folder or a tool's state root has no path, so it can't be shown
+        /// to be outside them.
+        Unlocated = "unlocated",
     }
 }
 
@@ -411,6 +414,7 @@ impl From<Protection> for Hold {
             Protection::FileSystemRoot => Self::FileSystemRoot,
             Protection::Home => Self::Home,
             Protection::Subresource => Self::Subresource,
+            Protection::Unlocated => Self::Unlocated,
         }
     }
 }

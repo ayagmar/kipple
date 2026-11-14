@@ -393,7 +393,7 @@ fn yes_without_only_changes_nothing_and_says_what_to_name() {
     assert!(demo.history().is_empty(), "no run is stored");
 }
 
-/// Catches a store kipple can't use reported as items in a tool's own data and exit 3:
+/// Catches a store kipple can't use reported as items whose location is unknown and exit 3:
 /// with kipple's data folder unknown, `clean` says so, exits 1 and changes nothing.
 #[test]
 fn an_unknown_data_folder_refuses_and_says_why() {

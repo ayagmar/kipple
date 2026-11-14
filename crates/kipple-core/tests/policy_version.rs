@@ -23,7 +23,7 @@ use kipple_core::{
 const HISTORY: &[(u32, &str)] = &[
     (1, "8465c62ae444a033bfb801d45aca1aed"),
     (2, "85fff6351399322d17e4f1b8ce829ab6"),
-    (3, "b1f12b8aad46b81a3a02d70aaa79d52b"),
+    (3, "9d3b805388cb3b812d61731948bbe879"),
 ];
 
 const DAY: u64 = 24 * 60 * 60;

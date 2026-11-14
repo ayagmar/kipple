@@ -202,7 +202,7 @@ pub struct VerdictOut {
     /// `unknown-consequence`, `unknown-git`, `holds-repository`, `in-use`,
     /// `unknown-activity`, `unknown-modified`, `retained`, `unsettled`, `fact-unmet`,
     /// `fact-unknown`, `subject-mismatch`, `tracked-inside-native`, and what the host
-    /// protects: `file-system-root`, `home`, `subresource`). Empty when Safe.
+    /// protects: `file-system-root`, `home`, `subresource`, `unlocated`). Empty when Safe.
     pub reasons: Vec<&'static str>,
 }
 

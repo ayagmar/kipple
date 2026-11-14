@@ -765,7 +765,8 @@
         "tracked-inside-native",
         "file-system-root",
         "home",
-        "subresource"
+        "subresource",
+        "unlocated"
       ]
     },
     "ItemMethod": {
@@ -1131,7 +1132,8 @@
       "enum": [
         "file-system-root",
         "home",
-        "subresource"
+        "subresource",
+        "unlocated"
       ]
     },
     "ReceiptItemOut": {

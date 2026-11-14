@@ -202,7 +202,7 @@ fn malformed_override_holds_every_finding_and_doctor_says_why() {
         IntegrationId("cargo"),
         &Owners::default(),
     );
-    assert_eq!(found, Some(Protection::Subresource));
+    assert_eq!(found, Some(Protection::Unlocated));
 
     let mut doctor = report(io::ErrorKind::NotFound);
     doctor.roots.push(RootCheck {

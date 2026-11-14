@@ -551,7 +551,7 @@ fn an_unresolved_config_path_holds_every_log() {
     assert_eq!(scan.fact(&closed_log(), "layout"), SUPPORTED);
     assert_eq!(
         scan.protection(&closed_log(), CLAUDE),
-        Some(Protection::Subresource)
+        Some(Protection::Unlocated)
     );
 }
 

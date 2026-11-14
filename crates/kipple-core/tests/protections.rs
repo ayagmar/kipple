@@ -447,7 +447,10 @@ fn unresolved_npm_root_blocks_only_npm() {
         Protections::of_host(&roots, Some(&data), &[descriptor(NPM, &[NPM_CACHE])], &held);
     let owners = supported(&[NPM, CARGO]);
 
-    assert_eq!(check(&protections, "/home/u/x", NPM, &owners), SUBRESOURCE);
+    assert_eq!(
+        check(&protections, "/home/u/x", NPM, &owners),
+        Some(Protection::Unlocated)
+    );
     assert_eq!(check(&protections, "/home/u/x", CARGO, &owners), None);
 }
 

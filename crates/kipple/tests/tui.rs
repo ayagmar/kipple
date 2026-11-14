@@ -657,7 +657,7 @@ fn with_an_unknown_data_folder_nothing_runs_and_the_scan_says_why() {
         .lines()
         .find(|line| line.contains("clients/acme/api/target"))
         .unwrap_or_else(|| panic!("no acme target in {screen}"));
-    assert!(row.contains("in a tool's own data"), "{screen}");
+    assert!(row.contains("location unknown"), "{screen}");
 }
 
 #[derive(Debug)]

@@ -129,9 +129,22 @@ named! {
         /// The home directory itself, or a directory holding it.
         Home = "home",
         /// A subresource an integration declares, such as a credential store or a
-        /// tool's config: at it, inside it or above it.
+        /// tool's config, or kipple's own data: at it, inside it or above it.
         Subresource = "subresource",
+        /// A place that holds findings has no path, so nothing can be shown to be outside
+        /// it: kipple's own data folder, or a tool's state root that couldn't be resolved.
+        Unlocated = "unlocated",
     }
+}
+
+/// A place the host must keep findings out of that has no path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unlocated {
+    /// kipple's data folder, which holds its runs and config.
+    KippleData,
+    /// A tool's state root that holds every finding when it can't be located
+    /// ([`Unresolved::HoldAll`]).
+    Root(SymbolicRoot),
 }
 
 /// Whether an integration recognised what it read in this scan, which is what lets its
@@ -174,9 +187,11 @@ pub struct Protections {
     /// The home directory, matched by path and by identity. `None` when it is unknown:
     /// then no item can be shown not to hold it, and every one is protected.
     pub home: Option<HeldPath>,
-    /// What stays closed to everything: kipple's own data, and each root that holds every
-    /// finding because it has no path.
+    /// What stays closed to everything wherever it is: kipple's own data.
     pub subresources: Vec<HeldPath>,
+    /// What has no path and so holds every finding: kipple's data folder, or a root
+    /// that holds every finding when it can't be located.
+    pub unlocated: Vec<Unlocated>,
     /// Every integration's state roots, whether it runs here or not.
     pub state: Vec<StateRoot>,
     /// The integrations with a state root that has no path and holds only their own
@@ -212,9 +227,12 @@ impl Protections {
         };
         let mut protections = Self {
             home,
-            subresources: vec![data.map_or_else(HeldPath::default, held)],
             ..Self::default()
         };
+        match data {
+            Some(data) => protections.subresources.push(held(data)),
+            None => protections.unlocated.push(Unlocated::KippleData),
+        }
         let declared = descriptors.iter().flat_map(|descriptor| {
             let state = descriptor.state.iter();
             state.map(|declaration| (descriptor.id, *declaration))
@@ -236,7 +254,7 @@ impl Protections {
                 declaration,
                 held,
             }),
-            (None, Unresolved::HoldAll) => self.subresources.push(HeldPath::default()),
+            (None, Unresolved::HoldAll) => self.unlocated.push(Unlocated::Root(declaration.root)),
             (None, Unresolved::HoldOwn) => {
                 self.unresolved.insert(owner);
             }
@@ -274,13 +292,16 @@ impl Protections {
             .subresources
             .iter()
             .any(|held| held.holds(path, lineage))
-            || self.unresolved.contains(&integration)
             || self
                 .state
                 .iter()
                 .filter(|root| root.held.holds(path, lineage))
                 .any(|root| !self.consents(root, asked));
-        closed.then_some(Protection::Subresource)
+        if closed {
+            return Some(Protection::Subresource);
+        }
+        let unlocated = !self.unlocated.is_empty() || self.unresolved.contains(&integration);
+        unlocated.then_some(Protection::Unlocated)
     }
 
     /// Whether `root`, which reaches the path, lets the finding through. A path above a
