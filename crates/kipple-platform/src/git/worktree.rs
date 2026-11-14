@@ -535,9 +535,11 @@ fn lossy(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
 }
 
-/// The path `bytes` hold, if it is absolute.
+/// The path `bytes` hold, if it is absolute, with this system's separators: git for Windows
+/// prints `C:/Users/…`, and a finding there is shown as every other path is.
 fn absolute(bytes: &[u8]) -> Option<PathBuf> {
-    let path = PathBuf::from(os_string(bytes)?);
+    let printed = PathBuf::from(os_string(bytes)?);
+    let path: PathBuf = printed.components().collect();
     path.is_absolute().then_some(path)
 }
 
@@ -842,6 +844,16 @@ mod tests {
         for (name, class) in cases {
             assert_eq!(config_class(name.as_bytes()), class, "{name}");
         }
+    }
+
+    /// Catches a worktree on Windows shown as git prints it, `C:/Users/…`, beside findings
+    /// spelled with the system's separator.
+    #[test]
+    #[cfg(windows)]
+    fn a_path_git_prints_takes_the_systems_separators() {
+        let path = absolute(b"C:/Users/u/code/app").unwrap();
+
+        assert_eq!(path.to_str(), Some(r"C:\Users\u\code\app"));
     }
 
     /// Catches a line ending kept in a path, which would resolve to nothing and call a sound
