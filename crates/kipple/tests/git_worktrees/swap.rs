@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use kipple_core::ItemOutcome;
 
 use crate::apply::removes_here;
-use crate::repo::{Refs, Repo, write};
+use crate::repo::{Refs, Repo, listed, write};
 
 /// Which of the two worktrees git registers first: under `-C` only the decoy-first order
 /// deleted the decoy, so both are tried.
@@ -39,6 +39,24 @@ fn swapping_git(repo: &Repo, from: &Path, to: &Path) -> PathBuf {
 
 fn add(repo: &Repo, branch: &str, at: &str) {
     repo.git(&["worktree", "add", "-q", "-b", branch, at]);
+}
+
+/// That the decoy at `projects/<name>` is whole: its files, its registration and its admin
+/// directory, since git can drop a registration and leave the files.
+fn decoy_stays(repo: &Repo, name: &str, order: Order) {
+    let checkout = repo.projects().join(name);
+    assert!(
+        checkout.join("file.txt").exists(),
+        "{order:?}: the decoy's files stay"
+    );
+    assert!(listed(repo, name), "{order:?}: the decoy is still listed");
+    let gitfile = fs::read_to_string(checkout.join(".git")).unwrap();
+    let admin = gitfile.trim().strip_prefix("gitdir: ").unwrap_or_default();
+    let admin = checkout.join(admin);
+    assert!(
+        admin.join("gitdir").exists(),
+        "{order:?}: the decoy's admin directory stays"
+    );
 }
 
 /// Catches a removal rebound by a swapped ancestor: `projects/a`, above the reviewed
@@ -73,10 +91,7 @@ fn swapped_ancestor_cannot_rebind_the_remove() {
             "{order:?}: {:?}",
             ran.outcome()
         );
-        assert!(
-            projects.join("b/wt/file.txt").exists(),
-            "{order:?}: the decoy stays"
-        );
+        decoy_stays(&repo, "b/wt", order);
         assert!(
             projects.join("a.moved/wt/file.txt").exists(),
             "{order:?}: the reviewed checkout stays"
@@ -117,10 +132,7 @@ fn swapped_root_cannot_rebind_the_remove() {
             "{order:?}: {:?}",
             ran.outcome()
         );
-        assert!(
-            projects.join("decoy/wt/file.txt").exists(),
-            "{order:?}: the decoy stays"
-        );
+        decoy_stays(&repo, "decoy/wt", order);
         assert!(
             projects.join("root.moved/wt/file.txt").exists(),
             "{order:?}: the reviewed checkout stays"
