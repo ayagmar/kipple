@@ -1,6 +1,6 @@
 # Integrations and rules
 
-Status: partly built. §3 is the normative schema v1 contract, and its validator exists since M1 (`kipple_adapters::pack::validate`, tested against every error case below). The rule types live in `kipple-core`. The built-in integrations of §5a, their packs in `rules/` and the advice of §6 for pacman, journald and Claude Code exist since M1, and their findings are classified into buckets since M2. Since M4a the Codex, Claude Code, Pi, Cursor and git integrations discover and report as §5a says, and the closed logs of Claude Code and Pi, Codex's old TUI log and its plugin catalog cache are removable on Linux. Since M4b Codex's stale releases are removable on Linux too (§4), and since M4c so is a registered, present linked git worktree that passes every fact of §4, through `git worktree remove`. The other TOML examples have been parse-checked only.
+Status: partly built. §3 is the normative schema v1 contract, and its validator exists since M1 (`kipple_adapters::pack::validate`, tested against every error case below). The rule types live in `kipple-core`. The built-in integrations of §5a, their packs in `rules/` and the advice of §6 for pacman, journald and Claude Code exist since M1, and their findings are classified into buckets since M2. Since M4a the Codex, Claude Code, Pi, Cursor and git integrations discover and report as §5a says, and the closed logs of Claude Code and Pi, Codex's old TUI log and its plugin catalog cache are removable on Linux. Since M4b Codex's stale releases are removable on Linux too (§4), and since M4c so are a registered, present linked git worktree that passes every fact of §4, through `git worktree remove`, and npm's download cache, through `npm cache clean` (§5a). On macOS and Windows all of these are reported only. The other TOML examples have been parse-checked only.
 
 ## 1. Two layers
 
@@ -18,7 +18,7 @@ Each kipple release publishes, in docs and through `kipple rules --json`, the ca
 | Symbolic roots | `home`, `xdg.cache`, `xdg.data`, `xdg.state`, `known.local-app-data`, `macos.caches`, `config.project-roots`, integration roots such as `codex.release-store` |
 | Generic selectors | `dirs-matching` (bounded relative glob, depth limit), `files-matching`, `project-artifact` (marker file plus artifact dir name) |
 | Integration selectors | `verified-release-directories`, `registered-linked-worktrees`, `worktree-registrations` (registrations that are missing, unregistered or invalid) |
-| Facts | `modified_age`, `size`, `git.tracked_changes`, `git.untracked_files`, `activity` (idle, busy, unknown), `layout` (supported, unknown), `marker.present`, `release.active`, `release.running` |
+| Facts | `modified_age`, `size`, `git.tracked_changes`, `git.untracked_files`, `activity` (idle, busy, unknown), `layout` (supported, unknown), `marker.present`, integration facts such as `installer_activity`, `worktree.locked` and `npm.version_supported` |
 | Operations | `report` and `remove-files` (frozen leaf set) for everyone. **First-party only:** `remove-verified-release`, `git-worktree-remove`, and the `native.*` closed set. The first-party-only status comes from the capability table, not from an ID prefix. |
 
 Every required fact that is unknown blocks eligibility. The host can restrict a rule further but never relaxes protection because a rule asks.
@@ -203,7 +203,7 @@ Fixtures (`crates/kipple-adapters/tests/codex.rs`, `crates/kipple-core/tests/ret
 
 Worktrees are handled by a **generic Git integration** that labels which agent made each one by location alone, such as `.claude/worktrees/`, because agents of every brand leave them behind and a branch name proves nothing. In the one public report we found, 12 of 13 abandoned worktrees (13.8 GB in total) came from an agent other than Claude Code ([claude-code#26725 comment](https://github.com/anthropics/claude-code/issues/26725#issuecomment-5284720631), 2026-08-13). Claude Code's own `cleanupPeriodDays` sweep also removes *its* orphaned worktrees past that age, and kipple explains this instead of competing with it. Discovery uses `git worktree list --porcelain -z`, from git 2.36, and the facts about each worktree come from real git, with the repository config gate of 04 §6 clear before any command that reads an object.
 
-There are four states, and each path gets exactly one finding. When several repositories list a path, as a copy of a repository does, the one git names from inside the checkout speaks for it. Every rule here is `report` today, so nothing is removed yet.
+There are four states, and each path gets exactly one finding. When several repositories list a path, as a copy of a repository does, the one git names from inside the checkout speaks for it. Only the first state below can be removed, on Linux; the others are reported.
 
 | State | Treatment |
 | --- | --- |
