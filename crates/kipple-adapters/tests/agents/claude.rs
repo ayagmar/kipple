@@ -714,15 +714,25 @@ fn key_files_are_never_read() {
             format!("{CONFIG}/settings.json")
         ]
     );
-    // Not the whole report: an opened root's identity is a random number here, which now
-    // and then holds the digits looked for.
+    // Not the report's whole `Debug`: the identities of roots and of each finding's
+    // directories are random numbers here, which now and then hold the digits looked for.
     let said: Vec<_> = scan
         .report
         .integrations
         .iter()
         .map(|integration| (&integration.omissions, &integration.advice))
         .collect();
-    let report = format!("{:?}{said:?}", scan.report.findings);
+    let found: Vec<_> = scan
+        .report
+        .findings
+        .iter()
+        .map(|finding| {
+            let facts = finding.facts.as_ref();
+            let supplied = facts.map(|facts| (&facts.supplied, &facts.unmet, &facts.activity));
+            (&finding.path, &finding.rule, &finding.evidence, supplied)
+        })
+        .collect();
+    let report = format!("{found:?}{said:?}");
     for secret in [
         "credential-value",
         "key-value",
