@@ -17,7 +17,8 @@ pub(crate) use linux::*;
 pub(crate) use macos::*;
 #[cfg(unix)]
 pub(crate) use unix::{
-    codex_system_config, create_private_dir, create_private_file, own_process_group, sync_dir,
+    codex_system_config, create_private_dir, create_private_file, exit_signal, own_process_group,
+    sync_dir,
 };
 #[cfg(windows)]
 pub(crate) use windows::*;

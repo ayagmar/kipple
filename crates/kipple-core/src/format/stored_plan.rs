@@ -24,7 +24,7 @@ use super::{
 use crate::capability::NativeTool;
 use crate::digest::Digest;
 use crate::engine::FindingId;
-use crate::frozen::{FrozenTree, NameCodec};
+use crate::frozen::{Fingerprint, FrozenTree, NameCodec, Stamp};
 use crate::mutation::LocalFileSystem;
 use crate::native::{NativeCommand, NativeSpec, ResolvedTool, ToolFile};
 use crate::plan::{
@@ -175,6 +175,68 @@ pub(crate) struct ToolFileOut {
     pub path: TextOut,
     /// Its identity.
     pub identity: IdentityOut,
+    /// What changes when it is rewritten in place.
+    pub fingerprint: FingerprintOut,
+}
+
+/// What changes when a file is changed in place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct FingerprintOut {
+    /// The status change time.
+    pub changed: StampOut,
+    /// The modification time.
+    pub modified: StampOut,
+    /// The birth time, where the OS reports one.
+    pub born: Option<StampOut>,
+    /// The length in bytes.
+    pub size: u64,
+}
+
+/// A time as the file system recorded it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct StampOut {
+    /// Seconds since the Unix epoch.
+    pub secs: i64,
+    /// Nanoseconds within that second.
+    pub nanos: u32,
+}
+
+impl FingerprintOut {
+    const fn of(fingerprint: &Fingerprint) -> Self {
+        Self {
+            changed: StampOut::of(fingerprint.changed),
+            modified: StampOut::of(fingerprint.modified),
+            born: match fingerprint.born {
+                Some(born) => Some(StampOut::of(born)),
+                None => None,
+            },
+            size: fingerprint.size,
+        }
+    }
+
+    fn read(&self) -> Result<Fingerprint, FormatError> {
+        Ok(Fingerprint {
+            changed: self.changed.read()?,
+            modified: self.modified.read()?,
+            born: self.born.as_ref().map(StampOut::read).transpose()?,
+            size: self.size,
+        })
+    }
+}
+
+impl StampOut {
+    const fn of(stamp: Stamp) -> Self {
+        Self {
+            secs: stamp.secs(),
+            nanos: stamp.nanos(),
+        }
+    }
+
+    fn read(&self) -> Result<Stamp, FormatError> {
+        Stamp::new(self.secs, self.nanos).ok_or_else(|| invalid("time"))
+    }
 }
 
 /// A native tool as found on this machine.
@@ -187,6 +249,8 @@ pub(crate) struct ToolOut {
     pub path: TextOut,
     /// Its executable's identity.
     pub identity: IdentityOut,
+    /// What changes when its executable is rewritten in place.
+    pub fingerprint: FingerprintOut,
     /// Its version, as it reported it.
     pub version: String,
     /// What runs it, when it is a script.
@@ -225,6 +289,7 @@ impl ToolFileOut {
         Ok(ToolFile {
             path: self.path.path(codec).ok_or_else(|| invalid("tool path"))?,
             identity: self.identity.0,
+            fingerprint: self.fingerprint.read()?,
         })
     }
 }
@@ -235,10 +300,12 @@ impl ToolOut {
             tool: tool.tool,
             path: path_out(&tool.path, codec),
             identity: IdentityOut(tool.identity),
+            fingerprint: FingerprintOut::of(&tool.fingerprint),
             version: tool.version.clone(),
             runtime: tool.runtime.as_ref().map(|file| ToolFileOut {
                 path: path_out(&file.path, codec),
                 identity: IdentityOut(file.identity),
+                fingerprint: FingerprintOut::of(&file.fingerprint),
             }),
         }
     }
@@ -248,6 +315,7 @@ impl ToolOut {
             tool: self.tool,
             path: self.path.path(codec).ok_or_else(|| invalid("tool path"))?,
             identity: self.identity.0,
+            fingerprint: self.fingerprint.read()?,
             version: self.version.clone(),
             runtime: match &self.runtime {
                 Some(file) => Some(file.read(codec)?),

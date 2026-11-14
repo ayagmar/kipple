@@ -132,6 +132,11 @@ pub(crate) fn own_process_group(command: &mut Command) {
     command.creation_flags(CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW);
 }
 
+/// None: Windows ends processes with exit codes, never signals.
+pub(crate) const fn exit_signal(_: std::process::ExitStatus) -> Option<i32> {
+    None
+}
+
 /// Nothing to do: Windows can't sync a directory through std, and a rename replaces the
 /// file in one step (`MoveFileExW` with `MOVEFILE_REPLACE_EXISTING`).
 #[expect(

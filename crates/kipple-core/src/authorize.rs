@@ -26,7 +26,7 @@ use std::sync::Arc;
 use crate::digest::Digest;
 use crate::frozen::{FrozenTree, Mark, Marks, NodeId};
 use crate::mutation::{FileSystemClass, Freeze};
-use crate::native::{NativeKind, NativeSpec};
+use crate::native::{NativeCommand, NativeKind, NativeSpec, ToolGap};
 use crate::outcome::{LeftReason, Skip, Tally};
 use crate::plan::{
     Anchor, Execution, ItemId, ItemMethod, Judgement, JudgementField, Plan, PlanEntry, Standing,
@@ -34,6 +34,7 @@ use crate::plan::{
 use crate::policy::{Hold, Proposal, Verdict};
 use crate::profile::ProfileGrant;
 use crate::rule::Method;
+use crate::supplied::{Subject, Supplied};
 use crate::tracked::{GitGap, OwnGit, holds_repository};
 
 /// What the user authorized.
@@ -206,6 +207,7 @@ pub struct NativeOp {
     spec: NativeSpec,
     repository: Option<PathBuf>,
     admin: Option<PathBuf>,
+    registered: Option<PathBuf>,
 }
 
 impl NativeOp {
@@ -234,6 +236,13 @@ impl NativeOp {
         self.admin.as_deref()
     }
 
+    /// For a worktree, the path git printed for it, which a `list` after the run must no
+    /// longer name.
+    #[must_use]
+    pub fn registered(&self) -> Option<&Path> {
+        self.registered.as_deref()
+    }
+
     /// A native command over what `target` authorizes, made without a plan, a review or
     /// revalidation. Only for the platform's native tests of its runner. Only under the
     /// `platform-tests` feature, as [`DeleteOp::for_platform_tests`].
@@ -245,11 +254,13 @@ impl NativeOp {
         repository: Option<PathBuf>,
         admin: Option<PathBuf>,
     ) -> Self {
+        let registered = repository.as_ref().map(|_| target.0.anchor.path());
         Self {
             target: target.0,
             spec,
             repository,
             admin,
+            registered,
         }
     }
 }
@@ -260,7 +271,7 @@ impl NativeOp {
 ///     target: kipple_core::Authorized,
 ///     spec: kipple_core::NativeSpec,
 /// ) -> kipple_core::NativeOp {
-///     kipple_core::NativeOp { target, spec, repository: None, admin: None }
+///     kipple_core::NativeOp { target, spec, repository: None, admin: None, registered: None }
 /// }
 /// ```
 #[cfg(doctest)]
@@ -273,6 +284,8 @@ pub enum AuthorizedOp {
     Delete(DeleteOp),
     /// A trash move.
     Trash(TrashOp),
+    /// A tool's own command.
+    Native(Box<NativeOp>),
 }
 
 impl AuthorizedOp {
@@ -282,15 +295,17 @@ impl AuthorizedOp {
         match self {
             Self::Delete(op) => op.target(),
             Self::Trash(op) => op.target(),
+            Self::Native(op) => op.target(),
         }
     }
 
-    /// Its method.
+    /// How it runs.
     #[must_use]
-    pub const fn method(&self) -> Method {
+    pub const fn method(&self) -> ItemMethod {
         match self {
-            Self::Delete(_) => Method::Delete,
-            Self::Trash(_) => Method::Trash,
+            Self::Delete(_) => ItemMethod::Delete,
+            Self::Trash(_) => ItemMethod::Trash,
+            Self::Native(_) => ItemMethod::Native,
         }
     }
 }
@@ -306,6 +321,9 @@ pub(crate) struct Recheck<'facts> {
     pub(crate) proposal: &'facts Proposal,
     /// What the item is judged under now.
     pub(crate) judgement: &'facts Judgement,
+    /// What its integration read again now ([`Rescan::now`](crate::Rescan::now)): the
+    /// tool and witness a native command is compared with.
+    pub(crate) supplied: &'facts Supplied,
     /// Whether its own top-level `.git` stands for a repository inside it now.
     pub(crate) own_git: OwnGit,
     /// The target frozen now.
@@ -322,9 +340,14 @@ pub(crate) struct Recheck<'facts> {
 /// not be Protected now; its bucket must still be one it was authorized in (a Safe item
 /// stays Safe, a Review item gains no caution, and under Safe-only it is Safe); its rule
 /// must still offer its method; its file system must be supported; the fresh freeze must
-/// confirm at least one reviewed entry; and a trash move or a native command needs every
-/// entry of the tree confirmed, nothing left out. No native command is authorized yet: a
-/// native item that passes everything is still refused.
+/// confirm at least one reviewed entry; and a trash move or a worktree's removal needs
+/// every entry of the tree confirmed, nothing left out and nothing added.
+///
+/// A native command must also find its tool read again as the same files and version
+/// (pinned 29), a worktree's witness built again equal, and no repository and nothing git
+/// tracks inside its target. npm's clean alone compares only its target's top: entries
+/// landing in the cache since review are its stated effect (04 §6), and what is gone needs
+/// no authority.
 pub(crate) fn admit(
     plan: &Plan,
     item: ItemId,
@@ -345,9 +368,10 @@ pub(crate) fn admit(
     }
     if let Execution::Native(spec) = &entry.execution {
         native_stands(spec, own_git, &freeze.tree)?;
+        still_the_same(spec, recheck.supplied)?;
     }
     let tree = &entry.tree;
-    let mut marks = tree.recheck(&freeze.tree);
+    let mut marks = leaves(&entry.execution, tree, &freeze.tree);
     // A tree of a root's contents for a target below it, or the reverse, isn't what the
     // anchor names, whatever a freezer returned.
     if entry.anchor.parent != freeze.parent || tree.scope() != entry.anchor.scope() {
@@ -374,7 +398,102 @@ pub(crate) fn admit(
             })
         }
         Execution::Files(Method::Trash) => Ok(AuthorizedOp::Trash(TrashOp(target))),
-        Execution::Native(_) => Err(Skip::SemanticNotReviewed),
+        Execution::Native(spec) => Ok(AuthorizedOp::Native(Box::new(native_op(
+            target,
+            spec,
+            recheck.supplied,
+        )))),
+    }
+}
+
+/// What of `tree` the fresh freeze `now` still authorizes, for `execution`.
+///
+/// Files and a worktree's removal compare every entry, and a worktree's removal also
+/// drops the directory holding an entry the review never saw: `status --ignored` prints
+/// an ignored directory and stops there, so nothing else sees a file added inside it
+/// (pinned 29). npm's clean compares only the top: the same directory, or nothing.
+fn leaves(execution: &Execution, tree: &FrozenTree, now: &FrozenTree) -> Marks {
+    let Execution::Native(spec) = execution else {
+        return tree.recheck(now);
+    };
+    match spec.command {
+        NativeCommand::NpmCacheClean { .. } => {
+            let mut marks = Marks::of(tree);
+            let top = |frozen: &FrozenTree| {
+                frozen
+                    .top()
+                    .snapshot()
+                    .map(|snapshot| (snapshot.kind, snapshot.identity))
+            };
+            if tree.volume() != now.volume() || tree.scope() != now.scope() || top(tree) != top(now)
+            {
+                marks.drop_subtree(tree, NodeId::TOP, LeftReason::Replaced);
+            }
+            marks
+        }
+        NativeCommand::GitWorktreeRemove { .. } => {
+            let mut marks = tree.recheck(now);
+            for added in now
+                .entries()
+                .filter(|entry| tree.find(&entry.path()).is_none())
+            {
+                let holder = added
+                    .parent()
+                    .and_then(|parent| tree.find(&parent.path()))
+                    .unwrap_or(NodeId::TOP);
+                marks.drop_subtree(tree, holder, LeftReason::Changed);
+            }
+            marks
+        }
+    }
+}
+
+/// Whether the tool and the witness read again now are the ones `spec` was reviewed with.
+fn still_the_same(spec: &NativeSpec, now: &Supplied) -> Result<(), Skip> {
+    let (tool, witness) = match (&spec.command, &now.subject) {
+        (NativeCommand::NpmCacheClean { .. }, Subject::Semantic(facts))
+            if facts.kind == NativeKind::NpmCacheClean =>
+        {
+            (&facts.tool, None)
+        }
+        (NativeCommand::GitWorktreeRemove { witness, .. }, Subject::Worktree(facts)) => {
+            (&facts.tool, Some((witness, &facts.witness)))
+        }
+        (
+            NativeCommand::NpmCacheClean { .. } | NativeCommand::GitWorktreeRemove { .. },
+            Subject::Plain | Subject::Release(_) | Subject::Semantic(_) | Subject::Worktree(_),
+        ) => return Err(Skip::Protected(vec![Hold::SubjectMismatch])),
+    };
+    let tool = tool.as_ref().map_err(|gap| Skip::ToolChanged(*gap))?;
+    if *tool != spec.tool {
+        return Err(Skip::ToolChanged(ToolGap::Changed));
+    }
+    if let Some((reviewed, read)) = witness {
+        let read = read.as_ref().map_err(|gap| Skip::Git(*gap))?;
+        if read != reviewed {
+            return Err(Skip::WitnessChanged);
+        }
+    }
+    Ok(())
+}
+
+/// The command `spec` over `target`, with the paths a worktree's run checks and asks
+/// about afterwards, as read now.
+fn native_op(target: Authorized, spec: &NativeSpec, now: &Supplied) -> NativeOp {
+    let (repository, admin, registered) = match &now.subject {
+        Subject::Worktree(facts) => (
+            Some(facts.repository.clone()),
+            facts.admin.clone(),
+            Some(facts.registration.path.clone()),
+        ),
+        Subject::Plain | Subject::Release(_) | Subject::Semantic(_) => (None, None, None),
+    };
+    NativeOp {
+        target,
+        spec: spec.clone(),
+        repository,
+        admin,
+        registered,
     }
 }
 

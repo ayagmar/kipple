@@ -511,6 +511,10 @@
         "cancelled",
         "native-failed",
         "native-timed-out",
+        "native-unconfirmed",
+        "native-lost",
+        "native-lost-running",
+        "tool-changed",
         "io"
       ]
     },
@@ -704,6 +708,25 @@
             "found": {
               "type": "string",
               "const": "unsynced"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "found",
+            "error"
+          ]
+        },
+        {
+          "description": "A tool's own command ended without proving what it changed.",
+          "type": "object",
+          "properties": {
+            "error": {
+              "description": "How it ended.",
+              "$ref": "#/$defs/ErrorOut"
+            },
+            "found": {
+              "type": "string",
+              "const": "unproven"
             }
           },
           "additionalProperties": false,
@@ -1854,7 +1877,8 @@
         "tool-unreadable",
         "tool-unknown-version",
         "tool-unverified-version",
-        "tool-changed"
+        "tool-changed",
+        "tool-script"
       ]
     },
     "TotalsOut": {

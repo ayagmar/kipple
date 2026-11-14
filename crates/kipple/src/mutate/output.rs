@@ -1,18 +1,20 @@
 //! What a mutating command writes: its events as they happen (`--events jsonl`), and its
 //! receipt when it ends, for people or as `kipple.receipt/v1`.
 
+use std::cell::RefCell;
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use kipple_core::format::{ApplyEventOut, ReceiptOut};
 use kipple_core::{
-    ApplyEvent, CancelToken, DroppedItem, Ending, EventSink, Finding, Finished, ItemEvent, Policy,
-    Receipt, Reconciled, RefusedItem, Status,
+    ApplyEvent, CancelToken, DroppedItem, Ending, EventSink, Finding, Finished, ItemEvent,
+    ItemMethod, Policy, Receipt, Reconciled, RefusedItem, Status,
 };
 use kipple_platform::OsNames;
 
 use super::Format;
-use crate::human::{self, outcome, receipt as words};
+use crate::human::{self, native, outcome, receipt as words, review};
 use crate::theme::{Ink, Role};
 use crate::{CANCELLED, say};
 
@@ -114,6 +116,8 @@ pub(super) struct Events {
     written: io::Result<()>,
     /// The item to crash at, in a `test-roots` build ([`crate::crash_point`]).
     crash_at: Option<u32>,
+    /// The path of the native item running, which its output is said under.
+    running: Option<PathBuf>,
 }
 
 impl Events {
@@ -126,6 +130,7 @@ impl Events {
             notices: Vec::new(),
             written: Ok(()),
             crash_at: None,
+            running: None,
         }
     }
 
@@ -134,11 +139,18 @@ impl Events {
         Self { crash_at, ..self }
     }
 
-    /// Where the command reports its events, streaming them to `stdout` when asked to.
-    pub(super) fn sink<'sink>(&'sink mut self, stdout: &'sink mut dyn Write) -> Sink<'sink> {
+    /// Where the command reports its events, streaming them to `stdout` when asked to, and
+    /// saying on `stderr` when a tool's own command starts and what it printed once it
+    /// ended.
+    pub(super) fn sink<'sink>(
+        &'sink mut self,
+        stdout: &'sink mut dyn Write,
+        stderr: &'sink mut dyn Write,
+    ) -> Sink<'sink> {
         Sink {
             events: self,
             stdout,
+            stderr,
         }
     }
 
@@ -179,13 +191,67 @@ impl Events {
 pub(super) struct Sink<'sink> {
     events: &'sink mut Events,
     stdout: &'sink mut dyn Write,
+    stderr: &'sink mut dyn Write,
+}
+
+impl Sink<'_> {
+    /// Says on stderr that a tool's own command started, and what it printed once it
+    /// ended: nothing else shows while it runs, and none of it is data (AGENTS.md 12).
+    fn say_native(&mut self, event: &ApplyEvent) {
+        let ApplyEvent::Item { event, .. } = event else {
+            return;
+        };
+        let lines = match event {
+            ItemEvent::Started {
+                method: ItemMethod::Native,
+                path,
+                ..
+            } => {
+                self.events.running = Some(path.clone());
+                vec![review::working_on(ItemMethod::Native, path)]
+            }
+            ItemEvent::Ended {
+                output: Some(output),
+                ..
+            } => {
+                let path = self.events.running.take().unwrap_or_default();
+                native::output_lines(&path, output)
+            }
+            ItemEvent::Started { .. } | ItemEvent::Ended { .. } => Vec::new(),
+        };
+        for line in lines {
+            say(self.stderr, &line);
+        }
+    }
+}
+
+/// One stream two writers share while a command runs: the prompt asks a person on stderr
+/// before anything starts, and the run's events say on stderr what a tool's own command
+/// did once it has.
+pub(super) struct Shared<'stream>(RefCell<&'stream mut dyn Write>);
+
+impl<'stream> Shared<'stream> {
+    pub(super) fn new(stream: &'stream mut dyn Write) -> Self {
+        Self(RefCell::new(stream))
+    }
+}
+
+impl Write for &Shared<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.borrow_mut().write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.borrow_mut().flush()
+    }
 }
 
 impl EventSink for Sink<'_> {
     fn event(&mut self, event: ApplyEvent) {
+        self.say_native(&event);
         let events = &mut *self.events;
         if let ApplyEvent::Item {
-            event: ItemEvent::Started { item },
+            event: ItemEvent::Started { item, .. },
             ..
         } = &event
             && events.crash_at == Some(item.0)
@@ -296,5 +362,86 @@ const fn role_of(status: Status) -> Role {
         Status::Skipped | Status::Cancelled => Role::Muted,
         Status::Partial | Status::Indeterminate => Role::Warning,
         Status::Failed => Role::Error,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::time::{Duration, SystemTime};
+
+    use kipple_core::{
+        Effect, ItemId, ItemOutcome, Measured, NativeEffect, NativeEnd, NativeOutput, Printed,
+        RunId,
+    };
+
+    use super::*;
+
+    fn item(event: ItemEvent) -> ApplyEvent {
+        ApplyEvent::Item {
+            run: RunId::at(
+                SystemTime::UNIX_EPOCH + Duration::from_secs(1_793_000_000),
+                0,
+            ),
+            event,
+        }
+    }
+
+    /// What a command in `format` wrote on each stream once `events` had happened.
+    fn written(format: Format, events: &[ApplyEvent]) -> [String; 2] {
+        let mut told = Events::new(format, 0, CancelToken::new(), Ink::plain());
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut sink = told.sink(&mut stdout, &mut stderr);
+        for event in events {
+            sink.event(event.clone());
+        }
+        [stdout, stderr].map(|bytes| String::from_utf8(bytes).unwrap())
+    }
+
+    /// Catches a tool's output shown as it streams, which a person could read mid-run as
+    /// the outcome, or written on stdout, where a script reads data: the start is said on
+    /// stderr, what the command printed only after it ended, and stdout holds none of it in
+    /// any format (04 §8a; AGENTS.md 12).
+    #[test]
+    fn output_shows_when_it_ends_and_never_on_stdout() {
+        let path = PathBuf::from("checkout");
+        let output = NativeOutput {
+            stdout: Printed::all(b"printed-out\n".to_vec()),
+            stderr: Printed::all(b"printed-err\n".to_vec()),
+        };
+        let started = item(ItemEvent::Started {
+            item: ItemId(0),
+            method: ItemMethod::Native,
+            path: path.clone(),
+        });
+        let ended = item(ItemEvent::Ended {
+            item: ItemId(0),
+            outcome: Box::new(ItemOutcome::Done(Effect::Native(NativeEffect {
+                exit: NativeEnd {
+                    exit: Some(0),
+                    signal: None,
+                },
+                reclaimed: Measured::Unknown,
+            }))),
+            output: Some(Box::new(output.clone())),
+        });
+        let starting = review::working_on(ItemMethod::Native, &path);
+        let printed = native::output_lines(&path, &output);
+
+        let [_, running] = written(Format::Human, std::slice::from_ref(&started));
+        assert!(running.contains(&starting), "{running}");
+        assert!(!running.contains("printed-"), "nothing yet: {running}");
+
+        for format in [Format::Human, Format::Json, Format::Events] {
+            let [stdout, stderr] = written(format, &[started.clone(), ended.clone()]);
+            assert!(!stdout.contains("printed-"), "{format:?}: {stdout}");
+            let (_, after) = stderr.split_once(&starting).unwrap();
+            for line in &printed {
+                assert!(
+                    after.contains(line.as_str()),
+                    "{format:?}: {line:?} after the start in {stderr}"
+                );
+            }
+        }
     }
 }

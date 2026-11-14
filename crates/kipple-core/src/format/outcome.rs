@@ -651,6 +651,11 @@ pub enum FoundOut {
         /// Why.
         error: ErrorOut,
     },
+    /// A tool's own command ended without proving what it changed.
+    Unproven {
+        /// How it ended.
+        error: ErrorOut,
+    },
     /// Not reconciled yet: running, or interrupted.
     Pending,
 }
@@ -674,6 +679,9 @@ impl FoundOut {
             Found::Unsynced(error) => Self::Unsynced {
                 error: ErrorOut::of(error, codec),
             },
+            Found::Unproven(error) => Self::Unproven {
+                error: ErrorOut::of(error, codec),
+            },
             Found::Pending => Self::Pending,
         }
     }
@@ -693,6 +701,7 @@ impl FoundOut {
             }),
             Self::Unreadable { error } => Found::Unreadable(error.read(codec)?),
             Self::Unsynced { error } => Found::Unsynced(error.read(codec)?),
+            Self::Unproven { error } => Found::Unproven(error.read(codec)?),
             Self::Pending => Found::Pending,
         })
     }

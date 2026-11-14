@@ -3,7 +3,9 @@
 
 use std::path::Path;
 
-use kipple_core::{NativeArg, NativeCommand, NativeSpec, ResolvedTool};
+use kipple_core::{
+    Kept, NativeArg, NativeCommand, NativeOutput, NativeSpec, Printed, ResolvedTool,
+};
 
 use super::escaped;
 
@@ -14,12 +16,24 @@ pub(crate) const NATIVE_CANNOT_UNDO: &str =
 /// What npm's command removes, beside its line.
 const NPM_REMOVES: &str = "removes what is in the cache when it runs, nothing else";
 
-/// One argument as a person reads it. What kipple points a tool at below its own data
-/// directory is kipple's, so only the key shows.
+/// What review shows for a path kipple fills in below its own data directory: one that
+/// holds nothing, whatever its full name, which is kipple's and not the person's.
+pub(crate) const KIPPLES_OWN: &str = "(kipple's own, empty)";
+
+/// What review shows for the OS's null device.
+const NOTHING: &str = "(none)";
+
+/// What follows a stream cut short: it went past what kipple keeps, or couldn't be read
+/// to its end.
+pub(crate) const OUTPUT_CUT: &str = "  (the rest of what it printed wasn't kept)";
+
+/// One argument as a person reads it. A path kipple fills in shows as what it is, never
+/// as an empty value, so the line a person approves is never another valid command.
 fn shown(arg: NativeArg) -> String {
     match arg {
-        NativeArg::Fixed(text) | NativeArg::Data(text, _) => text.to_owned(),
-        NativeArg::NullDevice(key) => format!("{key}(none)"),
+        NativeArg::Fixed(text) => text.to_owned(),
+        NativeArg::Data(key, _) => format!("{key}{KIPPLES_OWN}"),
+        NativeArg::NullDevice(key) => format!("{key}{NOTHING}"),
     }
 }
 
@@ -53,14 +67,64 @@ pub(crate) fn native_line(spec: &NativeSpec, size: &str, path: &Path) -> String 
     }
 }
 
+/// What a tool's own command on `path` printed, said once it ended: each stream that
+/// printed anything, under a line naming the item and the stream, every line escaped, and
+/// a stream cut short said to be. On stderr at the command line and in the result's
+/// notices in the TUI; never on stdout and never stored (04 §8a).
+pub(crate) fn output_lines(path: &Path, output: &NativeOutput) -> Vec<String> {
+    let path = escaped(&path.display().to_string());
+    let streams = [
+        (
+            format!("What the tool's command on {path} printed:"),
+            &output.stdout,
+        ),
+        (
+            format!("What the tool's command on {path} printed as errors and warnings:"),
+            &output.stderr,
+        ),
+    ];
+    let mut lines = Vec::new();
+    for (heading, printed) in streams {
+        let text = String::from_utf8_lossy(whole_characters(printed));
+        let said: Vec<String> = text
+            .lines()
+            .filter(|line| !line.trim().is_empty())
+            .map(|line| format!("  | {}", escaped(line)))
+            .collect();
+        if said.is_empty() && printed.kept == Kept::All {
+            continue;
+        }
+        lines.push(heading);
+        lines.extend(said);
+        if printed.kept == Kept::Start {
+            lines.push(OUTPUT_CUT.to_owned());
+        }
+    }
+    lines
+}
+
+/// The bytes of `printed` without a character the cut split, which would show as a
+/// replacement character that the tool never printed.
+fn whole_characters(printed: &Printed) -> &[u8] {
+    let bytes = printed.bytes.as_slice();
+    if printed.kept == Kept::All {
+        return bytes;
+    }
+    let split = bytes
+        .utf8_chunks()
+        .last()
+        .map_or(0, |chunk| chunk.invalid().len());
+    bytes.get(..bytes.len() - split).unwrap_or(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
     use kipple_core::{
-        Allocated, Anchor, FileIdentity, Measured, NativeCommand, NativeEffect, NativeEnd,
-        NativeTool, ObjectId, RelPath, SymbolicRoot, ToolFile, Totals, VerifiedRoot,
-        WorktreeWitness,
+        Allocated, Anchor, FileIdentity, Fingerprint, Measured, NativeCommand, NativeEffect,
+        NativeEnd, NativeTool, ObjectId, RelPath, Stamp, SymbolicRoot, ToolFile, Totals,
+        VerifiedRoot, WorktreeWitness,
     };
 
     use super::*;
@@ -68,6 +132,16 @@ mod tests {
     use crate::human::receipt::totals;
 
     const IDENTITY: FileIdentity = FileIdentity { volume: 1, file: 2 };
+    const FINGERPRINT: Fingerprint = Fingerprint {
+        changed: STAMP,
+        modified: STAMP,
+        born: None,
+        size: 1,
+    };
+    const STAMP: Stamp = match Stamp::new(1, 0) {
+        Some(stamp) => stamp,
+        None => panic!("a stamp in range"),
+    };
 
     fn spec(command: NativeCommand, tool: NativeTool) -> NativeSpec {
         NativeSpec {
@@ -76,6 +150,7 @@ mod tests {
                 tool,
                 path: PathBuf::from("/usr/bin/tool"),
                 identity: IDENTITY,
+                fingerprint: FINGERPRINT,
                 version: "1.0.0".to_owned(),
                 runtime: None,
             },
@@ -107,6 +182,7 @@ mod tests {
         npm.tool.runtime = Some(ToolFile {
             path: PathBuf::from("/opt/node/bin/node"),
             identity: IDENTITY,
+            fingerprint: FINGERPRINT,
         });
         let line = native_line(&npm, "12 MiB", Path::new("/home/u/.npm/_cacache"));
         assert!(
@@ -128,6 +204,17 @@ mod tests {
             !line.contains("native/npm"),
             "kipple's own paths stay out: {line}"
         );
+        for key in [
+            "--prefix=",
+            "--userconfig=",
+            "--globalconfig=",
+            "--logs-dir=",
+        ] {
+            assert!(
+                line.contains(&format!("{key}{KIPPLES_OWN}")),
+                "{key} says kipple fills it, never an empty value: {line}"
+            );
+        }
 
         let worktree = NativeCommand::GitWorktreeRemove {
             checkout: anchor(),
@@ -173,5 +260,31 @@ mod tests {
             reclaimed: Measured::Unknown,
         };
         assert_eq!(measured(effect.reclaimed), "not measured");
+    }
+
+    /// Catches output cut at the runner's bound read as all a tool printed, which hides the
+    /// reason a tool gives last, and a character the cut split shown as one the tool never
+    /// printed: the cut stream says the rest wasn't kept, and ends on a whole character.
+    #[test]
+    fn a_cut_stream_says_so_and_ends_on_a_whole_character() {
+        let cut = Printed {
+            bytes: "warning: x\u{e9}".as_bytes()[..11].to_vec(),
+            kept: Kept::Start,
+        };
+        let output = NativeOutput {
+            stdout: Printed::all(b"done\n".to_vec()),
+            stderr: cut,
+        };
+
+        let lines = output_lines(Path::new("/w"), &output);
+
+        assert_eq!(
+            lines[lines.len() - 2..],
+            ["  | warning: x".to_owned(), OUTPUT_CUT.to_owned()]
+        );
+        assert!(
+            lines[0].contains("/w") && lines[2].contains("/w"),
+            "each heading names its item: {lines:?}"
+        );
     }
 }

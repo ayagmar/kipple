@@ -7,9 +7,9 @@ use std::os::unix::ffi::OsStrExt as _;
 use std::os::unix::fs::{
     DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _,
 };
-use std::os::unix::process::CommandExt as _;
+use std::os::unix::process::{CommandExt as _, ExitStatusExt as _};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, ExitStatus};
 use std::sync::Arc;
 
 use kipple_core::{
@@ -304,6 +304,11 @@ pub(crate) fn create_private_file(path: &Path) -> io::Result<fs::File> {
 /// and never kills the command midway.
 pub(crate) fn own_process_group(command: &mut Command) {
     command.process_group(0);
+}
+
+/// The signal that ended a process, if one did.
+pub(crate) fn exit_signal(status: ExitStatus) -> Option<i32> {
+    status.signal()
 }
 
 /// Makes a rename inside `dir` durable.

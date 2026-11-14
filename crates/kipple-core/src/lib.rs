@@ -143,9 +143,9 @@ pub use mutation::{
     EffectSink, Executor, FileSystemClass, Finish, Freeze, Freezer, LocalFileSystem, Unsupported,
 };
 pub use native::{
-    GIT_ISOLATION, NativeArg, NativeCommand, NativeEnd, NativeExit, NativeKind, NativeRunner,
-    NativeSpec, NativeStatus, Postcondition, ResolvedTool, SemanticFacts, ToolFile, ToolGap,
-    ToolResolver, Unavailable,
+    GIT_ISOLATION, Kept, NativeArg, NativeCommand, NativeEnd, NativeExit, NativeKind, NativeOutput,
+    NativeRunner, NativeSpec, NativeStatus, Postcondition, Printed, ResolvedTool, SemanticFacts,
+    ToolFile, ToolGap, ToolResolver, Unavailable,
 };
 pub use outcome::{
     ApplyError, Cause, Effect, ErrorCode, FileEffect, Found, Freed, ItemOutcome, Left, LeftCount,
