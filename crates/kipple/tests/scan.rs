@@ -668,3 +668,38 @@ fn open_areas_still_open_at_scan() {
         }
     }
 }
+
+/// The `Looks in` row of `kipple explain <rule>`.
+#[expect(
+    clippy::panic,
+    reason = "a rule explained without the row fails the test"
+)]
+fn looks_in(env: &Environment, rule: &str) -> String {
+    let (code, out, _) = kipple(env, &["explain", rule]);
+    assert_eq!(code, ExitCode::SUCCESS, "{out}");
+    let line = out
+        .lines()
+        .find(|line| line.trim_start().starts_with("Looks in"));
+    let line = line.unwrap_or_else(|| panic!("no Looks in row in {out}"));
+    line.trim_start()
+        .trim_start_matches("Looks in")
+        .trim()
+        .to_owned()
+}
+
+/// Catches `explain` naming a git rule's own root alone, so a person reading it concludes
+/// kipple doesn't read the agents' worktree locations (PR #19 review), and a rule whose
+/// integration adds no root naming its own twice.
+#[test]
+fn explain_names_every_root_a_git_rule_reads() {
+    let (_temp, env) = demo();
+
+    assert_eq!(
+        looks_in(&env, "builtin.git.worktree-remove"),
+        "config.project-roots, git.agent-locations"
+    );
+    assert_eq!(
+        looks_in(&env, "builtin.cargo.target"),
+        "config.project-roots"
+    );
+}

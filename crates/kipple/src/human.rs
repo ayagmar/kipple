@@ -6,9 +6,9 @@
 use std::path::{MAIN_SEPARATOR, Path};
 
 use kipple_core::{
-    Activity, ActivityGap, Bucket, Caution, Clause, Cost, FactState, Facts, Finding, Hold, Lens,
-    Level, Loss, Method, Modified, Policy, Proposal, Recovery, ScanOutcome, Seen, Tracked, Unmet,
-    Verdict, WalkGap,
+    Activity, ActivityGap, Bucket, Caution, Clause, Cost, FactState, Facts, Finding, Hold,
+    IntegrationDescriptor, Lens, Level, Loss, Method, Modified, Policy, Proposal, Recovery, Rule,
+    ScanOutcome, Seen, Tracked, Unmet, Verdict, WalkGap,
 };
 
 use crate::json::{CompletenessOut, SizeOut};
@@ -290,6 +290,20 @@ pub(crate) const fn method_about(method: Method) -> &'static str {
         Method::Delete => "frees the space at once",
         Method::Trash => "can be put back, but frees nothing until the Trash is emptied",
     }
+}
+
+/// Every root `rule` finds things in, as `explain` names them: its own, then each other
+/// root its integration (`descriptor`) reads, each once. The engine opens all of them for
+/// the integration, so a finding of the rule can come from any.
+pub(crate) fn looks_in(rule: &Rule, descriptor: Option<&IntegrationDescriptor>) -> String {
+    let mut roots = vec![rule.root];
+    for root in descriptor.map_or(&[][..], |descriptor| descriptor.roots) {
+        if !roots.contains(root) {
+            roots.push(*root);
+        }
+    }
+    let names: Vec<&str> = roots.iter().map(|root| root.name()).collect();
+    names.join(", ")
 }
 
 /// Where the default method is used, while the home screen removes nothing.
