@@ -29,13 +29,13 @@ use std::time::{Duration, SystemTime};
 use kipple_adapters::builtin;
 use kipple_core::{
     ApplyPorts, CancelToken, CleanRequest, Clock, Confirmed, DirEntryMeta, Ending, Engine,
-    EntryMeta, EventChannel, Finding, Finished, FsProbe, GroupGap, HeldPath, IntegrationId,
+    EntryMeta, EventChannel, Finding, Finished, FsProbe, GroupGap, HeldPath, Hold, IntegrationId,
     Inventory, ItemOutcome, Judge, Lineage, LockGap, Method, Methods, MutationPorts, Observer,
     PlanMode, Platform, Policy, Ports, ProbeError, ProcessOutcome, ProcessOwner, ProcessProbe,
-    ProcessRecord, ProcessSnapshot, Protections, ReleaseFacts, ReleaseRole, ReleaseState,
-    ResolvedRoot, RootSource, Roots, Rule, ScanReport, ScanRequest, Selection, Session, Settlement,
-    Skip, StoreLocks as _, Subject, SymbolicRoot, Unavailable, event_channel, prepare_clean,
-    run_prepared,
+    ProcessRecord, ProcessSnapshot, Protection, Protections, ReleaseFacts, ReleaseRole,
+    ReleaseState, ResolvedRoot, RootSource, Roots, Rule, ScanReport, ScanRequest, Selection,
+    Session, Settlement, Skip, StoreLocks as _, Subject, SymbolicRoot, Unavailable, Verdict,
+    event_channel, prepare_clean, run_prepared,
 };
 use kipple_platform::{
     ConfinedFs, ConfinedTrash, Environment, FileLocks, FileRunStore, GitQuery, NativeCommands,
@@ -555,6 +555,46 @@ fn two_stale_releases_of_one_component_go_in_one_run() {
         gate.releases_left(),
         BTreeSet::from([name("0.163.0"), name("0.165.0"), name("0.166.0")])
     );
+}
+
+/// Catches the host's protection of Codex's open `releases/` area and release retention
+/// disagreeing at apply. A release the review saw while Codex was supported was planned. If
+/// `current` is gone before apply, Codex's version can't be read, so the apply's own scan
+/// hands the release to the host, which skips it as `subresource` before its locks, and a
+/// scan made then holds it as `subresource` before anything retention says.
+#[test]
+fn a_release_codex_no_longer_vouches_for_is_the_hosts_at_apply() {
+    if PLATFORM != Platform::Linux {
+        return;
+    }
+    let gate = Gate::new();
+    let report = gate.scan(Box::new(NoFollowFs), rules_of(PLATFORM));
+    let finding = at(&gate, &report, STALE_RELEASE);
+    let facts = finding.facts.as_ref().unwrap();
+    assert_eq!(facts.host, None);
+    assert_eq!(facts.settlement, Settlement::Candidate);
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test plays an install that stopped after removing `current`"
+    )]
+    fs::remove_file(gate.home().join("packages/standalone/current")).unwrap();
+
+    let finished = gate.delete(&report, finding);
+
+    assert_eq!(
+        finished.receipt.items[0].outcome,
+        ItemOutcome::Skipped(Skip::HostProtected(Protection::Subresource))
+    );
+    assert!(
+        present(&gate.home().join(STALE_RELEASE)),
+        "the release stays"
+    );
+    let rescanned = gate.scan(Box::new(NoFollowFs), rules_of(PLATFORM));
+    let now = at(&gate, &rescanned, STALE_RELEASE);
+    let Some(Verdict::Protected(holds)) = now.verdict(&Policy::default()) else {
+        panic!("expected a scan now to hold it: {now:#?}");
+    };
+    assert_eq!(holds.first(), Some(&Hold::Subresource), "{holds:?}");
 }
 
 const TARGET: &str = "x86_64-unknown-linux-musl";
