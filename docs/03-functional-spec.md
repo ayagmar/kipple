@@ -47,7 +47,7 @@ Status (M2): built. It opens only when there is no config file at the default lo
   Safe to clean                                   9.9 GB   passes every check at this level
     Rust build output (target/)                   5.1 GB
     node_modules (reinstall from lockfile)        2.7 GB
-    Old Codex releases (keeps active, running +1) 1.8 GB
+    Old Codex releases (keeps active, rollback, running) 1.8 GB
     Python bytecode caches                        0.3 GB
   Review                                          1.3 GB   loses something, or recent
     node_modules touched this week                1.3 GB
@@ -56,7 +56,7 @@ Status (M2): built. It opens only when there is no config file at the default lo
     pacman cache  → advice: paccache -rk3         7.4 GB
 ```
 
-The Codex line above is the target: until its release rule removes (M4b), Codex's releases show under report only. Inside each bucket, findings are grouped by **Agents**, **Dev** and **System**. A filter switches to one lens. Totals separate *discovered*, *eligible*, *selected* and *estimated immediate reclaim* (Trash counts as zero immediate reclaim). Sizes fill in as they are computed. Known roots appear within 250 ms. Project scanning covers the configured (or default) project roots.
+The Codex line above shows on Linux, where the release rule removes; on macOS and Windows Codex's releases show under report only. Inside each bucket, findings are grouped by **Agents**, **Dev** and **System**. A filter switches to one lens. Totals separate *discovered*, *eligible*, *selected* and *estimated immediate reclaim* (Trash counts as zero immediate reclaim). Sizes fill in as they are computed. Known roots appear within 250 ms. Project scanning covers the configured (or default) project roots.
 
 "Protected / report-only" shows *why* for each row in plain words: `in use`, `layout not recognised`, `can't tell if in use`, `a tool's own data`, `location unknown`, `report only` or `advice only`, and later `needs grant`. These are distinct reasons, never lumped into one label. The detail pane and `kipple explain` say each as a sentence.
 

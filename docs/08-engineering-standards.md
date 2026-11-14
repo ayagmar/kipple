@@ -116,7 +116,7 @@ Test cases come from the spec, not from the implementation. The required failure
 
 **Do test:**
 - Policy and eligibility decisions from fact sets, including the unknown-blocks cases
-- Retention: keep-active, keep-running, keep-N, per-group
+- Retention: keep-active, keep-previous, keep-running, keep-pending, newest-left, per-group
 - Plan revalidation that only subtracts
 - Integration layouts against `FixtureTree` fixtures, one per supported upstream version (06 §7)
 - Confinement, idempotence and dedup as seeded property tests (a generated case per seed, so a failure names the seed that reproduces it), since those are the invariants that matter
