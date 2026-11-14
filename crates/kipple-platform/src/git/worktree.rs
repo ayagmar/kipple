@@ -632,19 +632,27 @@ impl Asking<'_> {
     /// is a name the removal deletes. Both sides' entries are of gc's unreachable kind,
     /// because a commit past every branch is past each reflog's own tip on an eligible
     /// worktree, and a global `gc.reflogExpire*` key times both alike. A
-    /// `gc.<pattern>.reflogExpire*` key can time a branch's reflog shorter, and makes
-    /// the answer unknown. The surviving reflogs are read only when something would
+    /// `gc.<pattern>.reflogExpire*` key can time a branch's reflog shorter, and so can
+    /// one behind an `includeIf`, which git resolves here for this worktree and not for
+    /// where gc runs: either makes the answer unknown when surviving reflogs are what
+    /// keep the commits. The surviving reflogs are read only when something would
     /// otherwise be lost.
+    ///
+    /// This holds for what the repository's own config and files say. kipple's git reads
+    /// no global or system config, so that no program a user config names can run: a
+    /// per-pattern reflog expiry set there isn't seen, and after an amend, rebase or reset
+    /// in the worktree the person's own gc can drop the replaced commits sooner than the
+    /// worktree's reflog would have (docs/04 §11).
     fn unreferenced_commits(&self, keys: &[Vec<u8>]) -> Result<u64, GitGap> {
         let named = Named::read(&self.links.admin)?;
         let lost = self.beyond_branches(&named.all(), Missing::Unknown)?;
         if lost.is_empty() {
             return Ok(0);
         }
-        self.refuse_expiry_per_ref(keys)?;
         let surviving = surviving(&self.links.common)?;
         let unkept = self.unkept(&named, &lost, &surviving)?;
         if unkept.is_empty() {
+            self.refuse_expiry_per_ref(keys)?;
             return Ok(0);
         }
         count_of(self.beyond_branches(&unkept, Missing::Unknown)?.len())
@@ -698,12 +706,11 @@ impl Asking<'_> {
         Ok(unkept)
     }
 
-    /// Refuses a config with a `gc.<pattern>.reflogExpire` or
-    /// `gc.<pattern>.reflogExpireUnreachable` key, read here, in the main worktree's own
-    /// config or in another worktree's: gc run from there times a branch's reflog by it.
-    /// Its value isn't read.
+    /// Refuses a config with a key of [`may_time_reflogs`], read here, in the main
+    /// worktree's own config or in another worktree's: gc run from there times a branch's
+    /// reflog by it. Its value isn't read.
     fn refuse_expiry_per_ref(&self, keys: &[Vec<u8>]) -> Result<(), GitGap> {
-        let mut found = keys.iter().any(|key| expiry_per_ref(key));
+        let mut found = keys.iter().any(|key| may_time_reflogs(key));
         if !found
             && keys
                 .iter()
@@ -713,7 +720,7 @@ impl Asking<'_> {
                 let theirs =
                     self.git
                         .config_file_names(&self.links.checkout, &file, self.cancel)?;
-                found = found || theirs.iter().any(|key| expiry_per_ref(key));
+                found = found || theirs.iter().any(|key| may_time_reflogs(key));
             }
         }
         if found {
@@ -818,11 +825,15 @@ fn gate_at(
     }
 }
 
-/// Whether the config key `name` is a `gc.<pattern>.reflogExpire` or
-/// `gc.<pattern>.reflogExpireUnreachable`, which times the reflogs of some refs alone. Git
-/// prints a key's section and variable in lowercase.
-fn expiry_per_ref(name: &[u8]) -> bool {
+/// Whether the config key `name` may time the reflogs of some refs alone: a
+/// `gc.<pattern>.reflogExpire` or `gc.<pattern>.reflogExpireUnreachable`, or an `includeIf`,
+/// whose condition git resolves for the worktree it is asked from, so what it includes
+/// where gc runs isn't listed here. Git prints a key's section and variable in lowercase.
+fn may_time_reflogs(name: &[u8]) -> bool {
     let name = String::from_utf8_lossy(name).to_ascii_lowercase();
+    if name.starts_with("includeif.") {
+        return true;
+    }
     let Some(rest) = name.strip_prefix("gc.") else {
         return false;
     };
@@ -1314,9 +1325,10 @@ mod tests {
         }
     }
 
-    /// Catches a key that times some reflogs alone missed for its spelling or a pattern
-    /// holding dots, and a global one, which times every reflog alike, holding every
-    /// repository that sets it.
+    /// Catches a key that may time some reflogs alone missed for its spelling, a pattern
+    /// holding dots or a conditional include, and a global one, which times every reflog
+    /// alike, or a plain include, which git resolves as gc would, holding every repository
+    /// that sets it.
     #[test]
     fn a_key_timing_some_reflogs_alone_is_found() {
         let cases = [
@@ -1329,9 +1341,12 @@ mod tests {
             ("gc.auto", false),
             ("gc.refs/heads/*.auto", false),
             ("core.reflogexpire", false),
+            ("includeif.onbranch:main.path", true),
+            ("includeIf.gitdir:/r/.git.path", true),
+            ("include.path", false),
         ];
         for (name, per_ref) in cases {
-            assert_eq!(expiry_per_ref(name.as_bytes()), per_ref, "{name}");
+            assert_eq!(may_time_reflogs(name.as_bytes()), per_ref, "{name}");
         }
     }
 

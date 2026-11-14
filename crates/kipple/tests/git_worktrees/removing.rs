@@ -14,8 +14,8 @@ use kipple_core::{
 use kipple_core::{Execution, NativeArg, PlanEntry};
 
 use super::{
-    CASES, Case, Head, Repo, Scan, UNREFERENCED, left_behind, orig_head, reset_away, visited_after,
-    write,
+    CASES, Case, Head, Repo, Scan, UNREFERENCED, expiry_behind_include, left_behind, orig_head,
+    reset_away, visited_after, write,
 };
 use crate::apply::{Approval, Between, REMOVE, removes_here};
 use crate::repo::{Moment, Refs, listed};
@@ -251,6 +251,14 @@ const HISTORIES: &[History] = &[
         set: |repo| {
             reset_back(repo);
             two_commits_later(repo);
+        },
+    },
+    History {
+        name: "plain commits, reflog expiry behind a conditional include",
+        set: |repo| {
+            expiry_behind_include(repo);
+            commit_in_worktree(repo, "a.txt");
+            commit_in_worktree(repo, "b.txt");
         },
     },
     History {

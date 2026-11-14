@@ -214,6 +214,14 @@ fn expiry_per_branch_in_main(repo: &Repo) {
     repo.wt(&["commit", "-q", "--amend", "--allow-empty", "-m", "amended"]);
 }
 
+/// A per-branch reflog expiry behind a conditional include that holds on `main`, where
+/// gc runs, and not on the worktree's branch, where kipple asks.
+pub(crate) fn expiry_behind_include(repo: &Repo) {
+    let file = b"[gc \"refs/heads/*\"]\n\treflogExpireUnreachable = now\n\treflogExpire = now\n";
+    write(&repo.main.join(".git/exp.cfg"), file);
+    repo.git(&["config", "includeIf.onbranch:main.path", "exp.cfg"]);
+}
+
 /// A stash popped onto a commit it conflicts with, with rerere on: rerere records the
 /// conflict in `MERGE_RR`, and no operation marker is left.
 fn rerere_conflict(repo: &Repo) {
@@ -463,6 +471,16 @@ const CASES: &[Case] = &[
     moving(
         "reflog expiry set for branches in the main worktree's own config",
         expiry_per_branch_in_main,
+        UNREFERENCED,
+        FactValue::Unknown,
+    ),
+    moving(
+        "reflog expiry behind a conditional include, then amend",
+        |repo| {
+            expiry_behind_include(repo);
+            repo.wt(&["commit", "-q", "--allow-empty", "-m", "first"]);
+            repo.wt(&["commit", "-q", "--amend", "--allow-empty", "-m", "amended"]);
+        },
         UNREFERENCED,
         FactValue::Unknown,
     ),
