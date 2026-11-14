@@ -743,14 +743,19 @@ fn explain_names_every_root_a_git_rule_reads() {
 
 /// The verdict `kipple scan --root <home> --json` gives the `node_modules` of `at`, or
 /// `Null` when the report has none there.
+fn node_modules_verdict(env: &Environment, home: &str, at: &str) -> Value {
+    let (code, json, err) = kipple(env, &["scan", "--root", home, "--json"]);
+    assert_eq!(code, ExitCode::SUCCESS, "{err}");
+    verdict_at(&json, at)
+}
+
+/// The verdict of the `node_modules` of `at` in the scan report `json`, or `Null`.
 #[expect(
     clippy::unwrap_used,
     reason = "a report that doesn't parse fails the test"
 )]
-fn node_modules_verdict(env: &Environment, home: &str, at: &str) -> Value {
-    let (code, json, _) = kipple(env, &["scan", "--root", home, "--json"]);
-    assert_eq!(code, ExitCode::SUCCESS, "{json}");
-    let report: Value = serde_json::from_str(&json).unwrap();
+fn verdict_at(json: &str, at: &str) -> Value {
+    let report: Value = serde_json::from_str(json).unwrap();
     let wanted = node_modules_of(at);
     let findings = report.get("findings").and_then(Value::as_array);
     let found = findings.into_iter().flatten().find(|f| {
@@ -774,20 +779,42 @@ fn held_for(verdict: &Value, reason: &str, not: &str) -> bool {
 
 /// Catches a project shown as in a tool's own data when kipple only can't find its own
 /// data folder, which sends a person looking for a tool that isn't there: it is
-/// Protected as `unlocated`, the reason that says to check where the folder is.
+/// Protected as `unlocated`, the reason that says to check where the folder is. On
+/// Windows the config folder is in the same known folder as the data folder, so without
+/// a named config the scan stops first, at exit 2, and says how to name one.
 #[test]
 fn an_unknown_data_folder_holds_a_project_as_unlocated() {
     let unset = [
         ("xdg.data", Root::Unset),
         ("known.roaming-app-data", Root::Unset),
     ];
-    let (_temp, env, home) = npm_home(&[IN_A_PROJECT], &unset);
+    let (temp, env, home) = npm_home(&[IN_A_PROJECT], &unset);
+    let config = temp.path().join("config.toml");
+    fs::write(&config, "").unwrap();
+    let config = config.display().to_string();
 
-    let verdict = node_modules_verdict(&env, &home, IN_A_PROJECT);
+    let (code, json, err) = kipple(&env, &["scan", "--root", &home, "--json"]);
+    let named = kipple(
+        &env,
+        &["--config", &config, "scan", "--root", &home, "--json"],
+    );
 
+    if kipple_platform::PLATFORM == kipple_core::Platform::Windows {
+        assert_eq!(code, ExitCode::from(USAGE), "{err}");
+        assert!(err.contains("config directory is unknown"), "{err}");
+    } else {
+        assert_eq!(code, ExitCode::SUCCESS, "{err}");
+        let verdict = verdict_at(&json, IN_A_PROJECT);
+        assert!(
+            held_for(&verdict, "unlocated", "subresource"),
+            "expected Protected as unlocated: {verdict}"
+        );
+    }
+    assert_eq!(named.0, ExitCode::SUCCESS, "{}", named.2);
+    let verdict = verdict_at(&named.1, IN_A_PROJECT);
     assert!(
         held_for(&verdict, "unlocated", "subresource"),
-        "expected Protected as unlocated: {verdict}"
+        "expected Protected as unlocated with a named config: {verdict}"
     );
 }
 
