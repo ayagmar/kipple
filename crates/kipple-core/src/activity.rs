@@ -111,6 +111,8 @@ struct View {
     cwd_resolved: Option<Vec<FileIdentity>>,
     /// The file names of its executable and of the name it was started by, lowercase.
     names: Vec<String>,
+    /// The identity of the file it runs, when that was read.
+    executable: Option<FileIdentity>,
     /// The file name of every token on its command line, lowercase, so a bare script name
     /// counts too.
     arguments: Vec<String>,
@@ -672,6 +674,15 @@ fn view(process: &ProcessRecord, observer: &Observer, fs: &dyn FsProbe) -> (View
             .find(|(kind, ..)| *kind == Kind::WorkingDirectory)
             .map(|(.., ids)| ids.clone()),
         names: names(executable.map(PathBuf::as_path), first),
+        executable: match &process.outcome {
+            ProcessOutcome::Identified { identity, .. } => Some(*identity),
+            ProcessOutcome::PathOnly { .. }
+            | ProcessOutcome::Denied(_)
+            | ProcessOutcome::Exited
+            | ProcessOutcome::Gone
+            | ProcessOutcome::NoExecutable
+            | ProcessOutcome::Other(_) => None,
+        },
         arguments: argv.map_or_else(Vec::new, |args| argument_names(args)),
         command_line_placed: placed,
         modes: match &process.capabilities {
@@ -1028,6 +1039,31 @@ pub(crate) struct Processes {
 }
 
 impl Processes {
+    /// The processes, listed the first time a finding needs them.
+    fn index(&self, probe: &dyn ProcessProbe, scope: Scope<'_>) -> &Result<Index, ProbeError> {
+        self.index.get_or_init(|| {
+            let lineage = |path: &Path| scope.identities.lineage(scope.fs, path);
+            probe
+                .snapshot()
+                .map(|snapshot| Index::new(&snapshot, scope.fs, &lineage))
+        })
+    }
+
+    /// The first process that runs a file with one of `identities`, wherever its path
+    /// says it runs from: a hard link runs a release from outside it (spec M4 pinned 14).
+    /// A copy has another identity and isn't seen. `None` too when the processes couldn't
+    /// be listed, which leaves every finding's activity unknown anyway.
+    pub(crate) fn running(
+        &self,
+        probe: &dyn ProcessProbe,
+        scope: Scope<'_>,
+        identities: &[FileIdentity],
+    ) -> Option<u32> {
+        let index = self.index(probe, scope).as_ref().ok()?;
+        let runs = |view: &&View| view.executable.is_some_and(|id| identities.contains(&id));
+        index.views.iter().find(runs).map(|view| view.pid)
+    }
+
     /// Whether a program uses `subject`. A process that counts and couldn't be inspected
     /// might be the one, so the answer is then unknown, never idle.
     pub(crate) fn activity(
@@ -1039,13 +1075,7 @@ impl Processes {
         if !subject.owner.declares(subject.evidence) {
             return Activity::Unknown(ActivityGap::Unsupported);
         }
-        let built = self.index.get_or_init(|| {
-            let lineage = |path: &Path| scope.identities.lineage(scope.fs, path);
-            probe
-                .snapshot()
-                .map(|snapshot| Index::new(&snapshot, scope.fs, &lineage))
-        });
-        let index = match built {
+        let index = match self.index(probe, scope) {
             Ok(index) => index,
             Err(error) => return Activity::Unknown(ActivityGap::NoListing(error.clone())),
         };

@@ -63,6 +63,13 @@ pub struct Now {
     pub unmet: Vec<Unmet>,
 }
 
+/// What a release is now among its component's releases.
+#[derive(Debug)]
+struct Settled {
+    activity: Activity,
+    settlement: Settlement,
+}
+
 /// How old a process snapshot may be.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Snapshot {
@@ -236,9 +243,14 @@ impl Rescan for EngineRescan<'_> {
         let mut judged = facts.clone();
         judged.supplied = supplied;
         current.facts = Some(judged.clone());
-        judged.activity = self.activity(scan, &current, snapshot);
-        // Nothing decides a release yet, which holds it.
-        judged.settlement = Settlement::Unsettled;
+        if matches!(judged.supplied.subject, Subject::Release(_)) {
+            let settled = self.settled(scan, current.clone(), cancel)?;
+            judged.activity = settled.activity;
+            judged.settlement = settled.settlement;
+        } else {
+            judged.activity = self.activity(scan, &current, snapshot);
+            judged.settlement = Settlement::Unsettled;
+        }
         current.facts = Some(judged.clone());
         Ok(Now {
             unmet: self.engine.unmet_now(&current).unwrap_or(judged.unmet),
@@ -255,6 +267,72 @@ impl Rescan for EngineRescan<'_> {
 }
 
 impl EngineRescan<'_> {
+    /// What the release `ours`, read again, is now among the releases of its component in
+    /// `scan`, each read again by its integration, judged by one new process snapshot and
+    /// settled as the scan settles them. A release whose integration can't read it again
+    /// holds `ours`, and one the apply scan didn't measure leaves its group unsettled.
+    fn settled(
+        &self,
+        scan: &ScanReport,
+        ours: Finding,
+        cancel: &CancelToken,
+    ) -> Result<Settled, Skip> {
+        let component = |finding: &Finding| match &finding.facts.as_ref()?.supplied.subject {
+            Subject::Release(release) => Some(release.group.component.clone()),
+            Subject::Plain | Subject::Worktree(_) | Subject::Semantic(_) => None,
+        };
+        let ours_component = component(&ours);
+        let integration = ours.integration;
+        let path = ours.path.clone();
+        let peers = scan.findings.iter().filter(|peer| {
+            peer.integration == integration
+                && peer.path != path
+                && component(peer).is_some()
+                && component(peer) == ours_component
+        });
+        let mut members = vec![ours];
+        for peer in peers {
+            let again = self.engine.revisit(self.request, scan, peer, cancel)?;
+            let supplied = again.ok_or(Skip::RevisitMissing)?;
+            let mut member = peer.clone();
+            if let Some(facts) = member.facts.as_mut() {
+                facts.supplied = supplied;
+            }
+            members.push(member);
+        }
+        let now = self.engine.ports.clock.now();
+        let fresh = Fresh {
+            processes: Processes::default(),
+            identities: Identities::default(),
+            taken: now,
+        };
+        for member in &mut members {
+            let activity = self.engine.activity_now(&fresh, self.request, scan, member);
+            if let Some(facts) = member.facts.as_mut() {
+                facts.activity = activity;
+            }
+        }
+        let scope = Scope {
+            fs: self.engine.ports.fs.as_ref(),
+            identities: &fresh.identities,
+            home: self.engine.home(&self.request.roots),
+            roots: &self.request.roots,
+        };
+        self.engine
+            .settle_releases(&mut members, &[], &fresh.processes, scope);
+        let judged = members.first().and_then(|first| first.facts.as_ref());
+        Ok(judged.map_or(
+            Settled {
+                activity: Activity::Unknown(ActivityGap::Unsupported),
+                settlement: Settlement::Unsettled,
+            },
+            |facts| Settled {
+                activity: facts.activity.clone(),
+                settlement: facts.settlement,
+            },
+        ))
+    }
+
     /// Whether a program uses `finding` of `scan` now, from a snapshot of that age.
     fn activity(&self, scan: &ScanReport, finding: &Finding, snapshot: Snapshot) -> Activity {
         let now = self.engine.ports.clock.now();

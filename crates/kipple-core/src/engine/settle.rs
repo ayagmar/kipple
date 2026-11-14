@@ -1,9 +1,14 @@
 //! Where a scan's findings that depend on each other are decided: after an integration's
-//! findings are measured, and after every integration ran. The first changes nothing yet,
-//! so a release stays `Unsettled`, which holds.
+//! findings are measured, and after every integration ran.
 //!
-//! A group with a member left unmeasured stays `Unsettled`: which release may go depends on
-//! all of them, so the others can't be decided without it.
+//! The first settles releases (spec M4 pinned 12 to 14). A release runs when a process's
+//! executable lies under it, which its activity already shows, or when a process runs a
+//! file with the identity of one of its files from anywhere, as a hard link does; that is
+//! recorded as its activity too. Then [`settle`] decides each release among the others of
+//! its group. Apply settles a release again the same way, from what its integration reads
+//! again and a new process snapshot. A group with a member left unmeasured stays
+//! `Unsettled`: which release may go depends on all of them, so the others can't be
+//! decided without it.
 //!
 //! The second settles worktrees. `git worktree remove` deletes ignored files without a
 //! word, so a worktree's ignored path counts as classified only when it is exactly a
@@ -14,10 +19,12 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use super::{Engine, Finding, FindingId, Found, Owner, Shared};
+use crate::activity::{Processes, Scope};
 use crate::facts::{Evaluated, unmet};
 use crate::integration::IntegrationId;
-use crate::policy::{Facts, HeldPath, Proposal, Tracked};
+use crate::policy::{Activity, ActivityGap, Facts, HeldPath, Proposal, Seen, Tracked};
 use crate::protect::Unresolved;
+use crate::retention::{ReleaseFacts, ReleaseView, settle};
 use crate::supplied::{FactValue, Subject};
 
 /// How many of a worktree's ignored paths aren't exactly a classified finding.
@@ -29,17 +36,103 @@ impl Engine {
     /// `unmeasured` are the findings a cancel stopped short of, each with what its
     /// integration supplied, so it can be placed in its group: they have no facts in
     /// `findings`.
-    #[expect(
-        clippy::unused_self,
-        reason = "the seam the release cards fill, reading this engine's ports"
-    )]
-    pub(super) const fn settle_integration(
+    pub(super) fn settle_integration(
         &self,
-        _findings: &mut [Finding],
-        _unmeasured: &[Found],
+        findings: &mut [Finding],
+        unmeasured: &[Found],
         _owner: Owner<'_>,
-        _shared: Shared<'_>,
+        shared: Shared<'_>,
     ) {
+        let scope = Scope {
+            fs: self.ports.fs.as_ref(),
+            identities: shared.identities,
+            home: shared.home,
+            roots: shared.roots,
+        };
+        let unmeasured: Vec<&ReleaseFacts> = unmeasured
+            .iter()
+            .filter_map(|found| match &found.supplied.subject {
+                Subject::Release(release) => Some(release),
+                Subject::Plain | Subject::Worktree(_) | Subject::Semantic(_) => None,
+            })
+            .collect();
+        self.settle_releases(findings, &unmeasured, shared.processes, scope);
+    }
+
+    /// Settles every release among `findings`, with `unmeasured` in their groups too, from
+    /// `processes`: what the scan does once an integration's findings are measured, and
+    /// what apply does again for one release's component.
+    pub(super) fn settle_releases(
+        &self,
+        findings: &mut [Finding],
+        unmeasured: &[&ReleaseFacts],
+        processes: &Processes,
+        scope: Scope<'_>,
+    ) {
+        for finding in findings.iter_mut() {
+            self.mark_running(finding, processes, scope);
+        }
+        let unknown = Activity::Unknown(ActivityGap::Unsupported);
+        let mut views = Vec::new();
+        let mut settled = Vec::new();
+        for (at, finding) in findings.iter().enumerate() {
+            let Some(facts) = &finding.facts else {
+                continue;
+            };
+            let Subject::Release(release) = &facts.supplied.subject else {
+                continue;
+            };
+            views.push(ReleaseView {
+                facts: release,
+                measured: finding.size.map(|size| size.completeness),
+                activity: &facts.activity,
+            });
+            settled.push(at);
+        }
+        views.extend(unmeasured.iter().map(|release| ReleaseView {
+            facts: release,
+            measured: None,
+            activity: &unknown,
+        }));
+        let decided: Vec<_> = settled.into_iter().zip(settle(&views)).collect();
+        for (at, settlement) in decided {
+            if let Some(facts) = findings.get_mut(at).and_then(|f| f.facts.as_mut()) {
+                facts.settlement = settlement;
+            }
+        }
+    }
+
+    /// Records a process running a file of the release `finding` from anywhere as its
+    /// activity. A file whose identity can't be read could be the one run, so its activity
+    /// is then unknown.
+    fn mark_running(&self, finding: &mut Finding, processes: &Processes, scope: Scope<'_>) {
+        let Some(facts) = finding.facts.as_mut() else {
+            return;
+        };
+        let Subject::Release(release) = &facts.supplied.subject else {
+            return;
+        };
+        if !matches!(
+            facts.activity,
+            Activity::Idle | Activity::IdleExceptSystem { .. }
+        ) {
+            return;
+        }
+        let fs = self.ports.fs.as_ref();
+        let identities: Option<Vec<_>> = release
+            .files
+            .iter()
+            .map(|file| fs.metadata(file).ok()?.identity)
+            .collect();
+        let Some(identities) = identities else {
+            facts.activity = Activity::Unknown(ActivityGap::Unsupported);
+            return;
+        };
+        let probe = self.ports.processes.as_ref();
+        if let Some(pid) = processes.running(probe, scope, &identities) {
+            let seen = Seen::Executable(finding.path.clone());
+            facts.activity = Activity::InUse { pid, seen };
+        }
     }
 
     /// Settles what reads other integrations' findings, after they all ran, and returns

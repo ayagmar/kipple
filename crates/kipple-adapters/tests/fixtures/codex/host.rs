@@ -74,6 +74,16 @@ pub(crate) fn add_release(tree: &mut FixtureTree, store: &str, version: &str) {
     }
 }
 
+/// The identity the host gives the file at `path`, off any mount.
+fn identity(path: &Path) -> FileIdentity {
+    let mut hasher = DefaultHasher::new();
+    path.hash(&mut hasher);
+    FileIdentity {
+        volume: 1,
+        file: u128::from(hasher.finish()),
+    }
+}
+
 /// A file system with the scripted parts of [`Scene`] over the real one.
 #[derive(Debug, Clone, Default)]
 struct Disk {
@@ -87,6 +97,9 @@ struct Disk {
     mounts: Vec<PathBuf>,
     /// Links that read as holding the second path, and not what the OS made of it.
     stored: Vec<(PathBuf, PathBuf)>,
+    /// Links an installer made again after the scan, with what each now holds: both what
+    /// they read as and their stamp follow.
+    relinked: Arc<Mutex<Vec<(PathBuf, PathBuf)>>>,
     /// The home directory, which only its user may enter.
     home: PathBuf,
     /// Every file that was opened, in order.
@@ -126,21 +139,33 @@ impl Disk {
     }
 
     fn identity(&self, path: &Path) -> FileIdentity {
-        let mut hasher = DefaultHasher::new();
-        path.hash(&mut hasher);
         let mounted = self.mounts.iter().any(|mount| path.starts_with(mount));
         FileIdentity {
             volume: if mounted { 2 } else { 1 },
-            file: u128::from(hasher.finish()),
+            ..identity(path)
         }
     }
 
     /// What Unix records of the link at `path`, whether or not this test can read it.
     fn stamp(path: &Path) -> Result<String, ProbeError> {
         let target = fs::read_link(path).map_err(|e| ProbeError::io(path, e))?;
+        Ok(Self::stamp_of(&target))
+    }
+
+    /// The stamp of a link that holds `target`.
+    fn stamp_of(target: &Path) -> String {
         let mut hasher = DefaultHasher::new();
         target.hash(&mut hasher);
-        Ok(format!("50 {} 1793458575.030397325", hasher.finish()))
+        format!("50 {} 1793458575.030397325", hasher.finish())
+    }
+
+    /// What the link at `path` holds since an installer made it again, if one did.
+    fn relinked(&self, path: &Path) -> Option<PathBuf> {
+        let relinked = self.relinked.lock().unwrap_or_else(PoisonError::into_inner);
+        let found = relinked.iter().rev().find(|(link, _)| link == path);
+        let target = found.map(|(_, target)| target.clone());
+        drop(relinked);
+        target
     }
 }
 
@@ -208,6 +233,9 @@ impl FsProbe for Disk {
 
     fn read_link(&self, path: &Path) -> Result<PathBuf, ProbeError> {
         self.check(path)?;
+        if let Some(target) = self.relinked(path) {
+            return Ok(target);
+        }
         let stored = self.stored.iter().find(|(link, _)| link == path);
         if let Some((_, target)) = stored {
             return Ok(target.clone());
@@ -217,7 +245,8 @@ impl FsProbe for Disk {
 
     fn link_stamp(&self, path: &Path) -> Result<String, ProbeError> {
         self.check(path)?;
-        Self::stamp(path)
+        self.relinked(path)
+            .map_or_else(|| Self::stamp(path), |target| Ok(Self::stamp_of(&target)))
     }
 }
 
@@ -277,6 +306,10 @@ impl TrackedQuery for NoGit {
 pub(crate) struct Shown {
     /// Paths in the tree that a process of the user runs from.
     pub(crate) running: Vec<String>,
+    /// Processes of the user that run a hard link to a file in the tree from elsewhere.
+    pub(crate) linked: Vec<HardLink>,
+    /// Commands of processes of the user that couldn't be inspected.
+    pub(crate) uninspected: Vec<String>,
     /// Whether every process was listed.
     pub(crate) inventory: Inventory,
 }
@@ -297,6 +330,18 @@ impl ProcessProbe for Snapshot {
         for (pid, path) in (3000..).zip(&shown.running) {
             let executable = self.tree.join(path);
             processes.push(inspected(pid, &executable, self.root_dir));
+        }
+        for (pid, link) in (4000..).zip(&shown.linked) {
+            let mut process = inspected(pid, &self.tree.join(&link.runs), self.root_dir);
+            if let ProcessOutcome::Identified { identity: id, .. } = &mut process.outcome {
+                *id = identity(&self.tree.join(&link.file));
+            }
+            processes.push(process);
+        }
+        for (pid, command) in (5000..).zip(&shown.uninspected) {
+            let command = self.tree.join(command);
+            let command = command.to_string_lossy();
+            processes.push(uninspectable(pid, ProcessOwner::CurrentUser, &[&command]));
         }
         Ok(ProcessSnapshot {
             processes,
@@ -389,6 +434,13 @@ fn session(shell: &Path, root_dir: FileIdentity) -> Vec<ProcessRecord> {
     ]
 }
 
+/// A process running, from `runs`, a hard link to `file`: both are paths in the tree.
+#[derive(Debug, Clone)]
+pub(crate) struct HardLink {
+    pub(crate) runs: String,
+    pub(crate) file: String,
+}
+
 /// What `selection-history` holds for a store.
 #[derive(Debug)]
 struct History {
@@ -424,6 +476,13 @@ pub(crate) struct Scene {
     pub(crate) platform: Platform,
     /// Paths in the tree that a process of the user runs from.
     pub(crate) running: Vec<String>,
+    /// Processes of the user that run a hard link to a file in the tree from elsewhere.
+    pub(crate) linked: Vec<HardLink>,
+    /// Commands, paths in the tree, of processes of the user that couldn't be inspected.
+    pub(crate) uninspected: Vec<String>,
+    /// The user's home directory in the tree, which holds the Codex home unless a test
+    /// moves it.
+    pub(crate) user_home: &'static str,
     /// Whether every process was listed.
     pub(crate) inventory: Inventory,
     /// Why the home has no path, if it hasn't.
@@ -445,6 +504,9 @@ impl Scene {
             stored: Vec::new(),
             platform: Platform::Linux,
             running: Vec::new(),
+            linked: Vec::new(),
+            uninspected: Vec::new(),
+            user_home: "home",
             inventory: Inventory::Complete,
             unresolved: None,
         }
@@ -500,6 +562,7 @@ impl Scene {
     pub(crate) fn build(self) -> Rc<Built> {
         let temp = tempfile::tempdir().unwrap();
         self.tree.build_in(temp.path()).unwrap();
+        fs::create_dir_all(temp.path().join(self.user_home)).unwrap();
         let root = temp.path();
         let inside = |paths: &[String]| paths.iter().map(|path| root.join(path)).collect();
         let disk = Disk {
@@ -512,8 +575,9 @@ impl Scene {
                 .iter()
                 .map(|stored| (root.join(&stored.link), root.join(&stored.target)))
                 .collect(),
-            home: root.join("home"),
+            home: root.join(self.user_home),
             opened: Arc::default(),
+            relinked: Arc::default(),
         };
         for history in &self.histories {
             let dir = root.join(at(&component(history.store)));
@@ -527,6 +591,8 @@ impl Scene {
             platform: self.platform,
             shown: Arc::new(Mutex::new(Shown {
                 running: self.running,
+                linked: self.linked,
+                uninspected: self.uninspected,
                 inventory: self.inventory,
             })),
             unresolved: self.unresolved,
@@ -563,7 +629,7 @@ impl Built {
 
     fn roots(&self) -> Roots {
         let mut roots = Roots::default();
-        let home = self.temp.path().join("home");
+        let home = self.disk.home.clone();
         let fixed = |root, path| ResolvedRoot::new(root, path, RootSource::Fixed);
         roots.insert(SymbolicRoot::Home, Ok(fixed(SymbolicRoot::Home, home)));
         let store = self.home().join("packages");
@@ -647,6 +713,23 @@ impl Scan {
     pub(crate) fn now(&self, path: &str) -> Result<Now, Skip> {
         let rescan = self.engine.rescan(&self.request);
         rescan.now(&self.report, self.finding(path), &CancelToken::new())
+    }
+
+    /// Plays an install selecting `selected` in `store` after the scan: `current` made
+    /// again, then `selection-history` written for it with `previous`.
+    pub(crate) fn select(&self, store: &str, selected: &str, previous: &str) {
+        let dir = self.built.home().join(component(store));
+        let link = dir.join("current");
+        let target = self.built.home().join(release(store, selected));
+        let stamp = Disk::stamp_of(&target);
+        self.built
+            .disk
+            .relinked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((link, target));
+        let history = format!("{selected}\n{previous}\n{stamp}\n");
+        fs::write(dir.join("selection-history"), history).unwrap();
     }
 
     /// Changes what the process probe shows from here on.

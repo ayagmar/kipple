@@ -22,11 +22,13 @@ mod host;
 
 use std::fs;
 
-use host::{DAEMON, HOME, MUSL, STANDALONE, Scan, Scene, StoredLink, at, component, name, release};
+use host::{
+    DAEMON, HOME, HardLink, MUSL, STANDALONE, Scan, Scene, StoredLink, at, component, name, release,
+};
 use kipple_core::{
     Activity, ActivityEvidence, Evidence, FactValue, GroupGap, Hold, IntegrationId, Inventory, Now,
-    Omission, OwnerStatus, Platform, Policy, Proposal, ReleaseRole, ReleaseState, UnresolvedRoot,
-    Verdict,
+    Omission, OwnerStatus, Platform, Policy, Proposal, ReleaseRole, ReleaseState, Retained,
+    Settlement, UnresolvedRoot, Verdict,
 };
 use tree::Holds;
 
@@ -1714,4 +1716,498 @@ fn manifest_survives_generated_input() {
     }
     assert_ne!(signed, 0, "the generator must reach valid input");
     assert_ne!(kept, 0, "the generator must reach invalid input");
+}
+
+const KEPT_ACTIVE: Settlement = Settlement::Retained(Retained::Active);
+const KEPT_PREVIOUS: Settlement = Settlement::Retained(Retained::Previous);
+const KEPT_RUNNING: Settlement = Settlement::Retained(Retained::Running);
+const KEPT_NEWEST: Settlement = Settlement::Retained(Retained::NewestLeft);
+const CANDIDATE: Settlement = Settlement::Candidate;
+
+const fn kept_blocked(gap: GroupGap) -> Settlement {
+    Settlement::Retained(Retained::GroupBlocked(gap))
+}
+
+/// The release `version` of `store`, relative to the home.
+fn of(store: &str, version: &str) -> String {
+    release(store, &name(version))
+}
+
+/// Every release a scan found, with how it settled, sorted by path.
+fn settlements(scan: &Scan) -> Vec<(String, Settlement)> {
+    let mut settled: Vec<(String, Settlement)> = scan
+        .rows()
+        .into_iter()
+        .filter_map(|row| {
+            let path = row.split_once(' ').map_or(row.as_str(), |(_, path)| path);
+            let finding = scan.get(path)?;
+            let facts = finding.facts.as_ref()?;
+            matches!(facts.supplied.subject, kipple_core::Subject::Release(_))
+                .then(|| (path.to_owned(), facts.settlement))
+        })
+        .collect();
+    settled.sort_by(|a, b| a.0.cmp(&b.0));
+    settled
+}
+
+/// The releases of a scan that settled as candidates.
+fn candidates(scan: &Scan) -> Vec<String> {
+    let candidate = |(path, settled): (String, Settlement)| (settled == CANDIDATE).then_some(path);
+    settlements(scan)
+        .into_iter()
+        .filter_map(candidate)
+        .collect()
+}
+
+/// Asserts how each of `expected` settled.
+fn assert_settled(scan: &Scan, expected: &[(&str, Settlement)]) {
+    for (path, settlement) in expected {
+        assert_eq!(scan.facts(path).settlement, *settlement, "{path}");
+    }
+}
+
+/// Catches the selected release or the store's rollback becoming a candidate.
+#[test]
+fn active_v3_keeps_v3_and_v2() {
+    let scan = verified().scan();
+
+    assert_settled(
+        &scan,
+        &[
+            (ACTIVE, KEPT_ACTIVE),
+            (ROLLBACK, KEPT_PREVIOUS),
+            (OLD, CANDIDATE),
+        ],
+    );
+}
+
+/// Catches a release a program runs from becoming a candidate because it is old.
+#[test]
+fn running_v1_keeps_v3_v1_and_v2() {
+    let mut scene = verified();
+    scene.running.push(at(&format!("{OLD}/bin/codex")));
+
+    let scan = scene.scan();
+
+    assert_settled(
+        &scan,
+        &[
+            (ACTIVE, KEPT_ACTIVE),
+            (ROLLBACK, KEPT_PREVIOUS),
+            (OLD, KEPT_RUNNING),
+        ],
+    );
+}
+
+/// Catches the two stores' releases settling as one group, so one store's rollback
+/// would answer for the other's.
+#[test]
+fn standalone_and_daemon_keep_their_own_rollbacks() {
+    let mut scene = verified();
+    scene.store(DAEMON, &[V164, V165, V166], V166, V164);
+
+    let scan = scene.scan();
+
+    assert_settled(
+        &scan,
+        &[
+            (OLD, CANDIDATE),
+            (ROLLBACK, KEPT_PREVIOUS),
+            (&of(DAEMON, V164), KEPT_PREVIOUS),
+            (&of(DAEMON, V165), CANDIDATE),
+            (&of(DAEMON, V166), KEPT_ACTIVE),
+        ],
+    );
+}
+
+/// The 5+3 store of `docs/11-delivery-plan.md` M4's Verify list, with S5 codex §7's
+/// versions: the state a prune skipped by a process held open leaves.
+fn five_plus_three() -> Scene {
+    let mut scene = Scene::new();
+    scene
+        .store(
+            STANDALONE,
+            &["0.162.1", "0.163.0", V164, V165, V166],
+            V166,
+            V165,
+        )
+        .store(DAEMON, &[V164, V165, V166], V166, V165);
+    let running = of(STANDALONE, "0.163.0");
+    scene.running.push(at(&format!("{running}/bin/codex")));
+    scene
+}
+
+/// Catches the docs/11 Verify case: the active, running and rollback releases are kept,
+/// and only the rest of each store is a candidate.
+#[test]
+fn five_plus_three_with_one_older_running() {
+    let scan = five_plus_three().scan();
+
+    assert_eq!(
+        candidates(&scan),
+        [
+            of(DAEMON, V164),
+            of(STANDALONE, "0.162.1"),
+            of(STANDALONE, V164),
+        ]
+    );
+    assert_settled(
+        &scan,
+        &[
+            (&of(STANDALONE, "0.163.0"), KEPT_RUNNING),
+            (ROLLBACK, KEPT_PREVIOUS),
+            (ACTIVE, KEPT_ACTIVE),
+            (&of(DAEMON, V165), KEPT_PREVIOUS),
+            (&of(DAEMON, V166), KEPT_ACTIVE),
+        ],
+    );
+}
+
+/// Catches kipple finding something to remove in a store Codex's own prune left as it
+/// should: the selected release and its rollback.
+#[test]
+fn pruned_store_has_no_candidates() {
+    let mut scene = Scene::new();
+    scene
+        .store(STANDALONE, &[V165, V166], V166, V165)
+        .store(DAEMON, &[V165, V166], V166, V165);
+
+    let scan = scene.scan();
+
+    assert_eq!(candidates(&scan), Vec::<String>::new());
+    assert_eq!(settlements(&scan).len(), 4, "{:#?}", settlements(&scan));
+}
+
+/// Catches keeping the newest release beside the selected one instead of the rollback the
+/// store names: removing 0.164.0 here would remove Codex's own way back.
+#[test]
+fn rollback_is_previous_not_newest() {
+    let mut scene = Scene::new();
+    scene.store(STANDALONE, &[V164, V165, V166], V166, V164);
+
+    let scan = scene.scan();
+
+    assert_settled(
+        &scan,
+        &[
+            (ACTIVE, KEPT_ACTIVE),
+            (OLD, KEPT_PREVIOUS),
+            (ROLLBACK, CANDIDATE),
+        ],
+    );
+}
+
+/// Catches a store that names no rollback losing every way back: the newest release left
+/// stays, and a prerelease orders below its release.
+#[test]
+fn empty_previous_keeps_the_newest_left() {
+    let alpha = "0.165.0-alpha.5.1";
+    let mut scene = Scene::new();
+    scene
+        .releases(STANDALONE, &[V164, alpha, V165, V166])
+        .select(STANDALONE, &name(V166))
+        .history(STANDALONE, &name(V166), "");
+
+    let scan = scene.scan();
+
+    assert_settled(
+        &scan,
+        &[
+            (ACTIVE, KEPT_ACTIVE),
+            (ROLLBACK, KEPT_NEWEST),
+            (&of(STANDALONE, alpha), CANDIDATE),
+            (OLD, CANDIDATE),
+        ],
+    );
+}
+
+/// The release `version` of `store` for `target`, relative to the home.
+fn of_target(store: &str, version: &str, target: &str) -> String {
+    release(store, &format!("{version}-{target}"))
+}
+
+/// Catches two targets of one component settling as one group, and a marker of the
+/// component blocking only one of them.
+#[test]
+fn two_targets_settle_apart() {
+    let arm = "aarch64-unknown-linux-musl";
+    let two_targets = || {
+        let mut scene = verified();
+        for version in [V165, V166] {
+            let dir = at(&of_target(STANDALONE, version, arm));
+            codex_v0_166_0::release(&mut scene.tree, &dir, version, arm);
+        }
+        scene
+    };
+    let arm_newest = of_target(STANDALONE, V166, arm);
+    let arm_older = of_target(STANDALONE, V165, arm);
+
+    let scan = two_targets().scan();
+
+    assert_settled(
+        &scan,
+        &[
+            (ACTIVE, KEPT_ACTIVE),
+            (ROLLBACK, KEPT_PREVIOUS),
+            (OLD, CANDIDATE),
+            (&arm_newest, KEPT_NEWEST),
+            (&arm_older, CANDIDATE),
+        ],
+    );
+
+    let mut staged = two_targets();
+    let staging = release(STANDALONE, &format!(".staging.{}.4242", name("0.167.0")));
+    staged.tree.dir(&at(&staging));
+    let busy = staged.scan();
+    let blocked = kept_blocked(GroupGap::InstallerBusy);
+    for path in [
+        ACTIVE,
+        ROLLBACK,
+        OLD,
+        arm_newest.as_str(),
+        arm_older.as_str(),
+    ] {
+        assert_eq!(busy.facts(path).settlement, blocked, "{path}");
+    }
+}
+
+/// Catches an install that is under way being judged by what it left half done.
+#[test]
+fn staging_blocks_the_group() {
+    let mut scene = verified();
+    let staging = release(STANDALONE, &format!(".staging.{}.4242", name("0.167.0")));
+    scene.tree.dir(&at(&staging));
+
+    let scan = scene.scan();
+
+    assert_eq!(candidates(&scan), Vec::<String>::new());
+    assert_eq!(
+        scan.facts(OLD).settlement,
+        kept_blocked(GroupGap::InstallerBusy)
+    );
+}
+
+/// Catches a `current` kipple can't follow leaving the rest of its store's releases free
+/// to go, when it can't tell which one is in use.
+#[test]
+fn malformed_current_blocks_its_group() {
+    let mut scene = Scene::new();
+    scene.releases(STANDALONE, &[V164, V165, V166]);
+    let dir = at(&component(STANDALONE));
+    scene
+        .tree
+        .link(&format!("{dir}/current"), "nowhere", Holds::AsWritten)
+        .file(&format!("{dir}/install.lock"), b"");
+
+    let scan = scene.scan();
+
+    assert_eq!(candidates(&scan), Vec::<String>::new());
+    for path in [ACTIVE, ROLLBACK, OLD] {
+        let settled = scan.facts(path).settlement;
+        assert!(
+            matches!(settled, Settlement::Retained(Retained::GroupBlocked(_))),
+            "expected {path} blocked by its group, got {settled:?}"
+        );
+    }
+}
+
+/// Catches a process list with gaps read as one without them.
+#[test]
+fn incomplete_inventory_blocks_the_group() {
+    let mut scene = verified();
+    scene.inventory = Inventory::Partial {
+        reason: "a process exited while it was read".to_owned(),
+    };
+
+    let scan = scene.scan();
+
+    assert_eq!(candidates(&scan), Vec::<String>::new());
+    assert_eq!(
+        scan.facts(OLD).settlement,
+        kept_blocked(GroupGap::ActivityUnknown)
+    );
+}
+
+/// Catches a release whose only running file is a helper, such as `rg`, read as idle:
+/// removing it breaks the Codex that looks the helper up.
+#[test]
+fn helper_process_keeps_its_release() {
+    let mut scene = verified();
+    scene.running.push(at(&format!("{OLD}/codex-path/rg")));
+
+    let scan = scene.scan();
+
+    assert_eq!(scan.facts(OLD).settlement, KEPT_RUNNING);
+}
+
+/// Catches a process under a release already set aside being ignored, when upstream's
+/// prune would stop for it.
+#[test]
+fn process_under_retired_blocks_the_group() {
+    let retired = release(STANDALONE, ".retired.AbCdEfGh");
+    let mut scene = verified();
+    codex_v0_166_0::release(
+        &mut scene.tree,
+        &at(&format!("{retired}/release")),
+        "0.163.0",
+        MUSL,
+    );
+    scene
+        .running
+        .push(at(&format!("{retired}/release/bin/codex")));
+
+    let scan = scene.scan();
+
+    assert_eq!(candidates(&scan), Vec::<String>::new());
+    assert_eq!(
+        scan.facts(OLD).settlement,
+        kept_blocked(GroupGap::RetiredRunning)
+    );
+}
+
+/// Catches a release run through a hard link from outside it read as idle: the process
+/// holds a file of the release, wherever it runs it from.
+#[test]
+fn hard_linked_running_binary_keeps_its_release() {
+    let mut scene = verified();
+    scene.linked.push(HardLink {
+        runs: "usr/local/bin/codex".to_owned(),
+        file: at(&format!("{OLD}/bin/codex")),
+    });
+
+    let scan = scene.scan();
+
+    assert_eq!(scan.facts(OLD).settlement, KEPT_RUNNING);
+    assert_eq!(scan.facts(ROLLBACK).settlement, KEPT_PREVIOUS);
+}
+
+/// Catches a pid file read as a running daemon: the process it names is gone, and only the
+/// process table says what runs.
+#[test]
+fn stale_pid_file_is_not_running() {
+    let mut scene = verified();
+    scene.store(DAEMON, &[V164, V165, V166], V166, V165);
+    scene
+        .tree
+        .file(&at("app-server-daemon/daemon.pid"), br#"{"pid":99999}"#);
+
+    let scan = scene.scan();
+
+    assert_eq!(scan.facts(&of(DAEMON, V164)).settlement, CANDIDATE);
+}
+
+/// Catches root's processes, which can't run from a home only its user can enter, blocking
+/// every release.
+#[test]
+fn root_process_is_a_notice_not_a_block() {
+    let scan = verified().scan();
+
+    assert!(
+        matches!(
+            scan.facts(OLD).activity,
+            Activity::IdleExceptSystem { unchecked, .. } if unchecked > 0
+        ),
+        "expected root's processes noted, got {:?}",
+        scan.facts(OLD).activity
+    );
+    assert_eq!(scan.facts(OLD).settlement, CANDIDATE);
+}
+
+/// Catches a Codex process of the user that couldn't be inspected read as idle, when it
+/// may run any release.
+#[test]
+fn unreadable_codex_process_blocks() {
+    let mut scene = verified();
+    scene.uninspected.push("usr/local/bin/codex".to_owned());
+
+    let scan = scene.scan();
+
+    assert_eq!(candidates(&scan), Vec::<String>::new());
+    assert_eq!(
+        scan.facts(OLD).settlement,
+        kept_blocked(GroupGap::ActivityUnknown)
+    );
+}
+
+/// Catches `/proc` mounted with `hidepid`, which hides processes without an error for each,
+/// read as a full list.
+#[test]
+fn hidepid_blocks() {
+    let mut scene = verified();
+    scene.inventory = Inventory::Partial {
+        reason: "/proc is mounted with hidepid=2".to_owned(),
+    };
+
+    let scan = scene.scan();
+
+    assert_eq!(
+        scan.facts(OLD).settlement,
+        kept_blocked(GroupGap::ActivityUnknown)
+    );
+}
+
+/// Catches a store outside the user's home settling as one inside it: another user's
+/// process could run from it, so no release of it goes, though the home's advice stands.
+#[test]
+fn store_outside_home_gets_advice_only() {
+    let mut scene = verified();
+    scene.user_home = "users/me";
+
+    let scan = scene.scan();
+
+    assert_eq!(candidates(&scan), Vec::<String>::new());
+    assert_eq!(
+        scan.facts(OLD).settlement,
+        kept_blocked(GroupGap::ActivityUnknown)
+    );
+    assert_eq!(scan.advice().len(), 1);
+}
+
+/// A store whose newest release was installed but not selected, as an interrupted update
+/// leaves one: 0.165.0 selected after 0.164.0, and 0.166.0 beside them.
+fn before_the_switch() -> Scene {
+    let mut scene = Scene::new();
+    scene.store(STANDALONE, &[V164, V165, V166], V165, V164);
+    scene
+}
+
+/// Catches a release judged by the selection it had at the scan: an install that selects
+/// it before apply, or between two items of a run, makes it the active one, and a scan
+/// after that plans it as one.
+#[test]
+fn link_changed_before_apply_protects_new_release() {
+    let scan = before_the_switch().scan();
+    assert_eq!(scan.facts(ACTIVE).settlement, CANDIDATE);
+    assert_eq!(scan.now(OLD).map(|now| now.settlement), Ok(KEPT_PREVIOUS));
+
+    scan.select(STANDALONE, &name(V166), &name(V165));
+
+    assert_eq!(scan.now(ACTIVE).map(|now| now.settlement), Ok(KEPT_ACTIVE));
+    assert_eq!(
+        scan.now(ROLLBACK).map(|now| now.settlement),
+        Ok(KEPT_PREVIOUS)
+    );
+    assert_eq!(scan.now(OLD).map(|now| now.settlement), Ok(CANDIDATE));
+    let replanned = scan.built.scan();
+    assert_eq!(replanned.facts(ACTIVE).settlement, KEPT_ACTIVE);
+    assert_eq!(candidates(&replanned), [OLD.to_owned()]);
+}
+
+/// Catches apply settling a release from the scan's facts after the store changed: a
+/// `current` made again without its history, as an install that stopped between the two
+/// leaves it, keeps every release.
+#[test]
+fn a_link_made_again_without_its_history_holds_at_apply() {
+    let scan = before_the_switch().scan();
+
+    scan.select(STANDALONE, &name(V166), &name(V165));
+    let history = scan
+        .built
+        .home()
+        .join(component(STANDALONE))
+        .join("selection-history");
+    fs::write(history, format!("{}\n{}\nstale\n", name(V166), name(V165))).unwrap();
+
+    let now = scan.now(ACTIVE).map(|now| now.settlement);
+    assert_eq!(now, Ok(kept_blocked(GroupGap::HistoryStale)));
 }
