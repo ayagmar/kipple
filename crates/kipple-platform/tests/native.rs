@@ -9,6 +9,8 @@ mod executor;
 mod gate;
 #[path = "native/profiles.rs"]
 mod profiles;
+#[path = "native/runner.rs"]
+mod runner;
 #[path = "native/runs.rs"]
 mod runs;
 #[path = "native/trash.rs"]

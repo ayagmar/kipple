@@ -1,6 +1,6 @@
 //! The platform runner: the one place kipple starts a native command
-//! (`docs/08-engineering-standards.md` §2). It runs read-only version probes and git's
-//! tracked-file query (D-066).
+//! (`docs/08-engineering-standards.md` §2). It runs read-only version probes, git's
+//! queries (D-066) and a tool's own reviewed command (`native.rs`).
 
 use std::ffi::OsStr;
 use std::io::{self, Read};
@@ -21,9 +21,10 @@ use crate::os;
 /// How often the runner checks on a child that has closed its output but not exited.
 const POLL: Duration = Duration::from_millis(10);
 
-/// The most output a version probe keeps from each stream. The rest is read and
-/// discarded, so a chatty tool can neither block on a full pipe nor grow kipple's memory.
-const OUTPUT_LIMIT: u64 = 64 * 1024;
+/// The most output a version probe or a tool's command keeps from each stream. The rest
+/// is read and discarded, so a chatty tool can neither block on a full pipe nor grow
+/// kipple's memory.
+pub(crate) const OUTPUT_LIMIT: u64 = 64 * 1024;
 
 /// A command to run: the program, its arguments, the variables it gets beyond the
 /// runner's own, how long it may take and how much of its stdout is kept.
@@ -50,12 +51,19 @@ pub(crate) struct CheckedDir(sys::Dir);
 
 impl CheckedDir {
     /// The directory at `anchor`, which must be what it records.
-    #[expect(dead_code, reason = "the native runner opens these when it fills in")]
     pub(crate) fn of(anchor: &Anchor) -> Result<Self, ApplyError> {
         let reached = executor::reach(anchor)?;
         let Some(last) = anchor.relative.components().last() else {
             return Ok(Self(reached.root));
         };
+        Self::below(&reached, last)
+    }
+
+    /// The directory `last` in the directory `reached` holds a target in, on its volume.
+    pub(crate) fn below(
+        reached: &executor::Reached,
+        last: &kipple_core::Component,
+    ) -> Result<Self, ApplyError> {
         let name = sys::name(last.as_os_str()).map_err(|e| ApplyError::io(ErrorCode::Io, e))?;
         let dir = reached.holder().open_dir(&name).map_err(|error| {
             let code = if sys::is_link_or_file(&error) {
@@ -73,8 +81,13 @@ impl CheckedDir {
     }
 
     /// What a child is told to start in, where this OS has a way to name the open handle.
-    fn start_path(&self) -> Option<PathBuf> {
+    pub(crate) fn start_path(&self) -> Option<PathBuf> {
         os::working_dir(&self.0)
+    }
+
+    /// The open directory.
+    pub(crate) const fn dir(&self) -> &sys::Dir {
+        &self.0
     }
 }
 
@@ -83,6 +96,26 @@ impl CheckedDir {
 pub(crate) struct Var<'value> {
     pub(crate) name: &'value str,
     pub(crate) value: &'value OsStr,
+}
+
+/// How a command's wait ended.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Finish {
+    /// It exited and closed its output by itself.
+    Exited,
+    /// It missed its deadline, and kipple killed it.
+    MissedDeadline,
+    /// Its cancel token was set, and kipple killed it.
+    Cancelled,
+}
+
+/// A command waited for to its end, however that came.
+#[derive(Debug)]
+pub(crate) struct Ran {
+    /// What it printed before it ended: nothing of a stream it hadn't closed when it was
+    /// killed.
+    pub(crate) output: Output,
+    pub(crate) finish: Finish,
 }
 
 /// What a finished command printed.
@@ -136,6 +169,23 @@ pub(crate) fn run(
 /// Runs `invocation` as [`run`] does, with its own variables, output limit and cancel
 /// token. A cancelled command is stopped and fails as an interrupted wait.
 pub(crate) fn invoke(invocation: &Invocation<'_>, env: &Environment) -> Result<Output, ToolError> {
+    let ran = invoke_to_end(invocation, env)?;
+    match ran.finish {
+        Finish::Exited => Ok(ran.output),
+        Finish::MissedDeadline => Err(ToolError::TimedOut {
+            deadline: invocation.deadline,
+        }),
+        Finish::Cancelled => Err(ToolError::Wait(Arc::new(io::ErrorKind::Interrupted.into()))),
+    }
+}
+
+/// Runs `invocation` and waits for it as [`invoke`] does, giving how a command stopped at
+/// its deadline or cancel ended too. Fails only when it couldn't start, or couldn't be
+/// waited for or read.
+pub(crate) fn invoke_to_end(
+    invocation: &Invocation<'_>,
+    env: &Environment,
+) -> Result<Ran, ToolError> {
     #[expect(
         clippy::disallowed_methods,
         reason = "the platform runner is the one place that starts native commands"
@@ -193,13 +243,13 @@ fn read_in_background<R: Read + Send + 'static>(
 }
 
 /// Waits for the child to exit and both streams to close, or kills it at the deadline or
-/// once it is cancelled.
+/// once it is cancelled. Only the child is killed: what it started itself runs on.
 fn wait(
     child: &mut Child,
     outputs: &mpsc::Receiver<Delivered>,
     started: Instant,
     invocation: &Invocation<'_>,
-) -> Result<Output, ToolError> {
+) -> Result<Ran, ToolError> {
     let wait_error = |e| ToolError::Wait(Arc::new(e));
     let deadline = invocation.deadline;
     let (mut status, mut stdout, mut stderr): (_, Option<Captured>, Option<Captured>) =
@@ -208,26 +258,27 @@ fn wait(
         if status.is_none() {
             status = child.try_wait().map_err(wait_error)?;
         }
-        if let (Some(status), Some(stdout), Some(stderr)) = (status, &mut stdout, &mut stderr) {
-            let stdout = std::mem::take(stdout);
-            return Ok(Output {
-                status,
-                stdout: stdout.kept,
-                stderr: std::mem::take(stderr).kept,
-                truncated: stdout.truncated,
+        if let (Some(status), Some(_), Some(_)) = (status, &stdout, &stderr) {
+            return Ok(Ran {
+                output: output(status, stdout, stderr),
+                finish: Finish::Exited,
             });
         }
         let left = deadline.checked_sub(started.elapsed());
         let cancelled = invocation.cancel.is_some_and(CancelToken::is_cancelled);
         let Some(left) = left.filter(|_| !cancelled) else {
-            child
+            let killed = child
                 .kill()
                 .and_then(|()| child.wait())
                 .map_err(wait_error)?;
-            return Err(if cancelled {
-                wait_error(io::ErrorKind::Interrupted.into())
+            let finish = if cancelled {
+                Finish::Cancelled
             } else {
-                ToolError::TimedOut { deadline }
+                Finish::MissedDeadline
+            };
+            return Ok(Ran {
+                output: output(killed, stdout, stderr),
+                finish,
             });
         };
         match outputs.recv_timeout(left.min(POLL)) {
@@ -235,6 +286,17 @@ fn wait(
             Ok((Stream::Stderr, bytes)) => stderr = Some(bytes.map_err(wait_error)?),
             Err(RecvTimeoutError::Timeout | RecvTimeoutError::Disconnected) => {}
         }
+    }
+}
+
+/// What a command that ended with `status` printed on the streams that closed.
+fn output(status: ExitStatus, stdout: Option<Captured>, stderr: Option<Captured>) -> Output {
+    let stdout = stdout.unwrap_or_default();
+    Output {
+        status,
+        stdout: stdout.kept,
+        stderr: stderr.unwrap_or_default().kept,
+        truncated: stdout.truncated,
     }
 }
 
