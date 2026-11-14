@@ -4,10 +4,10 @@
 use std::path::Path;
 
 use kipple_core::{
-    Kept, NativeArg, NativeCommand, NativeOutput, NativeSpec, Printed, ResolvedTool,
+    Finding, Kept, NativeArg, NativeCommand, NativeOutput, NativeSpec, Printed, ResolvedTool,
 };
 
-use super::escaped;
+use super::{escaped, worktree};
 
 /// What a native command means, said before a person confirms one.
 pub(crate) const NATIVE_CANNOT_UNDO: &str =
@@ -51,8 +51,14 @@ fn resolved(tool: &ResolvedTool) -> String {
 
 /// A native item as the person confirming it sees it: the command, what it acts on, the
 /// tool that runs it and its size, about `size` because nothing was enumerated. `path` is
-/// the reviewed path: npm's own arguments name only its working directory.
-pub(crate) fn native_line(spec: &NativeSpec, size: &str, path: &Path) -> String {
+/// the reviewed path: npm's own arguments name only its working directory. `finding`, the
+/// one it was planned from when the frontend has it, names a worktree's repository.
+pub(crate) fn native_line(
+    spec: &NativeSpec,
+    size: &str,
+    path: &Path,
+    finding: Option<&Finding>,
+) -> String {
     let args: Vec<String> = spec.command.argv().into_iter().map(shown).collect();
     let line = format!(
         "  native  about {size}  {} {} on {}, run by {}",
@@ -61,9 +67,11 @@ pub(crate) fn native_line(spec: &NativeSpec, size: &str, path: &Path) -> String 
         escaped(&path.display().to_string()),
         resolved(&spec.tool)
     );
-    match spec.command {
+    match &spec.command {
         NativeCommand::NpmCacheClean { .. } => format!("{line}: {NPM_REMOVES}"),
-        NativeCommand::GitWorktreeRemove { .. } => line,
+        NativeCommand::GitWorktreeRemove { witness, .. } => {
+            format!("{line}: {}", worktree::removal(witness, finding))
+        }
     }
 }
 
@@ -184,7 +192,7 @@ mod tests {
             identity: IDENTITY,
             fingerprint: FINGERPRINT,
         });
-        let line = native_line(&npm, "12 MiB", Path::new("/home/u/.npm/_cacache"));
+        let line = native_line(&npm, "12 MiB", Path::new("/home/u/.npm/_cacache"), None);
         assert!(
             line.contains("npm cache clean --force") && line.contains("/home/u/.npm/_cacache"),
             "expected the command and the path: {line}"
@@ -227,7 +235,12 @@ mod tests {
                 branch: None,
             },
         };
-        let git = native_line(&spec(worktree, NativeTool::Git), "1 MiB", Path::new("/w"));
+        let git = native_line(
+            &spec(worktree, NativeTool::Git),
+            "1 MiB",
+            Path::new("/w"),
+            None,
+        );
         assert!(
             git.contains("worktree remove") && git.contains("(none)"),
             "expected the command and no device path: {git}"

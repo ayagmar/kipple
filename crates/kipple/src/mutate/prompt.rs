@@ -125,7 +125,7 @@ fn cancelled(out: &mut dyn Write, cancel: &CancelToken) -> io::Result<Option<Str
 /// The lines that show `review` before it is confirmed: what it removes by each method,
 /// each item, what deleting and a trash move mean, and what was left out.
 pub(super) fn plan_lines(review: &Review<'_>, scan: &ScanReport, shown: &Shown<'_>) -> Vec<Line> {
-    let mut lines = item_lines(review.plan);
+    let mut lines = item_lines(review.plan, scan);
     let methods = review.plan.entries().iter().map(PlanEntry::method);
     lines.extend(method_lines(methods));
     let refused = RefusedItem::list(scan, review.refused);
@@ -133,15 +133,18 @@ pub(super) fn plan_lines(review: &Review<'_>, scan: &ScanReport, shown: &Shown<'
     lines
 }
 
-/// What `plan` removes by each method, then each of its items.
-pub(super) fn item_lines(plan: &Plan) -> Vec<Line> {
+/// What `plan` removes by each method, then each of its items, planned from `scan`.
+pub(super) fn item_lines(plan: &Plan, scan: &ScanReport) -> Vec<Line> {
     let headings = words::plan_heading(plan)
         .into_iter()
         .map(|heading| Line::new(Role::Title, heading));
-    let items = plan
-        .entries()
-        .iter()
-        .map(|entry| Line::new(Role::Text, words::plan_line(entry, entry.path())));
+    let items = plan.entries().iter().map(|entry| {
+        let finding = scan
+            .findings
+            .iter()
+            .find(|found| found.id == entry.finding());
+        Line::new(Role::Text, words::plan_line(entry, entry.path(), finding))
+    });
     headings.chain(items).collect()
 }
 
