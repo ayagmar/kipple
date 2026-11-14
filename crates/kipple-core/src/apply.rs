@@ -12,36 +12,43 @@
 //! 3. A release's tool locks are taken, without waiting. They are held until the item's
 //!    outcome is recorded.
 //! 4. It is frozen again, and git is asked again which entries of the fresh tree it
-//!    tracks, which are left out.
+//!    tracks, which are left out. A native item's target is measured then, so no long walk
+//!    sits between the re-check and the run (pinned 29).
 //! 5. [`Rescan::now`] reads again what it rests on, and judges its activity and predicates
 //!    from that: in use or unknown skips it as Protected.
 //! 6. [`admit`] makes its operation, or says why not: revalidation only subtracts.
 //! 7. Its intent is made durable, then the operation runs, the platform makes its effect
-//!    durable, and its outcome is recorded (pinned 8, F).
+//!    durable, and its outcome is recorded (pinned 8, F). A native command runs through the
+//!    platform's runner, which checks its tool and target by identity once more right
+//!    before it starts; what it did is settled as `native` says (pinned 30–32).
 //!
 //! Every item that ends gets an outcome record, skips included. A journal write that fails
 //! stops the apply: nothing runs after it. Cancellation is checked between items, and by
 //! the executor between entries.
 
+mod native;
 mod reconcile;
 
 pub use reconcile::{Reconciled, reconcile};
 
 use std::cell::RefCell;
+use std::path::PathBuf;
 
-use crate::authorize::{Authorization, AuthorizedOp, DeleteOp, Recheck, TrashOp, admit};
+use crate::authorize::{Authorization, AuthorizedOp, DeleteOp, NativeOp, Recheck, TrashOp, admit};
 use crate::cancel::CancelToken;
 use crate::engine::{Rescan, ScanReport};
 use crate::journal::{Intent, Journal, Record};
 use crate::mutation::{Finish, Freeze};
+use crate::native::NativeOutput;
 use crate::outcome::{
     ApplyError, Effect, ErrorCode, ItemOutcome, Receipt, ReceiptItem, Skip, Stop, Tally,
 };
 use crate::plan::{ItemId, ItemMethod, Plan, PlanEntry, VerifiedRoot};
 use crate::planner::{Judge, Judged, MutationPorts, Scene, Unjudged, untracked};
 use crate::policy::{Caution, Verdict};
+use crate::size::{Allocated, Completeness, SpaceEstimate};
 use crate::store_lock::{HeldLocks, LockGap};
-use crate::supplied::Subject;
+use crate::supplied::{Subject, Supplied};
 use crate::trash::TrashSlot;
 
 /// What to apply.
@@ -60,6 +67,11 @@ pub enum ItemEvent {
     Started {
         /// The item.
         item: ItemId,
+        /// How it runs: a frontend says a tool's own command started, since nothing shows
+        /// until it ends.
+        method: ItemMethod,
+        /// Its path, as it was shown.
+        path: PathBuf,
     },
     /// The item ended, with this outcome, which is recorded.
     Ended {
@@ -67,6 +79,9 @@ pub enum ItemEvent {
         item: ItemId,
         /// How it ended.
         outcome: Box<ItemOutcome>,
+        /// What its tool's own command printed, for a native item that started one. Shown
+        /// once, then dropped: never recorded, and never part of an event's JSON (04 §8a).
+        output: Option<Box<NativeOutput>>,
     },
 }
 
@@ -146,6 +161,7 @@ pub fn apply(
         events.item(ItemEvent::Ended {
             item: entry.item(),
             outcome: Box::new(ran.outcome.clone()),
+            output: ran.output.map(Box::new),
         });
         receipt.items.push(ReceiptItem {
             item: entry.item(),
@@ -167,6 +183,7 @@ fn stopped_before(plan: &Plan, events: &mut dyn ItemSink) -> Receipt {
         events.item(ItemEvent::Ended {
             item: entry.item(),
             outcome: Box::new(outcome.clone()),
+            output: None,
         });
         receipt.items.push(ReceiptItem {
             item: entry.item(),
@@ -184,6 +201,9 @@ fn stopped_before(plan: &Plan, events: &mut dyn ItemSink) -> Receipt {
 #[derive(Debug)]
 struct Admitted {
     op: AuthorizedOp,
+    /// For a native item, what its target allocated before the re-check, when that was
+    /// measured in full. A file item isn't measured: its run counts what it removes.
+    before: Option<Allocated>,
     _locks: Option<HeldLocks>,
 }
 
@@ -204,6 +224,7 @@ struct Run<'run> {
 enum Ready<'op> {
     Delete(&'op DeleteOp),
     Trash(&'op TrashOp, TrashSlot),
+    Native(&'op NativeOp),
 }
 
 /// How one item ended, and whether the apply stops after it.
@@ -211,6 +232,8 @@ enum Ready<'op> {
 struct Ran {
     outcome: ItemOutcome,
     stop: Option<Stop>,
+    /// What a native item's command printed.
+    output: Option<NativeOutput>,
 }
 
 impl Ran {
@@ -232,7 +255,11 @@ impl Ran {
         } else {
             stop
         };
-        Self { outcome, stop }
+        Self {
+            outcome,
+            stop,
+            output: None,
+        }
     }
 
     /// `entry` not started because the apply stopped for `why`. Recorded unless the
@@ -243,6 +270,7 @@ impl Ran {
             Stop::JournalFailed | Stop::Interrupted => Self {
                 outcome: ItemOutcome::Skipped(skip),
                 stop: Some(why),
+                output: None,
             },
             Stop::Cancelled => Self::skipped(entry, skip, journal),
         }
@@ -271,9 +299,10 @@ impl Run<'_> {
                 Ok(slot) => Ready::Trash(trash, slot),
                 Err(error) => return Ran::skipped(entry, Skip::TrashUnavailable(error), journal),
             },
+            AuthorizedOp::Native(native) => Ready::Native(native),
         };
         let slot = match &ready {
-            Ready::Delete(_) => None,
+            Ready::Delete(_) | Ready::Native(_) => None,
             Ready::Trash(_, slot) => Some(slot.clone()),
         };
         if journal
@@ -283,12 +312,21 @@ impl Run<'_> {
             return Ran {
                 outcome: ItemOutcome::Skipped(Skip::NotStarted(Stop::JournalFailed)),
                 stop: Some(Stop::JournalFailed),
+                output: None,
             };
         }
-        events.item(ItemEvent::Started { item: entry.item() });
-        let outcome = match ready {
-            Ready::Delete(delete) => self.delete(delete),
-            Ready::Trash(trash, to) => self.trash(trash, &to),
+        events.item(ItemEvent::Started {
+            item: entry.item(),
+            method: entry.method(),
+            path: entry.path().clone(),
+        });
+        let (outcome, output) = match ready {
+            Ready::Delete(delete) => (self.delete(delete), None),
+            Ready::Trash(trash, to) => (self.trash(trash, &to), None),
+            Ready::Native(native) => {
+                let ran = native::run(native, admitted.before, self.ports, self.cancel);
+                (ran.outcome, ran.output)
+            }
         };
         let record = Record::Outcome {
             item: entry.item(),
@@ -299,7 +337,11 @@ impl Run<'_> {
         } else {
             matches!(outcome, ItemOutcome::Cancelled(_)).then_some(Stop::Cancelled)
         };
-        Ran { outcome, stop }
+        Ran {
+            outcome,
+            stop,
+            output,
+        }
     }
 
     /// Prepares the home trash once, for the first trash item: created when it is
@@ -329,7 +371,7 @@ impl Run<'_> {
         Intent {
             plan: self.request.plan.digest(),
             item: target.item(),
-            method: op.method().into(),
+            method: op.method(),
             reviewed: target.tree().digest(),
             authorized: target.digest(),
             entries: target.marks().authorized(),
@@ -341,12 +383,14 @@ impl Run<'_> {
     fn authorize(&self, entry: &PlanEntry) -> Result<Admitted, Skip> {
         let judged = self.current(entry)?;
         let locks = self.locks(&judged)?;
+        let before = self.measure(&judged);
         let freeze = self.freeze(&judged)?;
-        let verdict = self.active(&judged)?;
+        let (verdict, supplied) = self.active(&judged)?;
         let recheck = Recheck {
             verdict: &verdict,
             proposal: &judged.proposal,
             judgement: &judged.judgement,
+            supplied: &supplied,
             own_git: judged.own_git(),
             freeze,
         };
@@ -356,7 +400,21 @@ impl Run<'_> {
             &self.request.authorization,
             recheck,
         )?;
-        Ok(Admitted { op, _locks: locks })
+        Ok(Admitted {
+            op,
+            before,
+            _locks: locks,
+        })
+    }
+
+    /// What a native item's target allocates now, when that is measured in full. It runs
+    /// before the freeze, so no walk sits between the re-check and the run (pinned 29). Nothing enumerates what a tool's command removes, so this and a
+    /// second measurement after it are all a receipt can say (04 §8).
+    fn measure(&self, judged: &Judged<'_>) -> Option<Allocated> {
+        if judged.method() != ItemMethod::Native {
+            return None;
+        }
+        in_full(self.ports.rescan.size(&judged.anchor.path(), self.cancel))
     }
 
     /// The tool's locks a release is removed under. It is removed under all of them or
@@ -413,8 +471,9 @@ impl Run<'_> {
     }
 
     /// `judged`'s verdict with what it rests on read again now: in use or unknown holds it
-    /// (pinned 4), and whatever else that reading gives it counts with its verdict.
-    fn active(&self, judged: &Judged<'_>) -> Result<Verdict, Skip> {
+    /// (pinned 4), and whatever else that reading gives it counts with its verdict. With
+    /// it, what its integration read now, which a native command is compared with.
+    fn active(&self, judged: &Judged<'_>) -> Result<(Verdict, Supplied), Skip> {
         let finding = judged.finding;
         let now = self
             .ports
@@ -425,15 +484,16 @@ impl Run<'_> {
         facts.supplied = now.supplied;
         facts.settlement = now.settlement;
         facts.unmet = now.unmet;
-        match self
+        let verdict = match self
             .judge
             .policy
             .verdict(&finding.rule, &finding.path, &facts)
         {
-            Verdict::Protected(holds) => Err(Skip::Protected(holds)),
-            Verdict::Safe => Ok(judged.verdict.clone()),
-            Verdict::Review(cautions) => Ok(with_cautions(&judged.verdict, cautions)),
-        }
+            Verdict::Protected(holds) => return Err(Skip::Protected(holds)),
+            Verdict::Safe => judged.verdict.clone(),
+            Verdict::Review(cautions) => with_cautions(&judged.verdict, cautions),
+        };
+        Ok((verdict, facts.supplied))
     }
 
     /// Runs `op`, after its intent, and turns what it did into the item's outcome.
@@ -459,6 +519,13 @@ impl Run<'_> {
             Err(error) => tally.finish(Err(error)),
         }
     }
+}
+
+/// What `estimate` allocates, when it was measured in full.
+fn in_full(estimate: Option<SpaceEstimate>) -> Option<Allocated> {
+    estimate
+        .filter(|size| size.completeness == Completeness::Complete)
+        .and_then(|size| size.allocated)
 }
 
 /// `verdict` with `cautions` too, each once.

@@ -228,7 +228,7 @@ fn restored(
 
 /// How `fresh` differs from the stored tree: by the identity of its top, then by how many
 /// of the entries the plan authorized aren't at their place with their identity and kind.
-fn compare(stored: &FrozenTree, fresh: &Freeze) -> Found {
+pub(super) fn compare(stored: &FrozenTree, fresh: &Freeze) -> Found {
     let identity = |tree: &FrozenTree| tree.top().snapshot().map(|top| (top.kind, top.identity));
     if identity(stored) != identity(&fresh.tree) {
         return Found::Replaced;

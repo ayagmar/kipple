@@ -5,10 +5,10 @@
 
 use std::path::Path;
 
-use kipple_core::{ApplyEvent, ItemMethod, Reconciled, Standing, Waited};
+use kipple_core::{ApplyEvent, ItemEvent, ItemMethod, Reconciled, Standing, Waited};
 
 use super::receipt::{self, items_word};
-use super::{caution, escaped, outcome};
+use super::{caution, escaped, native, outcome};
 
 /// What a wait for the person's answer ended in, when it says anything.
 pub(crate) const fn waited(waited: Waited) -> Option<&'static str> {
@@ -157,8 +157,22 @@ pub(crate) fn working_on(method: ItemMethod, path: &Path) -> String {
 pub(crate) const RESULT: &str = "Result";
 
 /// What an event of a running clean leaves to say once it is over: an earlier run
-/// reconciled, or one that can't be read.
-pub(crate) fn notice(event: &ApplyEvent) -> Option<String> {
+/// reconciled, one that can't be read, or what a tool's own command printed.
+pub(crate) fn notices(event: &ApplyEvent) -> Vec<String> {
+    if let ApplyEvent::Item {
+        event: ItemEvent::Ended {
+            output: Some(output),
+            ..
+        },
+        ..
+    } = event
+    {
+        return native::output_lines(output);
+    }
+    notice(event).into_iter().collect()
+}
+
+fn notice(event: &ApplyEvent) -> Option<String> {
     match event {
         ApplyEvent::Reconciled {
             run,

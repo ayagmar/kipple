@@ -216,6 +216,16 @@ named! {
     }
 }
 
+/// What a native command printed, up to the runner's bound on each stream. Kept in memory
+/// only and shown once the command ends: never stored, never in JSON (04 §8a).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct NativeOutput {
+    /// The start of its standard output.
+    pub stdout: Vec<u8>,
+    /// The start of its standard error.
+    pub stderr: Vec<u8>,
+}
+
 /// What the runner saw of a native command it started.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NativeExit {
@@ -225,10 +235,32 @@ pub struct NativeExit {
     pub postcondition: Postcondition,
     /// Whether its effect is durable: nothing is done without this barrier.
     pub synced: Result<(), ApplyError>,
-    /// The start of its standard output. Kept in memory only, never stored.
-    pub stdout: Vec<u8>,
-    /// The start of its standard error. Kept in memory only, never stored.
-    pub stderr: Vec<u8>,
+    /// What it printed.
+    pub output: NativeOutput,
+}
+
+impl NativeStatus {
+    /// How the process ended, whether or not it missed its deadline.
+    #[must_use]
+    pub const fn end(self) -> NativeEnd {
+        match self {
+            Self::Ended(end) | Self::TimedOut(end) => end,
+        }
+    }
+}
+
+impl NativeEnd {
+    /// Whether it exited by itself with code 0.
+    #[must_use]
+    pub const fn succeeded(self) -> bool {
+        matches!(
+            self,
+            Self {
+                exit: Some(0),
+                signal: None
+            }
+        )
+    }
 }
 
 /// Finds a native tool. Read-only and never cached, so apply sees the present.

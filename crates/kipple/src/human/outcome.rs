@@ -202,6 +202,12 @@ pub(crate) const fn error_code(code: ErrorCode) -> &'static str {
         ErrorCode::Cancelled => "cancelled",
         ErrorCode::NativeFailed => "its tool's command failed",
         ErrorCode::NativeTimedOut => "its tool's command took too long and was stopped",
+        ErrorCode::NativeUnconfirmed => {
+            "its tool's command ended, and what it did can't be confirmed"
+        }
+        ErrorCode::ToolChanged => {
+            "its tool isn't the one that was reviewed, so its command never started"
+        }
         ErrorCode::Io => "the system refused",
     }
 }
@@ -232,6 +238,10 @@ pub(crate) fn found(found: &Found) -> String {
         Found::Trashed(_) => "it is in the trash, and can be restored".to_owned(),
         Found::Unreadable(error) => format!("it couldn't be checked: {}", error_text(error)),
         Found::Unsynced(error) => format!("it can't be told: {}", error_text(error)),
+        Found::Unproven(error) => format!(
+            "its tool's command may or may not have finished: {}",
+            error_text(error)
+        ),
         Found::Pending => "not checked yet".to_owned(),
     }
 }

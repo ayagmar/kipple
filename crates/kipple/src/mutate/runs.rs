@@ -119,7 +119,7 @@ pub(crate) fn restore(host: &Host<'_>, args: &RestoreArgs, io: &mut Io<'_>) -> E
     let ink = host.ink(io.stderr);
     let mut events = Events::new(Format::Human, 0, io.cancel.clone(), ink.clone());
     let finished = machine.with_session(|session| {
-        let mut sink = events.sink(&mut *io.stdout);
+        let mut sink = events.sink(&mut *io.stdout, &mut *io.stderr);
         run_restore(&ask, session, &mut sink, &io.cancel)
     });
     events.say_notices(io.stderr);

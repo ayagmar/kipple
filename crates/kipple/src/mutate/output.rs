@@ -1,18 +1,19 @@
 //! What a mutating command writes: its events as they happen (`--events jsonl`), and its
 //! receipt when it ends, for people or as `kipple.receipt/v1`.
 
+use std::cell::RefCell;
 use std::io::{self, Write};
 use std::process::ExitCode;
 
 use kipple_core::format::{ApplyEventOut, ReceiptOut};
 use kipple_core::{
-    ApplyEvent, CancelToken, DroppedItem, Ending, EventSink, Finding, Finished, ItemEvent, Policy,
-    Receipt, Reconciled, RefusedItem, Status,
+    ApplyEvent, CancelToken, DroppedItem, Ending, EventSink, Finding, Finished, ItemEvent,
+    ItemMethod, Policy, Receipt, Reconciled, RefusedItem, Status,
 };
 use kipple_platform::OsNames;
 
 use super::Format;
-use crate::human::{self, outcome, receipt as words};
+use crate::human::{self, native, outcome, receipt as words, review};
 use crate::theme::{Ink, Role};
 use crate::{CANCELLED, say};
 
@@ -134,11 +135,18 @@ impl Events {
         Self { crash_at, ..self }
     }
 
-    /// Where the command reports its events, streaming them to `stdout` when asked to.
-    pub(super) fn sink<'sink>(&'sink mut self, stdout: &'sink mut dyn Write) -> Sink<'sink> {
+    /// Where the command reports its events, streaming them to `stdout` when asked to, and
+    /// saying on `stderr` when a tool's own command starts and what it printed once it
+    /// ended.
+    pub(super) fn sink<'sink>(
+        &'sink mut self,
+        stdout: &'sink mut dyn Write,
+        stderr: &'sink mut dyn Write,
+    ) -> Sink<'sink> {
         Sink {
             events: self,
             stdout,
+            stderr,
         }
     }
 
@@ -179,13 +187,61 @@ impl Events {
 pub(super) struct Sink<'sink> {
     events: &'sink mut Events,
     stdout: &'sink mut dyn Write,
+    stderr: &'sink mut dyn Write,
+}
+
+impl Sink<'_> {
+    /// Says on stderr that a tool's own command started, and what it printed once it
+    /// ended: nothing else shows while it runs, and none of it is data (AGENTS.md 12).
+    fn say_native(&mut self, event: &ApplyEvent) {
+        let ApplyEvent::Item { event, .. } = event else {
+            return;
+        };
+        let lines = match event {
+            ItemEvent::Started {
+                method: ItemMethod::Native,
+                path,
+                ..
+            } => vec![review::working_on(ItemMethod::Native, path)],
+            ItemEvent::Ended {
+                output: Some(output),
+                ..
+            } => native::output_lines(output),
+            ItemEvent::Started { .. } | ItemEvent::Ended { .. } => Vec::new(),
+        };
+        for line in lines {
+            say(self.stderr, &line);
+        }
+    }
+}
+
+/// One stream two writers share while a command runs: the prompt asks a person on stderr
+/// before anything starts, and the run's events say on stderr what a tool's own command
+/// did once it has.
+pub(super) struct Shared<'stream>(RefCell<&'stream mut dyn Write>);
+
+impl<'stream> Shared<'stream> {
+    pub(super) fn new(stream: &'stream mut dyn Write) -> Self {
+        Self(RefCell::new(stream))
+    }
+}
+
+impl Write for &Shared<'_> {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.0.borrow_mut().write(bytes)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.borrow_mut().flush()
+    }
 }
 
 impl EventSink for Sink<'_> {
     fn event(&mut self, event: ApplyEvent) {
+        self.say_native(&event);
         let events = &mut *self.events;
         if let ApplyEvent::Item {
-            event: ItemEvent::Started { item },
+            event: ItemEvent::Started { item, .. },
             ..
         } = &event
             && events.crash_at == Some(item.0)

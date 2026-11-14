@@ -943,9 +943,10 @@ fn clean_with_a_profiles_consent_runs_its_selection() {
 }
 
 /// Catches a profile reaching a tool's command: a rule it grants that now runs one is
-/// left out before planning, and no one reviewed it (pinned 24).
+/// left out before planning, and no one reviewed it (pinned 24). `admit` refuses a
+/// profile's authorization of one again (`authorize::tests`).
 #[test]
-fn a_profile_never_plans_a_native_item() {
+fn profile_never_holds_native() {
     let mut desk = desk();
     let profile = desk.make(Some(&[OTHER_RULE]));
     let check = desk.check(&profile);

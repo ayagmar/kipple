@@ -378,9 +378,11 @@ pub(crate) fn clean(host: &Host<'_>, args: &CleanArgs, io: &mut Io<'_>) -> ExitC
     } = io;
     let cancel: &CancelToken = cancel;
     let (mut finished, told) = machine.with_session(|session| {
+        let shared = output::Shared::new(&mut **stderr);
+        let (mut asks, mut says) = (&shared, &shared);
         let mut prompt = prompt::Prompt {
             input: &mut **stdin,
-            out: &mut **stderr,
+            out: &mut asks,
             ink: &ink,
             scan: &scanned.report,
             review: &picked.review,
@@ -390,7 +392,7 @@ pub(crate) fn clean(host: &Host<'_>, args: &CleanArgs, io: &mut Io<'_>) -> ExitC
             told: output::Told::NotYet,
         };
         let consent = consent(args, check.as_ref(), &mut prompt);
-        let mut sink = events.sink(&mut **stdout);
+        let mut sink = events.sink(&mut **stdout, &mut says);
         let finished = run_clean(&request, session, consent, &mut sink, cancel);
         (finished, prompt.told)
     });
@@ -474,6 +476,21 @@ pub(crate) fn prompt_shows(
         .into_iter()
         .map(|line| line.text)
         .collect()
+}
+
+/// What the command line says while a clean's run tells `events`: its stdout, then its
+/// stderr, for tests of what a running command shows.
+#[cfg(all(test, feature = "test-roots"))]
+pub(crate) fn said_while_running(events: &[kipple_core::ApplyEvent]) -> [Vec<u8>; 2] {
+    use kipple_core::EventSink as _;
+
+    let mut told = output::Events::new(Format::Human, 0, CancelToken::new(), Ink::plain());
+    let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+    let mut sink = told.sink(&mut stdout, &mut stderr);
+    for event in events {
+        sink.event(event.clone());
+    }
+    [stdout, stderr]
 }
 
 /// What `clean --dry-run` plans for: what the same command's consent may hold.
@@ -628,9 +645,11 @@ pub(crate) fn apply(host: &Host<'_>, args: &ApplyArgs, io: &mut Io<'_>) -> ExitC
     } = io;
     let cancel: &CancelToken = cancel;
     let finished = machine.with_session(|session| {
+        let shared = output::Shared::new(&mut **stderr);
+        let (mut asks, mut says) = (&shared, &shared);
         let mut prompt = prompt::Prompt {
             input: &mut **stdin,
-            out: &mut **stderr,
+            out: &mut asks,
             ink: &ink,
             scan: &scanned.report,
             review: &[],
@@ -648,7 +667,7 @@ pub(crate) fn apply(host: &Host<'_>, args: &ApplyArgs, io: &mut Io<'_>) -> ExitC
             imported: &imported,
             scan: &scanned.report,
         };
-        let mut sink = events.sink(&mut **stdout);
+        let mut sink = events.sink(&mut **stdout, &mut says);
         let finished = run_apply(&file, session, consent, &mut sink, cancel);
         (finished, prompt.told)
     });

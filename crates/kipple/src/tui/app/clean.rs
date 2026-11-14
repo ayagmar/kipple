@@ -169,17 +169,15 @@ impl App {
         let Some(Cleaning::Applying(applying)) = &mut self.cleaning else {
             return;
         };
-        if let Some(notice) = review::notice(&event) {
-            applying.notices.push(notice);
-        }
+        applying.notices.extend(review::notices(&event));
         match event {
             ApplyEvent::RunStarted { run, .. } => applying.run = Some(run),
             ApplyEvent::Item {
-                event: ItemEvent::Started { item },
+                event: ItemEvent::Started { item, .. },
                 ..
             } => applying.current = Some(item),
             ApplyEvent::Item {
-                event: ItemEvent::Ended { item, outcome },
+                event: ItemEvent::Ended { item, outcome, .. },
                 ..
             } => {
                 if applying.current == Some(item) {

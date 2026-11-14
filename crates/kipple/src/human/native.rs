@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use kipple_core::{NativeArg, NativeCommand, NativeSpec, ResolvedTool};
+use kipple_core::{NativeArg, NativeCommand, NativeOutput, NativeSpec, ResolvedTool};
 
 use super::escaped;
 
@@ -51,6 +51,33 @@ pub(crate) fn native_line(spec: &NativeSpec, size: &str, path: &Path) -> String 
         NativeCommand::NpmCacheClean { .. } => format!("{line}: {NPM_REMOVES}"),
         NativeCommand::GitWorktreeRemove { .. } => line,
     }
+}
+
+/// What a tool's own command printed, said once it ended: each stream that printed
+/// anything, under a line naming it, every line escaped. On stderr at the command line and
+/// in the result's notices in the TUI; never on stdout and never stored (04 §8a).
+pub(crate) fn output_lines(output: &NativeOutput) -> Vec<String> {
+    let streams = [
+        ("What its tool's command printed:", &output.stdout),
+        (
+            "What its tool's command printed as errors and warnings:",
+            &output.stderr,
+        ),
+    ];
+    let mut lines = Vec::new();
+    for (heading, bytes) in streams {
+        let text = String::from_utf8_lossy(bytes);
+        if text.trim().is_empty() {
+            continue;
+        }
+        lines.push(heading.to_owned());
+        lines.extend(
+            text.lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| format!("  | {}", escaped(line))),
+        );
+    }
+    lines
 }
 
 #[cfg(test)]

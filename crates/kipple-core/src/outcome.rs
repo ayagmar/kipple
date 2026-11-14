@@ -333,6 +333,10 @@ pub enum Found {
     /// The run changed it but couldn't make the change durable ([`ErrorCode::Unsynced`]),
     /// so what a power loss leaves can't be told.
     Unsynced(ApplyError),
+    /// A tool's own command ran and ended without proving what it changed: it missed its
+    /// deadline, failed after changing something, or git can't confirm the removal. The
+    /// error says how it ended, by kipple's code, its exit code and its signal.
+    Unproven(ApplyError),
     /// Not looked at yet: its intent is recorded and its outcome isn't, because its run
     /// is still going or a crash interrupted it and the next mutating command reconciles
     /// it. Only a run read back says this.
@@ -470,6 +474,12 @@ named! {
         NativeFailed = "native-failed",
         /// A tool's own command missed its deadline and was stopped.
         NativeTimedOut = "native-timed-out",
+        /// A tool's own command exited 0, and what it was to do couldn't be confirmed: its
+        /// target is still there, or git still lists it or couldn't be asked.
+        NativeUnconfirmed = "native-unconfirmed",
+        /// A tool's own command never started: its executable isn't the file that was
+        /// reviewed, or is one kipple never runs, such as a `.cmd` shim.
+        ToolChanged = "tool-changed",
         /// Another OS error.
         Io = "io",
     }

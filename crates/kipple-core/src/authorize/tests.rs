@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::{Authorization, AuthorizedOp, Recheck, ReviewedPlan, admit};
+use crate::AgentLabel;
 use crate::capability::NativeTool;
 use crate::digest::Digest;
 use crate::engine::FindingId;
@@ -14,7 +15,7 @@ use crate::frozen::{
     Volume,
 };
 use crate::mutation::{FileSystemClass, Freeze, LocalFileSystem, Unsupported};
-use crate::native::{NativeCommand, NativeKind, NativeSpec, ResolvedTool};
+use crate::native::{NativeCommand, NativeKind, NativeSpec, ResolvedTool, SemanticFacts, ToolGap};
 use crate::outcome::{LeftReason, Skip};
 use crate::plan::{
     Anchor, Execution, ItemId, ItemMethod, Judgement, JudgementField, Plan, PlanEntry, Standing,
@@ -25,8 +26,11 @@ use crate::probe::{EntryKind, FileIdentity};
 use crate::profile::ProfileGrant;
 use crate::root::SymbolicRoot;
 use crate::rule::{Method, RuleId};
+use crate::supplied::{Subject, Supplied};
 use crate::tracked::{GitGap, OwnGit};
-use crate::worktree::{ObjectId, WorktreeWitness};
+use crate::worktree::{
+    Checkout, ObjectId, Registration, RegistrationState, WorktreeFacts, WorktreeWitness,
+};
 
 const VOLUME: Volume = Volume {
     device: 7,
@@ -128,6 +132,7 @@ struct Now {
     judgement: Judgement,
     own_git: OwnGit,
     freeze: Freeze,
+    supplied: Supplied,
 }
 
 impl Now {
@@ -141,6 +146,7 @@ impl Now {
             judgement: entry.judgement.clone(),
             own_git: OwnGit::Counts,
             freeze: freeze((*entry.tree).clone()),
+            supplied: Supplied::default(),
         }
     }
 }
@@ -168,6 +174,7 @@ fn admit_item(
         judgement: &now.judgement,
         own_git: now.own_git,
         freeze: now.freeze,
+        supplied: &now.supplied,
     };
     admit(&plan, item, &authorization, recheck)
 }
@@ -180,7 +187,7 @@ fn review(cautions: &[Caution]) -> Standing {
 fn an_unchanged_reviewed_item_is_authorized_whole() {
     let entry = entry(Method::Delete, Standing::Safe, tree(1));
     let op = admit_now(&entry, None, Now::same_as(&entry)).unwrap();
-    assert_eq!(op.method(), Method::Delete);
+    assert_eq!(op.method(), ItemMethod::Delete);
     assert_eq!(op.target().marks().authorized(), 5);
 }
 
@@ -372,7 +379,7 @@ fn a_tree_with_another_scope_than_its_anchor_authorizes_nothing() {
 fn a_trash_move_needs_every_entry_still_authorized() {
     let entry = entry(Method::Trash, Standing::Safe, tree(1));
     let whole = admit_now(&entry, None, Now::same_as(&entry)).unwrap();
-    assert_eq!(whole.method(), Method::Trash);
+    assert_eq!(whole.method(), ItemMethod::Trash);
 
     let mut changed = Now::same_as(&entry);
     changed.freeze = freeze(tree(5));
@@ -424,18 +431,62 @@ fn a_root_target_is_never_moved_to_the_trash() {
     );
 }
 
+fn resolved() -> ResolvedTool {
+    ResolvedTool {
+        tool: NativeTool::Git,
+        path: PathBuf::from("/usr/bin/git"),
+        identity: FileIdentity { volume: 7, file: 9 },
+        version: "2.47.0".to_owned(),
+        runtime: None,
+    }
+}
+
+fn witness() -> WorktreeWitness {
+    let identity = FileIdentity { volume: 7, file: 5 };
+    WorktreeWitness {
+        common: identity,
+        admin: identity,
+        gitfile: identity,
+        gitdir_file: identity,
+        head: ObjectId("0".repeat(40)),
+        branch: None,
+    }
+}
+
+/// What a worktree's integration reads again at apply, as it was at planning.
+fn worktree_read(path: PathBuf) -> Subject {
+    Subject::Worktree(Box::new(WorktreeFacts {
+        registration: Registration {
+            path,
+            head: Some(ObjectId("0".repeat(40))),
+            checkout: Checkout::Detached,
+            locked: None,
+            prunable: false,
+            bare: false,
+        },
+        state: RegistrationState::RegisteredPresent,
+        repository: PathBuf::from("/home/u/code/app"),
+        admin: Some(PathBuf::from("/home/u/code/app/.git/worktrees/target")),
+        witness: Ok(witness()),
+        ignored: Ok(Vec::new()),
+        tool: Ok(resolved()),
+        agent: AgentLabel::Unknown,
+    }))
+}
+
 /// A native item on `tree`, reviewed, with everything at apply as it was at planning.
 fn native(command: NativeCommand, tree: FrozenTree) -> (PlanEntry, Now) {
     let mut native = entry(Method::Delete, Standing::Safe, tree);
+    let subject = match &command {
+        NativeCommand::NpmCacheClean { .. } => Subject::Semantic(SemanticFacts {
+            kind: NativeKind::NpmCacheClean,
+            tool: Ok(resolved()),
+        }),
+        NativeCommand::GitWorktreeRemove { .. } => worktree_read(native.path.clone()),
+    };
     native.execution = Execution::Native(Box::new(NativeSpec {
         command,
-        tool: ResolvedTool {
-            tool: NativeTool::Git,
-            path: PathBuf::from("/usr/bin/git"),
-            identity: FileIdentity { volume: 7, file: 9 },
-            version: "2.47.0".to_owned(),
-            runtime: None,
-        },
+        tool: resolved(),
         scope: native.anchor.clone(),
     }));
     native.judgement.method = ItemMethod::Native;
@@ -444,6 +495,7 @@ fn native(command: NativeCommand, tree: FrozenTree) -> (PlanEntry, Now) {
         Execution::Native(spec) => spec.command.kind(),
         Execution::Files(_) => NativeKind::NpmCacheClean,
     });
+    now.supplied.subject = subject;
     (native, now)
 }
 
@@ -454,15 +506,7 @@ fn npm(tree: FrozenTree) -> (PlanEntry, Now) {
 
 fn worktree(tree: FrozenTree) -> (PlanEntry, Now) {
     let checkout = entry(Method::Delete, Standing::Safe, tree.clone()).anchor;
-    let identity = FileIdentity { volume: 7, file: 5 };
-    let witness = WorktreeWitness {
-        common: identity,
-        admin: identity,
-        gitfile: identity,
-        gitdir_file: identity,
-        head: ObjectId("0".repeat(40)),
-        branch: None,
-    };
+    let witness = witness();
     let (entry, mut now) = native(NativeCommand::GitWorktreeRemove { checkout, witness }, tree);
     now.own_git = OwnGit::Replaced;
     (entry, now)
@@ -490,19 +534,44 @@ fn refused((item, now): (PlanEntry, Now)) -> Skip {
 }
 
 /// `item`, with `change` made to what is there at apply.
-fn changed((item, mut now): (PlanEntry, Now), change: fn(&mut Now)) -> (PlanEntry, Now) {
+fn changed((item, mut now): (PlanEntry, Now), change: impl FnOnce(&mut Now)) -> (PlanEntry, Now) {
     change(&mut now);
     (item, now)
 }
 
 /// Catches a tool's command run over a tree with a mark on it: a command can't subtract,
-/// so what revalidation dropped or the plan left out would go anyway (pinned 4).
+/// so what revalidation dropped or the plan left out would go anyway (pinned 4). npm's
+/// clean alone compares only its target's top (pinned 29), so a cache entry rewritten
+/// since review doesn't refuse it, and the plan's own exclusion still does.
 #[test]
 fn dropped_mark_on_a_native_tree_refuses_the_item() {
-    let dropped = refused(changed(npm(tree(1)), |now| now.freeze = freeze(tree(5))));
+    let worktree_tree = || with_git(&[".git"], EntryKind::File);
+    let rewritten = || {
+        let mut builder =
+            TreeBuilder::new(Scope::Whole, VOLUME, &snapshot(EntryKind::Dir, 20, 1)).unwrap();
+        let top = builder.top();
+        builder
+            .add(
+                top,
+                Component::new(".git").unwrap(),
+                &snapshot(EntryKind::File, 21, 9),
+            )
+            .unwrap();
+        builder.finish().unwrap()
+    };
+    let dropped = refused(changed(worktree(worktree_tree()), |now| {
+        now.freeze = freeze(rewritten());
+    }));
     assert!(
         matches!(dropped, Skip::NotWhole { .. }),
         "a dropped entry refuses the whole item: {dropped:?}"
+    );
+
+    let (item, now) = changed(npm(tree(1)), |now| now.freeze = freeze(tree(5)));
+    let cleaned = admit_now(&item, None, now);
+    assert!(
+        matches!(&cleaned, Ok(AuthorizedOp::Native(_))),
+        "npm's entries are its own to change: {cleaned:?}"
     );
 
     let mut frozen = tree(1);
@@ -517,10 +586,10 @@ fn dropped_mark_on_a_native_tree_refuses_the_item() {
     );
 }
 
-/// Catches automation reaching a tool's command that passes every other check, and an
-/// item that passes them all making an operation before anything can run one (pinned 24).
+/// Catches automation reaching a tool's command that passes every other check (pinned 24),
+/// and a person's review of one never authorizing it.
 #[test]
-fn only_a_person_authorizes_a_native_item_and_none_runs_yet() {
+fn only_a_person_authorizes_a_native_item() {
     let (item, now) = npm(tree(1));
     let automated = admit_now(&item, Some(Authorization::SafeOnly), now).unwrap_err();
     assert_eq!(automated, Skip::SemanticNotReviewed);
@@ -533,10 +602,110 @@ fn only_a_person_authorizes_a_native_item_and_none_runs_yet() {
         "a profile recorded no review of a command, whatever it grants"
     );
 
-    assert_eq!(
-        refused(npm(tree(1))),
-        Skip::SemanticNotReviewed,
-        "fail closed until it runs"
+    let (reviewed, at_review) = npm(tree(1));
+    let op = admit_now(&reviewed, None, at_review);
+    assert!(
+        matches!(&op, Ok(AuthorizedOp::Native(op)) if op.spec().command.kind() == NativeKind::NpmCacheClean),
+        "a person who saw it authorizes it: {op:?}"
+    );
+}
+
+/// Catches a command run by a tool other than the one a person saw: one read again as
+/// another file or version, or not found now, skips the item before its intent (pinned
+/// 29). A revisit that kept the scan's tool is caught again by the runner's own check.
+#[test]
+fn executable_swapped_before_apply_skips() {
+    let mut other = npm(tree(1));
+    if let Subject::Semantic(facts) = &mut other.1.supplied.subject
+        && let Ok(tool) = &mut facts.tool
+    {
+        tool.identity.file += 1;
+    }
+    assert_eq!(refused(other), Skip::ToolChanged(ToolGap::Changed));
+
+    let mut upgraded = worktree(with_git(&[".git"], EntryKind::File));
+    if let Subject::Worktree(facts) = &mut upgraded.1.supplied.subject
+        && let Ok(tool) = &mut facts.tool
+    {
+        tool.version = "2.47.1".to_owned();
+    }
+    assert_eq!(refused(upgraded), Skip::ToolChanged(ToolGap::Changed));
+
+    let mut gone = npm(tree(1));
+    gone.1.supplied.subject = Subject::Semantic(SemanticFacts {
+        kind: NativeKind::NpmCacheClean,
+        tool: Err(ToolGap::Missing),
+    });
+    assert_eq!(refused(gone), Skip::ToolChanged(ToolGap::Missing));
+}
+
+/// Catches a worktree removed when its registration, repository or HEAD changed since
+/// review, which booleans and counts alone can't see (pinned 20), or when the witness
+/// can't be built again.
+#[test]
+fn a_witness_built_again_must_equal_the_reviewed_one() {
+    let with_witness = |witness: Result<WorktreeWitness, GitGap>| {
+        let mut item = worktree(with_git(&[".git"], EntryKind::File));
+        if let Subject::Worktree(facts) = &mut item.1.supplied.subject {
+            facts.witness = witness;
+        }
+        refused(item)
+    };
+    let mut moved = witness();
+    moved.head = ObjectId("1".repeat(40));
+    assert_eq!(with_witness(Ok(moved)), Skip::WitnessChanged);
+    let mut other = witness();
+    other.admin.file += 1;
+    assert_eq!(with_witness(Ok(other)), Skip::WitnessChanged);
+    assert_eq!(with_witness(Err(GitGap::Failed)), Skip::Git(GitGap::Failed));
+
+    let mut plain = worktree(with_git(&[".git"], EntryKind::File));
+    plain.1.supplied.subject = Subject::Plain;
+    assert_eq!(refused(plain), Skip::Protected(vec![Hold::SubjectMismatch]));
+}
+
+/// Catches a file added inside a worktree since review going with it: `status` prints an
+/// ignored directory and stops there, so the tree's own comparison is all that sees it
+/// (pinned 29). npm's cache gaining entries is its stated effect, and doesn't refuse.
+#[test]
+fn an_entry_added_since_review_refuses_a_worktree_and_not_npm() {
+    let grown = || {
+        let mut builder =
+            TreeBuilder::new(Scope::Whole, VOLUME, &snapshot(EntryKind::Dir, 20, 1)).unwrap();
+        let top = builder.top();
+        builder
+            .add(
+                top,
+                Component::new(".git").unwrap(),
+                &snapshot(EntryKind::File, 21, 1),
+            )
+            .unwrap();
+        builder
+            .add(
+                top,
+                Component::new("new").unwrap(),
+                &snapshot(EntryKind::File, 30, 1),
+            )
+            .unwrap();
+        builder.finish().unwrap()
+    };
+    let added = refused(changed(
+        worktree(with_git(&[".git"], EntryKind::File)),
+        |now| {
+            now.freeze = freeze(grown());
+        },
+    ));
+    assert!(
+        matches!(added, Skip::AllDropped(_)),
+        "an entry the review never saw refuses the worktree it landed in: {added:?}"
+    );
+
+    let (item, now) = changed(npm(with_git(&["index-v5"], EntryKind::Dir)), |now| {
+        now.freeze = freeze(with_git(&["index-v5", "bucket"], EntryKind::File));
+    });
+    assert!(
+        matches!(admit_now(&item, None, now), Ok(AuthorizedOp::Native(_))),
+        "a cache entry that landed since review is npm's to remove"
     );
 }
 
@@ -572,9 +741,13 @@ fn only_a_worktrees_own_git_file_is_excused_at_apply() {
     }
 
     let own = || worktree(with_git(&[".git"], EntryKind::File));
-    assert_eq!(refused(own()), Skip::SemanticNotReviewed, "past every hold");
+    let (item, now) = own();
+    assert!(
+        matches!(admit_now(&item, None, now), Ok(AuthorizedOp::Native(_))),
+        "past every hold"
+    );
     assert_eq!(
-        refused(changed(own(), |now| now.own_git = OwnGit::Counts)),
+        refused(changed(own(), |counts| counts.own_git = OwnGit::Counts)),
         Skip::Protected(vec![Hold::SubjectMismatch])
     );
 }
