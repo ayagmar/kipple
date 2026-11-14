@@ -174,8 +174,11 @@ impl Repo {
     }
 
     /// Only the project root the test made: no other integration's root is reached.
-    pub(crate) fn roots(&self, env: &Environment) -> Roots {
-        let resolved = resolve_roots(env, &[self.projects()]);
+    ///
+    /// The roots are resolved without `PATH`: with one, resolving npm's cache root would
+    /// read the host's npm install and the npmrc files it names, in the real home.
+    pub(crate) fn roots(&self) -> Roots {
+        let resolved = resolve_roots(&self.env_with(OsString::new()), &[self.projects()]);
         let mut roots = Roots::default();
         for root in resolved.all(SymbolicRoot::ProjectRoots) {
             roots.add(SymbolicRoot::ProjectRoots, root.clone());
@@ -188,7 +191,7 @@ impl Repo {
     }
 
     pub(crate) fn scan_in(&self, env: &Environment) -> Scan {
-        scan_of(env, self.roots(env))
+        scan_of(env, self.roots())
     }
 }
 
