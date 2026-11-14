@@ -269,7 +269,7 @@ The Cargo, Node and Python rules propose `remove-files` with `delete` or `trash`
 | Pi | agents | on Linux, four named logs of the agent directory; its store, reported only | the verified install layout and an idle installer | `none`, loses `history`, Review at every level | Pi 1.5.0 |
 | Cursor | agents | on Windows, its application data, reported only; advice | none: nothing is verified, so it opens nothing | — (report only, advice) | nothing verified |
 | Git worktrees | agents | each linked worktree of the repositories under a project root or an agent's location, and each checkout none of them lists, with what git says of it | the facts git gave, past the roots | — (report only) | git 2.56.0 |
-| npm | dev | nothing yet: it has its descriptor, its closed roots and its rules as `report` | — | — | nothing yet |
+| npm | dev | the cache root's `_cacache` (on Linux under the download cache's rule, with the npm that would clean it; elsewhere reported); `_npx` and `_logs`, reported only | cacache's `index-v5/` and `content-v2/` in a `_cacache` that is a real directory; `CACHEDIR.TAG` proves nothing | `redownload`, loses `cache-warmth` and `offline-ability` | npm 11.20.0, 12.2.1 |
 
 A `target`, `node_modules` or `.venv` with no recognised signature is still reported, with `no-signature` evidence, so an unknown layout is visible but can never become eligible. A candidate that can't be listed, including a `__pycache__`, is reported with no layout evidence at all. Generic `dirs-matching` and `files-matching` rules from third-party packs are validated but not evaluated before M5.
 

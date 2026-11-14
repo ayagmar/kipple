@@ -87,14 +87,15 @@ fn claims(support: &Value, id: &str) -> Vec<(bool, bool)> {
 }
 
 /// Catches the site saying kipple finds what it doesn't: a stub's pack gives it rules, and a
-/// rule proves nothing about whether its integration can find anything yet.
+/// rule proves nothing about whether its integration can find anything yet. No built-in is
+/// a stub since npm's integration landed, so this holds the claims of the ones that are.
 #[test]
 fn the_support_matrix_claims_nothing_for_an_integration_that_finds_nothing() {
     let builtin = Builtin::load().unwrap();
 
     let support = matrix(&builtin);
 
-    assert_eq!(claims(&support, "npm"), [(false, false); 3]);
+    assert_eq!(claims(&support, "npm"), [(true, true); 3]);
     assert_eq!(claims(&support, "cursor"), [(false, true); 3]);
     assert_eq!(claims(&support, "cargo"), [(true, true); 3]);
 }

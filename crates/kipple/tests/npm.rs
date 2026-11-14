@@ -90,7 +90,7 @@ fn make_runnable(path: &Path) {
 /// the `node_modules` an `npx` run leaves below it is open to the Node integration, which
 /// would offer a cache npm reuses as a project's dependencies.
 #[test]
-fn npx_node_modules_is_no_node_candidate() {
+fn a_cache_moved_by_npmrc_keeps_node_out_of_npx() {
     let (_temp, home, roots) = moved_cache();
     let cache = home.join("code/npm-cache");
     let resolved = roots.get(SymbolicRoot::NpmCache).unwrap().as_ref().unwrap();
