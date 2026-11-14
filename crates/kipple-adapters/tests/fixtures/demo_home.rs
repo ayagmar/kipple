@@ -89,7 +89,9 @@ const _: () = {
 /// git and nothing else, so a scan can ask git about the demo's worktrees and can start no
 /// other program of the host's, npm and node included (AGENTS.md 8). Every host then shows
 /// the same demo: npm's cache, say, is held on Linux for the missing tool. The directory is
-/// made below `dir` on first use. A host with no git is an error, not an empty `PATH`.
+/// made below `dir` on first use. On Windows it is the host git's own directory, which may
+/// hold more than git; nothing of npm is looked for there. A host with no git is an error,
+/// not an empty `PATH`.
 pub(crate) fn path(dir: &Path) -> io::Result<OsString> {
     let git = host_git()?;
     git_dir(dir, &git).map(PathBuf::into_os_string)

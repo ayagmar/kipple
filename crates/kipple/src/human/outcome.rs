@@ -276,9 +276,12 @@ const fn lock_gap(gap: LockGap) -> &'static str {
     }
 }
 
+/// What is said of a tool no directory on `PATH` holds. It may be installed elsewhere.
+pub(crate) const TOOL_NOT_ON_PATH: &str = "it isn't on PATH";
+
 pub(crate) const fn tool_gap(gap: ToolGap) -> &'static str {
     match gap {
-        ToolGap::Missing => "it isn't installed",
+        ToolGap::Missing => TOOL_NOT_ON_PATH,
         ToolGap::Unreadable => "it can't be read",
         ToolGap::UnknownVersion => "its version can't be read",
         ToolGap::UnverifiedVersion => "kipple hasn't verified that version",

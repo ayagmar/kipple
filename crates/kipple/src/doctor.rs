@@ -357,7 +357,7 @@ impl Report {
         heading(out, ink, "Native tools")?;
         for ToolProbe { tool, status } in &self.tools {
             let line = match status {
-                ToolStatus::NotFound => "not found on PATH".to_owned(),
+                ToolStatus::NotFound => crate::human::outcome::TOOL_NOT_ON_PATH.to_owned(),
                 ToolStatus::Found {
                     path,
                     version: Ok(version),
