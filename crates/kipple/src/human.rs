@@ -122,6 +122,16 @@ pub(crate) fn findings(count: usize) -> String {
     }
 }
 
+/// The notice under a summary whose scan left `gaps` places uncovered, which `kipple scan`
+/// lists one by one.
+pub(crate) fn partial(gaps: usize) -> String {
+    if gaps == 1 {
+        "Partial: 1 place couldn't be covered; `kipple scan` lists it.".to_owned()
+    } else {
+        format!("Partial: {gaps} places couldn't be covered; `kipple scan` lists them.")
+    }
+}
+
 /// A bucket's name on screen.
 pub(crate) const fn bucket(bucket: Bucket) -> &'static str {
     standing(Some(bucket)).title

@@ -278,6 +278,19 @@ fn a_size_written_short_keeps_its_unit_its_rounding_and_its_lower_bound() {
     assert_eq!(super::size_short(Some(&partial)), ">=8.0M");
 }
 
+/// Catches "1 places" under a summary whose scan left one place uncovered.
+#[test]
+fn one_uncovered_place_is_singular() {
+    assert_eq!(
+        super::partial(1),
+        "Partial: 1 place couldn't be covered; `kipple scan` lists it."
+    );
+    assert_eq!(
+        super::partial(2),
+        "Partial: 2 places couldn't be covered; `kipple scan` lists them."
+    );
+}
+
 /// Catches two error codes, statuses, left reasons, stops, git gaps or run states worded
 /// alike, which leaves a person unable to tell what happened to an item.
 #[test]
