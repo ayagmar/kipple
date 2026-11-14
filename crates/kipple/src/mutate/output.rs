@@ -354,3 +354,83 @@ const fn role_of(status: Status) -> Role {
         Status::Failed => Role::Error,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::time::{Duration, SystemTime};
+
+    use kipple_core::{
+        Effect, ItemId, ItemOutcome, Measured, NativeEffect, NativeEnd, NativeOutput, RunId,
+    };
+
+    use super::*;
+
+    fn item(event: ItemEvent) -> ApplyEvent {
+        ApplyEvent::Item {
+            run: RunId::at(
+                SystemTime::UNIX_EPOCH + Duration::from_secs(1_793_000_000),
+                0,
+            ),
+            event,
+        }
+    }
+
+    /// What a command in `format` wrote on each stream once `events` had happened.
+    fn written(format: Format, events: &[ApplyEvent]) -> [String; 2] {
+        let mut told = Events::new(format, 0, CancelToken::new(), Ink::plain());
+        let (mut stdout, mut stderr) = (Vec::new(), Vec::new());
+        let mut sink = told.sink(&mut stdout, &mut stderr);
+        for event in events {
+            sink.event(event.clone());
+        }
+        [stdout, stderr].map(|bytes| String::from_utf8(bytes).unwrap())
+    }
+
+    /// Catches a tool's output shown as it streams, which a person could read mid-run as
+    /// the outcome, or written on stdout, where a script reads data: the start is said on
+    /// stderr, what the command printed only after it ended, and stdout holds none of it in
+    /// any format (04 §8a; AGENTS.md 12).
+    #[test]
+    fn output_shows_when_it_ends_and_never_on_stdout() {
+        let path = PathBuf::from("checkout");
+        let output = NativeOutput {
+            stdout: b"printed-out\n".to_vec(),
+            stderr: b"printed-err\n".to_vec(),
+        };
+        let started = item(ItemEvent::Started {
+            item: ItemId(0),
+            method: ItemMethod::Native,
+            path: path.clone(),
+        });
+        let ended = item(ItemEvent::Ended {
+            item: ItemId(0),
+            outcome: Box::new(ItemOutcome::Done(Effect::Native(NativeEffect {
+                exit: NativeEnd {
+                    exit: Some(0),
+                    signal: None,
+                },
+                reclaimed: Measured::Unknown,
+            }))),
+            output: Some(Box::new(output.clone())),
+        });
+        let starting = review::working_on(ItemMethod::Native, &path);
+        let printed = native::output_lines(&output);
+
+        let [_, running] = written(Format::Human, std::slice::from_ref(&started));
+        assert!(running.contains(&starting), "{running}");
+        assert!(!running.contains("printed-"), "nothing yet: {running}");
+
+        for format in [Format::Human, Format::Json, Format::Events] {
+            let [stdout, stderr] = written(format, &[started.clone(), ended.clone()]);
+            assert!(!stdout.contains("printed-"), "{format:?}: {stdout}");
+            let (_, after) = stderr.split_once(&starting).unwrap();
+            for line in &printed {
+                assert!(
+                    after.contains(line.as_str()),
+                    "{format:?}: {line:?} after the start in {stderr}"
+                );
+            }
+        }
+    }
+}
