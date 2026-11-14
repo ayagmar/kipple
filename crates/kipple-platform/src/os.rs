@@ -16,9 +16,20 @@ pub(crate) use linux::*;
 #[cfg(target_os = "macos")]
 pub(crate) use macos::*;
 #[cfg(unix)]
-pub(crate) use unix::{create_private_dir, create_private_file, own_process_group, sync_dir};
+pub(crate) use unix::{
+    codex_system_config, create_private_dir, create_private_file, own_process_group, sync_dir,
+};
 #[cfg(windows)]
 pub(crate) use windows::*;
+
+/// A tool's config file.
+#[derive(Debug, Clone)]
+pub(crate) struct ConfigFile {
+    /// What people call it, shown when it can't be read.
+    pub(crate) name: &'static str,
+    /// Where it is.
+    pub(crate) path: std::path::PathBuf,
+}
 
 /// A file with more than one name: its identity, and how many names it has.
 #[derive(Debug, Clone, Copy)]

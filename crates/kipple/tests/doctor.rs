@@ -2,15 +2,17 @@
 //! (`docs/03-functional-spec.md` §2 and §4), on a report built from fixed facts.
 
 use std::io::{self, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use kipple::doctor::{ConfigStatus, IntegrationRoots, Probed, Report, RootCheck};
 use kipple::theme::Ink;
 use kipple::{CANCELLED, exit_code};
+use kipple_adapters::builtin::descriptors;
 use kipple_core::{
-    FileIdentity, IntegrationId, Inventory, Lens, Observer, ProbeError, ProcessSnapshot,
-    ResolvedRoot, RootLink, RootSource, SymbolicRoot, UnresolvedRoot,
+    FileIdentity, HeldPath, IntegrationId, Inventory, Lens, Lineage, Observer, Owners, ProbeError,
+    ProcessSnapshot, Protection, Protections, ResolvedRoot, RootLink, RootSource, Roots,
+    SymbolicRoot, UnresolvedRoot,
 };
 use kipple_platform::{KippleDir, KippleDirs};
 
@@ -167,5 +169,49 @@ fn each_integration_is_listed_with_the_roots_it_reads_in_its_own_column() {
     assert!(
         output.contains("\n  claude-code reads claude.config\n"),
         "{output}"
+    );
+}
+
+/// Catches an unusable `CLAUDE_CONFIG_DIR` leaving kipple free to touch a store it can't
+/// locate, or leaving the person unable to tell why nothing can be cleaned.
+#[test]
+fn malformed_override_holds_every_finding_and_doctor_says_why() {
+    let malformed = UnresolvedRoot::NotAbsolute {
+        var: "CLAUDE_CONFIG_DIR",
+        value: "claude".to_owned(),
+    };
+    let mut roots = Roots::default();
+    let home = PathBuf::from("/home/u");
+    let resolved = ResolvedRoot::new(SymbolicRoot::Home, home.clone(), RootSource::Env("HOME"));
+    roots.insert(SymbolicRoot::Home, Ok(resolved));
+    roots.insert(SymbolicRoot::ClaudeConfig, Err(malformed.clone()));
+    let identity = |file| Some(FileIdentity { volume: 1, file });
+    let held = |path: &Path| HeldPath {
+        forms: vec![path.to_owned()],
+        lineage: Lineage(vec![identity(2)]),
+        note: None,
+    };
+    let data = home.join(".local/share/kipple");
+    let protections = Protections::of_host(&roots, Some(&data), &descriptors(), &held);
+
+    let finding = home.join("code/app/target");
+    let lineage = Lineage(vec![identity(1)]);
+    let found = protections.check(
+        &finding,
+        &lineage,
+        IntegrationId("cargo"),
+        &Owners::default(),
+    );
+    assert_eq!(found, Some(Protection::Subresource));
+
+    let mut doctor = report(io::ErrorKind::NotFound);
+    doctor.roots.push(RootCheck {
+        root: SymbolicRoot::ClaudeConfig,
+        status: Err(malformed),
+    });
+    let output = printed(&doctor);
+    assert!(
+        output.contains("CLAUDE_CONFIG_DIR is not an absolute path"),
+        "expected doctor to name the setting, got {output}"
     );
 }

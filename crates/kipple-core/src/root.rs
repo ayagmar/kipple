@@ -40,6 +40,46 @@ named! {
         PacmanCache = "pacman.cache",
         /// systemd-journald's persistent journal, `/var/log/journal`.
         Journal = "journald.journal",
+        /// `~/.claude`, where Claude Code still writes when `$CLAUDE_CONFIG_DIR` moves its
+        /// configuration directory.
+        ClaudeHome = "claude.home",
+        /// `.claude.json`, beside Claude Code's configuration directory.
+        ClaudeConfigFile = "claude.config-file",
+        /// Claude Code's installed versions, below `$XDG_DATA_HOME`.
+        ClaudeVersions = "claude.versions",
+        /// Claude Code's install state, below `$XDG_STATE_HOME`.
+        ClaudeInstallState = "claude.install-state",
+        /// The home of Codex: `$CODEX_HOME`, then `~/.codex`, canonicalized.
+        CodexHome = "codex.home",
+        /// `~/.codex`, whether or not `$CODEX_HOME` moved the home.
+        CodexDefaultHome = "codex.default-home",
+        /// Where Codex keeps its databases, when `$CODEX_SQLITE_HOME` or `sqlite_home` sets
+        /// it.
+        CodexSqliteHome = "codex.sqlite-home",
+        /// Codex's release store, `<home>/packages`.
+        CodexReleaseStore = "codex.release-store",
+        /// npm's cache directory, as its configuration resolves it.
+        NpmCache = "npm.cache",
+        /// npm's default cache directory, whether or not configuration moved the cache.
+        NpmDefaultCache = "npm.default-cache",
+        /// Pi's agent directory: `$PI_CODING_AGENT_DIR`, then `~/.pi/agent`.
+        PiAgent = "pi.agent",
+        /// `~/.pi`, whether or not `$PI_CODING_AGENT_DIR` moved the agent directory.
+        PiHome = "pi.home",
+        /// Pi's session directory, when `$PI_CODING_AGENT_SESSION_DIR` or `sessionDir` sets
+        /// it.
+        PiSessionDir = "pi.session-dir",
+        /// Cursor's configuration directory.
+        CursorConfig = "cursor.config",
+        /// Cursor's application data.
+        CursorAppData = "cursor.app-data",
+        /// The Cursor command line's own directory.
+        CursorCli = "cursor.cli",
+        /// The Cursor remote server's directory.
+        CursorServer = "cursor.server",
+        /// The directories agents keep git worktrees in, outside any repository, that
+        /// exist. A scan may have several.
+        GitAgentLocations = "git.agent-locations",
     }
 }
 
@@ -200,7 +240,8 @@ pub enum UnresolvedRoot {
 }
 
 /// Every root that exists on this platform, resolved or not. Most symbolic roots have one
-/// path; [`SymbolicRoot::ProjectRoots`] may have several.
+/// path; [`SymbolicRoot::ProjectRoots`] and [`SymbolicRoot::GitAgentLocations`] may have
+/// several.
 #[derive(Debug, Clone, Default)]
 pub struct Roots(BTreeMap<SymbolicRoot, Vec<Result<ResolvedRoot, UnresolvedRoot>>>);
 

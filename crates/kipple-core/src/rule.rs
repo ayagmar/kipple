@@ -6,6 +6,7 @@ use std::fmt;
 use std::time::Duration;
 
 use crate::integration::IntegrationId;
+use crate::native::NativeKind;
 use crate::root::SymbolicRoot;
 
 /// A rule pack's ID, such as `builtin.cargo`.
@@ -224,9 +225,77 @@ pub const GENERIC_SELECTORS: &[(&str, &[&str])] = &[
     ("project-artifact", &["marker", "artifact", "max_depth"]),
 ];
 
-/// The operations this engine publishes. More arrive with the integrations that can
-/// carry them out.
-pub const OPERATIONS: &[&str] = &["report", "remove-files"];
+/// An operation this engine publishes (`docs/06-adapters-and-rules.md` §2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct OperationSpec {
+    /// The name rules use for it.
+    pub name: &'static str,
+    /// Whether only built-in packs may name it. The table says so, never an ID prefix.
+    pub first_party: bool,
+    /// Whether a rule using it must carry a `[rule.retention]` table.
+    pub retention: bool,
+    /// The methods a rule using it may offer, none for one that chooses no method.
+    pub methods: &'static [Method],
+    /// What it does, for the generated catalog.
+    pub meaning: &'static str,
+}
+
+/// The operations this engine publishes.
+pub const OPERATIONS: &[OperationSpec] = &[
+    OperationSpec {
+        name: "report",
+        first_party: false,
+        retention: false,
+        methods: &[],
+        meaning: "shows the finding and never acts on it",
+    },
+    OperationSpec {
+        name: "remove-files",
+        first_party: false,
+        retention: false,
+        methods: Method::ALL,
+        meaning: "removes a frozen set of files",
+    },
+    OperationSpec {
+        name: "remove-verified-release",
+        first_party: true,
+        retention: true,
+        methods: Method::ALL,
+        meaning: "removes a frozen release that retention doesn't keep",
+    },
+    OperationSpec {
+        name: NativeKind::GitWorktreeRemove.name(),
+        first_party: true,
+        retention: false,
+        methods: &[],
+        meaning: "runs `git worktree remove` on a registered linked worktree",
+    },
+    OperationSpec {
+        name: NativeKind::NpmCacheClean.name(),
+        first_party: true,
+        retention: false,
+        methods: &[],
+        meaning: "runs `npm cache clean` on npm's download cache",
+    },
+];
+
+named! {
+    /// What a release's retention group is keyed on.
+    GroupKey {
+        /// The store it is in, such as Codex's `standalone`.
+        Component = "component",
+        /// The platform it was built for.
+        Target = "target",
+    }
+}
+
+/// How a release's group is formed. What is kept in each group is fixed: the host keeps
+/// everything the tool's own prune would (`docs/06-adapters-and-rules.md` §4).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Retention {
+    /// What groups its releases.
+    pub group_by: Vec<GroupKey>,
+}
 
 /// A range test. At least one bound is set, and `min <= max`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -268,6 +337,15 @@ pub enum Operation {
     Report,
     /// Remove a frozen set of files, by one of these methods.
     RemoveFiles(Vec<Method>),
+    /// Remove a frozen release that retention doesn't keep, by one of these methods.
+    RemoveVerifiedRelease {
+        /// How it may be removed.
+        methods: Vec<Method>,
+        /// How its releases are grouped.
+        retention: Retention,
+    },
+    /// Run a tool's own command.
+    Native(NativeKind),
 }
 
 impl Operation {
@@ -277,6 +355,18 @@ impl Operation {
         match self {
             Self::Report => "report",
             Self::RemoveFiles(_) => "remove-files",
+            Self::RemoveVerifiedRelease { .. } => "remove-verified-release",
+            Self::Native(kind) => kind.name(),
+        }
+    }
+
+    /// Whether it removes a frozen set of files: what a profile can hold an entry for. A
+    /// native command removes what it finds when it runs, so it can't.
+    #[must_use]
+    pub const fn removes_frozen_files(&self) -> bool {
+        match self {
+            Self::RemoveFiles(_) | Self::RemoveVerifiedRelease { .. } => true,
+            Self::Report | Self::Native(_) => false,
         }
     }
 }

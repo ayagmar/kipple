@@ -9,13 +9,13 @@
 use std::io::{self, Write};
 
 use kipple_core::{
-    Answer, CancelToken, Confirm, Finding, Method, Plan, PlanEntry, Policy, RefusedItem, Review,
-    ScanReport, Waited,
+    Answer, CancelToken, Confirm, Finding, ItemMethod, Plan, PlanEntry, Policy, RefusedItem,
+    Review, ScanReport, Waited,
 };
 
 use super::output::{Line, Shown, Told, left_out};
 use crate::Answers;
-use crate::human::{receipt as words, review};
+use crate::human::{native, receipt as words, review};
 use crate::theme::{Ink, Role};
 
 /// Asks on `out` and reads the answer from `input`.
@@ -138,22 +138,20 @@ pub(super) fn item_lines(plan: &Plan) -> Vec<Line> {
     let headings = words::plan_heading(plan)
         .into_iter()
         .map(|heading| Line::new(Role::Title, heading));
-    let items = plan.entries().iter().map(|entry| {
-        let size = words::estimate(entry.estimate());
-        Line::new(
-            Role::Text,
-            words::plan_line(entry.method(), &size, entry.path()),
-        )
-    });
+    let items = plan
+        .entries()
+        .iter()
+        .map(|entry| Line::new(Role::Text, words::plan_line(entry, entry.path())));
     headings.chain(items).collect()
 }
 
 /// What deleting and a trash move mean, for each of `methods` used.
-pub(super) fn method_lines(methods: impl Iterator<Item = Method>) -> Vec<Line> {
-    let used: Vec<Method> = methods.collect();
+pub(super) fn method_lines(methods: impl Iterator<Item = ItemMethod>) -> Vec<Line> {
+    let used: Vec<ItemMethod> = methods.collect();
     [
-        (Method::Delete, words::DELETE_PERMANENT),
-        (Method::Trash, words::TRASH_WHOLE),
+        (ItemMethod::Delete, words::DELETE_PERMANENT),
+        (ItemMethod::Trash, words::TRASH_WHOLE),
+        (ItemMethod::Native, native::NATIVE_CANNOT_UNDO),
     ]
     .into_iter()
     .filter(|(method, _)| used.contains(method))

@@ -23,17 +23,22 @@ use std::time::Duration;
 
 use codec::TestCodec;
 use kipple_core::{
-    Activity, ActivityGap, Allocated, Apparent, ApplyRequest, Authorization, CancelToken, Category,
-    Completeness, Conflict, ConflictKind, Consequence, Cost, EntryKind, EntrySnapshot, ErrorCode,
-    Evidence, Facts, FileIdentity, FileSystemClass, Finding, FindingId, Fingerprint, Found,
-    HeldPath, Hold, IntegrationId, IntegrationReport, ItemOutcome, Judge, JudgementField,
-    LeftReason, Level, Lineage, Loss, Method, Methods, Modified, MutationPorts, OpenedRoot,
-    Operation, Plan, PlanEntry, PlanMode, PlanRequest, Planned, Platform, Policy, Proposal,
-    Protection, Protections, Receipt, Recovery, RelPath, Rule, RuleId, RuleSettings, RuleText,
-    ScanOutcome, ScanReport, Scope, Selection, Selector, Skip, SpaceEstimate, Stamp, Standing,
-    Status, Stop, SymbolicRoot, Tracked, Unjudged, Unsupported, apply, plan, reconcile,
+    Activity, ActivityGap, Allocated, Apparent, ApplyRequest, Area, Authorization, CancelToken,
+    Category, Completeness, Conflict, ConflictKind, Consequence, Cost, EntryKind, EntrySnapshot,
+    ErrorCode, Evidence, Facts, FileIdentity, FileSystemClass, Finding, FindingId, Fingerprint,
+    Found, HeldPath, Hold, IntegrationId, IntegrationReport, ItemOutcome, Judge, JudgementField,
+    LeftReason, Level, Lineage, Loss, Method, Methods, Modified, MutationPorts, OpenArea,
+    OpenedRoot, Operation, OwnerStatus, Plan, PlanEntry, PlanMode, PlanRequest, Planned, Platform,
+    Policy, Proposal, Protection, Protections, Receipt, Recovery, RelPath, Rule, RuleId,
+    RuleSettings, RuleText, ScanOutcome, ScanReport, Scope, Selection, Selector, Skip,
+    SpaceEstimate, Stamp, Standing, StateDeclaration, StateRoot, Status, Stop, SymbolicRoot,
+    Tracked, Unavailable, Unjudged, Unresolved, Unsupported, apply, plan, reconcile,
 };
 use kipple_core::{ApplyPorts, Depth, Reconciled, Recorders, RunRead, StoredRun, read_run};
+use kipple_core::{
+    NativeKind, ReleaseFacts, ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion,
+    SemanticFacts, Subject, ToolGap,
+};
 use world::{Crash, Crashed, Record, Rescanned, Target, World};
 
 /// The home directory the scenarios run in: absolute on the OS the tests run on, as a
@@ -168,6 +173,10 @@ fn safe(lineage: Lineage) -> Facts {
         modified: Modified::Ago(Duration::from_hours(24 * 40)),
         recent_days: None,
         lineage,
+        supplied: kipple_core::Supplied::default(),
+        unmet: Vec::new(),
+        settlement: kipple_core::Settlement::Unsettled,
+        integration: IntegrationId("test"),
     }
 }
 
@@ -204,6 +213,7 @@ fn scan_of(items: &[Item]) -> ScanReport {
                 omissions: Vec::new(),
                 advice: Vec::new(),
                 opened: vec![home_root()],
+                owner: OwnerStatus::Unsupported,
             })
             .collect(),
         findings: (0..).zip(items).map(|(n, item)| finding(n, item)).collect(),
@@ -220,7 +230,7 @@ fn protections() -> Protections {
             lineage: Lineage(vec![Some(HOME_ID), Some(HOME_PARENT), Some(FS_ROOT)]),
             note: None,
         }),
-        subresources: Vec::new(),
+        ..Protections::default()
     }
 }
 
@@ -262,6 +272,9 @@ const fn ports(world: &World) -> MutationPorts<'_> {
         executor: world,
         trash: world,
         tracked: world,
+        runner: &Unavailable,
+        locks: &Unavailable,
+        worktrees: &Unavailable,
     }
 }
 
@@ -300,6 +313,8 @@ fn rescanned(scan: &ScanReport) -> Rescanned {
     Rescanned {
         scan: scan.clone(),
         activity: None,
+        refuses: None,
+        log: None,
     }
 }
 
@@ -347,7 +362,7 @@ fn plan_some(scan: &ScanReport, ids: &[u64], config: &Config, world: &World) -> 
 }
 
 const fn reviewed(plan: &Plan) -> Authorization {
-    Authorization::Reviewed(kipple_core::ReviewedPlan::of(plan))
+    Authorization::Reviewed(kipple_core::ReviewedPlan::for_core_tests(plan))
 }
 
 fn run(plan: &Plan, rescan: &ScanReport, config: &Config, world: &World) -> Receipt {
@@ -400,7 +415,7 @@ const fn skip_of(outcome: &ItemOutcome) -> Option<&Skip> {
 
 fn left(outcome: &ItemOutcome, reason: LeftReason) -> u64 {
     outcome
-        .effect()
+        .file_effect()
         .and_then(|effect| effect.left.0.get(&reason))
         .map_or(0, |left| left.count)
 }
@@ -991,6 +1006,9 @@ fn a_cancel_during_reconciliation_leaves_the_item_pending() {
         executor: &world,
         trash: &world,
         tracked: &world,
+        runner: &Unavailable,
+        locks: &Unavailable,
+        worktrees: &Unavailable,
     };
     let mut journal = world.recorder();
     let run = stored(&world, &planned.plan);
@@ -1128,6 +1146,100 @@ fn refusals(planned: &Planned) -> Vec<(FindingId, Skip)> {
         .collect()
 }
 
+/// Catches a new operation running before the card that owns it: a tool's command with
+/// no tool has nothing to build, and a release waits for settle.
+#[test]
+fn no_new_operation_can_run_yet() {
+    let (item, target) = project(0, 100, TARGET);
+    let world = world_of(&[(item.clone(), target)]);
+    let config = Config::new();
+    let scan_with = |proposal, subject| {
+        let mut scan = scan_of(std::slice::from_ref(&item));
+        let facts = scan.findings[0].facts.as_mut().unwrap();
+        facts.proposal = proposal;
+        facts.supplied.subject = subject;
+        scan
+    };
+
+    let native = scan_with(
+        Proposal::Native(NativeKind::NpmCacheClean),
+        Subject::Semantic(SemanticFacts {
+            kind: NativeKind::NpmCacheClean,
+            tool: Err(ToolGap::Missing),
+        }),
+    );
+    let commands = plan_all(&native, &config, &world, PlanMode::Review);
+    assert_eq!(
+        refusals(&commands),
+        [(FindingId(0), Skip::ToolChanged(ToolGap::Missing))]
+    );
+
+    let release = scan_with(
+        Proposal::RemoveRelease(vec![Method::Delete]),
+        Subject::Release(ReleaseFacts {
+            group: ReleaseGroup {
+                component: "cli".to_owned(),
+                target: "any".to_owned(),
+            },
+            version: ReleaseVersion("1.0.0".to_owned()),
+            role: ReleaseRole::Installed,
+            files: Vec::new(),
+            locks: Vec::new(),
+            state: ReleaseState::Sound,
+        }),
+    );
+    let releases = plan_all(&release, &config, &world, PlanMode::Review);
+    assert_eq!(
+        refusals(&releases),
+        [(FindingId(0), Skip::Protected(vec![Hold::Unsettled]))]
+    );
+}
+
+/// Catches the planner asking about a state root with the wrong integration, or without
+/// the owners of the scan it is judging.
+#[test]
+fn a_state_root_opens_only_to_the_integration_it_names_while_its_owner_is_supported() {
+    const OPEN_TO_CARGO: StateDeclaration = StateDeclaration {
+        root: SymbolicRoot::CodexHome,
+        protected: &[],
+        open: &[OpenArea {
+            at: Area::Inside(""),
+            integrations: &[CARGO],
+        }],
+        delegates: &[],
+        unresolved: Unresolved::HoldOwn,
+    };
+    let (item, target) = project(0, 100, TARGET);
+    let world = world_of(&[(item.clone(), target)]);
+    let mut config = Config::new();
+    config.protections.state.push(StateRoot {
+        owner: OTHER,
+        declaration: OPEN_TO_CARGO,
+        held: HeldPath {
+            forms: vec![home("p0")],
+            lineage: Lineage(vec![Some(id(99))]),
+            note: None,
+        },
+    });
+    let mut scan = scan_of(&[item]);
+
+    let closed = plan_all(&scan, &config, &world, PlanMode::Review);
+    assert_eq!(
+        refusals(&closed),
+        [(FindingId(0), Skip::HostProtected(Protection::Subresource))]
+    );
+
+    scan.integrations.push(IntegrationReport {
+        id: OTHER,
+        omissions: Vec::new(),
+        advice: Vec::new(),
+        opened: Vec::new(),
+        owner: OwnerStatus::Supported,
+    });
+    let open = plan_all(&scan, &config, &world, PlanMode::Review);
+    assert_eq!(refusals(&open), []);
+}
+
 /// Catches a plan that could remove the home directory, a file system's root or a
 /// declared subresource, or that freezes one before refusing it (04 §3.2, §3.9;
 /// pinned 12).
@@ -1151,6 +1263,7 @@ fn the_host_protects_home_roots_and_subresources_before_anything_is_frozen() {
         omissions: Vec::new(),
         advice: Vec::new(),
         opened: vec![home_root()],
+        owner: OwnerStatus::Unsupported,
     }];
     let mut config = Config::new();
     config.protections.subresources.push(HeldPath {
@@ -1901,8 +2014,12 @@ fn check_reconciled(seed: u64, world: &World, case: &Case) {
     assert_eq!(state.order_problem(), None, "seed {seed}");
 }
 
+#[path = "apply/native.rs"]
+mod native;
 #[path = "apply/profile.rs"]
 mod profile;
+#[path = "apply/releases.rs"]
+mod releases;
 #[path = "apply/replan.rs"]
 mod replan;
 #[path = "apply/runs.rs"]

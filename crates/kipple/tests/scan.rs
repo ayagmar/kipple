@@ -29,7 +29,7 @@ mod uv_v0_12_23;
 #[path = "../../kipple-adapters/tests/fixtures/python/venv_v3_14_8.rs"]
 mod venv_v3_14_8;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs;
@@ -200,8 +200,14 @@ fn a_lens_scans_only_its_own_integrations() {
         .iter()
         .map(|i| i["id"].as_str().unwrap())
         .collect();
-    assert_eq!(ran, ["claude-code"]);
-    assert_eq!(report["findings"], Value::Array(Vec::new()));
+    assert_eq!(ran, ["claude-code", "codex", "cursor", "git", "pi"]);
+    let lenses: BTreeSet<&str> = report["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|f| f["lens"].as_str().unwrap())
+        .collect();
+    assert_eq!(lenses, BTreeSet::from(["agents"]), "{json}");
 }
 
 #[test]
@@ -359,7 +365,7 @@ fn a_project_root_given_twice_or_through_its_parent_finds_each_artifact_once() {
     );
 
     assert_eq!(code, ExitCode::SUCCESS);
-    assert_eq!(finding_paths(&alone).len(), 8, "{alone}");
+    assert_eq!(finding_paths(&alone).len(), 9, "{alone}");
     assert_eq!(finding_paths(&repeated), finding_paths(&alone));
     assert_eq!(finding_paths(&parent), finding_paths(&alone));
 }
@@ -421,14 +427,11 @@ fn kipple_without_a_terminal_prints_each_buckets_total_instead_of_the_home_scree
     assert!(line("Safe to clean").ends_with(&count("safe")), "{out}");
     assert!(line("Review").ends_with(&count("review")), "{out}");
     // Every OS has at least the two Cargo targets Safe. The recent install is Review,
-    // except on Windows, where an interpreted layout is always Protected (04 §4).
+    // except on Windows, where an interpreted layout is always Protected (04 §4) and no
+    // agent's rule removes anything.
     assert!(!line("Safe to clean").ends_with(" 0 findings"), "{out}");
-    let review = if kipple_platform::PLATFORM == kipple_core::Platform::Windows {
-        "0 findings"
-    } else {
-        "1 finding"
-    };
-    assert!(line("Review").ends_with(review), "{out}");
+    let windows = kipple_platform::PLATFORM == kipple_core::Platform::Windows;
+    assert_eq!(line("Review").ends_with(" 0 findings"), windows, "{out}");
     assert!(line("Protected").contains("finding"), "{out}");
     assert!(out.contains("Nothing was changed."), "{out}");
 }

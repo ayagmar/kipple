@@ -1,7 +1,8 @@
 //! What a mutating command removes and records through.
 //!
 //! The settings it judges with, the engine that scans again, the run and profile
-//! stores, the confined executor and trash, git, and the host's protections.
+//! stores, the confined executor and trash, git, the native runner and a tool's locks,
+//! and the host's protections.
 //!
 //! A [`Machine`] is `Send`: a worker thread can take one and build its [`Session`]
 //! there, so no port reference crosses threads.
@@ -10,13 +11,14 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::sync::mpsc::Sender;
 
+use kipple_adapters::builtin;
 use kipple_core::{
     ApplyEvent, ApplyPorts, Engine, EventSink, Judge, Method, Methods, MutationPorts, Protections,
     Rule, Session, SymbolicRoot,
 };
 use kipple_platform::{
-    ConfinedFs, ConfinedTrash, Environment, FileProfileStore, FileRunStore, GitQuery, OsNames,
-    clock, kipple_dirs,
+    ConfinedFs, ConfinedTrash, Environment, FileLocks, FileProfileStore, FileRunStore, GitQuery,
+    NativeCommands, OsNames, clock, kipple_dirs,
 };
 
 use crate::config::{Settings, held_at};
@@ -35,6 +37,7 @@ pub struct Machine {
     profiles: FileProfileStore,
     trash: ConfinedTrash,
     git: GitQuery,
+    runner: NativeCommands,
 }
 
 impl Machine {
@@ -66,7 +69,13 @@ impl Machine {
                 rules: BTreeMap::new(),
                 config: settings.loaded.config.method,
             },
-            protections: Protections::of_host(roots, data.as_deref(), &|path| held_at(path, roots)),
+            protections: Protections::of_host(
+                roots,
+                data.as_deref(),
+                &builtin::descriptors(),
+                &|path| held_at(path, roots),
+            ),
+            runner: NativeCommands::new(env, data.clone()),
             store: FileRunStore::new(data.clone(), Arc::clone(&clock)),
             profiles: FileProfileStore::new(data),
             trash: ConfinedTrash::new(trash, clock),
@@ -111,7 +120,8 @@ impl Machine {
         }
     }
 
-    /// The ports that freeze, delete, trash and ask git.
+    /// The ports that freeze, delete, trash, ask git, take a tool's locks and run its
+    /// command.
     #[must_use]
     pub fn mutation(&self) -> MutationPorts<'_> {
         MutationPorts {
@@ -119,6 +129,9 @@ impl Machine {
             executor: &ConfinedFs,
             trash: &self.trash,
             tracked: &self.git,
+            runner: &self.runner,
+            locks: &FileLocks,
+            worktrees: &self.git,
         }
     }
 

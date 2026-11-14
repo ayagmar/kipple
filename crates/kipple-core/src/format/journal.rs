@@ -15,8 +15,7 @@ use super::outcome::{ErrorOut, FoundOut, OutcomeOut, SlotOut};
 use super::{DigestOut, FormatError, JOURNAL, signed, verified};
 use crate::frozen::NameCodec;
 use crate::journal::{Intent, Record, RestoreResult};
-use crate::plan::ItemId;
-use crate::rule::Method;
+use crate::plan::{ItemId, ItemMethod};
 
 /// One journal line.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -54,7 +53,7 @@ pub(crate) enum RecordOut {
         /// The item.
         item: u32,
         /// How it is removed.
-        method: Method,
+        method: ItemMethod,
         /// Its stored tree's digest.
         reviewed: DigestOut,
         /// The digest of that tree with what revalidation left of it.

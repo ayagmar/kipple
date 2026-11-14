@@ -1,0 +1,62 @@
+schema_version = 1
+
+[pack]
+id = "builtin.git"
+version = "1.0.0"
+publisher = "kipple"
+description = "Git worktrees, whichever agent left them"
+license = "MIT"
+kipple = ">=0.0.0"
+platforms = ["linux", "macos", "windows"]
+
+[[rule]]
+id = "builtin.git.worktree-remove"
+integration = "git"
+title = "Linked git worktrees"
+description = "A linked worktree that is registered and present."
+why = "Agents create git worktrees and often leave them behind."
+loss = "The checkout and its ignored files. Its branch stays."
+references = ["https://git-scm.com/docs/git-worktree"]
+category = "source-worktree"
+platforms = ["linux"]
+
+[rule.scope]
+root = "config.project-roots"
+selection = "registered-linked-worktrees"
+
+[rule.operation]
+kind = "report"
+
+[[rule]]
+id = "builtin.git.worktree-inventory"
+integration = "git"
+title = "Linked git worktrees, reported only"
+description = "A registered worktree kipple doesn't remove here: off Linux, or outside every root it opened."
+why = "Agents create git worktrees and often leave them behind."
+loss = "Nothing. Report only."
+references = ["https://git-scm.com/docs/git-worktree"]
+category = "source-worktree"
+
+[rule.scope]
+root = "config.project-roots"
+selection = "registered-linked-worktrees"
+
+[rule.operation]
+kind = "report"
+
+[[rule]]
+id = "builtin.git.worktree-anomalies"
+integration = "git"
+title = "Worktrees needing review"
+description = "A registration that is missing its checkout, a checkout no repository lists, or one that doesn't match its registration."
+why = "Agents create git worktrees and often leave them behind."
+loss = "Nothing. Report only."
+references = ["https://git-scm.com/docs/git-worktree"]
+category = "source-worktree"
+
+[rule.scope]
+root = "config.project-roots"
+selection = "worktree-registrations"
+
+[rule.operation]
+kind = "report"

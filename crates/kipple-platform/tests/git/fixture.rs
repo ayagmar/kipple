@@ -225,6 +225,7 @@ pub(crate) fn fake_git(repo: &Repo, version: &str, listing: &Path) -> Environmen
          *--version*) echo 'git version {version}' ;;\n\
          *rev-parse*) printf '%s\\n' '{top}' ;;\n\
          *ls-files*) cat '{listing}' ;;\n\
+         *'config --includes'*) ;;\n\
          *) exit 1 ;;\nesac\n",
         top = repo.root.display(),
         listing = listing.display(),

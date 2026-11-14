@@ -1,0 +1,3 @@
+builtin.claude-code.closed-debug-logs 8fc676edf91cfa7be5d9a5eee7fefddf 5ef840869f64541e477e0668640f54d8
+builtin.claude-code.store-inventory e992828a7444619bc64155a1b020fdb7 5ef840869f64541e477e0668640f54d8
+builtin.claude-code.versions 588be19c94ce68b45563a11fd46aaceb 5ef840869f64541e477e0668640f54d8

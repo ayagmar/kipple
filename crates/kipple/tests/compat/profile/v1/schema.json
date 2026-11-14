@@ -219,7 +219,25 @@
         "trash",
         "claude.config",
         "pacman.cache",
-        "journald.journal"
+        "journald.journal",
+        "claude.home",
+        "claude.config-file",
+        "claude.versions",
+        "claude.install-state",
+        "codex.home",
+        "codex.default-home",
+        "codex.sqlite-home",
+        "codex.release-store",
+        "npm.cache",
+        "npm.default-cache",
+        "pi.agent",
+        "pi.home",
+        "pi.session-dir",
+        "cursor.config",
+        "cursor.app-data",
+        "cursor.cli",
+        "cursor.server",
+        "git.agent-locations"
       ]
     },
     "TextOut": {

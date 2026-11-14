@@ -42,6 +42,14 @@ impl FsProbe for NoFollowFs {
         open(dir).map(drop).map_err(|e| ProbeError::io(dir, e))
     }
 
+    fn read_link(&self, path: &Path) -> Result<PathBuf, ProbeError> {
+        fs::read_link(exact(path)).map_err(|e| ProbeError::io(path, e))
+    }
+
+    fn link_stamp(&self, path: &Path) -> Result<String, ProbeError> {
+        os::link_stamp(&exact(path)).map_err(|e| ProbeError::io(path, e))
+    }
+
     fn read_file(&self, path: &Path, limit: u64) -> Result<Vec<u8>, ProbeError> {
         let read = || -> io::Result<Vec<u8>> {
             let file = exact(path);

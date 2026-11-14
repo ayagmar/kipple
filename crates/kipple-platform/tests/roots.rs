@@ -3,13 +3,22 @@
 //! roots are covered by the native profile instead. A root whose own path is a link is
 //! resolved once (D-041), here in a temp dir.
 #![cfg(unix)]
+#![expect(
+    clippy::unwrap_used,
+    reason = "a temp dir or path that can't be made fails the test"
+)]
 
 use std::ffi::OsString;
 use std::fs;
 use std::os::unix::fs::{PermissionsExt as _, symlink};
 use std::path::{Path, PathBuf};
+use std::slice;
 
-use kipple_core::{FsProbe as _, LinkProblem, RootSource, Roots, SymbolicRoot, UnresolvedRoot};
+use kipple_core::{
+    FsProbe as _, HeldPath, IntegrationDescriptor, IntegrationId, Lens, Lineage, LinkProblem,
+    Owners, Platform, Protections, RootSource, Roots, StateDeclaration, SymbolicRoot, Unresolved,
+    UnresolvedRoot,
+};
 use kipple_platform::{Environment, NoFollowFs, kipple_dirs, resolve_roots};
 
 fn roots(vars: &[(&str, &str)]) -> Roots {
@@ -451,4 +460,1097 @@ fn the_linux_trash_is_where_the_freedesktop_home_trash_keeps_the_trashed_files()
             }
         ))
     );
+}
+
+/// A real home directory in a temp dir, as `HOME`.
+fn home() -> tempfile::TempDir {
+    tempfile::tempdir().unwrap()
+}
+
+fn text(path: &Path) -> &str {
+    path.to_str().unwrap()
+}
+
+fn locations(roots: &Roots) -> Vec<PathBuf> {
+    let all = roots.all(SymbolicRoot::GitAgentLocations);
+    all.iter()
+        .map(|location| location.as_ref().unwrap().path.clone())
+        .collect()
+}
+
+/// Catches an absent location opened as a root, which reads as a scanned one, and a present
+/// one left out, so its worktrees are never seen.
+#[test]
+fn agent_locations_are_opened_only_when_present() {
+    let dir = home();
+    let home = dir.path();
+    let vars = [("HOME", text(home))];
+    assert_eq!(locations(&roots(&vars)), Vec::<PathBuf>::new());
+
+    fs::create_dir_all(home.join(".cursor/worktrees")).unwrap();
+    fs::create_dir_all(home.join(".codex/worktrees")).unwrap();
+    fs::create_dir_all(home.join("conductor")).unwrap();
+    fs::write(home.join(".herdr"), b"a file, not a directory").unwrap();
+
+    assert_eq!(
+        locations(&roots(&vars)),
+        [
+            home.join(".codex/worktrees"),
+            home.join(".cursor/worktrees")
+        ]
+    );
+}
+
+/// Catches a location that can't be placed reading as an empty one: with `$CODEX_HOME`
+/// unusable, the worktrees below it must show as a gap.
+#[test]
+fn an_agent_location_with_no_base_is_unknown() {
+    let dir = home();
+    let vars = [("HOME", text(dir.path())), ("CODEX_HOME", "relative/home")];
+
+    let roots = roots(&vars);
+
+    let all = roots.all(SymbolicRoot::GitAgentLocations);
+    assert!(
+        matches!(all, [Err(UnresolvedRoot::BaseUnresolved { .. })]),
+        "expected one unknown location, found {all:?}"
+    );
+}
+
+/// Catches a setup Pi accepts holding every finding of the scan: `pi.agent` is `HoldAll`, so
+/// a tilde read as a relative path, or an unmade directory read as an error, would close
+/// everything.
+#[test]
+fn pi_dir_expands_tilde_and_an_absent_one_holds_nothing() {
+    let dir = home();
+    // A directory that exists comes back in its physical parent (D-045), and macOS's temp
+    // dir sits below a link, so `~` has to be compared in that form.
+    let physical = dir.path().canonicalize().unwrap();
+    let home = physical.as_path();
+    for (value, expected) in [
+        ("~", home.to_owned()),
+        ("~/pi/agent", home.join("pi/agent")),
+        ("", home.join(".pi/agent")),
+    ] {
+        let roots = roots(&[("HOME", text(home)), ("PI_CODING_AGENT_DIR", value)]);
+        let (path, _) = path(&roots, SymbolicRoot::PiAgent).unwrap();
+        assert_eq!(path, expected, "{value:?}");
+    }
+    let absent = home.join("not/made/yet");
+    let vars = [("HOME", text(home)), ("PI_CODING_AGENT_DIR", text(&absent))];
+    let roots = roots(&vars);
+    assert_eq!(path(&roots, SymbolicRoot::PiAgent).unwrap().0, absent);
+
+    let declared = IntegrationDescriptor {
+        id: IntegrationId("pi"),
+        lens: Lens::Agents,
+        platforms: Platform::ALL,
+        roots: &[],
+        selectors: &[],
+        artifacts: &[],
+        owner_files: &[],
+        verified: &[],
+        consequences: &[],
+        facts: &[],
+        state: &[StateDeclaration {
+            root: SymbolicRoot::PiAgent,
+            protected: &[],
+            open: &[],
+            delegates: &[],
+            unresolved: Unresolved::HoldAll,
+        }],
+        evidences: &[],
+        revision: 1,
+    };
+    let held = |path: &Path| HeldPath {
+        forms: vec![path.to_owned()],
+        lineage: lineage(path),
+        note: None,
+    };
+    let protections = Protections::of_host(&roots, Some(&home.join("data")), &[declared], &held);
+    let finding = home.join("projects/app/node_modules");
+    fs::create_dir_all(&finding).unwrap();
+
+    let answer = protections.check(
+        &finding,
+        &lineage(&finding),
+        IntegrationId("node"),
+        &Owners::default(),
+    );
+
+    assert_eq!(answer, None);
+}
+
+fn lineage(path: &Path) -> Lineage {
+    let identity = |at: &Path| NoFollowFs.metadata(at).ok().and_then(|m| m.identity);
+    Lineage(path.ancestors().map(identity).collect())
+}
+
+/// Catches a value upstream refuses being treated as a place, or as unset: either would
+/// let a finding through a store kipple can't locate.
+#[test]
+fn an_unusable_agent_home_is_unresolved_and_never_the_default() {
+    let dir = home();
+    let home = dir.path();
+    let file = home.join("a-file");
+    fs::write(&file, b"").unwrap();
+    let missing = home.join("missing");
+    let unusable = [
+        ("CODEX_HOME", SymbolicRoot::CodexHome, "relative/home"),
+        ("CODEX_HOME", SymbolicRoot::CodexHome, "   "),
+        ("CODEX_HOME", SymbolicRoot::CodexHome, text(&missing)),
+        ("CODEX_HOME", SymbolicRoot::CodexHome, text(&file)),
+        (
+            "PI_CODING_AGENT_DIR",
+            SymbolicRoot::PiAgent,
+            "relative/agent",
+        ),
+        ("PI_CODING_AGENT_DIR", SymbolicRoot::PiAgent, text(&file)),
+    ];
+    for (var, root, value) in unusable {
+        let roots = roots(&[("HOME", text(home)), (var, value)]);
+        assert!(
+            matches!(roots.get(root), Some(Err(_))),
+            "{var}={value:?} gave {:?}",
+            roots.get(root)
+        );
+    }
+}
+
+/// Catches the release store derived through a link it can't re-check: `$CODEX_HOME` is
+/// canonicalized, and what is below it hangs off the directory it leads to.
+#[test]
+fn codex_home_is_canonicalized_and_its_store_is_below_it() {
+    let dir = home();
+    let home = dir.path().canonicalize().unwrap();
+    let real = home.join("real-codex");
+    fs::create_dir(&real).unwrap();
+    symlink(&real, home.join("linked")).unwrap();
+    let linked = home.join("linked");
+
+    let roots = roots(&[("HOME", text(&home)), ("CODEX_HOME", text(&linked))]);
+
+    assert_eq!(path(&roots, SymbolicRoot::CodexHome).unwrap().0, real);
+    let (store, _) = path(&roots, SymbolicRoot::CodexReleaseStore).unwrap();
+    assert_eq!(store, real.join("packages"));
+    let (default, _) = path(&roots, SymbolicRoot::CodexDefaultHome).unwrap();
+    assert_eq!(default, home.join(".codex"));
+}
+
+/// Catches a store a config file moves staying open: `codex.sqlite-home` and
+/// `pi.session-dir` exist only because of these two keys.
+#[test]
+fn settings_that_move_a_store_are_read() {
+    let dir = home();
+    let home = dir.path();
+    let codex = home.join(".codex");
+    let agent = home.join(".pi/agent");
+    fs::create_dir_all(&codex).unwrap();
+    fs::create_dir_all(&agent).unwrap();
+    fs::write(
+        codex.join("config.toml"),
+        "model = \"x\"\nsqlite_home = \"/data/codex\" # moved\n\n[history]\nmax_bytes = 1\n",
+    )
+    .unwrap();
+    fs::write(
+        agent.join("settings.json"),
+        "{\n  \"theme\": \"sessionDir\",\n  \"sessionDir\": \"~/pi-sessions\"\n}\n",
+    )
+    .unwrap();
+
+    let roots = roots(&[("HOME", text(home))]);
+
+    let (sqlite, source) = path(&roots, SymbolicRoot::CodexSqliteHome).unwrap();
+    assert_eq!(sqlite, Path::new("/data/codex"));
+    assert_eq!(
+        source,
+        RootSource::Setting {
+            file: "config.toml",
+            key: "sqlite_home",
+        }
+    );
+    let (sessions, _) = path(&roots, SymbolicRoot::PiSessionDir).unwrap();
+    assert_eq!(sessions, home.join("pi-sessions"));
+}
+
+/// Catches a store with no setting being invented, which would show a path nothing uses.
+#[test]
+fn a_store_no_setting_moves_is_absent() {
+    let dir = home();
+
+    let roots = roots(&[("HOME", text(dir.path()))]);
+
+    assert!(
+        roots.all(SymbolicRoot::CodexSqliteHome).is_empty(),
+        "no setting moves the Codex store"
+    );
+    assert!(
+        roots.all(SymbolicRoot::PiSessionDir).is_empty(),
+        "no setting moves the Pi sessions"
+    );
+}
+
+/// Catches a config kipple can't read being treated as one that sets nothing, and the value
+/// of another key reaching the message: these files can hold tokens.
+#[test]
+fn an_unreadable_setting_is_unknown_and_shows_no_other_value() {
+    let dir = home();
+    let home = dir.path();
+    let codex = home.join(".codex");
+    fs::create_dir_all(&codex).unwrap();
+    fs::write(
+        codex.join("config.toml"),
+        "token = \"s3cret\"\nsqlite_home = 12\n",
+    )
+    .unwrap();
+
+    let roots = roots(&[("HOME", text(home))]);
+
+    let found = roots.all(SymbolicRoot::CodexSqliteHome);
+    assert_eq!(found.len(), 1, "one root, found {found:?}");
+    let shown = found[0].as_ref().unwrap_err().to_string();
+    assert!(shown.contains("sqlite_home"), "says which key: {shown}");
+    assert!(!shown.contains("s3cret"), "shows no other value: {shown}");
+}
+
+const CODEX_CONFIG: &str = ".codex/config.toml";
+const PI_SETTINGS: &str = ".pi/agent/settings.json";
+
+/// What `root` resolves to with `document` at `file` under a new home, sorted.
+fn set_by(file: &str, root: SymbolicRoot, document: &str) -> Vec<Result<PathBuf, String>> {
+    let dir = home();
+    let at = dir.path().join(file);
+    fs::create_dir_all(at.parent().unwrap()).unwrap();
+    fs::write(&at, document).unwrap();
+    let roots = roots(&[("HOME", text(dir.path()))]);
+    let mut found: Vec<_> = roots
+        .all(root)
+        .iter()
+        .map(|resolved| {
+            let path = resolved.as_ref().map(|r| r.path.clone());
+            path.map_err(ToString::to_string)
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+fn paths(expected: &[&str]) -> Vec<Result<PathBuf, String>> {
+    expected.iter().map(|p| Ok(PathBuf::from(p))).collect()
+}
+
+/// Catches a TOML form decoded wrongly or missed: that names the wrong directory and leaves
+/// the real store open.
+#[test]
+fn every_toml_form_of_a_setting_decodes_to_its_path() {
+    let rows: [(&str, &[&str]); 12] = [
+        (
+            r#"sqlite_home = "/data/co\u0064ex\ttab""#,
+            &["/data/codex\ttab"],
+        ),
+        (r"sqlite_home = '/data/co\dex'", &[r"/data/co\dex"]),
+        (r#""sqlite_home" = "/data/quoted""#, &["/data/quoted"]),
+        (
+            r#"'sqlite_home' = "/data/literal-key""#,
+            &["/data/literal-key"],
+        ),
+        (r#"profile.sqlite_home = "/data/dotted""#, &["/data/dotted"]),
+        (
+            r#"profile = { sqlite_home = "/data/inline" }"#,
+            &["/data/inline"],
+        ),
+        (
+            "sqlite_home = \"\"\"\n/data/multi\\\n   -line\"\"\"",
+            &["/data/multi-line"],
+        ),
+        ("sqlite_home = '''\n/data/raw\\n'''", &[r"/data/raw\n"]),
+        (
+            "[[profile]]\nsqlite_home = \"/data/a\"\n[[profile]]\nsqlite_home = \"/data/b\"\n",
+            &["/data/a", "/data/b"],
+        ),
+        (
+            "sqlite_home = \"/data/top\"\n[profile.deep]\nsqlite_home = \"/data/table\"\n",
+            &["/data/table", "/data/top"],
+        ),
+        ("# sqlite_home = \"/data/comment\"\n", &[]),
+        (r#"note = "sqlite_home = '/data/string'""#, &[]),
+    ];
+
+    for (document, expected) in rows {
+        let found = set_by(CODEX_CONFIG, SymbolicRoot::CodexSqliteHome, document);
+        assert_eq!(found, paths(expected), "for {document:?}");
+    }
+}
+
+/// Catches a JSON form decoded wrongly or missed, or a key's name taken for the key where it
+/// is only text.
+#[test]
+fn every_json_form_of_a_setting_decodes_to_its_path() {
+    let rows: [(&str, &[&str]); 7] = [
+        (r#"{"sessionDir": "/data/pi\u0073"}"#, &["/data/pis"]),
+        (r#"{"sessionDir": "/data/\ud83d\ude00"}"#, &["/data/😀"]),
+        (
+            r#"{"session\u0044ir": "/data/escaped-key"}"#,
+            &["/data/escaped-key"],
+        ),
+        (
+            r#"{"a": {"sessionDir": "/data/a"}, "b": [{"sessionDir": "/data/b"}]}"#,
+            &["/data/a", "/data/b"],
+        ),
+        (
+            r#"{"sessionDir": "/data/first", "sessionDir": "/data/last"}"#,
+            &["/data/last"],
+        ),
+        (r#"{"theme": "sessionDir"}"#, &[]),
+        (r#"{"note": "\"sessionDir\": \"/data/string\""}"#, &[]),
+    ];
+
+    for (document, expected) in rows {
+        let found = set_by(PI_SETTINGS, SymbolicRoot::PiSessionDir, document);
+        assert_eq!(found, paths(expected), "for {document:?}");
+    }
+}
+
+/// Catches a file kipple can't parse counting as one that sets nothing, a non-string value
+/// being skipped, and the parser's own message reaching the output: toml's quotes the line,
+/// and these files can hold tokens. A file nested past any use must not crash the scan.
+#[test]
+fn a_setting_file_kipple_cant_parse_is_unknown_and_quotes_nothing() {
+    let deep = format!("{}{}", "[".repeat(100_000), "]".repeat(100_000));
+    let toml_rows = [
+        "token = \"s3cret\"\nsqlite_home = \"/data/unclosed\n".to_owned(),
+        "token = \"s3cret\"\ntoken = \"s3cret\"\n".to_owned(),
+        "[profile]\nsqlite_home = [\"/data/s3cret\"]\n".to_owned(),
+        "[profile]\nsqlite_home = { token = \"s3cret\" }\n".to_owned(),
+        format!("token = {deep}"),
+    ];
+    let json_rows = [
+        "{\"token\": \"s3cret\", \"sessionDir\": }".to_owned(),
+        "{\"token\": \"s3cret\", \"sessionDir\": null}".to_owned(),
+        "{\"a\": [{\"sessionDir\": 12}], \"token\": \"s3cret\"}".to_owned(),
+        deep,
+    ];
+    let toml_cases = toml_rows
+        .iter()
+        .map(|row| set_by(CODEX_CONFIG, SymbolicRoot::CodexSqliteHome, row));
+    let json_cases = json_rows
+        .iter()
+        .map(|row| set_by(PI_SETTINGS, SymbolicRoot::PiSessionDir, row));
+
+    for found in toml_cases.chain(json_cases) {
+        assert_eq!(found.len(), 1, "one unknown root, found {found:?}");
+        let message = found[0].as_ref().unwrap_err();
+        assert!(!message.contains("s3cret"), "shows no value: {message}");
+    }
+}
+
+/// Variables to set, each a name and its value.
+type Vars<'text> = &'text [(&'text str, &'text str)];
+
+/// What `root` resolved to in a new home, with the home kept alive to look inside.
+struct Read {
+    _dir: tempfile::TempDir,
+    home: PathBuf,
+    roots: Roots,
+    found: Vec<Result<PathBuf, String>>,
+}
+
+/// `root` resolved with `vars` set, `document` at `file` and the directory `real` made below
+/// a new home. `<home>` in `vars` and `document` stands for that home's path.
+fn read_in_home(
+    vars: Vars<'_>,
+    file: &str,
+    document: &str,
+    root: SymbolicRoot,
+    real: &str,
+) -> Read {
+    let dir = home();
+    let home = dir.path().canonicalize().unwrap();
+    let at = home.join(file);
+    fs::create_dir_all(at.parent().unwrap()).unwrap();
+    fs::create_dir_all(home.join(real)).unwrap();
+    let here = text(&home);
+    fs::write(&at, document.replace("<home>", here)).unwrap();
+    let set: Vec<_> = vars
+        .iter()
+        .map(|(k, v)| (*k, v.replace("<home>", here)))
+        .collect();
+    let mut all: Vec<_> = set.iter().map(|(k, v)| (*k, v.as_str())).collect();
+    all.push(("HOME", here));
+    let roots = roots(&all);
+    let found = roots
+        .all(root)
+        .iter()
+        .map(|resolved| {
+            let path = resolved.as_ref().map(|r| r.path.clone());
+            path.map_err(ToString::to_string)
+        })
+        .collect();
+    Read {
+        _dir: dir,
+        home,
+        roots,
+        found,
+    }
+}
+
+/// Whether a closed state root on `root` keeps another integration out of a file made in
+/// `dir`: what matters is that the tool's real directory is covered, not what the root's
+/// path reads like.
+fn closes(roots: &Roots, root: SymbolicRoot, dir: &Path) -> bool {
+    let inside = dir.join("inside");
+    fs::write(&inside, b"").unwrap();
+    let state = vec![StateDeclaration {
+        root,
+        protected: &[],
+        open: &[],
+        delegates: &[],
+        unresolved: Unresolved::HoldOwn,
+    }];
+    let declared = IntegrationDescriptor {
+        id: IntegrationId("tool"),
+        lens: Lens::Agents,
+        platforms: Platform::ALL,
+        roots: &[],
+        selectors: &[],
+        artifacts: &[],
+        owner_files: &[],
+        verified: &[],
+        consequences: &[],
+        facts: &[],
+        state: state.leak(),
+        evidences: &[],
+        revision: 1,
+    };
+    let held = |path: &Path| HeldPath {
+        forms: vec![path.to_owned()],
+        lineage: lineage(path),
+        note: None,
+    };
+    let data = dir.join("no-such-data");
+    let protections = Protections::of_host(roots, Some(&data), &[declared], &held);
+    let answer = protections.check(
+        &inside,
+        &lineage(&inside),
+        IntegrationId("node"),
+        &Owners::default(),
+    );
+    answer.is_some()
+}
+
+const SQLITE: SymbolicRoot = SymbolicRoot::CodexSqliteHome;
+const SESSIONS: SymbolicRoot = SymbolicRoot::PiSessionDir;
+const AGENT: SymbolicRoot = SymbolicRoot::PiAgent;
+
+/// A way to move a store: the variables, the file and what it holds, the root that moves,
+/// and the directory below the home that the tool then uses.
+type Moved = (
+    Vars<'static>,
+    &'static str,
+    &'static str,
+    SymbolicRoot,
+    &'static str,
+);
+
+const MOVED_STORES: &[Moved] = &[
+    (&[], CODEX_CONFIG, r#"sqlite_home = "~//db""#, SQLITE, "db"),
+    (
+        &[],
+        CODEX_CONFIG,
+        r#"sqlite_home = "state/db""#,
+        SQLITE,
+        ".codex/state/db",
+    ),
+    (
+        &[],
+        CODEX_CONFIG,
+        r#"sqlite_home = "file:///x""#,
+        SQLITE,
+        ".codex/file:/x",
+    ),
+    (
+        &[("CODEX_SQLITE_HOME", "<home>/db ")],
+        CODEX_CONFIG,
+        "",
+        SQLITE,
+        "db",
+    ),
+    (
+        &[("CODEX_SQLITE_HOME", " ~/db")],
+        CODEX_CONFIG,
+        "",
+        SQLITE,
+        "db",
+    ),
+    (&[], PI_SETTINGS, r#"{"sessionDir": "~//s"}"#, SESSIONS, "s"),
+    (
+        &[],
+        PI_SETTINGS,
+        "\u{feff}{\"sessionDir\": \"~/s\"}",
+        SESSIONS,
+        "s",
+    ),
+    (
+        &[],
+        PI_SETTINGS,
+        r#"{"sessionDir": "file://<home>/s"}"#,
+        SESSIONS,
+        "s",
+    ),
+    (
+        &[],
+        PI_SETTINGS,
+        r#"{"sessionDir": "file://localhost<home>/a%20b"}"#,
+        SESSIONS,
+        "a b",
+    ),
+    (
+        &[("PI_CODING_AGENT_SESSION_DIR", "~//s")],
+        CODEX_CONFIG,
+        "",
+        SESSIONS,
+        "s",
+    ),
+    (
+        &[("PI_CODING_AGENT_SESSION_DIR", "file://<home>/s")],
+        CODEX_CONFIG,
+        "",
+        SESSIONS,
+        "s",
+    ),
+    // `.` and `..` fold by text, whether or not the name before them exists.
+    (
+        &[],
+        CODEX_CONFIG,
+        r#"sqlite_home = "<home>/missing/../db""#,
+        SQLITE,
+        "db",
+    ),
+    (
+        &[],
+        CODEX_CONFIG,
+        r#"sqlite_home = "~/missing/../db""#,
+        SQLITE,
+        "db",
+    ),
+    (
+        &[],
+        CODEX_CONFIG,
+        r#"sqlite_home = "<home>/./db""#,
+        SQLITE,
+        "db",
+    ),
+    (
+        &[],
+        CODEX_CONFIG,
+        r#"sqlite_home = "sub/../db""#,
+        SQLITE,
+        ".codex/db",
+    ),
+    (&[], CODEX_CONFIG, r#"sqlite_home = "../db""#, SQLITE, "db"),
+    (
+        &[("CODEX_SQLITE_HOME", "<home>/missing/../db")],
+        CODEX_CONFIG,
+        "",
+        SQLITE,
+        "db",
+    ),
+    (
+        &[("CODEX_SQLITE_HOME", "~/missing/../db")],
+        CODEX_CONFIG,
+        "",
+        SQLITE,
+        "db",
+    ),
+    (
+        &[],
+        PI_SETTINGS,
+        r#"{"sessionDir": "~/missing/../s"}"#,
+        SESSIONS,
+        "s",
+    ),
+    (
+        &[("PI_CODING_AGENT_SESSION_DIR", "~/old/../s")],
+        CODEX_CONFIG,
+        "",
+        SESSIONS,
+        "s",
+    ),
+    (
+        &[("PI_CODING_AGENT_DIR", "~/old/../agent")],
+        CODEX_CONFIG,
+        "",
+        AGENT,
+        "agent",
+    ),
+    (
+        &[("PI_CODING_AGENT_DIR", "<home>/old/../agent")],
+        CODEX_CONFIG,
+        "",
+        AGENT,
+        "agent",
+    ),
+    // A URL's dot segments, written or encoded, fold after it is decoded.
+    (
+        &[("PI_CODING_AGENT_DIR", "file://<home>/old/../agent")],
+        CODEX_CONFIG,
+        "",
+        AGENT,
+        "agent",
+    ),
+    (
+        &[("PI_CODING_AGENT_DIR", "file://<home>/old/%2e%2e/agent")],
+        CODEX_CONFIG,
+        "",
+        AGENT,
+        "agent",
+    ),
+    (
+        &[("PI_CODING_AGENT_DIR", "file://<home>/old/%2E./agent")],
+        CODEX_CONFIG,
+        "",
+        AGENT,
+        "agent",
+    ),
+    (
+        &[],
+        PI_SETTINGS,
+        r#"{"sessionDir": "file://<home>/./s"}"#,
+        SESSIONS,
+        "s",
+    ),
+];
+
+/// Catches a value kipple decodes differently from its tool. That gives an `Ok` root in the
+/// wrong place with no error, so the real store stays open, or an error on a setup the tool
+/// accepts, which on `pi.agent` holds every finding of the scan.
+#[test]
+fn a_moved_store_is_read_the_way_its_own_tool_reads_the_value() {
+    for (vars, file, document, root, below) in MOVED_STORES {
+        let read = read_in_home(vars, file, document, *root, below);
+        let used = read.home.join(below);
+        assert_eq!(read.found, [Ok(used.clone())], "for {vars:?} {document:?}");
+        assert!(
+            closes(&read.roots, *root, &used),
+            "{used:?} is closed for {vars:?} {document:?}"
+        );
+    }
+}
+
+/// Catches `closes` above saying yes to everything: a directory no root names stays open.
+#[test]
+fn a_directory_no_setting_names_stays_open() {
+    let read = read_in_home(
+        &[],
+        PI_SETTINGS,
+        r#"{"sessionDir": "~/s"}"#,
+        SymbolicRoot::PiSessionDir,
+        "s",
+    );
+    let other = read.home.join("other");
+    fs::create_dir(&other).unwrap();
+
+    assert!(
+        !closes(&read.roots, SymbolicRoot::PiSessionDir, &other),
+        "only the named directory is closed"
+    );
+}
+
+/// Catches `~/old/../agent` with no `~/old` reading as an absent root: Pi keeps its
+/// credentials in `~/agent`, and the `sessionDir` there would never be read, so the second
+/// store would be open too.
+#[test]
+fn a_pi_agent_dir_with_dots_is_the_real_one_and_its_settings_are_read() {
+    let dir = home();
+    let home = dir.path().canonicalize().unwrap();
+    let agent = home.join("agent");
+    let sessions = home.join("sessions");
+    fs::create_dir(&agent).unwrap();
+    fs::create_dir(&sessions).unwrap();
+    fs::write(
+        agent.join("settings.json"),
+        r#"{"sessionDir": "~/sessions"}"#,
+    )
+    .unwrap();
+
+    let roots = roots(&[
+        ("HOME", text(&home)),
+        ("PI_CODING_AGENT_DIR", "~/old/../agent"),
+    ]);
+
+    assert_eq!(
+        places(&roots, SymbolicRoot::PiAgent),
+        slice::from_ref(&agent)
+    );
+    assert_eq!(
+        places(&roots, SymbolicRoot::PiSessionDir),
+        slice::from_ref(&sessions)
+    );
+    assert!(closes(&roots, SymbolicRoot::PiAgent, &agent), "{agent:?}");
+    assert!(
+        closes(&roots, SymbolicRoot::PiSessionDir, &sessions),
+        "{sessions:?}"
+    );
+}
+
+/// Catches `<home>/lnk/../db` going through the link: the tool folds `..` by text and uses
+/// `<home>/db`, while the OS would answer below the link's target. The tool's answer is
+/// closed, and the OS's too when it is a real and different place.
+#[test]
+fn a_value_through_a_link_closes_the_tools_answer_and_the_oss() {
+    let dir = home();
+    let base = dir.path().canonicalize().unwrap();
+    let home = base.join("home");
+    let target = base.join("elsewhere/target");
+    let textual = home.join("db");
+    let through_link = base.join("elsewhere/db");
+    fs::create_dir_all(&textual).unwrap();
+    fs::create_dir_all(&target).unwrap();
+    symlink(&target, home.join("lnk")).unwrap();
+    let root = SymbolicRoot::CodexSqliteHome;
+    let vars = [("HOME", text(&home))];
+    let codex = home.join(".codex");
+    fs::create_dir(&codex).unwrap();
+    let setting = format!(r#"sqlite_home = "{}/lnk/../db""#, text(&home));
+    fs::write(codex.join("config.toml"), setting).unwrap();
+
+    let before = roots(&vars);
+    assert_eq!(places(&before, root), slice::from_ref(&textual));
+    assert!(closes(&before, root, &textual), "{textual:?}");
+
+    fs::create_dir(&through_link).unwrap();
+    let after = roots(&vars);
+    assert_eq!(
+        places(&after, root),
+        [textual.clone(), through_link.clone()]
+    );
+    assert!(closes(&after, root, &textual), "{textual:?}");
+    assert!(closes(&after, root, &through_link), "{through_link:?}");
+}
+
+/// Catches a relative `sqlite_home` joined only to the followed home: Codex doesn't resolve
+/// `~/.codex` before joining, so with `~/.codex` a link and `../db` the databases are in
+/// `~/db`. The followed reading is closed too, because `$CODEX_HOME` is canonicalized first.
+#[test]
+fn a_relative_setting_in_a_linked_home_closes_both_bases() {
+    let dir = home();
+    let base = dir.path().canonicalize().unwrap();
+    let home = base.join("home");
+    let target = base.join("data/codex");
+    let named = home.join("db");
+    let followed = base.join("data/db");
+    fs::create_dir_all(&named).unwrap();
+    fs::create_dir_all(&followed).unwrap();
+    fs::create_dir_all(&target).unwrap();
+    symlink(&target, home.join(".codex")).unwrap();
+    fs::write(target.join("config.toml"), r#"sqlite_home = "../db""#).unwrap();
+    let root = SymbolicRoot::CodexSqliteHome;
+
+    let roots = roots(&[("HOME", text(&home))]);
+
+    let mut found = places(&roots, root);
+    found.sort();
+    let mut expected = vec![named.clone(), followed.clone()];
+    expected.sort();
+    assert_eq!(found, expected);
+    assert!(closes(&roots, root, &named), "{named:?}");
+    assert!(closes(&roots, root, &followed), "{followed:?}");
+}
+
+/// Catches `~//agent` leaving the home: `Path::join` with an absolute path drops the base,
+/// so a `HoldAll` credentials root would land on an absent `/agent` and hold nothing.
+#[test]
+fn a_tilde_with_doubled_slashes_stays_in_the_home() {
+    let vars = [("PI_CODING_AGENT_DIR", "~//agent")];
+
+    let read = read_in_home(&vars, CODEX_CONFIG, "", SymbolicRoot::PiAgent, "agent");
+
+    assert_eq!(read.found, [Ok(read.home.join("agent"))]);
+}
+
+/// Catches a blank `$CODEX_SQLITE_HOME` reading as a place: upstream trims it and treats
+/// what is left as unset. Catches a value kipple can't place reading as unset too: Pi's and
+/// Codex's working directories aren't kipple's, so a relative value stays unknown.
+#[test]
+fn a_value_kipple_cant_place_is_unknown_and_a_blank_one_unset() {
+    let codex = SymbolicRoot::CodexSqliteHome;
+    let pi = SymbolicRoot::PiSessionDir;
+    let blank = [("CODEX_SQLITE_HOME", "   ")];
+    assert_eq!(read_in_home(&blank, CODEX_CONFIG, "", codex, "").found, []);
+
+    let unknown: &[(Vars<'_>, &str, &str, SymbolicRoot)] = &[
+        (
+            &[("CODEX_SQLITE_HOME", "relative/db")],
+            CODEX_CONFIG,
+            "",
+            codex,
+        ),
+        (&[], PI_SETTINGS, r#"{"sessionDir": "relative/s"}"#, pi),
+        (&[], PI_SETTINGS, r#"{"sessionDir": "file://host/s"}"#, pi),
+        (&[], PI_SETTINGS, r#"{"sessionDir": "file:///s%2Ft"}"#, pi),
+        (
+            &[],
+            PI_SETTINGS,
+            r#"{"sessionDir": "file://<home>/sub\\x"}"#,
+            pi,
+        ),
+        (
+            &[],
+            PI_SETTINGS,
+            r#"{"sessionDir": "file://<home>/s "}"#,
+            pi,
+        ),
+        (
+            &[],
+            PI_SETTINGS,
+            r#"{"sessionDir": "file://<home>/s\tt"}"#,
+            pi,
+        ),
+        (
+            &[],
+            PI_SETTINGS,
+            r#"{"sessionDir": "file://<home>/s\nt"}"#,
+            pi,
+        ),
+        (
+            &[],
+            PI_SETTINGS,
+            r#"{"sessionDir": "file://<home>/s\rt"}"#,
+            pi,
+        ),
+        (
+            &[("PI_CODING_AGENT_DIR", "file://<home>/agent ")],
+            CODEX_CONFIG,
+            "",
+            SymbolicRoot::PiAgent,
+        ),
+    ];
+
+    for (vars, file, document, root) in unknown {
+        let found = read_in_home(vars, file, document, *root, "").found;
+        assert_eq!(found.len(), 1, "for {vars:?} {document:?}: {found:?}");
+        assert!(found[0].is_err(), "unknown, found {found:?}");
+    }
+}
+
+/// Catches a Codex profile file going unread: `codex --profile work` layers it over
+/// `config.toml`, so a `sqlite_home` there is where the store really is. kipple can't know
+/// which profile a person selects, so every one counts.
+#[test]
+fn every_codex_profile_file_can_move_the_store() {
+    let dir = home();
+    let home = dir.path().canonicalize().unwrap();
+    let codex = home.join(".codex");
+    fs::create_dir_all(&codex).unwrap();
+    fs::write(codex.join("config.toml"), r#"sqlite_home = "/data/user""#).unwrap();
+    fs::write(
+        codex.join("work.config.toml"),
+        r#"sqlite_home = "/data/work""#,
+    )
+    .unwrap();
+    let inside = "[history]\nsqlite_home = \"home-db\"\n";
+    fs::write(codex.join("home.config.toml"), inside).unwrap();
+    fs::write(codex.join("notes.toml"), r#"sqlite_home = "/data/no""#).unwrap();
+    fs::write(codex.join("myconfig.toml"), r#"sqlite_home = "/data/no""#).unwrap();
+
+    let roots = roots(&[("HOME", text(&home))]);
+
+    let mut found: Vec<_> = roots
+        .all(SymbolicRoot::CodexSqliteHome)
+        .iter()
+        .map(|resolved| resolved.as_ref().unwrap().path.clone())
+        .collect();
+    found.sort();
+    let mut expected = vec![
+        PathBuf::from("/data/user"),
+        PathBuf::from("/data/work"),
+        codex.join("home-db"),
+    ];
+    expected.sort();
+    assert_eq!(found, expected);
+}
+
+/// Catches a profile file kipple can't read counting as one that sets nothing: its
+/// `sqlite_home` may be the store, so it holds like the others, and no value in the file
+/// reaches the message.
+#[test]
+fn a_codex_profile_kipple_cant_read_is_unknown() {
+    let bad = "token = \"s3cret\"\nsqlite_home = \n";
+    let dir = home();
+    let home = dir.path();
+    let codex = home.join(".codex");
+    fs::create_dir_all(codex.join("folder.config.toml")).unwrap();
+    fs::write(codex.join("work.config.toml"), bad).unwrap();
+
+    let roots = roots(&[("HOME", text(home))]);
+
+    let found = roots.all(SymbolicRoot::CodexSqliteHome);
+    assert_eq!(found.len(), 2, "one unknown for each, found {found:?}");
+    for resolved in found {
+        let message = resolved.as_ref().unwrap_err().to_string();
+        assert!(!message.contains("s3cret"), "shows no value: {message}");
+    }
+}
+
+/// The paths of `root` that resolved.
+fn places(roots: &Roots, root: SymbolicRoot) -> Vec<PathBuf> {
+    let found = roots.all(root).iter().flatten();
+    found.map(|resolved| resolved.path.clone()).collect()
+}
+
+/// Catches `$CURSOR_CONFIG_DIR` being ignored, which leaves the moved directory open and a
+/// bad value reading as the default. `~/.cursor` stays closed whatever the variable says.
+#[test]
+fn cursor_config_follows_its_variable_and_keeps_the_default() {
+    let dir = home();
+    let home = dir.path();
+    let default = home.join(".cursor");
+    let moved = home.join("cursor-config");
+    let file = home.join("a-file");
+    fs::create_dir(&moved).unwrap();
+    fs::write(&file, b"").unwrap();
+    let root = SymbolicRoot::CursorConfig;
+
+    let unset = roots(&[("HOME", text(home))]);
+    let set = roots(&[("HOME", text(home)), ("CURSOR_CONFIG_DIR", text(&moved))]);
+
+    assert!(
+        places(&unset, root).contains(&default),
+        "the default, found {:?}",
+        unset.all(root)
+    );
+    let found = places(&set, root);
+    let physical = moved.canonicalize().unwrap();
+    assert!(found.contains(&default), "the default, found {found:?}");
+    assert!(found.contains(&physical), "the moved one, found {found:?}");
+    for bad in ["relative/cursor", text(&file)] {
+        let roots = roots(&[("HOME", text(home)), ("CURSOR_CONFIG_DIR", bad)]);
+        let all = roots.all(root);
+        assert!(
+            all.iter().any(Result::is_err),
+            "unknown for {bad:?}, found {all:?}"
+        );
+        assert!(places(&roots, root).contains(&default), "for {bad:?}");
+    }
+}
+
+/// Catches Cursor's XDG directories staying open on Linux. Which of them the editor uses
+/// isn't verified, and a path that only protects costs nothing, so each form is closed.
+#[cfg(target_os = "linux")]
+#[test]
+fn cursor_closes_both_forms_of_its_config_directories_on_linux() {
+    let roots = roots(&[("HOME", "/home/u"), ("XDG_CONFIG_HOME", "/data/cfg")]);
+
+    assert_eq!(
+        places(&roots, SymbolicRoot::CursorAppData),
+        [
+            Path::new("/home/u/.config/Cursor"),
+            Path::new("/data/cfg/Cursor")
+        ]
+    );
+    assert_eq!(
+        places(&roots, SymbolicRoot::CursorConfig),
+        [Path::new("/home/u/.cursor"), Path::new("/data/cfg/cursor")]
+    );
+}
+
+/// Catches the two forms being one directory counted twice, which shows it twice.
+#[cfg(target_os = "linux")]
+#[test]
+fn cursors_app_data_is_one_root_when_xdg_is_the_default() {
+    let roots = roots(&[("HOME", "/home/u")]);
+
+    assert_eq!(
+        places(&roots, SymbolicRoot::CursorAppData),
+        [Path::new("/home/u/.config/Cursor")]
+    );
+}
+
+/// Catches a linked `.claude.json` losing its closure: a dotfile manager links it to a file,
+/// and a root that wants a directory would turn that into an error, so neither the link nor
+/// the file it leads to is closed and every Claude finding is held for good.
+#[test]
+fn a_linked_claude_json_keeps_the_link_and_its_file_closed() {
+    let dir = home();
+    let home = dir.path().canonicalize().unwrap();
+    let file = home.join("dots/claude.json");
+    let link = home.join(".claude.json");
+    fs::create_dir(home.join("dots")).unwrap();
+    fs::write(&file, b"{}").unwrap();
+    symlink(&file, &link).unwrap();
+
+    let roots = roots(&[("HOME", text(&home))]);
+
+    assert_eq!(places(&roots, SymbolicRoot::ClaudeConfigFile), [link, file]);
+}
+
+/// Catches the file case swallowing the rest: a link that leads nowhere can't say what it
+/// closes, so it stays unknown, and a plain file stays one path.
+#[test]
+fn a_claude_json_that_leads_nowhere_stays_unknown() {
+    let dir = home();
+    let home = dir.path().canonicalize().unwrap();
+    let link = home.join(".claude.json");
+    let root = SymbolicRoot::ClaudeConfigFile;
+    symlink(home.join("gone"), &link).unwrap();
+
+    let dangling = roots(&[("HOME", text(&home))]);
+
+    let all = dangling.all(root);
+    assert!(matches!(all, [Err(_)]), "one unknown, found {all:?}");
+
+    let other = home.join("other");
+    fs::create_dir(&other).unwrap();
+    let plain = other.join(".claude.json");
+    fs::write(&plain, b"{}").unwrap();
+    let settled = roots(&[("HOME", text(&other))]);
+    assert_eq!(places(&settled, root), [plain]);
+}
+
+/// Catches the parsers' input reaching a panic through what a person left in a file: any
+/// input must end in a value, an unknown or nothing.
+#[test]
+fn the_setting_readers_survive_generated_input() {
+    const PIECES: [&str; 14] = [
+        "sqlite_home",
+        "\"sessionDir\"",
+        " = ",
+        ": ",
+        "\"",
+        "'",
+        "\\",
+        "\\\\",
+        "\n",
+        "é",
+        "/a/b",
+        "~/x",
+        "[t]",
+        "{",
+    ];
+    let dir = home();
+    let home = dir.path();
+    let codex = home.join(".codex");
+    let agent = home.join(".pi/agent");
+    fs::create_dir_all(&codex).unwrap();
+    fs::create_dir_all(&agent).unwrap();
+    let mut state = 0x2545_f491_4f6c_dd1d_u64;
+    for _ in 0..300 {
+        let mut document = String::new();
+        for _ in 0..12 {
+            state = state
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1);
+            let at = usize::try_from(state >> 33).unwrap() % PIECES.len();
+            document.push_str(PIECES[at]);
+        }
+        fs::write(codex.join("config.toml"), &document).unwrap();
+        fs::write(agent.join("settings.json"), &document).unwrap();
+
+        let roots = roots(&[("HOME", text(home))]);
+
+        assert!(
+            roots.get(SymbolicRoot::Home).is_some(),
+            "resolved for {document:?}"
+        );
+    }
 }

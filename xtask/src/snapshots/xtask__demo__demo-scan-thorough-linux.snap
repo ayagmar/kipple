@@ -9,6 +9,1041 @@ expression: "serde_json::to_string_pretty(&report)?"
         "state": "idle",
         "unchecked_system": 0
       },
+      "category": "log",
+      "consequence": {
+        "cost": "low",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
+      "evidence": [
+        {
+          "entry": "<session>.txt",
+          "kind": "signature"
+        }
+      ],
+      "integration": "claude-code",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.claude/debug/1f0c9d7e-6b2a-4c11-9a3e-7d5e2b8c4a10.txt"
+      },
+      "rule": "builtin.claude-code.closed-debug-logs",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 13,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "fact-unmet"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "log",
+      "consequence": {
+        "cost": "low",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
+      "evidence": [
+        {
+          "entry": "<session>.txt",
+          "kind": "signature"
+        }
+      ],
+      "integration": "claude-code",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.claude/debug/a3b1e2d4-58c7-4f9a-b6d0-2c9e7f1a3d55.txt"
+      },
+      "rule": "builtin.claude-code.closed-debug-logs",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 15,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "review",
+        "reasons": [
+          "recovery",
+          "loss"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "cache",
+      "consequence": null,
+      "evidence": [
+        {
+          "entry": "daemon.log",
+          "kind": "signature"
+        }
+      ],
+      "integration": "claude-code",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.claude/daemon.log"
+      },
+      "rule": "builtin.claude-code.store-inventory",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 8,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "release-install",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "rollback-ability"
+        ],
+        "recovery": "redownload"
+      },
+      "evidence": [
+        {
+          "entry": "versions/<version>",
+          "kind": "signature"
+        }
+      ],
+      "integration": "claude-code",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.local/share/claude/versions/2.1.316"
+      },
+      "rule": "builtin.claude-code.versions",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 4,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "release-install",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "rollback-ability"
+        ],
+        "recovery": "redownload"
+      },
+      "evidence": [
+        {
+          "entry": "versions/<version>",
+          "kind": "signature"
+        }
+      ],
+      "integration": "claude-code",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.local/share/claude/versions/2.1.318"
+      },
+      "rule": "builtin.claude-code.versions",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 4,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "log",
+      "consequence": {
+        "cost": "low",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
+      "evidence": [
+        {
+          "entry": "codex-tui.log",
+          "kind": "signature"
+        }
+      ],
+      "integration": "codex",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.codex/log/codex-tui.log"
+      },
+      "rule": "builtin.codex.legacy-tui-log",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 50331648,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "review",
+        "reasons": [
+          "recovery",
+          "loss"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "cache",
+      "consequence": {
+        "cost": "low",
+        "loss": [
+          "cache-warmth"
+        ],
+        "recovery": "automatic"
+      },
+      "evidence": [
+        {
+          "entry": "remote_plugin_catalog",
+          "kind": "signature"
+        }
+      ],
+      "integration": "codex",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.codex/cache/remote_plugin_catalog/0123456789abcdef.json"
+      },
+      "rule": "builtin.codex.plugin-catalog-cache",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 2097152,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "safe",
+        "reasons": []
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "release-install",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "offline-ability"
+        ],
+        "recovery": "redownload"
+      },
+      "evidence": [
+        {
+          "entry": "codex-package.json",
+          "kind": "signature"
+        }
+      ],
+      "integration": "codex",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.codex/packages/standalone/releases/0.164.0-x86_64-unknown-linux-musl"
+      },
+      "rule": "builtin.codex.stale-releases",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 233,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "release-install",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "offline-ability"
+        ],
+        "recovery": "redownload"
+      },
+      "evidence": [
+        {
+          "entry": "codex-package.json",
+          "kind": "signature"
+        }
+      ],
+      "integration": "codex",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.codex/packages/standalone/releases/0.165.0-x86_64-unknown-linux-musl"
+      },
+      "rule": "builtin.codex.stale-releases",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 233,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "release-install",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "offline-ability"
+        ],
+        "recovery": "redownload"
+      },
+      "evidence": [
+        {
+          "entry": "codex-package.json",
+          "kind": "signature"
+        }
+      ],
+      "integration": "codex",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.codex/packages/standalone/releases/0.166.0-x86_64-unknown-linux-musl"
+      },
+      "rule": "builtin.codex.stale-releases",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 278,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "message": "this OS doesn't show which paths running programs use, beyond their executable",
+        "reason": "unsupported",
+        "state": "unknown"
+      },
+      "category": "source-worktree",
+      "consequence": null,
+      "evidence": [
+        {
+          "agent": "cursor",
+          "kind": "worktree"
+        }
+      ],
+      "integration": "git",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.cursor/worktrees/app/swift-fox"
+      },
+      "rule": "builtin.git.worktree-anomalies",
+      "size": null,
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "advice"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "source-worktree",
+      "consequence": null,
+      "evidence": [
+        {
+          "agent": "conductor",
+          "kind": "worktree"
+        }
+      ],
+      "integration": "git",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/conductor/workspaces/app/warsaw"
+      },
+      "rule": "builtin.git.worktree-anomalies",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 63,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "advice"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "source-worktree",
+      "consequence": null,
+      "evidence": [
+        {
+          "agent": "codex",
+          "kind": "worktree"
+        }
+      ],
+      "integration": "git",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.codex/worktrees/ab12/app"
+      },
+      "rule": "builtin.git.worktree-remove",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 61,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "source-worktree",
+      "consequence": null,
+      "evidence": [
+        {
+          "agent": "herdr",
+          "kind": "worktree"
+        }
+      ],
+      "integration": "git",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.herdr/worktrees/app/worktree-brave-river-1a2b"
+      },
+      "rule": "builtin.git.worktree-remove",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 97,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "source-worktree",
+      "consequence": null,
+      "evidence": [
+        {
+          "agent": "unknown",
+          "kind": "worktree"
+        }
+      ],
+      "integration": "git",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/projects/app-wt/fix-1"
+      },
+      "rule": "builtin.git.worktree-remove",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 59,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "source-worktree",
+      "consequence": null,
+      "evidence": [
+        {
+          "agent": "claude-code",
+          "kind": "worktree"
+        }
+      ],
+      "integration": "git",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/projects/app/.claude/worktrees/agent-a1b2c3d4e5f607182"
+      },
+      "rule": "builtin.git.worktree-remove",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 83,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "source-worktree",
+      "consequence": null,
+      "evidence": [
+        {
+          "agent": "claude-code",
+          "kind": "worktree"
+        }
+      ],
+      "integration": "git",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/projects/app/.claude/worktrees/feature-a"
+      },
+      "rule": "builtin.git.worktree-remove",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 69,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "source-worktree",
+      "consequence": null,
+      "evidence": [
+        {
+          "agent": "claude-code",
+          "kind": "worktree"
+        }
+      ],
+      "integration": "git",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/projects/app/.claude/worktrees/fix-b"
+      },
+      "rule": "builtin.git.worktree-remove",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 121,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "log",
+      "consequence": {
+        "cost": "low",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
+      "evidence": [
+        {
+          "entry": "mcp.log.1",
+          "kind": "signature"
+        }
+      ],
+      "integration": "pi",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.pi/agent/mcp.log.1"
+      },
+      "rule": "builtin.pi.closed-logs",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 12,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "review",
+        "reasons": [
+          "recovery",
+          "loss"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "log",
+      "consequence": {
+        "cost": "low",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
+      "evidence": [
+        {
+          "entry": "pi-debug.log",
+          "kind": "signature"
+        }
+      ],
+      "integration": "pi",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.pi/agent/pi-debug.log"
+      },
+      "rule": "builtin.pi.closed-logs",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 12,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "review",
+        "reasons": [
+          "recovery",
+          "loss"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "log",
+      "consequence": {
+        "cost": "low",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
+      "evidence": [
+        {
+          "entry": "pi-tui-crash.log",
+          "kind": "signature"
+        }
+      ],
+      "integration": "pi",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.pi/agent/pi-tui-crash.log"
+      },
+      "rule": "builtin.pi.closed-logs",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 12,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "review",
+        "reasons": [
+          "recovery",
+          "loss"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "log",
+      "consequence": {
+        "cost": "low",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
+      "evidence": [
+        {
+          "entry": "pi-tui-debug.log",
+          "kind": "signature"
+        }
+      ],
+      "integration": "pi",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.pi/agent/pi-tui-debug.log"
+      },
+      "rule": "builtin.pi.closed-logs",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 12,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "review",
+        "reasons": [
+          "recovery",
+          "loss"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "cache",
+      "consequence": null,
+      "evidence": [
+        {
+          "entry": "bin/fd",
+          "kind": "signature"
+        }
+      ],
+      "integration": "pi",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.pi/agent/bin/fd"
+      },
+      "rule": "builtin.pi.store-inventory",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 4,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "cache",
+      "consequence": null,
+      "evidence": [
+        {
+          "entry": "bin/rg",
+          "kind": "signature"
+        }
+      ],
+      "integration": "pi",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.pi/agent/bin/rg"
+      },
+      "rule": "builtin.pi.store-inventory",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 4,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "cache",
+      "consequence": null,
+      "evidence": [
+        {
+          "entry": "crashes.json",
+          "kind": "signature"
+        }
+      ],
+      "integration": "pi",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.pi/agent/crashes.json"
+      },
+      "rule": "builtin.pi.store-inventory",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 3,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "cache",
+      "consequence": null,
+      "evidence": [
+        {
+          "entry": "install/releases/<version>",
+          "kind": "signature"
+        }
+      ],
+      "integration": "pi",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.pi/agent/install/releases/1.4.0"
+      },
+      "rule": "builtin.pi.store-inventory",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 3,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "cache",
+      "consequence": null,
+      "evidence": [
+        {
+          "entry": "install/staging",
+          "kind": "signature"
+        }
+      ],
+      "integration": "pi",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.pi/agent/install/staging/update-a1B2c3"
+      },
+      "rule": "builtin.pi.store-inventory",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 3,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "cache",
+      "consequence": null,
+      "evidence": [
+        {
+          "entry": "mcp.log",
+          "kind": "signature"
+        }
+      ],
+      "integration": "pi",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.pi/agent/mcp.log"
+      },
+      "rule": "builtin.pi.store-inventory",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 7,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "cache",
+      "consequence": null,
+      "evidence": [
+        {
+          "entry": "tmp/extensions",
+          "kind": "signature"
+        }
+      ],
+      "integration": "pi",
+      "lens": "agents",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/.pi/agent/tmp/extensions"
+      },
+      "rule": "builtin.pi.store-inventory",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 1,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
       "category": "build-artifact",
       "consequence": {
         "cost": "unknown",
@@ -78,6 +1113,47 @@ expression: "serde_json::to_string_pretty(&report)?"
       "size": {
         "allocated": "[redacted]",
         "apparent": 8388787,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "safe",
+        "reasons": []
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "dependency-install",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "offline-ability"
+        ],
+        "recovery": "reinstall"
+      },
+      "evidence": [
+        {
+          "file": "package.json",
+          "kind": "marker"
+        },
+        {
+          "entry": ".package-lock.json",
+          "kind": "signature"
+        }
+      ],
+      "integration": "node",
+      "lens": "dev",
+      "level": "thorough",
+      "path": {
+        "display": "<demo>/home/projects/app/.claude/worktrees/fix-b/node_modules"
+      },
+      "rule": "builtin.node.node-modules",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 21,
         "completeness": "complete",
         "unique_reclaim": "[redacted]"
       },
@@ -435,11 +1511,77 @@ expression: "serde_json::to_string_pretty(&report)?"
           "snippets": [
             "{ \"cleanupPeriodDays\": 14 }"
           ],
-          "text": "cleanupPeriodDays in your user settings: 14 days, from <demo>/home/.claude/settings.json. Claude Code deletes transcripts, file history, plans, debug logs and other session data older than this. The default is 30 and the minimum 1; 0 fails validation. Managed settings, and project or command-line settings, override the user setting, and kipple doesn't read them. It never deletes auto memory files (versions before v2.1.228 could delete old files below a memory directory), keeps Claude Desktop and Cowork transcripts unless desktopSessionCleanupPeriodDays is set, and doesn't sweep in --bare sessions.",
+          "text": "cleanupPeriodDays in your user settings: 14 days, from <demo>/home/.claude/settings.json. Claude Code deletes transcripts, file history, plans, debug logs and other session data older than this, and the same cutoff removes the orphaned worktrees it made. The default is 30 and the minimum 1; 0 fails validation. Managed settings, and project or command-line settings, override the user setting, and kipple doesn't read them. It never deletes auto memory files (versions before v2.1.228 could delete old files below a memory directory) and leaves history.jsonl, except under a HIPAA setting. Since v2.1.248 it keeps Claude Desktop and Cowork transcripts unless desktopSessionCleanupPeriodDays is set, which deletes only past both limits, and a managed cleanupPeriodDays or HIPAA setting overrides that. claude -p --bare doesn't sweep, and when it can't determine the retention period it pauses the sweep, which deletes nothing.",
           "title": "Claude Code's own transcript retention"
         }
       ],
       "id": "claude-code",
+      "lens": "agents",
+      "omissions": []
+    },
+    {
+      "advice": [
+        {
+          "references": [
+            "https://learn.chatgpt.com/docs/config-file/config-reference"
+          ],
+          "snippets": [
+            "[history]\nmax_bytes = 104857600"
+          ],
+          "text": "history.max_bytes in config.toml caps history.jsonl, which otherwise grows without limit: on its next write past the cap, Codex drops the oldest entries until the file is at 80% of it, always keeping the newest. Don't set it to 0, which turns trimming off rather than keeping nothing. It doesn't cover sessions/ or archived_sessions/: Codex compresses a rollout after 7 days, and nothing deletes one.",
+          "title": "Cap the size of Codex's history"
+        }
+      ],
+      "id": "codex",
+      "lens": "agents",
+      "omissions": []
+    },
+    {
+      "advice": [
+        {
+          "references": [
+            "https://cursor.com/docs/configuration/worktrees.md",
+            "https://cursor.com/help/troubleshooting/install-issues.md"
+          ],
+          "snippets": [
+            "{ \"cursor.worktreeMaxCount\": 25, \"cursor.worktreeCleanupIntervalHours\": 6 }"
+          ],
+          "text": "Old Agent chats collect in a local database that can reach many gigabytes. Run Delete Old Chats…, then GC Agent KV Blobs, which is what shrinks the file. Cursor also removes its own worktrees: cursor.worktreeMaxCount keeps the newest ones up to a count across every workspace (25 by default), cursor.worktreeCleanupIntervalHours sets how often that runs, and Max Total Size caps them at 50 GB by default. That cleanup also covers a worktree made with a plain git worktree add under its directory, so work there can go without kipple. kipple only reports Cursor's worktrees, and doesn't read its settings.",
+          "title": "Cursor's own cleanup"
+        }
+      ],
+      "id": "cursor",
+      "lens": "agents",
+      "omissions": []
+    },
+    {
+      "advice": [
+        {
+          "references": [
+            "https://git-scm.com/docs/git-worktree"
+          ],
+          "snippets": [
+            "git worktree prune --dry-run --verbose"
+          ],
+          "text": "Git still lists this worktree, and its directory isn't there. It may be on a disk that isn't mounted, or it may have moved, so check that first. The dry run shows what git would drop. Without it, `git gc` prunes the registration after 3 months.",
+          "title": "A worktree whose checkout is gone"
+        },
+        {
+          "references": [
+            "https://git-scm.com/docs/git-worktree"
+          ],
+          "snippets": [],
+          "text": "What this checkout's `.git` file points to is gone, so git can't say what it holds. Review it by hand: it may hold work found nowhere else.",
+          "title": "A checkout that lost its repository"
+        }
+      ],
+      "id": "git",
+      "lens": "agents",
+      "omissions": []
+    },
+    {
+      "advice": [],
+      "id": "pi",
       "lens": "agents",
       "omissions": []
     },
@@ -452,6 +1594,12 @@ expression: "serde_json::to_string_pretty(&report)?"
     {
       "advice": [],
       "id": "node",
+      "lens": "dev",
+      "omissions": []
+    },
+    {
+      "advice": [],
+      "id": "npm",
       "lens": "dev",
       "omissions": []
     },

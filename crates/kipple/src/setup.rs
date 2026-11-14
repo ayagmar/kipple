@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 
 use kipple_adapters::builtin;
 use kipple_core::{Engine, IntegrationDescriptor, IntegrationId, Lens, Pack, Ports, Rule};
-use kipple_platform::{Environment, GitQuery, NoFollowFs, PLATFORM, Walker, clock, processes};
+use kipple_platform::{
+    Environment, GitQuery, NoFollowFs, PLATFORM, PathTools, Walker, clock, processes,
+};
 
 /// The built-in integrations and packs, whatever platform they support.
 #[derive(Debug)]
@@ -99,6 +101,8 @@ impl Builtin {
             processes: processes(env),
             clock: clock(env),
             tracked: Box::new(GitQuery::new(env)),
+            tools: Box::new(PathTools::new(env)),
+            worktrees: Box::new(GitQuery::new(env)),
         };
         Engine::new(ports, integrations, rules).map_err(|e| e.to_string())
     }

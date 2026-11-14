@@ -116,6 +116,10 @@ fn safe() -> Facts {
         modified: Modified::Ago(41 * DAY),
         recent_days: None,
         lineage: Lineage::default(),
+        supplied: kipple_core::Supplied::default(),
+        unmet: Vec::new(),
+        settlement: kipple_core::Settlement::Unsettled,
+        integration: IntegrationId("test"),
     }
 }
 
@@ -787,6 +791,7 @@ fn finished(app: &mut App) {
                 snippets: vec!["sudo paccache -rk3".to_owned()],
                 references: Vec::new(),
             }],
+            owner: kipple_core::OwnerStatus::Unsupported,
         }],
         findings: Vec::new(),
         unchecked_system: 0,

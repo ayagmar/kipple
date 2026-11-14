@@ -13,6 +13,7 @@ use super::{HISTORY, RECEIPT, TextOut, path_out};
 use crate::frozen::NameCodec;
 use crate::imported::{Dropped, DroppedItem};
 use crate::outcome::{Receipt, ReceiptItem, Status};
+use crate::plan::ItemMethod;
 use crate::profile::ProfileRun;
 use crate::rule::{Method, RuleId};
 use crate::run::{RunState, RunSummary};
@@ -185,7 +186,7 @@ pub struct ReceiptItemOut {
     /// The finding's path, as shown.
     pub path: TextOut,
     /// How it was to be removed.
-    pub method: Method,
+    pub method: ItemMethod,
     /// What the scan estimated removing it frees.
     pub estimate: Option<EstimateOut>,
     /// What happened.
@@ -205,8 +206,21 @@ pub struct TotalsOut {
     pub trashed_apparent_bytes: u64,
     /// Their allocated size, where every one of them had one.
     pub trashed_allocated_bytes: Option<u64>,
+    /// What native commands freed, apart from what kipple removed.
+    pub native: NativeTotalOut,
     /// How many items ended in each status.
     pub statuses: BTreeMap<Status, u64>,
+}
+
+/// What native commands freed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, JsonSchema)]
+pub struct NativeTotalOut {
+    /// Items whose command ran.
+    pub items: u64,
+    /// What those measured in full freed, in allocated bytes.
+    pub reclaimed_bytes: u64,
+    /// Those not measured in full.
+    pub unmeasured: u64,
 }
 
 /// Every run kept.
@@ -308,6 +322,11 @@ fn totals(receipt: &Receipt) -> TotalsOut {
         trashed_items: totals.trashed.items,
         trashed_apparent_bytes: totals.trashed.apparent.0,
         trashed_allocated_bytes: totals.trashed.allocated.map(|bytes| bytes.0),
+        native: NativeTotalOut {
+            items: totals.native.items,
+            reclaimed_bytes: totals.native.reclaimed.0,
+            unmeasured: totals.native.unmeasured,
+        },
         statuses: totals.items,
     }
 }

@@ -262,9 +262,7 @@ pub(crate) fn write_summary(out: &mut dyn Write, report: &ScanOut, ink: &Ink) ->
     }
     let gaps: usize = report.integrations.iter().map(|i| i.omissions.len()).sum();
     if gaps > 0 {
-        let partial =
-            format!("Partial: {gaps} places couldn't be covered; `kipple scan` lists them.");
-        writeln!(out, "{}", ink.paint(Role::Warning, &partial))?;
+        writeln!(out, "{}", ink.paint(Role::Warning, &human::partial(gaps)))?;
     }
     for notice in process_notices(report) {
         writeln!(out, "{notice}")?;

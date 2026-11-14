@@ -716,6 +716,48 @@ fn a_file_git_tracks_inside_a_target_stays() {
     assert!(!present(&demo.at(ACME)), "the other target is gone whole");
 }
 
+/// Catches a file a repository tracks being told as a clean that can only fail (04 §3.2): the
+/// scan can't tell, but the plan lists it as left out with the reason and holds no item for
+/// it, and `clean` ends as for any refused item, with the file in place. The rule is Linux's.
+#[test]
+fn a_file_a_repository_tracks_is_left_out_of_the_plan_with_the_reason() {
+    if PLATFORM != Platform::Linux {
+        return;
+    }
+    let demo = Demo::new();
+    let home = demo.at("home/.codex");
+    let file = "cache/remote_plugin_catalog/0123456789abcdef.json";
+    git(&demo, &home, &["init", "-q"]);
+    git(&demo, &home, &["add", "-f", "--", file]);
+    let only = ["--only", "builtin.codex.plugin-catalog-cache"];
+    let reason = "a repository tracks it";
+
+    let scanned = demo.run(&["scan", "--json"]);
+    assert_eq!(scanned.code, ExitCode::SUCCESS, "{}", scanned.err);
+
+    let plan_file = demo.at("plan.json");
+    let plan_arg = plan_file.to_str().unwrap();
+    let planned = demo.run(&["plan", only[0], only[1], "-o", plan_arg]);
+    assert_eq!(planned.code, ExitCode::SUCCESS, "{}", planned.err);
+    assert!(planned.err.contains(reason), "{}", planned.err);
+    let plan = json(&fs::read_to_string(&plan_file).unwrap());
+    assert_eq!(items(&plan, "items").len(), 0, "{plan}");
+
+    let told = demo.run(&["clean", only[0], only[1], "--yes"]);
+    assert!(told.out.contains(reason), "{}", told.out);
+
+    let ran = demo.run(&["clean", only[0], only[1], "--yes", "--json"]);
+    assert_eq!(ran.code, ExitCode::from(3), "{}", ran.err);
+    let receipt = json(&ran.out);
+    let skips: Vec<&Value> = items(&receipt, "refused")
+        .iter()
+        .map(|refused| &refused["skip"]["skip"])
+        .collect();
+    assert_eq!(skips, ["tracked"], "{receipt}");
+    assert_eq!(items(&receipt, "items").len(), 0, "{receipt}");
+    assert!(present(&home.join(file)), "the tracked file stays");
+}
+
 /// Runs the host's git in `dir`, with a temporary home and no config of the user's.
 #[expect(
     clippy::disallowed_methods,

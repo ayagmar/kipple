@@ -21,9 +21,8 @@ use crate::frozen::{FrozenTree, Mark};
 use crate::journal::{Intent, Journal, Record, RestoreResult};
 use crate::mutation::Freeze;
 use crate::outcome::{ApplyError, ErrorCode, Found, ItemOutcome, Trashed};
-use crate::plan::ItemId;
+use crate::plan::{ItemId, ItemMethod};
 use crate::planner::MutationPorts;
-use crate::rule::Method;
 use crate::run::{StoredItem, StoredRun};
 use crate::trash::{Forgotten, SlotState, TrashSlot};
 
@@ -128,7 +127,7 @@ fn find(
     ports: &MutationPorts<'_>,
     cancel: &CancelToken,
 ) -> Found {
-    if let (Method::Trash, Some(slot)) = (intent.method, &intent.trash) {
+    if let (ItemMethod::Trash, Some(slot)) = (intent.method, &intent.trash) {
         let Some(top) = tree.top().snapshot() else {
             return Found::Unreadable(ApplyError::new(ErrorCode::Journal));
         };

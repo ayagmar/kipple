@@ -482,7 +482,7 @@ fn a_git_older_than_2_32_or_of_unknown_version_blocks() {
     }
     let query = GitQuery::new(&fixture::fake_git(&repo, "2.32.0", &listing));
     let count = query.count(&repo.root, &repo.at("src"), &CancelToken::new());
-    assert_eq!(count, Ok(0), "2.32 is new enough");
+    assert_eq!(count, Ok(0), "2.32, the floor, is asked");
 }
 
 /// Catches an answer cut at the output bound, or missing its last NUL, read as complete,

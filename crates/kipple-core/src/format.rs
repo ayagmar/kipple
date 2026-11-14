@@ -98,6 +98,9 @@ pub enum FormatError {
         /// What the document says it is.
         found: String,
     },
+    /// A plan holding a tool's own command can't be written as this format.
+    #[error("a {0} document can't hold a tool's own command")]
+    NativeItem(&'static str),
     /// A line or tree doesn't match the digest stored with it: torn or corrupt.
     #[error("a {0} record doesn't match its digest")]
     Digest(&'static str),

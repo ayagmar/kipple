@@ -89,6 +89,10 @@ pub struct Measurement {
     /// the platform reports one.
     pub modified: Option<SystemTime>,
     /// A directory inside the item that holds a `.git` entry (a directory, file or link),
-    /// so a git checkout lives inside it. The first in path order when there are several.
+    /// so a git checkout lives inside it. The first in path order when there are several,
+    /// which is the item itself when it holds a `.git`.
     pub repository: Option<PathBuf>,
+    /// The first such directory strictly below the item: what a worktree's own `.git`
+    /// would otherwise hide.
+    pub nested_repository: Option<PathBuf>,
 }

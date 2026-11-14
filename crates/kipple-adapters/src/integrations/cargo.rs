@@ -40,13 +40,11 @@ impl Integration for Cargo {
             owner_files: &[],
             verified: &["Cargo 1.99.0"],
             consequences: &[REBUILT],
+            facts: &[],
+            state: &[],
+            evidences: &[ActivityEvidence::BuiltExecutables],
             revision: 1,
         }
-    }
-
-    fn activity_evidence(&self) -> ActivityEvidence {
-        // What runs from a target directory is a program built into it.
-        ActivityEvidence::BuiltExecutables
     }
 
     fn discover(

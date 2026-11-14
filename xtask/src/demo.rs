@@ -35,6 +35,25 @@ pub(crate) fn build(dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// `dir` as git would print it, so the demo's roots are spelled as a worktree's path is:
+/// links resolved, since macOS keeps its temp directory below one, and on Windows the long
+/// names of a path the runner gives in short ones. Windows resolves to a verbatim path,
+/// which its tools don't all read, so a drive's loses that prefix and any other is left as
+/// given.
+fn physical(dir: &Path) -> PathBuf {
+    let Ok(resolved) = fs::canonicalize(dir) else {
+        return dir.to_owned();
+    };
+    let Some(text) = resolved.to_str() else {
+        return dir.to_owned();
+    };
+    match text.strip_prefix(r"\\?\") {
+        None => resolved,
+        Some(rest) if rest.starts_with("UNC") => dir.to_owned(),
+        Some(rest) => PathBuf::from(rest),
+    }
+}
+
 /// The cargo flags of the build whose roots can be redirected into `demo-home`.
 const FEATURES: [&str; 3] = ["--features", "test-roots", "--locked"];
 
@@ -54,7 +73,7 @@ pub(crate) fn verify(root: &Path) -> Result<()> {
             .args(FEATURES),
     )?;
     let temp = tempfile::tempdir()?;
-    let demo = temp.path().join("demo");
+    let demo = physical(temp.path()).join("demo");
     build(&demo)?;
     // Balanced is the default, so its scan names no config and reads the demo's own
     // config directory, which has none. The other levels come from a config file in the

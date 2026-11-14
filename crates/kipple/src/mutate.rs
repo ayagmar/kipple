@@ -457,11 +457,30 @@ fn consent<'prompt>(
     }
 }
 
+/// What the prompt shows of `review`, for tests of a plan no scan on a test's disk makes.
+#[cfg(all(test, feature = "test-roots"))]
+pub(crate) fn prompt_shows(
+    review: &kipple_core::Review<'_>,
+    scan: &ScanReport,
+    policy: &Policy,
+) -> Vec<String> {
+    let shown = output::Shown {
+        review: &[],
+        policy,
+        told: output::Told::NotYet,
+    };
+    prompt::plan_lines(review, scan, &shown)
+        .into_iter()
+        .map(|line| line.text)
+        .collect()
+}
+
 /// What `clean --dry-run` plans for: what the same command's consent may hold.
 const fn dry_mode(args: &CleanArgs, check: Option<&ProfileCheck>) -> PlanMode {
     match (args.yes, check) {
         (true, None) => PlanMode::SafeOnly,
-        (false, _) | (true, Some(_)) => PlanMode::Safe,
+        (true, Some(_)) => PlanMode::SafeFiles,
+        (false, _) => PlanMode::Safe,
     }
 }
 
@@ -506,9 +525,9 @@ impl DryRun<'_> {
     }
 }
 
-/// `kipple plan -o FILE`: plans the Safe findings chosen, as `clean` would on a terminal,
-/// and writes the plan as a new `kipple.plan/v1` file, or to stdout for `-`. Nothing
-/// outside that file is written.
+/// `kipple plan -o FILE`: plans the Safe findings chosen that remove files, and writes the
+/// plan as a new `kipple.plan/v1` file, or to stdout for `-`. A tool's own command is left
+/// out and said to be. Nothing outside that file is written.
 pub(crate) fn plan(host: &Host<'_>, args: &PlanArgs, io: &mut Io<'_>) -> ExitCode {
     let only = match only(host, &args.choice.only, io.stderr) {
         Ok(only) => only,
@@ -525,7 +544,7 @@ pub(crate) fn plan(host: &Host<'_>, args: &PlanArgs, io: &mut Io<'_>) -> ExitCod
         &PlanRequest {
             scan: &scanned.report,
             selection: &picked.selection,
-            mode: PlanMode::Safe,
+            mode: PlanMode::SafeFiles,
         },
         &machine.judge(),
         &machine.mutation(),

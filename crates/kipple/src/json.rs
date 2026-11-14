@@ -7,9 +7,9 @@ use std::path::Path;
 
 use kipple_core::format::base64;
 use kipple_core::{
-    Activity, ActivityGap, Advice, Bucket, Completeness, Consequence, Evidence, Finding,
-    IntegrationId, IntegrationReport, Lens, Omission, Policy, ScanOutcome, ScanReport, Seen,
-    SpaceEstimate, SymbolicRoot, UnresolvedRoot, Verdict,
+    Activity, ActivityGap, Advice, AgentLabel, Bucket, Completeness, Consequence, Evidence,
+    Finding, IntegrationId, IntegrationReport, Lens, Omission, Policy, ScanOutcome, ScanReport,
+    Seen, SpaceEstimate, SymbolicRoot, UnresolvedRoot, Verdict,
 };
 use kipple_platform::{PLATFORM, raw_path};
 use schemars::JsonSchema;
@@ -200,7 +200,8 @@ pub struct VerdictOut {
     /// `loss`, `high-cost`); for Protected, what holds it (`disabled`, `kept`, `excluded`,
     /// `report-only`, `advice`, `unknown-layout`,
     /// `unknown-consequence`, `unknown-git`, `holds-repository`, `in-use`,
-    /// `unknown-activity`, `unknown-modified`). Empty when Safe.
+    /// `unknown-activity`, `unknown-modified`, `retained`, `unsettled`, `fact-unmet`,
+    /// `fact-unknown`, `subject-mismatch`, `tracked-inside-native`). Empty when Safe.
     pub reasons: Vec<&'static str>,
 }
 
@@ -380,6 +381,7 @@ impl From<&Activity> for ActivityOut {
             Activity::Unknown(ActivityGap::Partial(_)) => unknown("partial"),
             Activity::Unknown(ActivityGap::Uninspected(_)) => unknown("uninspected"),
             Activity::Unknown(ActivityGap::Unsupported) => unknown("unsupported"),
+            Activity::Unknown(ActivityGap::UnresolvedStore(_)) => unknown("unresolved-store"),
         }
     }
 }
@@ -405,6 +407,11 @@ pub enum EvidenceOut {
         /// The symbolic root.
         root: &'static str,
     },
+    /// It is a git worktree, where this agent keeps them.
+    Worktree {
+        /// The agent's location it is in.
+        agent: AgentLabel,
+    },
 }
 
 impl From<&Evidence> for EvidenceOut {
@@ -416,6 +423,7 @@ impl From<&Evidence> for EvidenceOut {
             },
             Evidence::NoSignature => Self::NoSignature,
             Evidence::Root(root) => Self::Root { root: root.name() },
+            Evidence::Worktree { agent } => Self::Worktree { agent: *agent },
         }
     }
 }
@@ -548,6 +556,9 @@ impl From<&Omission> for OmissionOut {
             Omission::RootChanged { root, path } => ("root-changed", Some(*root), Some(path)),
             Omission::Unlisted { error } => ("unlisted", None, Some(error.path())),
             Omission::DiscoveryFailed { error } => ("discovery-failed", None, Some(error.path())),
+            Omission::GitInventory { repository, .. } => {
+                ("git-inventory", None, Some(repository.as_path()))
+            }
             Omission::SizingFailed { error, .. } => ("sizing-failed", None, Some(error.path())),
             Omission::Crashed => ("crashed", None, None),
             Omission::Excluded { path } => ("excluded", None, Some(path)),

@@ -440,6 +440,48 @@ fn s_enter_y_on_a_review_finding_removes_it_and_the_result_shows_it() {
     assert!(result.contains("Done."), "{result}");
 }
 
+// Catches a file finding never reaching a removal: a real disk answers `ENOTDIR` for `.git`
+// below a file, which held every log as unknown git while each fake answered `NotFound`.
+// Here a file goes through the real probe, plan, freezer and executor, and only that file.
+#[test]
+fn s_enter_y_on_a_closed_claude_log_removes_it_and_keeps_the_open_one() {
+    // The rule removes on Linux alone (spec M4 pinned 39).
+    if !matches!(PLATFORM, Platform::Linux) {
+        return;
+    }
+    // The demo's Claude Code holds the log of a session that ended and of one still open.
+    let demo = Demo::new();
+    let closed = "debug/a3b1e2d4-58c7-4f9a-b6d0-2c9e7f1a3d55.txt";
+    let open = "home/.claude/debug/1f0c9d7e-6b2a-4c11-9a3e-7d5e2b8c4a10.txt";
+    // The header repeats the filter, so the row is told by the whole path.
+    let shown = format!("~/.claude/{closed}");
+    let mut script = filtered_to(closed, Bucket::Review);
+    script.extend(press(&[Key::Char('s'), Key::Enter]));
+    script.push(Step::Look);
+    script.extend(press(&[Key::Char('y')]));
+
+    let frames = demo.home(script);
+
+    let review = &frames.looked[0];
+    assert!(review.contains("Review: clean 1 item"), "{review}");
+    assert!(review.contains(&shown), "{review}");
+    assert!(
+        !present(&demo.at(&format!("home/.claude/{closed}"))),
+        "the closed log stays"
+    );
+    assert!(present(&demo.at(open)), "the open session's log went");
+    assert!(
+        present(&demo.at("home/.claude/sessions/4242.json")),
+        "the session's marker went"
+    );
+    let result = &frames.last;
+    let line = result
+        .lines()
+        .find(|row| row.contains(&shown))
+        .unwrap_or_else(|| panic!("the item isn't in the result: {result}"));
+    assert!(line.contains("done"), "{line}");
+}
+
 // Catches a key typed while the plan was made or the review drawn confirming a review
 // the person never saw (`y` also copies a path on the tree): what was typed before the
 // review showed is thrown away, as the command line throws away what was typed before

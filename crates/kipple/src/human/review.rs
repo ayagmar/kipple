@@ -5,7 +5,7 @@
 
 use std::path::Path;
 
-use kipple_core::{ApplyEvent, Method, Reconciled, Standing, Waited};
+use kipple_core::{ApplyEvent, ItemMethod, Reconciled, Standing, Waited};
 
 use super::receipt::{self, items_word};
 use super::{caution, escaped, outcome};
@@ -144,11 +144,12 @@ pub(crate) const TYPE_THE_SIZE: &str =
     "The config now asks for the size to be typed: type it, then press enter.";
 
 /// The item being removed now, and how.
-pub(crate) fn working_on(method: Method, path: &Path) -> String {
+pub(crate) fn working_on(method: ItemMethod, path: &Path) -> String {
     let path = escaped(&path.display().to_string());
     match method {
-        Method::Delete => format!("deleting {path}"),
-        Method::Trash => format!("moving {path} to the trash"),
+        ItemMethod::Delete => format!("deleting {path}"),
+        ItemMethod::Trash => format!("moving {path} to the trash"),
+        ItemMethod::Native => format!("running its tool's command on {path}"),
     }
 }
 

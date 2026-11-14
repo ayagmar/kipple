@@ -75,6 +75,7 @@ impl Sizer for Sized {
             },
             modified: Some(SystemTime::UNIX_EPOCH),
             repository: None,
+            nested_repository: None,
         })
     }
 }
@@ -150,13 +151,12 @@ impl Integration for Venv {
             owner_files: &[],
             verified: &[],
             consequences: &[],
+            facts: &[],
+            state: &[],
+            evidences: &[ActivityEvidence::Interpreted {
+                runtimes: &["python*"],
+            }],
             revision: 1,
-        }
-    }
-
-    fn activity_evidence(&self) -> ActivityEvidence {
-        ActivityEvidence::Interpreted {
-            runtimes: &["python*"],
         }
     }
 
@@ -201,6 +201,8 @@ fn a_secret_in_a_process_title_never_reaches_json_or_the_detail_lines() {
             tracked: Box::new(kipple_platform::GitQuery::new(
                 &kipple_platform::Environment::default(),
             )),
+            tools: Box::new(kipple_core::Unavailable),
+            worktrees: Box::new(kipple_core::Unavailable),
         };
         let engine = Engine::new(ports, vec![Box::new(Venv(venv.clone()))], vec![rule()]).unwrap();
         let mut roots = Roots::default();
@@ -274,6 +276,19 @@ fn a_size_written_short_keeps_its_unit_its_rounding_and_its_lower_bound() {
     };
     assert_eq!(super::size(Some(&partial)), ">= 8.0 MiB");
     assert_eq!(super::size_short(Some(&partial)), ">=8.0M");
+}
+
+/// Catches "1 places" under a summary whose scan left one place uncovered.
+#[test]
+fn one_uncovered_place_is_singular() {
+    assert_eq!(
+        super::partial(1),
+        "Partial: 1 place couldn't be covered; `kipple scan` lists it."
+    );
+    assert_eq!(
+        super::partial(2),
+        "Partial: 2 places couldn't be covered; `kipple scan` lists them."
+    );
 }
 
 /// Catches two error codes, statuses, left reasons, stops, git gaps or run states worded

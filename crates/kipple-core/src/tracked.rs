@@ -19,8 +19,12 @@ use std::fmt;
 use std::path::Path;
 
 use crate::cancel::CancelToken;
-use crate::frozen::{FrozenTree, NodeId};
+use crate::frozen::{Entry, FrozenTree, NodeId};
+use crate::integration::IntegrationId;
 use crate::plan::Anchor;
+use crate::policy::{Proposal, replaces_own_git};
+use crate::probe::EntryKind;
+use crate::supplied::Subject;
 
 named! {
     /// Why git couldn't say what it tracks inside an item. Each blocks the item.
@@ -80,15 +84,50 @@ pub trait TrackedQuery: fmt::Debug + Send + Sync {
     ) -> Result<Vec<NodeId>, GitGap>;
 }
 
+/// Whether an item's own top-level `.git` stands for a repository inside it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum OwnGit {
+    /// It does, as any `.git` does.
+    Counts,
+    /// Removing the item replaces it: git's removal of its own linked worktree.
+    Replaced,
+}
+
+impl OwnGit {
+    /// Which it is for an item with this proposal, subject and integration.
+    pub(crate) fn of(proposal: &Proposal, subject: &Subject, integration: IntegrationId) -> Self {
+        if replaces_own_git(proposal, subject, integration) {
+            Self::Replaced
+        } else {
+            Self::Counts
+        }
+    }
+}
+
 /// Whether `tree` holds a `.git` below its top, compared ignoring ASCII case, which is
-/// stricter than any file system: a repository inside the item blocks it.
+/// stricter than any file system: a repository inside the item blocks it. Under
+/// [`OwnGit::Replaced`] the one `.git` that doesn't count is the file a linked worktree
+/// has directly below its top: a directory there, a case variant or any `.git` deeper
+/// is a repository.
 #[must_use]
-pub(crate) fn holds_repository(tree: &FrozenTree) -> bool {
+pub(crate) fn holds_repository(tree: &FrozenTree, own_git: OwnGit) -> bool {
     tree.entries().skip(1).any(|entry| {
-        entry.name().is_some_and(|name| {
+        let git = entry.name().is_some_and(|name| {
             name.as_os_str()
                 .as_encoded_bytes()
                 .eq_ignore_ascii_case(b".git")
-        })
+        });
+        git && !(own_git == OwnGit::Replaced && is_own_git(&entry))
     })
+}
+
+/// Whether `entry`, named `.git` in some case, is a linked worktree's own.
+fn is_own_git(entry: &Entry<'_>) -> bool {
+    entry.kind() == EntryKind::File
+        && entry
+            .name()
+            .is_some_and(|name| name.as_os_str().as_encoded_bytes() == b".git")
+        && entry
+            .parent()
+            .is_some_and(|parent| parent.id() == NodeId::TOP)
 }

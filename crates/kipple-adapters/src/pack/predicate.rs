@@ -3,10 +3,13 @@
 use std::ops::Range;
 use std::time::Duration;
 
-use kipple_core::{Bounds, FactKind, FactSpec, GENERIC_FACTS, Predicate, Test};
+use kipple_core::{
+    Bounds, FactKind, FactSpec, GENERIC_FACTS, IntegrationDescriptor, IntegrationId, Predicate,
+    Test,
+};
 
 use super::doc::{Checker, Table, Value};
-use super::{Catalog, ErrorCode, grammar};
+use super::{Catalog, ErrorCode, Origin, grammar};
 
 /// The most predicates one rule may hold, over both tables.
 const MAX_PREDICATES: usize = 32;
@@ -19,19 +22,57 @@ pub(super) struct RulePredicates {
     pub(super) eligibility: Vec<Predicate>,
 }
 
-/// The rule's `requirements` and `eligibility`, for a rule using `selector`.
+/// What decides which facts a rule may test.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct FactScope<'rule> {
+    /// The rule's selector, empty when it didn't validate.
+    pub(super) selector: &'rule str,
+    /// The rule's integration, when it validated.
+    pub(super) integration: Option<IntegrationId>,
+    /// Where the pack comes from.
+    pub(super) origin: Origin,
+    /// What the pack may reference.
+    pub(super) catalog: Catalog<'rule>,
+}
+
+impl FactScope<'_> {
+    /// The integration that publishes a fact called `name`, if any does.
+    fn publisher(&self, name: &str) -> Option<&IntegrationDescriptor> {
+        self.catalog
+            .integrations
+            .iter()
+            .find(|i| i.facts.iter().any(|fact| fact.name == name))
+    }
+
+    /// `name` among the rule's own integration's facts.
+    fn own(&self, name: &str) -> Option<&'static FactSpec> {
+        let mut integrations = self.catalog.integrations.iter();
+        let own = integrations.find(|i| Some(i.id) == self.integration)?;
+        own.facts.iter().find(|fact| fact.name == name)
+    }
+
+    /// Every fact name, whoever publishes it: a rule that can't use one is told why.
+    fn names(&self) -> impl Iterator<Item = &'static str> {
+        let published = self.catalog.integrations.iter();
+        GENERIC_FACTS
+            .iter()
+            .chain(published.flat_map(|i| i.facts))
+            .map(|fact| fact.name)
+    }
+}
+
+/// The rule's `requirements` and `eligibility`.
 pub(super) fn rule_predicates(
     c: &mut Checker<'_>,
     rule: &Table<'_>,
     at: Range<usize>,
-    selector: &str,
-    catalog: Catalog<'_>,
+    scope: FactScope<'_>,
 ) -> Option<RulePredicates> {
     let tables: Vec<Vec<Entry<'_, '_>>> = ["requirements", "eligibility"]
         .into_iter()
         .map(|key| {
             let table = rule.get(key).and_then(|value| c.table(value));
-            table.map_or_else(Vec::new, |table| entries(table, ""))
+            table.map_or_else(Vec::new, |table| entries(table, "", scope))
         })
         .collect();
     let total: usize = tables.iter().map(Vec::len).sum();
@@ -42,7 +83,7 @@ pub(super) fn rule_predicates(
     }
     let mut parsed = tables
         .into_iter()
-        .map(|entries| predicates(c, entries, selector, catalog));
+        .map(|entries| predicates(c, entries, scope));
     let requirements = parsed.next().flatten();
     let eligibility = parsed.next().flatten();
     Some(RulePredicates {
@@ -56,15 +97,15 @@ type Entry<'t, 'i> = (String, Range<usize>, &'t Value<'i>);
 
 /// The predicates of `table`. A dotted fact name written without quotes, such as
 /// `git.tracked_changes = 0`, is a nested table in TOML, so it is flattened back.
-fn entries<'t, 'i>(table: &'t Table<'i>, prefix: &str) -> Vec<Entry<'t, 'i>> {
+fn entries<'t, 'i>(table: &'t Table<'i>, prefix: &str, scope: FactScope<'_>) -> Vec<Entry<'t, 'i>> {
     let mut found = Vec::new();
     for (key, value) in table {
         let name = format!("{prefix}{}", key.get_ref());
         let nested = format!("{name}.");
-        let is_prefix = GENERIC_FACTS.iter().any(|f| f.name.starts_with(&nested));
+        let is_prefix = scope.names().any(|fact| fact.starts_with(&nested));
         match value.get_ref().as_table() {
-            Some(inner) if is_prefix && !GENERIC_FACTS.iter().any(|f| f.name == name) => {
-                found.extend(entries(inner, &nested));
+            Some(inner) if is_prefix && !scope.names().any(|fact| fact == name) => {
+                found.extend(entries(inner, &nested, scope));
             }
             _ => found.push((name, key.span(), value)),
         }
@@ -75,13 +116,12 @@ fn entries<'t, 'i>(table: &'t Table<'i>, prefix: &str) -> Vec<Entry<'t, 'i>> {
 fn predicates(
     c: &mut Checker<'_>,
     entries: Vec<Entry<'_, '_>>,
-    selector: &str,
-    catalog: Catalog<'_>,
+    scope: FactScope<'_>,
 ) -> Option<Vec<Predicate>> {
     let mut predicates = Vec::new();
     let mut valid = true;
     for (name, at, value) in entries {
-        let parsed = fact(c, &name, at, selector, catalog).and_then(|fact| {
+        let parsed = fact(c, &name, at, scope).and_then(|fact| {
             Some(Predicate {
                 fact: fact.name,
                 test: test(c, value, fact.kind)?,
@@ -95,25 +135,45 @@ fn predicates(
     valid.then_some(predicates)
 }
 
-/// The published fact called `name`, if it applies to `selector`.
+/// The published fact called `name`, if the rule may test it: a generic fact, then one of
+/// its own integration's.
 fn fact(
     c: &mut Checker<'_>,
     name: &str,
     at: Range<usize>,
-    selector: &str,
-    catalog: Catalog<'_>,
+    scope: FactScope<'_>,
 ) -> Option<&'static FactSpec> {
-    let Some(fact) = GENERIC_FACTS.iter().find(|fact| fact.name == name) else {
-        let message = format!("kipple {} publishes no fact {name:?}", catalog.engine);
-        c.error(ErrorCode::UnknownCapability, at, message);
+    let generic = GENERIC_FACTS.iter().find(|fact| fact.name == name);
+    let Some(fact) = generic.or_else(|| scope.own(name)) else {
+        unavailable(c, name, at, scope);
         return None;
     };
-    if let Some(only) = fact.selector.filter(|only| *only != selector) {
+    if let Some(only) = fact.selector.filter(|only| *only != scope.selector) {
         let message = format!("`{name}` applies only to the {only} selector");
         c.error(ErrorCode::UnknownCapability, at, message);
         return None;
     }
     Some(fact)
+}
+
+/// Reports why the rule can't test `name`.
+fn unavailable(c: &mut Checker<'_>, name: &str, at: Range<usize>, scope: FactScope<'_>) {
+    let publisher = scope.publisher(name).map(|i| i.id);
+    let (code, message) = match (publisher, scope.origin) {
+        (Some(_), Origin::ThirdParty) => (
+            ErrorCode::NotPermitted,
+            format!("`{name}` is an integration fact, which third-party rules may not use"),
+        ),
+        (Some(owner), Origin::Builtin) => (
+            ErrorCode::UnknownCapability,
+            format!("`{name}` is published by the {owner} integration, not this rule's"),
+        ),
+        (None, _) => (
+            ErrorCode::UnknownCapability,
+            format!("kipple {} publishes no fact {name:?}", scope.catalog.engine),
+        ),
+    };
+    c.error(code, at, message);
 }
 
 fn test(c: &mut Checker<'_>, value: &Value<'_>, kind: FactKind) -> Option<Test> {

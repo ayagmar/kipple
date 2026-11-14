@@ -1,0 +1,43 @@
+schema_version = 1
+
+[pack]
+id = "builtin.npm"
+version = "1.0.0"
+publisher = "kipple"
+description = "npm's download cache"
+license = "MIT"
+kipple = ">=0.0.0"
+platforms = ["linux", "macos", "windows"]
+
+[[rule]]
+id = "builtin.npm.cache"
+integration = "npm"
+title = "npm download cache"
+description = "The `_cacache` directory of npm's cache."
+why = "npm keeps every package it downloads so it can install it again without the network."
+loss = "Installs need the network again until the cache refills."
+category = "package-cache"
+platforms = ["linux"]
+
+[rule.scope]
+root = "npm.cache"
+selection = "npm-download-cache"
+
+[rule.operation]
+kind = "report"
+
+[[rule]]
+id = "builtin.npm.inventory"
+integration = "npm"
+title = "npm's cache, reported only"
+description = "`_npx`, `_logs`, and `_cacache` where kipple doesn't clean it."
+why = "npm keeps these beside its download cache."
+loss = "Nothing. Report only."
+category = "package-cache"
+
+[rule.scope]
+root = "npm.cache"
+selection = "npm-cache-entries"
+
+[rule.operation]
+kind = "report"

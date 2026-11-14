@@ -73,7 +73,7 @@ use crate::planner::Judge;
 use crate::policy::{Level, POLICY_VERSION, Policy, Verdict};
 use crate::probe::FileIdentity;
 use crate::root::{Roots, SymbolicRoot};
-use crate::rule::{Method, Operation, Rule, RuleId};
+use crate::rule::{Method, Rule, RuleId};
 
 /// A profile's name: 1 to 64 lowercase ASCII letters, digits and `-`, not starting with
 /// `-`, and not a name Windows keeps for a device. It names the file, so it is checked
@@ -479,7 +479,7 @@ fn removal_rules(rules: &[Rule]) -> Vec<&Rule> {
     rules
         .iter()
         .filter(|rule| rule.integration != IntegrationId::GENERIC)
-        .filter(|rule| matches!(rule.operation, Operation::RemoveFiles(_)))
+        .filter(|rule| rule.operation.removes_frozen_files())
         .collect()
 }
 
@@ -599,6 +599,15 @@ struct Granted {
 }
 
 impl ProfileGrant {
+    /// A grant of nothing, for tests of what comes before [`ProfileGrant::admits`].
+    #[cfg(test)]
+    pub(crate) const fn for_core_tests() -> Self {
+        Self {
+            policy: Digest(0),
+            rules: BTreeMap::new(),
+        }
+    }
+
     /// Whether `entry` is within the grant: its rule is an active entry's, judged under
     /// the policy and the rule the grant was checked against, removed by the frozen
     /// method, below one of the entry's frozen roots with the identity it had then.
@@ -607,8 +616,8 @@ impl ProfileGrant {
         judgement.policy == self.policy
             && self.rules.get(&judgement.rule).is_some_and(|granted| {
                 granted.rule == judgement.rule_digest
-                    && granted.method == entry.method()
-                    && granted.method == judgement.method
+                    && entry.file_method() == Some(granted.method)
+                    && judgement.method == granted.method.into()
                     && granted.roots.contains(&entry.anchor().root)
             })
     }

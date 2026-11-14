@@ -41,12 +41,13 @@ use windows_sys::Win32::System::Threading::{
     QueryFullProcessImageNameW,
 };
 use windows_sys::Win32::UI::Shell::{
-    FOLDERID_LocalAppData, FOLDERID_Profile, FOLDERID_RoamingAppData, SHGetKnownFolderPath,
+    FOLDERID_LocalAppData, FOLDERID_Profile, FOLDERID_ProgramData, FOLDERID_RoamingAppData,
+    SHGetKnownFolderPath,
 };
 use windows_sys::core::{GUID, PWSTR};
 
 use crate::environment::Environment;
-use crate::os::HardLink;
+use crate::os::{ConfigFile, HardLink};
 use crate::process::Context;
 
 pub(crate) const PLATFORM: Platform = Platform::Windows;
@@ -159,6 +160,33 @@ pub(crate) fn resolve_roots(_: &Environment) -> Roots {
     roots
 }
 
+/// Where Codex keeps its system-wide config files: below the `ProgramData` folder, which
+/// can be moved, so a folder the OS can't name is unknown and never `C:\ProgramData`.
+pub(crate) fn codex_system_config(_: &Environment) -> Result<Vec<ConfigFile>, UnresolvedRoot> {
+    let folder = "FOLDERID_ProgramData";
+    let data = known_folder(&FOLDERID_ProgramData).map_err(|error| UnresolvedRoot::Os {
+        folder,
+        source: Arc::new(error),
+    })?;
+    Ok(codex_config_in(&data))
+}
+
+/// Codex's two system files below `program_data`. There is no `managed_config.toml` here:
+/// upstream reads that one on Unix only.
+fn codex_config_in(program_data: &Path) -> Vec<ConfigFile> {
+    let dir = program_data.join("OpenAI").join("Codex");
+    let file = |(name, file)| ConfigFile {
+        name,
+        path: dir.join(file),
+    };
+    [
+        (r"OpenAI\Codex\config.toml", "config.toml"),
+        (r"OpenAI\Codex\requirements.toml", "requirements.toml"),
+    ]
+    .map(file)
+    .to_vec()
+}
+
 #[expect(
     unsafe_code,
     reason = "windows-sys exposes the Known Folder API as a raw call"
@@ -265,6 +293,20 @@ pub(crate) const fn is_executable(_: &fs::Metadata) -> bool {
 /// The variables a process is started with besides `LC_ALL=C`, where they are set.
 /// Processes fail in odd ways without `SystemRoot`.
 pub(crate) const INHERITED_VARS: &[&str] = &["SystemRoot"];
+
+/// No mechanism is pinned here yet, so a command can't start from a checked directory.
+#[expect(
+    clippy::missing_const_for_fn,
+    reason = "the Unix function of this name reads the handle and can't be const"
+)]
+pub(crate) fn working_dir(_: &crate::executor::sys::Dir) -> Option<PathBuf> {
+    None
+}
+
+/// Windows has no such stamp: a tool records a USN there, which `std` can't read.
+pub(crate) fn link_stamp(_: &Path) -> io::Result<String> {
+    Err(io::ErrorKind::Unsupported.into())
+}
 
 #[expect(
     unsafe_code,
@@ -540,4 +582,29 @@ fn os_error(error: &io::Error) -> Option<u32> {
 /// `K32EnumProcesses` lists every process to every user.
 pub(crate) const fn inventory() -> Inventory {
     Inventory::Complete
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::{Path, PathBuf};
+
+    use super::codex_config_in;
+
+    /// Catches a misspelt system directory: nothing would be found there, and a
+    /// `sqlite_home` an administrator set would read as unset.
+    #[test]
+    fn codex_system_config_is_below_program_data() {
+        let paths: Vec<PathBuf> = codex_config_in(Path::new(r"D:\Data"))
+            .into_iter()
+            .map(|file| file.path)
+            .collect();
+
+        assert_eq!(
+            paths,
+            [
+                PathBuf::from(r"D:\Data\OpenAI\Codex\config.toml"),
+                PathBuf::from(r"D:\Data\OpenAI\Codex\requirements.toml"),
+            ]
+        );
+    }
 }

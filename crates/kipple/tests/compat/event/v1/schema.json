@@ -314,6 +314,19 @@
         "references"
       ]
     },
+    "AgentLabel": {
+      "type": "string",
+      "enum": [
+        "claude-code",
+        "codex",
+        "cursor",
+        "conductor",
+        "herdr",
+        "gemini-cli",
+        "opencode",
+        "unknown"
+      ]
+    },
     "BucketOut": {
       "description": "A bucket of the home screen (`docs/04-safety-model.md` §2a).",
       "oneOf": [
@@ -448,6 +461,24 @@
           "required": [
             "kind",
             "root"
+          ]
+        },
+        {
+          "description": "It is a git worktree, where this agent keeps them.",
+          "type": "object",
+          "properties": {
+            "agent": {
+              "description": "The agent's location it is in.",
+              "$ref": "#/$defs/AgentLabel"
+            },
+            "kind": {
+              "type": "string",
+              "const": "worktree"
+            }
+          },
+          "required": [
+            "kind",
+            "agent"
           ]
         }
       ]
@@ -797,7 +828,7 @@
           "$ref": "#/$defs/BucketOut"
         },
         "reasons": {
-          "description": "Why it isn't Safe: for Review, what falls short of the level (`recent`, `recovery`,\n`loss`, `high-cost`); for Protected, what holds it (`disabled`, `kept`, `excluded`,\n`report-only`, `advice`, `unknown-layout`,\n`unknown-consequence`, `unknown-git`, `holds-repository`, `in-use`,\n`unknown-activity`, `unknown-modified`). Empty when Safe.",
+          "description": "Why it isn't Safe: for Review, what falls short of the level (`recent`, `recovery`,\n`loss`, `high-cost`); for Protected, what holds it (`disabled`, `kept`, `excluded`,\n`report-only`, `advice`, `unknown-layout`,\n`unknown-consequence`, `unknown-git`, `holds-repository`, `in-use`,\n`unknown-activity`, `unknown-modified`, `retained`, `unsettled`, `fact-unmet`,\n`fact-unknown`, `subject-mismatch`, `tracked-inside-native`). Empty when Safe.",
           "type": "array",
           "items": {
             "type": "string"

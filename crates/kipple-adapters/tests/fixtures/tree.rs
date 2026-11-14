@@ -4,22 +4,53 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{MAIN_SEPARATOR_STR, Path, PathBuf};
 use std::time::SystemTime;
 
-/// Directories and files to create, relative to the directory the tree is built in.
+// Each test binary that includes this file uses part of the builder, and would fail
+// `dead_code` on the rest. Naming these here keeps the lint off them in one place.
+const _: () = {
+    let _ = FixtureTree::link;
+    let _ = Holds::AsWritten;
+    let _ = FixtureTree::bad_link;
+    let _ = FixtureTree::modified_dir;
+    let _ = FixtureTree::after_build;
+    let _ = FixtureTree::link_stamp;
+};
+
+/// Directories, files and links to create, relative to the directory the tree is built
+/// in.
 #[derive(Debug, Default)]
 pub(crate) struct FixtureTree {
     dirs: Vec<String>,
     files: Vec<(String, Content)>,
+    links: Vec<(String, String, Holds)>,
     modified: Vec<(String, SystemTime)>,
+    modified_dirs: Vec<(String, SystemTime)>,
+    after: Vec<AfterBuild>,
 }
+
+/// A step run on the directory a tree was built in.
+type AfterBuild = fn(&Path) -> io::Result<()>;
 
 #[derive(Debug)]
 enum Content {
     Bytes(Vec<u8>),
     /// A sparse file of this length, so large sizes cost no disk.
     Sized(u64),
+}
+
+/// What a link holds of the target it's given, which is the upstream layout's to say: an
+/// integration can tell the forms apart, so a fixture has to state the one upstream writes.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum Holds {
+    /// The target is a path relative to the directory the tree is built in, like a link's
+    /// own path, and the link holds it as an absolute path, as Codex's `current` does.
+    AbsoluteInTree,
+    /// The link holds the target as written, relative to the link (`bin/codex`,
+    /// `../../.pi/agent/bin/pi`) or absolute, in the tree or not. `/` separates its parts
+    /// on every system.
+    AsWritten,
 }
 
 impl FixtureTree {
@@ -47,15 +78,74 @@ impl FixtureTree {
         self
     }
 
+    /// A symlink at `path`, with its parent directories, to `target`, which it holds as
+    /// `holds` says. Links are made after every directory and file, in the order added, so
+    /// a link to a directory through another link comes after it.
+    pub(crate) fn link(&mut self, path: &str, target: &str, holds: Holds) -> &mut Self {
+        self.links.push((path.to_owned(), target.to_owned(), holds));
+        self
+    }
+
+    /// A symlink at `path`, with its parent directories, whose target doesn't exist.
+    pub(crate) fn bad_link(&mut self, path: &str) -> &mut Self {
+        self.link(path, &format!("{path}.missing"), Holds::AbsoluteInTree)
+    }
+
     /// Every file below `dir` was last modified `at`, which overrides earlier calls for the
-    /// same files. Directories keep the time they were created.
+    /// same files. Directories keep the time they were created, unless [`Self::modified_dir`]
+    /// sets one.
     pub(crate) fn modified(&mut self, dir: &str, at: SystemTime) -> &mut Self {
         self.modified.push((dir.to_owned(), at));
         self
     }
 
-    /// Creates everything inside `root`, which must exist.
+    /// The directory `path`, which the tree must hold, was last modified `at`. Set after
+    /// everything else is built, so writing its children doesn't overwrite it. A link or a
+    /// file at `path` is an error, since the time would land somewhere else or on the
+    /// wrong kind of thing.
+    pub(crate) fn modified_dir(&mut self, path: &str, at: SystemTime) -> &mut Self {
+        self.modified_dirs.push((path.to_owned(), at));
+        self
+    }
+
+    /// Runs `step` on the directory the tree is built in, once everything in it exists and
+    /// before any time is set. For what can only be written from the built tree, such as a
+    /// file that records a link's stamp.
+    pub(crate) fn after_build(&mut self, step: AfterBuild) -> &mut Self {
+        self.after.push(step);
+        self
+    }
+
+    /// What `lstat` reports for the built link at `path`, as Codex's `selection-history`
+    /// records it: `<st_dev> <st_ino> <ctime_sec>.<ctime_nsec>`. A change time can't be set,
+    /// so a fixture reads this once the link is in its final place and writes the file
+    /// from it. Anything but a link is an error.
+    #[cfg(unix)]
+    pub(crate) fn link_stamp(path: &Path) -> io::Result<String> {
+        use std::os::unix::fs::MetadataExt as _;
+
+        let meta = fs::symlink_metadata(path)?;
+        if !meta.file_type().is_symlink() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{} isn't a link", path.display()),
+            ));
+        }
+        let (device, inode) = (meta.dev(), meta.ino());
+        let (seconds, nanos) = (meta.ctime(), meta.ctime_nsec());
+        Ok(format!("{device} {inode} {seconds}.{nanos:09}"))
+    }
+
+    /// Windows has no such stamp: Codex records a USN there, which `std` can't read.
+    #[cfg(windows)]
+    pub(crate) fn link_stamp(_: &Path) -> io::Result<String> {
+        Err(io::ErrorKind::Unsupported.into())
+    }
+
+    /// Creates everything inside `root`, which must exist. A relative `root` is taken from
+    /// the working directory, once, so a link that holds an absolute path holds a sound one.
     pub(crate) fn build_in(&self, root: &Path) -> io::Result<()> {
+        let root = &std::path::absolute(root)?;
         for dir in &self.dirs {
             fs::create_dir_all(root.join(dir))?;
         }
@@ -69,6 +159,20 @@ impl FixtureTree {
                 Content::Sized(len) => fs::File::create(&path)?.set_len(*len)?,
             }
         }
+        for (path, target, holds) in &self.links {
+            let path = root.join(path);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            let target = match holds {
+                Holds::AbsoluteInTree => below(root, target),
+                Holds::AsWritten => PathBuf::from(target.replace('/', MAIN_SEPARATOR_STR)),
+            };
+            symlink(&target, &path)?;
+        }
+        for step in &self.after {
+            step(root)?;
+        }
         for (dir, at) in &self.modified {
             let below = self
                 .files
@@ -79,6 +183,61 @@ impl FixtureTree {
                 file.set_modified(*at)?;
             }
         }
+        for (dir, at) in &self.modified_dirs {
+            let dir = root.join(dir);
+            if !fs::symlink_metadata(&dir)?.is_dir() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("{} isn't a directory", dir.display()),
+                ));
+            }
+            open_dir(&dir)?.set_modified(*at)?;
+        }
         Ok(())
     }
+}
+
+/// `path` below `root`, part by part: a link keeps its target as given, and Windows
+/// doesn't read a `/` in one.
+fn below(root: &Path, path: &str) -> PathBuf {
+    path.split('/')
+        .fold(root.to_path_buf(), |at, part| at.join(part))
+}
+
+#[cfg(unix)]
+fn symlink(target: &Path, link: &Path) -> io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+/// A link of the kind `target` needs, which a relative one finds from the link's own
+/// directory, as the system will. One to nothing is a file link.
+#[cfg(windows)]
+fn symlink(target: &Path, link: &Path) -> io::Result<()> {
+    let resolved = link.parent().unwrap_or(link).join(target);
+    if resolved.is_dir() {
+        std::os::windows::fs::symlink_dir(target, link)
+    } else {
+        std::os::windows::fs::symlink_file(target, link)
+    }
+}
+
+/// The directory `path`, open so its times can be set.
+#[cfg(unix)]
+fn open_dir(path: &Path) -> io::Result<fs::File> {
+    fs::File::open(path)
+}
+
+/// The directory `path`, open so its times can be set. Windows opens a directory only
+/// with backup semantics; the tools that build this have no `windows-sys` to name the
+/// constants.
+#[cfg(windows)]
+fn open_dir(path: &Path) -> io::Result<fs::File> {
+    use std::os::windows::fs::OpenOptionsExt as _;
+
+    const FILE_WRITE_ATTRIBUTES: u32 = 0x0100;
+    const FILE_FLAG_BACKUP_SEMANTICS: u32 = 0x0200_0000;
+    fs::File::options()
+        .access_mode(FILE_WRITE_ATTRIBUTES)
+        .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+        .open(path)
 }

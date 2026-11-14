@@ -1,6 +1,6 @@
 # Integrations and rules
 
-Status: partly built. §3 is the normative schema v1 contract, and its validator exists since M1 (`kipple_adapters::pack::validate`, tested against every error case below). The rule types live in `kipple-core`. The built-in integrations of §5a, their packs in `rules/` and the advice of §6 for pacman, journald and Claude Code exist since M1, and their findings are classified into buckets since M2. The other TOML examples have been parse-checked only.
+Status: partly built. §3 is the normative schema v1 contract, and its validator exists since M1 (`kipple_adapters::pack::validate`, tested against every error case below). The rule types live in `kipple-core`. The built-in integrations of §5a, their packs in `rules/` and the advice of §6 for pacman, journald and Claude Code exist since M1, and their findings are classified into buckets since M2. Since M4a the Codex, Claude Code, Pi, Cursor and git integrations discover and report as §5a says, and the closed logs of Claude Code and Pi, Codex's old TUI log and its plugin catalog cache are removable on Linux; Codex's releases and every git worktree stay `report`. The other TOML examples have been parse-checked only.
 
 ## 1. Two layers
 
@@ -17,7 +17,7 @@ Each kipple release publishes, in docs and through `kipple rules --json`, the ca
 | --- | --- |
 | Symbolic roots | `home`, `xdg.cache`, `xdg.data`, `xdg.state`, `known.local-app-data`, `macos.caches`, `config.project-roots`, integration roots such as `codex.release-store` |
 | Generic selectors | `dirs-matching` (bounded relative glob, depth limit), `files-matching`, `project-artifact` (marker file plus artifact dir name) |
-| Integration selectors | `verified-release-directories`, `registered-linked-worktrees`, `worktree-registrations` (every registration and every known agent worktree location) |
+| Integration selectors | `verified-release-directories`, `registered-linked-worktrees`, `worktree-registrations` (registrations that are missing, unregistered or invalid) |
 | Facts | `modified_age`, `size`, `git.tracked_changes`, `git.untracked_files`, `activity` (idle, busy, unknown), `layout` (supported, unknown), `marker.present`, `release.active`, `release.running` |
 | Operations | `report` and `remove-files` (frozen leaf set) for everyone. **First-party only:** `remove-verified-release`, `git-worktree-remove`, and the `native.*` closed set. The first-party-only status comes from the capability table, not from an ID prefix. |
 
@@ -56,11 +56,11 @@ Unknown keys anywhere are an error. Every error carries the file, line and colum
 | `scope.root` | enum | yes | | a published symbolic root. `home` is allowed only with a `pattern` of at least one literal leading component (see below). |
 | `scope.selection` | enum | yes | | a published selector |
 | selector parameters | per selector | per selector | | see the selector table |
-| `requirements.*` | fact → required value | no | `{}` | facts the integration must report as known *and* equal to the value |
-| `eligibility.*` | fact → predicate | no | `{}` | see predicates |
-| `retention.*` | per operation | no | | only for operations that declare retention |
+| `requirements.*` | fact → required value | no | `{}` | facts the integration must report as known *and* equal to the value. Not on a `report` rule. |
+| `eligibility.*` | fact → predicate | no | `{}` | see predicates. Not on a `report` rule. |
+| `retention.*` | per operation | for an operation that declares retention | | see below |
 | `operation.kind` | enum | yes | | a published operation. Third-party packs: `report` or `remove-files` only. |
-| `operation.methods` | array of `delete` / `trash` | for `remove-files` | | non-empty. The host may offer fewer. |
+| `operation.methods` | array of `delete` / `trash` | for `remove-files` and `remove-verified-release` | | non-empty. The host may offer fewer. |
 | `selection.default` | `unselected` | no | `unselected` | the only allowed value in v1 |
 | `selection.recent_days` | integer 0–365 | no | the carefulness level's window (04 §2a) | can only lengthen the level's window, never shorten it |
 
@@ -104,7 +104,7 @@ Predicates by type:
 - A predicate whose form doesn't match the fact's type gives `wrong-type`.
 - `unknown` never satisfies any predicate. That is how unknown blocks.
 - The host requires `activity = "idle"` and a known `git.tracked_files_in_item` for every `remove-files` operation, whatever the rule says. Files git tracks inside the item, and their directories, are left out of what is removed, at planning and again at apply (D-066).
-- `requirements` uses the same forms as `eligibility`. The difference is how a failure is reported: a failed requirement means the rule doesn't apply to this machine (an omission), and a failed eligibility predicate blocks that item with a reason.
+- `requirements` uses the same forms as `eligibility`. The engine evaluates both for every finding: a predicate that fails holds it as `fact-unmet`, and one whose fact is missing, of the wrong type or unknown holds it as `fact-unknown`. The difference is how it is worded: a requirement says the rule doesn't apply on this machine, and an eligibility predicate says what this item lacks.
 - There is no negation, no `or` across facts, no arithmetic and no references between rules. A rule whose needs go beyond this is a typed integration, not a bigger language.
 - A dotted fact name may be written with or without quotes: `git.tracked_changes = "absent"` is the same predicate as `"git.tracked_changes" = "absent"`.
 
@@ -133,19 +133,21 @@ Every error has one of these stable codes plus the file, line, column and a mess
 | `unknown-capability` | a root, selector, fact or operation this engine doesn't publish (the message names the engine version) |
 | `not-permitted` | a third-party pack using an integration selector or fact, a first-party-only operation, or the `builtin.` prefix |
 
-How the codes apply to the cases the table leaves open: a value outside a fixed set (a category, platform, method, enum fact value, `selection.default`) and a reference that isn't an HTTPS URL are `wrong-type`. Too many references or markers, an empty `platforms`, `methods` or enum list, and a duration over 100 years are `invalid-range`. A malformed duration or byte size is `wrong-type`. `retention` is `unknown-key` until an operation that keeps items exists, and first-party-only operations are `unknown-capability` until the integrations that carry them out ship (M4), so this engine publishes only `report` and `remove-files`. A pack with no `[[rule]]` is `missing-key`. Errors in the `[pack]` table and in the rules are reported together whenever the pack's ID and platforms are valid.
+How the codes apply to the cases the table leaves open: a value outside a fixed set (a category, platform, method, enum fact value, `selection.default`) and a reference that isn't an HTTPS URL are `wrong-type`. Too many references or markers, an empty `platforms`, `methods` or enum list, and a duration over 100 years are `invalid-range`. A malformed duration or byte size is `wrong-type`. An operation that declares retention requires `[rule.retention]` (`missing-key`), and on any other operation the key is `unknown-key`. `group_by` names `component`, `target` or both; `keep_active`, `keep_previous`, `keep_running` and `keep_pending_install` must be `true` and `unparsable_version` must be `keep`, because the host fixes what a group keeps, so anything else is `invalid-range`. A third-party pack naming a first-party operation or an integration fact is `not-permitted`. A rule tests the generic facts and its own integration's: a fact of another integration, or one scoped to another selector, is `unknown-capability`. So is `registered-linked-worktrees` under anything but `git-worktree-remove` or `report`, and `verified-release-directories` under anything but `remove-verified-release` or `report`. `requirements` and `eligibility` on a `report` rule are `unknown-key`, built-in packs included: a report rule selects by its selector alone, so a predicate there would decide nothing. A pack with no `[[rule]]` is `missing-key`. Errors in the `[pack]` table and in the rules are reported together whenever the pack's ID and platforms are valid.
 
 ## 4. Hard cases
 
 ### Codex stale releases (keep active + running + pending + 1 per component/channel)
 
+Today `builtin.codex.stale-releases` is a `report` rule with no requirements and no retention: kipple reads both release stores, supplies the facts below and reports each release, and removes none. The rule below is what it becomes when releases are removed (M4b), and its `requirements` and `retention` are not accepted on a `report` rule until then.
+
 ```toml
 [[rule]]
 id = "builtin.codex.stale-releases"
 integration = "codex"
-title = "Inactive Codex releases"
+title = "Codex releases"
 category = "release-install"
-description = "Old Codex releases kept after updates. The active, running and one rollback release per component are always kept."
+description = "Releases left after an update. The selected, previous, running and pending releases are always kept."
 why = "Codex keeps every downloaded release after self-updating."
 loss = "The removed versions; Codex re-downloads a version only if you install it again."
 
@@ -157,15 +159,13 @@ selection = "verified-release-directories"
 layout = "supported"
 inventory = "complete"
 installer_activity = "idle"
-process_observation = "complete"
 
 [rule.retention]
-group_by = ["component", "channel"]
+group_by = ["component", "target"]
 keep_active = true
+keep_previous = true
 keep_running = true
 keep_pending_install = true
-keep_additional = 1
-additional_order = "version-descending"
 unparsable_version = "keep"
 
 [rule.operation]
@@ -190,15 +190,16 @@ Fixtures needed:
 
 ### Git worktrees (any agent)
 
-Worktrees are handled by a **generic Git integration** that labels which agent made each one (by location such as `.claude/worktrees/`, or by branch naming where it's verifiable), because agents of every brand leave them behind. In the one public report we found, 12 of 13 abandoned worktrees (13.8 GB in total) came from an agent other than Claude Code ([claude-code#26725 comment](https://github.com/anthropics/claude-code/issues/26725#issuecomment-5284720631), 2026-08-13). Claude Code's own `cleanupPeriodDays` sweep also removes *its* orphaned worktrees past that age, and kipple explains this instead of competing with it. Discovery uses `git worktree list --porcelain -z`.
+Worktrees are handled by a **generic Git integration** that labels which agent made each one by location alone, such as `.claude/worktrees/`, because agents of every brand leave them behind and a branch name proves nothing. In the one public report we found, 12 of 13 abandoned worktrees (13.8 GB in total) came from an agent other than Claude Code ([claude-code#26725 comment](https://github.com/anthropics/claude-code/issues/26725#issuecomment-5284720631), 2026-08-13). Claude Code's own `cleanupPeriodDays` sweep also removes *its* orphaned worktrees past that age, and kipple explains this instead of competing with it. Discovery uses `git worktree list --porcelain -z`, from git 2.36, and the facts about each worktree come from real git, with the repository config gate of 04 §6 clear before any command that reads an object.
 
-There are three states and they get different treatment:
+There are four states, and each path gets exactly one finding. When several repositories list a path, as a copy of a repository does, the one git names from inside the checkout speaks for it. Every rule here is `report` today, so nothing is removed yet.
 
 | State | Treatment |
 | --- | --- |
-| Registered and present | Removable only via `builtin.git.worktree-remove`, which requires all of: linked (not main), not locked, no submodules, registration valid both ways, no tracked changes, no untracked files, no unclassified ignored files, idle, HEAD reachable from a retained local ref. Uses `git worktree remove` without `--force`, never deletes branches, no undo. |
-| Registered but missing | Report-only. Reclaims nothing. Shows a `git worktree prune` advice line, because missing may mean unmounted or moved. |
-| Present but unregistered | Report-only. May hold unique commits. Repair advice. |
+| Registered and present | Removable only via `builtin.git.worktree-remove`, once that rule ships, which requires all of: linked (not main), not locked, no submodules, registration valid both ways, repository config gate clear, no tracked changes, no untracked files, no hidden changes, no unclassified ignored files, no operation in progress, no per-worktree refs, index not locked, idle, HEAD reachable from a retained local ref, git at least 2.39.5. Uses `git worktree remove` without `--force`, never deletes branches, no undo. |
+| Registered but missing | Report-only. Reclaims nothing. Shows a `git worktree prune --dry-run` advice line, because missing may mean unmounted or moved. |
+| Registered but invalid | Report-only. What is on disk doesn't match the registration, or two records print one path. Review by hand; never prune, which drops the admin directory of a checkout still on disk. |
+| Present but unregistered | Report-only. May hold unique commits. `git worktree repair` is advised only when the registration names a checkout that is gone. A copy of a live worktree, or a checkout that lost its repository, gets review-by-hand advice with no command. |
 
 `node_modules`, `target` and similar directories inside any worktree are separate findings through the normal artifact rules. They can be reclaimed even when the worktree itself cannot.
 
@@ -215,21 +216,13 @@ loss = "Nothing. Report only."
 root = "config.project-roots"
 selection = "worktree-registrations"
 
-[rule.requirements]
-git_inventory = "complete"
-repository_identity = "verified"
-storage_availability = "known"
-
-[rule.eligibility]
-registration_state = ["registered-missing", "present-unregistered"]
-
 [rule.operation]
 kind = "report"
 ```
 
 ## 5. v0.1 catalog
 
-"Mutable" here depends on verifying the upstream layout and passing the native safety fixtures on each advertised OS. Anything that fails or is unknown stays blocked.
+"Mutable" here depends on verifying the upstream layout and passing the native safety fixtures on each advertised OS. Anything that fails or is unknown stays blocked. The table is the v0.1 target; §5a says what is built.
 
 Every integration descriptor declares its **protected subresources** (04 §3.9), its **upstream root precedence** (05 §1) and the **consequence facts** it can prove (04 §2a).
 
@@ -237,7 +230,7 @@ Every integration descriptor declares its **protected subresources** (04 §3.9),
 | --- | --- | --- |
 | Codex | Inactive releases per component and channel; closed diagnostic logs; verified ephemeral artifacts | Histories, state DBs, plugin and runtime stores until proven disposable, credentials and config, active or unknown versions |
 | Git worktrees (any agent) | Artifacts inside worktrees; strictly eligible registered linked-worktree removal (§4) | Registration anomalies (report plus `prune --dry-run` advice), dirty, locked or unreachable HEAD |
-| Claude Code | Closed debug logs | Sessions, checkpoints and file history, memory, plugins, skills and config; broken or dirty worktrees. Version cleanup after layout verification |
+| Claude Code | Closed debug logs | Sessions, checkpoints and file history, memory, plugins, skills and config; broken or dirty worktrees; installed versions, which the installer prunes and a stale lock can't prove unused |
 | Pi | Logs and ephemeral files only where upstream identifies them | Sessions, packages, extensions, cloned repos, auth and config |
 | Cursor | Project artifacts under roots; tool cache and logs only if separated from history | Workspace DBs, local history, model and embedding stores, release installs |
 | Cargo | Project `target/` (honouring the resolved target dir and busy evidence) | Registry and git stores (Cargo auto-GC; advice shown) |
@@ -250,7 +243,7 @@ Every integration descriptor declares its **protected subresources** (04 §3.9),
 
 ### 5a. Built today
 
-The Cargo, Node and Python rules propose `remove-files` with `delete` or `trash`; the trash, pacman and journald rules only report. Nothing is removed yet: kipple finds, sizes and classifies each finding into its bucket (D-047), and the executor arrives in M3. Each integration lists the upstream versions its fixtures were built from, and `kipple rules` and the generated support matrix show them. The consequence column is what the integration verified for a finding whose layout it recognised (04 §2a); an unrecognised layout and a report-only finding have none.
+The Cargo, Node and Python rules propose `remove-files` with `delete` or `trash`, and so do, on Linux only, the closed-log rules of Claude Code and Pi, Codex's old TUI log and its plugin catalog cache; the trash, pacman, journald, git and npm rules, Cursor's and the release rules of Codex only report. kipple finds, sizes and classifies each finding into its bucket (D-047), and `kipple clean` and the home screen remove only what a reviewed plan holds, through the executor. Each integration lists the upstream versions its fixtures were built from, and `kipple rules` and the generated support matrix show them. The consequence column is what the integration verified for a finding whose layout it recognised (04 §2a); an unrecognised layout and a report-only finding have none.
 
 | Integration | Lens | Finds | Evidence | Consequence | Verified against |
 | --- | --- | --- | --- | --- | --- |
@@ -260,7 +253,12 @@ The Cargo, Node and Python rules propose `remove-files` with `delete` or `trash`
 | Trash | system | the trash root, when not empty: on Linux the home trash's `files`, where the trashed files are (Linux, macOS) | the root | — (report only) | freedesktop Trash spec 1.0 |
 | Pacman | system | the package cache, when not empty (Linux) | the root | — (report only, advice) | pacman 7.1.0 |
 | journald | system | the persistent journal, when not empty (Linux) | the root | — (report only, advice) | systemd 262 |
-| Claude Code | agents | nothing yet; advice only | — | — | Claude Code settings docs, checked 2026-10-11 |
+| Claude Code | agents | on Linux, the debug logs of closed sessions; everywhere, installed versions and the rest of its store, reported only; advice | the verified install layout and no open session marker naming the log | `none` for the logs, loses `history`, Review at every level; versions: `redownload`, loses `rollback-ability` | Claude Code 2.1.318 |
+| Codex | agents | the release stores: every release reported on Linux, and elsewhere every release but the selected one; on Linux, `log/codex-tui.log` and the plugin catalog cache files; its logs and caches, reported only; advice | the selected release of a verified version in a store of a known layout | the log: `none`, loses `history`, Review at every level; the cache: `automatic`, loses `cache-warmth` | Codex 0.165.0, 0.166.0 |
+| Pi | agents | on Linux, four named logs of the agent directory; its store, reported only | the verified install layout and an idle installer | `none`, loses `history`, Review at every level | Pi 1.5.0 |
+| Cursor | agents | on Windows, its application data, reported only; advice | none: nothing is verified, so it opens nothing | — (report only, advice) | nothing verified |
+| Git worktrees | agents | each linked worktree of the repositories under a project root or an agent's location, and each checkout none of them lists, with what git says of it | the facts git gave, past the roots | — (report only) | git 2.56.0 |
+| npm | dev | nothing yet: it has its descriptor, its closed roots and its rules as `report` | — | — | nothing yet |
 
 A `target`, `node_modules` or `.venv` with no recognised signature is still reported, with `no-signature` evidence, so an unknown layout is visible but can never become eligible. A candidate that can't be listed, including a `__pycache__`, is reported with no layout evidence at all. Generic `dirs-matching` and `files-matching` rules from third-party packs are validated but not evaluated before M5.
 
@@ -268,17 +266,18 @@ Roadmap integrations, each added only with layout fixtures: Gemini CLI, OpenCode
 
 ## 6. Advice catalog (v0.1)
 
-Advice is text plus an exact command or config snippet, checked against supported tool versions, and never run by kipple. It belongs to the integration, not to one rule: once an integration gives any advice, every report-only finding of that integration proposes `advice` instead of `report`. Each built-in integration that advises has at most one rule.
-- Claude Code (built): `cleanupPeriodDays` (default 30, minimum 1; `0` fails validation). Show the resolved value and its source, or "unknown" if it can't be determined. Explain the exceptions: memory directories, `history.jsonl`, Desktop and Cowork transcripts (`desktopSessionCleanupPeriodDays`), `--bare` sessions, and versions before v2.1.228 deleting memory files. Source: code.claude.com settings reference and claude-directory docs, checked 2026-10-11.
-- Codex: `history.max_bytes` caps `history.jsonl` by dropping the oldest entries. It does *not* bound session rollouts (`sessions/`, `archived_sessions/`), which have no documented retention.
+Advice is text plus an exact command or config snippet, checked against supported tool versions, and never run by kipple. An integration gives it once and each finding it applies to names it: a report-only finding that names advice proposes `advice` instead of `report`, and one that doesn't still proposes `report`.
+- Claude Code (built): `cleanupPeriodDays` (default 30, minimum 1; `0` fails validation). Show the resolved value and its source, or "unknown" if it can't be determined. Explain the exceptions: memory directories, `history.jsonl` (except under a HIPAA setting), Desktop and Cowork transcripts (`desktopSessionCleanupPeriodDays`), `--bare` sessions, and versions before v2.1.228 deleting memory files. Managed, project and command-line settings override the user setting and aren't read. Source: code.claude.com settings reference and claude-directory docs, checked 2026-11-06.
+- Codex (built): `history.max_bytes` caps `history.jsonl` by dropping the oldest entries. It does *not* bound session rollouts (`sessions/`, `archived_sessions/`), which have no documented retention.
+- Cursor (built): `Delete Old Chats…` and `GC Agent KV Blobs` for its chat database, and `cursor.worktreeMaxCount` and `cursor.worktreeCleanupIntervalHours` for the worktrees it removes itself. kipple reports those worktrees and doesn't read Cursor's settings. Source: cursor.com docs, checked 2026-11-06.
 - pacman (built): `paccache -rk N` and `paccache.timer`, with the ArchWiki rollback caveat
 - journald (built): `SystemMaxUse=` or `journalctl --rotate --vacuum-size` (vacuuming alone never touches the active files), checked against systemd 262's `journalctl(1)`
 - Cargo: global cache auto-GC (`cache.auto-clean-frequency`)
-- git worktrees: `git worktree prune` and `git worktree repair` for registration anomalies
+- git worktrees (built): `git worktree prune --dry-run --verbose` for a registration whose checkout is gone, and `git worktree repair` only when the registration names a checkout that moved; a copy of a live worktree gets review-by-hand text and no command
 
 ## 7. Integration fixtures
 
-Fixtures are built by test code, not described in a new file format. A small `FixtureTree` builder (`tests/fixtures/tree.rs`), local to the `kipple-adapters` tests, creates directories, files with given contents, and sparse files of a given size (via `set_len`) in a temp dir:
+Fixtures are built by test code, not described in a new file format. A small `FixtureTree` builder (`tests/fixtures/tree.rs`), local to the `kipple-adapters` tests, creates directories, files with given contents, sparse files of a given size (via `set_len`) and symlinks in a temp dir:
 
 ```rust
 let mut tree = FixtureTree::new();
@@ -289,7 +288,7 @@ tree.file("projects/rust-app/Cargo.toml", b"[package]\nname = \"demo\"\n")
 tree.build_in(home)?;
 ```
 
-Symlinks and mtimes come with the first integration whose layout needs them.
+`link` and `bad_link` add real symlinks, on Windows too, where a test that can't make one fails. `link` takes what the link holds as an explicit `Holds`, since an integration can tell the forms apart: `AbsoluteInTree` is a path in the tree, held as an absolute path, and `AsWritten` is the target exactly as upstream writes it, relative to the link or absolute, in the tree or not. `modified` sets the times of the files below a directory, and `modified_dir` sets a directory's own time once its children are written. `FixtureTree::link_stamp` reads a built link's own `lstat` (Unix only), for a fixture that has to write a file recording it, since a change time can't be set.
 
 - Fixtures live in `crates/kipple-adapters/tests/fixtures/<integration>/`, one file per supported upstream layout named after the tool and version (`node/pnpm_v12_9_1.rs`), each adding its layout to a `FixtureTree`.
 - Each fixture comes with a positive case and at least one negative case (an unknown layout blocks, a running release is kept). `tests/integrations.rs` runs them through the engine.

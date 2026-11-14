@@ -1,0 +1,27 @@
+schema_version = 1
+
+[pack]
+id = "builtin.cursor"
+version = "1.0.0"
+publisher = "kipple"
+description = "Cursor's application data"
+license = "MIT"
+kipple = ">=0.0.0"
+platforms = ["linux", "macos", "windows"]
+
+[[rule]]
+id = "builtin.cursor.app-data-size"
+integration = "cursor"
+title = "Cursor application data"
+description = "User data, settings and workspace storage, as a whole."
+why = "Cursor keeps its user data, settings and workspace storage here."
+loss = "Nothing. Report only."
+category = "history"
+platforms = ["windows"]
+
+[rule.scope]
+root = "cursor.app-data"
+selection = "cursor-app-data"
+
+[rule.operation]
+kind = "report"
