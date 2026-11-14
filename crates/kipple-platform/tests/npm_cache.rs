@@ -1,7 +1,8 @@
 //! Where `npm.cache` resolves, read as npm 11.20.0's `@npmcli/config` reads it (spec M4
 //! pinned 33, S5 npm §2): its variables, then the user npmrc, the global npmrc and npm's
-//! own, through an npm install found on `PATH` whose files alone are read. Unix only, like
-//! `roots.rs`: Windows places its default cache through a Known Folder.
+//! own, through an npm install found on `PATH` whose files alone are read. Unix only:
+//! `crates/kipple/tests/npm_roots.rs` places it from each OS's installer layout, Windows's
+//! `npm.cmd` and `%LOCALAPPDATA%` included.
 #![cfg(unix)]
 #![expect(
     clippy::unwrap_used,

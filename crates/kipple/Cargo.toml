@@ -61,5 +61,9 @@ required-features = ["test-roots"]
 name = "npm"
 required-features = ["test-roots"]
 
+[[test]]
+name = "npm_roots"
+required-features = ["test-roots"]
+
 [lints]
 workspace = true
