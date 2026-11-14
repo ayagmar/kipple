@@ -3,6 +3,7 @@
 
 use std::cell::RefCell;
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use kipple_core::format::{ApplyEventOut, ReceiptOut};
@@ -115,6 +116,8 @@ pub(super) struct Events {
     written: io::Result<()>,
     /// The item to crash at, in a `test-roots` build ([`crate::crash_point`]).
     crash_at: Option<u32>,
+    /// The path of the native item running, which its output is said under.
+    running: Option<PathBuf>,
 }
 
 impl Events {
@@ -127,6 +130,7 @@ impl Events {
             notices: Vec::new(),
             written: Ok(()),
             crash_at: None,
+            running: None,
         }
     }
 
@@ -202,11 +206,17 @@ impl Sink<'_> {
                 method: ItemMethod::Native,
                 path,
                 ..
-            } => vec![review::working_on(ItemMethod::Native, path)],
+            } => {
+                self.events.running = Some(path.clone());
+                vec![review::working_on(ItemMethod::Native, path)]
+            }
             ItemEvent::Ended {
                 output: Some(output),
                 ..
-            } => native::output_lines(output),
+            } => {
+                let path = self.events.running.take().unwrap_or_default();
+                native::output_lines(&path, output)
+            }
             ItemEvent::Started { .. } | ItemEvent::Ended { .. } => Vec::new(),
         };
         for line in lines {
@@ -361,7 +371,8 @@ mod tests {
     use std::time::{Duration, SystemTime};
 
     use kipple_core::{
-        Effect, ItemId, ItemOutcome, Measured, NativeEffect, NativeEnd, NativeOutput, RunId,
+        Effect, ItemId, ItemOutcome, Measured, NativeEffect, NativeEnd, NativeOutput, Printed,
+        RunId,
     };
 
     use super::*;
@@ -395,8 +406,8 @@ mod tests {
     fn output_shows_when_it_ends_and_never_on_stdout() {
         let path = PathBuf::from("checkout");
         let output = NativeOutput {
-            stdout: b"printed-out\n".to_vec(),
-            stderr: b"printed-err\n".to_vec(),
+            stdout: Printed::all(b"printed-out\n".to_vec()),
+            stderr: Printed::all(b"printed-err\n".to_vec()),
         };
         let started = item(ItemEvent::Started {
             item: ItemId(0),
@@ -415,7 +426,7 @@ mod tests {
             output: Some(Box::new(output.clone())),
         });
         let starting = review::working_on(ItemMethod::Native, &path);
-        let printed = native::output_lines(&output);
+        let printed = native::output_lines(&path, &output);
 
         let [_, running] = written(Format::Human, std::slice::from_ref(&started));
         assert!(running.contains(&starting), "{running}");

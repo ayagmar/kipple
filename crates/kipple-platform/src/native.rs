@@ -11,21 +11,23 @@
 //! before the spawn, and syncs what it changed. A failed sync never reads as done.
 
 use std::ffi::{OsStr, OsString};
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::ExitStatus;
 use std::time::Duration;
 
 use kipple_core::{
     Anchor, ApplyError, EntryKind, ErrorCode, FileIdentity, NativeArg, NativeCommand, NativeEnd,
     NativeExit, NativeOp, NativeOutput, NativeRunner, NativeStatus, Postcondition, ResolvedTool,
-    WorktreeWitness,
+    ToolFile, WorktreeWitness,
 };
 
 use crate::environment::Environment;
 use crate::executor::{self, sys};
 use crate::os;
+use crate::os::folder::Folder;
 use crate::runner::{self, CheckedDir, Finish, Invocation, OUTPUT_LIMIT, Ran, Var};
+use crate::tools;
 
 /// A file that is always empty and that no one can replace: the global config, the
 /// hooks directory and, on Linux and macOS, the XDG config directory all point here, so
@@ -42,9 +44,10 @@ pub(crate) const WORKTREE_DEADLINE: Duration = Duration::from_mins(5);
 /// test's measurement of a large cache.
 pub(crate) const NPM_DEADLINE: Duration = Duration::from_mins(10);
 
-/// Where npm's configuration boundary lives below kipple's data directory: the prefix
-/// and logs directories and the two config files `NPM_CACHE_CLEAN` names, all empty.
-const NPM_BOUNDARY: &str = "native/npm";
+/// Where npm's configuration boundary lives below kipple's data directory, one name at a
+/// time: the prefix and logs directories and the two config files `NPM_CACHE_CLEAN`
+/// names, all empty.
+const NPM_BOUNDARY: [&str; 2] = ["native", "npm"];
 const NPM_DIRS: [&str; 2] = ["prefix", "logs"];
 const NPM_FILES: [&str; 2] = ["userconfig", "globalconfig"];
 
@@ -238,6 +241,7 @@ impl<'tool> Launch<'tool> {
             dir: Some(dir),
         };
         still_reviewed(tool)?;
+        // Only a start fails: once the child runs, how it ended comes back in `Ran`.
         runner::invoke_to_end(&invocation, env).map_err(|error| {
             ApplyError::io(
                 ErrorCode::Io,
@@ -256,18 +260,23 @@ fn is_shim(path: &Path) -> bool {
     })
 }
 
-/// Whether each file `tool` runs from is still the file a person reviewed: the last check
-/// before the spawn.
+/// Whether each file `tool` runs from is still the file a person reviewed, by identity
+/// and fingerprint, so neither another file in its inode nor a rewrite in place passes:
+/// the last check before the spawn.
 fn still_reviewed(tool: &ResolvedTool) -> Result<(), ApplyError> {
-    let files = std::iter::once((&tool.path, tool.identity)).chain(
-        tool.runtime
-            .as_ref()
-            .map(|runtime| (&runtime.path, runtime.identity)),
-    );
-    for (path, identity) in files {
-        let meta =
-            fs::metadata(path).map_err(|error| ApplyError::io(ErrorCode::ToolChanged, error))?;
-        if !meta.is_file() || os::identity(path, &meta) != Some(identity) {
+    let files = std::iter::once(ToolFile {
+        path: tool.path.clone(),
+        identity: tool.identity,
+        fingerprint: tool.fingerprint,
+    })
+    .chain(tool.runtime.clone());
+    for reviewed in files {
+        let now = tools::tool_file(&reviewed.path)
+            .map_err(|error| ApplyError::io(ErrorCode::ToolChanged, error))?;
+        let same = now.kind == EntryKind::File
+            && now.identity == reviewed.identity
+            && now.fingerprint == reviewed.fingerprint;
+        if !same {
             return Err(ApplyError::new(ErrorCode::ToolChanged));
         }
     }
@@ -297,20 +306,24 @@ fn os_name(name: &str) -> Result<sys::Name, ApplyError> {
     sys::name(OsStr::new(name)).map_err(|error| ApplyError::io(ErrorCode::Io, error))
 }
 
+/// What failing to reach a reviewed entry says: missing when it isn't there, changed when
+/// something else is.
+fn unreached(error: io::Error) -> ApplyError {
+    let code = if error.kind() == io::ErrorKind::NotFound {
+        ErrorCode::TargetMissing
+    } else {
+        ErrorCode::TargetChanged
+    };
+    ApplyError::io(code, error)
+}
+
 /// Fails unless `seen` is of `kind` with `identity`: what was reviewed, still there.
 fn is_reviewed(
     seen: io::Result<executor::Seen>,
     kind: EntryKind,
     identity: FileIdentity,
 ) -> Result<(), ApplyError> {
-    let seen = seen.map_err(|error| {
-        let code = if error.kind() == io::ErrorKind::NotFound {
-            ErrorCode::TargetMissing
-        } else {
-            ErrorCode::TargetChanged
-        };
-        ApplyError::io(code, error)
-    })?;
+    let seen = seen.map_err(unreached)?;
     if seen.snapshot.kind == kind && seen.snapshot.identity == identity {
         Ok(())
     } else {
@@ -328,28 +341,44 @@ fn reviewed_top(op: &NativeOp) -> Result<FileIdentity, ApplyError> {
         .ok_or_else(|| ApplyError::new(ErrorCode::TargetChanged))
 }
 
-/// Whether `name` is gone from `dir`, as only an answer of "not found" says.
-fn gone(dir: &sys::Dir, name: &sys::Name) -> bool {
-    matches!(dir.stat(name), Err(error) if error.kind() == io::ErrorKind::NotFound)
+/// Whether `name` is gone from `dir`, as only an answer of "not found" says, and the
+/// directory `held`, opened as `name` before the run, has no name left anywhere: no
+/// rename, of it or of an ancestor, passes for a removal.
+fn removed(dir: &sys::Dir, name: &sys::Name, held: &sys::Dir) -> Postcondition {
+    let gone = matches!(dir.stat(name), Err(error) if error.kind() == io::ErrorKind::NotFound);
+    let unlinked = held.seen().is_ok_and(|seen| seen.snapshot.links == 0);
+    if gone && unlinked {
+        Postcondition::Met
+    } else {
+        Postcondition::Unmet
+    }
+}
+
+/// How a process that ended with `status` ended.
+fn end_of(status: ExitStatus) -> NativeEnd {
+    NativeEnd {
+        exit: status.code(),
+        signal: os::exit_signal(status),
+    }
 }
 
 /// What the runner saw of a command that ran as `ran`.
 fn exit(ran: Ran, postcondition: Postcondition, synced: io::Result<()>) -> NativeExit {
-    let status = ran.output.status;
-    let end = NativeEnd {
-        exit: status.code(),
-        signal: os::exit_signal(status),
-    };
     NativeExit {
         status: match ran.finish {
-            Finish::Exited => NativeStatus::Ended(end),
-            Finish::MissedDeadline | Finish::Cancelled => NativeStatus::TimedOut(end),
+            Finish::Exited(status) => NativeStatus::Ended(end_of(status)),
+            Finish::MissedDeadline(status) | Finish::Cancelled(status) => {
+                NativeStatus::TimedOut(end_of(status))
+            }
+            Finish::Lost(lost) => NativeStatus::Lost {
+                stopped: lost.stopped.ok().map(end_of),
+            },
         },
         postcondition,
         synced: synced.map_err(|error| ApplyError::io(ErrorCode::Unsynced, error)),
         output: NativeOutput {
-            stdout: ran.output.stdout,
-            stderr: ran.output.stderr,
+            stdout: ran.stdout,
+            stderr: ran.stderr,
         },
     }
 }
@@ -357,7 +386,8 @@ fn exit(ran: Ran, postcondition: Postcondition, synced: io::Result<()>) -> Nativ
 impl NativeCommands {
     /// `npm cache clean --force`, started in the cache root's handle with `--cache` naming
     /// its own working directory, so no swapped ancestor can rebind it. Done when
-    /// `_cacache` is gone from that handle.
+    /// `_cacache` is gone from that handle and the `_cacache` held open since the check has
+    /// no name left.
     fn clean_npm(
         &self,
         op: &NativeOp,
@@ -368,44 +398,37 @@ impl NativeCommands {
         let root = CheckedDir::of(cache)?;
         startable(&root)?;
         let name = last_name(op.target().anchor())?;
-        is_reviewed(root.dir().stat(&name), EntryKind::Dir, reviewed_top(op)?)?;
+        let cacache = root.dir().open_dir(&name).map_err(unreached)?;
+        is_reviewed(cacache.seen(), EntryKind::Dir, reviewed_top(op)?)?;
         self.npm_boundary()?;
         let ran = launch.run(tool, &root, &self.env)?;
-        let postcondition = if gone(root.dir(), &name) {
-            Postcondition::Met
-        } else {
-            Postcondition::Unmet
-        };
+        let postcondition = removed(root.dir(), &name, &cacache);
         Ok(exit(ran, postcondition, root.dir().sync()))
     }
 
-    /// Makes npm's configuration boundary ready: its two directories, and its two config
-    /// files empty. A config file that holds anything, or isn't a plain file, is a failed
+    /// Makes npm's configuration boundary ready: `<data>/native/npm`, reached from the
+    /// data directory without following a link, holding its two directories empty and its
+    /// two config files empty. Anything else there, or a link on the way, is a failed
     /// start: no file a person edits chooses what the command does (pinned 33).
     fn npm_boundary(&self) -> Result<(), ApplyError> {
         let data = self
             .data
             .as_deref()
             .ok_or_else(|| ApplyError::new(ErrorCode::Unsupported))?;
-        let boundary = data.join(NPM_BOUNDARY);
         let failed = |error| ApplyError::io(ErrorCode::Io, error);
+        os::create_private_dir(data).map_err(failed)?;
+        let mut boundary = Folder::open(data).map_err(failed)?;
+        for dir in NPM_BOUNDARY {
+            boundary = made(&boundary, dir).map_err(failed)?;
+        }
         for dir in NPM_DIRS {
-            let path = boundary.join(dir);
-            os::create_private_dir(&path).map_err(failed)?;
-            if !fs::symlink_metadata(&path).map_err(failed)?.is_dir() {
-                return Err(failed(io::ErrorKind::AlreadyExists.into()));
+            let names = made(&boundary, dir).and_then(|made| made.names());
+            if !names.map_err(failed)?.is_empty() {
+                return Err(failed(io::ErrorKind::DirectoryNotEmpty.into()));
             }
         }
         for file in NPM_FILES {
-            let path = boundary.join(file);
-            match fs::symlink_metadata(&path) {
-                Ok(meta) if meta.is_file() && meta.len() == 0 => {}
-                Ok(_) => return Err(failed(io::ErrorKind::AlreadyExists.into())),
-                Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                    os::create_private_file(&path).map_err(failed)?;
-                }
-                Err(error) => return Err(failed(error)),
-            }
+            empty_file(&boundary, file).map_err(failed)?;
         }
         Ok(())
     }
@@ -440,19 +463,11 @@ impl NativeCommands {
         let held = Registered::open(op, witness)?;
         let ran = launch.run(tool, &dir, &self.env)?;
         let parent = reached.holder();
-        let unlinked = dir.dir().seen().is_ok_and(|seen| seen.snapshot.links == 0);
-        let postcondition = if gone(parent, &name) && unlinked {
-            Postcondition::Met
-        } else {
-            Postcondition::Unmet
-        };
+        let postcondition = removed(parent, &name, dir.dir());
         let synced = parent.sync().and_then(|()| held.sync());
         Ok(exit(ran, postcondition, synced))
     }
 }
-
-#[cfg(test)]
-mod tests;
 
 /// The repository's side of a worktree, held open across the run: `<common>`, its
 /// `worktrees` directory, and the admin directory checked against the witness.
@@ -503,3 +518,35 @@ impl Registered {
         self.common.sync()
     }
 }
+
+/// Makes sure `name` in `folder` is an empty file, made for its owner when it is
+/// missing; a link, or a file that holds anything, fails.
+fn empty_file(folder: &Folder, name: &str) -> io::Result<()> {
+    match folder.read(name) {
+        Ok(opened) => {
+            let meta = opened.metadata()?;
+            if meta.is_file() && meta.len() == 0 {
+                Ok(())
+            } else {
+                Err(io::ErrorKind::AlreadyExists.into())
+            }
+        }
+        Err(error) if error.kind() == io::ErrorKind::NotFound => folder.create(name).map(drop),
+        Err(error) => Err(error),
+    }
+}
+
+/// The directory `name` in `folder`, made for its owner when it is missing; never one
+/// reached through a link.
+fn made(folder: &Folder, name: &str) -> io::Result<Folder> {
+    match folder.open_in(name) {
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            folder.create_dir(name)?;
+            folder.open_in(name)
+        }
+        opened => opened,
+    }
+}
+
+#[cfg(test)]
+mod tests;

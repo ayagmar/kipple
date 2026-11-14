@@ -44,12 +44,13 @@ use std::time::{Duration, SystemTime};
 
 use kipple_core::{
     AgentLabel, Allocated, Apparent, ApplyEvent, CancelToken, Checkout, CleanRequest, Completeness,
-    Effect as Ran, Ending, EventChannel, FileEffect, FileIdentity, Finding, FindingId, Finished,
-    Found, IntegrationId, ItemEvent, ItemId, ItemMethod, ItemOutcome, JudgementField, Left,
-    LeftCount, LeftReason, Measured, NativeEffect, NativeEnd, NativeKind, NativeOutput, NativeTool,
-    ObjectId, PlanMode, Platform, Proposal, Receipt, ReceiptItem, Reconciled, Registration,
-    RegistrationState, Removed, ResolvedTool, RunId, ScanEvent, ScanReport, Selection, Skip,
-    SpaceEstimate, Subject, WorktreeFacts, WorktreeWitness, event_channel, prepare_clean,
+    Effect as Ran, Ending, EventChannel, FileEffect, FileIdentity, Finding, FindingId, Fingerprint,
+    Finished, Found, IntegrationId, ItemEvent, ItemId, ItemMethod, ItemOutcome, JudgementField,
+    Kept, Left, LeftCount, LeftReason, Measured, NativeEffect, NativeEnd, NativeKind, NativeOutput,
+    NativeTool, ObjectId, PlanMode, Platform, Printed, Proposal, Receipt, ReceiptItem, Reconciled,
+    Registration, RegistrationState, Removed, ResolvedTool, RunId, ScanEvent, ScanReport,
+    Selection, Skip, SpaceEstimate, Stamp, Subject, WorktreeFacts, WorktreeWitness, event_channel,
+    prepare_clean,
 };
 use kipple_platform::{Environment, PLATFORM};
 use tempfile::TempDir;
@@ -605,6 +606,12 @@ fn native_scan(home: &Home) -> ScanReport {
         tool: NativeTool::Git,
         path: PathBuf::from("/usr/bin/git"),
         identity,
+        fingerprint: Fingerprint {
+            changed: Stamp::new(1, 0).unwrap(),
+            modified: Stamp::new(1, 0).unwrap(),
+            born: None,
+            size: 1,
+        },
         version: "2.56.0".to_owned(),
         runtime: None,
     };
@@ -689,8 +696,11 @@ fn cli_and_tui_show_the_same_native_lines() {
         .path
         .clone();
     let output = NativeOutput {
-        stdout: b"Removing worktree\n".to_vec(),
-        stderr: b"warning: \x1b[31mred\x1b[0m\n".to_vec(),
+        stdout: Printed::all(b"Removing worktree\n".to_vec()),
+        stderr: Printed {
+            bytes: b"warning: \x1b[31mred\x1b[0m\n".to_vec(),
+            kept: Kept::Start,
+        },
     };
     let done = ItemOutcome::Done(Ran::Native(NativeEffect {
         exit: NativeEnd {
@@ -713,8 +723,12 @@ fn cli_and_tui_show_the_same_native_lines() {
         outcome: Box::new(done),
         output: Some(Box::new(output.clone())),
     });
-    let printed = native::output_lines(&output);
-    assert_eq!(printed.len(), 4, "a heading and a line for each stream");
+    let printed = native::output_lines(&checkout, &output);
+    assert_eq!(
+        printed.len(),
+        5,
+        "a heading and a line for each stream, and the cut said"
+    );
 
     let [stdout, stderr] = crate::mutate::said_while_running(&[started.clone(), ended.clone()]);
     assert_eq!(stdout, b"", "nothing on stdout");

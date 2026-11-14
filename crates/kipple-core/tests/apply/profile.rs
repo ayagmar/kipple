@@ -15,18 +15,19 @@ use kipple_core::profile::{
 };
 use kipple_core::{
     ActivityEvidence, ApplyPorts, Authorization, Bucket, CancelToken, CleanRequest, Confirmed,
-    Consent, Ending, FindingSink, HeldPath, Integration, IntegrationDescriptor, IntegrationError,
-    IntegrationId, Lens, Level, Lineage, Method, Modified, NativeKind, NativeTool, OpenedRoot,
-    POLICY_VERSION, PlanMode, Platform, Prepared, Proposal, ResolvedRoot, ResolvedTool, RootSource,
-    Roots, RuleId, RuleSettings, ScanContext, ScanReport, Selector, SemanticFacts, Session, Skip,
-    Status, Subject, SymbolicRoot, WalkGap, prepare_clean, run_clean, run_prepared,
+    Consent, Ending, EntryKind, FindingSink, HeldPath, Integration, IntegrationDescriptor,
+    IntegrationError, IntegrationId, Lens, Level, Lineage, Method, Modified, NativeKind,
+    NativeTool, OpenedRoot, POLICY_VERSION, PlanMode, Platform, Prepared, Proposal, ResolvedRoot,
+    ResolvedTool, RootSource, Roots, RuleId, RuleSettings, ScanContext, ScanReport, Selector,
+    SemanticFacts, Session, Skip, Status, Subject, SymbolicRoot, WalkGap, prepare_clean, run_clean,
+    run_prepared,
 };
 
 use super::codec::TestCodec;
 use super::world::Target;
 use super::{
     CARGO, Config, HOME, HOME_ID, Item, OTHER, SplitMix, apply_as, home, id, plan_all, ports,
-    project, rescanned, rule, rule_id, scan_of, world_of,
+    project, rescanned, rule, rule_id, scan_of, snapshot, world_of,
 };
 
 const CARGO_RULE: &str = "builtin.cargo.target";
@@ -962,6 +963,7 @@ fn profile_never_holds_native() {
             tool: NativeTool::Npm,
             path: home("bin/npm"),
             identity: id(900),
+            fingerprint: snapshot(EntryKind::File, 900, 1, 1).fingerprint,
             version: "1.0.0".to_owned(),
             runtime: None,
         }),

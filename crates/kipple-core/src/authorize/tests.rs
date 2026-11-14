@@ -436,6 +436,7 @@ fn resolved() -> ResolvedTool {
         tool: NativeTool::Git,
         path: PathBuf::from("/usr/bin/git"),
         identity: FileIdentity { volume: 7, file: 9 },
+        fingerprint: snapshot(EntryKind::File, 9, 1).fingerprint,
         version: "2.47.0".to_owned(),
         runtime: None,
     }
@@ -622,6 +623,15 @@ fn executable_swapped_before_apply_skips() {
         tool.identity.file += 1;
     }
     assert_eq!(refused(other), Skip::ToolChanged(ToolGap::Changed));
+
+    // Rewritten in place, or another file in its inode: the identity alone can't tell.
+    let mut rewritten = npm(tree(1));
+    if let Subject::Semantic(facts) = &mut rewritten.1.supplied.subject
+        && let Ok(tool) = &mut facts.tool
+    {
+        tool.fingerprint.changed = Stamp::new(2, 0).unwrap();
+    }
+    assert_eq!(refused(rewritten), Skip::ToolChanged(ToolGap::Changed));
 
     let mut upgraded = worktree(with_git(&[".git"], EntryKind::File));
     if let Subject::Worktree(facts) = &mut upgraded.1.supplied.subject

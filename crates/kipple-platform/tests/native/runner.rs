@@ -1,6 +1,9 @@
-//! The native runner on the real file system: an ancestor of the command's target swapped
-//! while the command runs (04 §3.4; spec M4 pinned 27). Linux alone starts a child in a
-//! checked handle; elsewhere nothing starts, which `kipple-platform`'s own tests check.
+//! The native runner on the real file system: an ancestor of the command's target moved
+//! by the command itself while it runs (04 §3.4; spec M4 pinned 27). Linux alone starts a
+//! child in a checked handle; elsewhere nothing starts, which `kipple-platform`'s own tests
+//! check. The swap between the runner's check and the spawn, which needs a seam inside
+//! the runner, is `kipple-platform`'s unit test
+//! `swapped_ancestor_leaves_the_child_in_the_checked_directory`.
 #![cfg(target_os = "linux")]
 
 use std::ffi::OsString;
@@ -14,7 +17,7 @@ use kipple_core::{
 };
 use kipple_platform::{Environment, NativeCommands};
 
-use crate::executor::support::{Site, freeze, identity, present, write};
+use crate::executor::support::{Site, anchor_at, freeze, present, write};
 
 /// Writes the fake program at `path`, running `body`.
 #[expect(
@@ -26,13 +29,29 @@ fn fake(path: &Path, body: &str) {
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
 }
 
-/// Catches a command that follows a path after an ancestor swap: npm's cache at
-/// `a/cache` is moved aside and a decoy put at its old path while the command runs, and
-/// the command, working through its own working directory, removes the reviewed cache
-/// and leaves the decoy, which the runner's postcondition, read through the cache root's
-/// handle, agrees with.
+/// The file at `path` as a resolver records it: frozen as itself, below its directory.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a fixture that fails to build fails the test"
+)]
+fn file(path: &Path) -> ToolFile {
+    let name = path.file_name().unwrap().to_str().unwrap();
+    let anchor = anchor_at(path.parent().unwrap(), name);
+    let top = freeze(&anchor).tree.top().snapshot().unwrap();
+    ToolFile {
+        path: path.to_owned(),
+        identity: top.identity,
+        fingerprint: top.fingerprint,
+    }
+}
+
+/// Catches a postcondition read by path after an ancestor moved: npm's cache at
+/// `a/cache` is moved aside and a decoy put at its old path by the command itself, which,
+/// working through its own working directory, removes the reviewed cache and leaves the
+/// decoy. The runner's postcondition, read through the handles it opened before the
+/// spawn, agrees, and nothing outside the root is touched.
 #[test]
-fn swapped_ancestor_leaves_the_child_in_the_checked_directory() {
+fn a_command_that_moves_its_ancestor_removes_only_the_reviewed_cache() {
     let site = Site::new();
     write(&site.at("a/cache/_cacache/index-v5/entry"), b"reviewed");
     let bin = site.outside.join("bin");
@@ -49,15 +68,14 @@ fn swapped_ancestor_leaves_the_child_in_the_checked_directory() {
     );
     fake(&node, &body);
     write(&cli, b"// npm\n");
+    let script = file(&cli);
     let tool = ResolvedTool {
         tool: NativeTool::Npm,
-        path: cli.clone(),
-        identity: identity(&cli),
+        path: script.path,
+        identity: script.identity,
+        fingerprint: script.fingerprint,
         version: "11.6.2".to_owned(),
-        runtime: Some(ToolFile {
-            path: node.clone(),
-            identity: identity(&node),
-        }),
+        runtime: Some(file(&node)),
     };
     let target = site.anchor("a/cache/_cacache");
     let tree = freeze(&target).tree;

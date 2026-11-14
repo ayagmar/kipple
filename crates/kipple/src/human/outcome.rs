@@ -205,6 +205,12 @@ pub(crate) const fn error_code(code: ErrorCode) -> &'static str {
         ErrorCode::NativeUnconfirmed => {
             "its tool's command ended, and what it did can't be confirmed"
         }
+        ErrorCode::NativeLost => {
+            "kipple lost sight of its tool's command after it started and stopped it, so what it did can't be confirmed"
+        }
+        ErrorCode::NativeLostRunning => {
+            "kipple lost sight of its tool's command after it started and couldn't stop it, so it may still be running"
+        }
         ErrorCode::ToolChanged => {
             "its tool isn't the one that was reviewed, so its command never started"
         }
@@ -277,6 +283,7 @@ const fn tool_gap(gap: ToolGap) -> &'static str {
         ToolGap::UnknownVersion => "its version can't be read",
         ToolGap::UnverifiedVersion => "kipple hasn't verified that version",
         ToolGap::Changed => "it isn't what you reviewed",
+        ToolGap::Script => "it is a script that starts another program, which kipple never runs",
     }
 }
 

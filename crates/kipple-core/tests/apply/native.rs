@@ -30,9 +30,9 @@ use kipple_core::{
     Activity, Allocated, Answer, ApplyError, ApplyEvent, ApplyFile, ApplyPorts, ApplyRequest,
     CancelToken, CleanRequest, Completeness, Confirm, Consent, Dropped, Effect, EntryKind,
     ErrorCode, EventSink, FindingId, Found, ItemEvent, ItemId, LockGap, Measured, Method,
-    MutationPorts, NativeEnd, NativeOutput, NativeStatus, Recorders, RelPath, ReleaseFacts,
-    ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion, Review, Seen, Session, Settlement,
-    SpaceEstimate, Status, apply, reconcile, run_apply, run_clean,
+    MutationPorts, NativeEnd, NativeOutput, NativeStatus, Printed, Recorders, RelPath,
+    ReleaseFacts, ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion, Review, Seen, Session,
+    Settlement, SpaceEstimate, Status, apply, reconcile, run_apply, run_clean,
 };
 
 /// `tool`, at a path absolute on every OS, as a resolver gives it: a stored plan refuses
@@ -42,6 +42,7 @@ fn tool(tool: NativeTool) -> ResolvedTool {
         tool,
         path: home("bin/tool"),
         identity: id(900),
+        fingerprint: snapshot(EntryKind::File, 900, 1, 1).fingerprint,
         version: "1.0.0".to_owned(),
         runtime: None,
     }
@@ -928,6 +929,40 @@ fn a_command_that_never_started_failed() {
     assert_eq!(world.state().ran, Vec::new());
 }
 
+/// Catches a command kipple lost sight of after it started read as failed or done: its
+/// wait or its output couldn't be read, so nobody saw how it ended, and it is
+/// indeterminate whether it changed nothing, everything, or couldn't even be stopped.
+#[test]
+fn a_command_lost_after_it_started_is_indeterminate() {
+    let killed = NativeEnd {
+        exit: None,
+        signal: Some(9),
+    };
+    let cases = [
+        (Some(killed), Some(0), ErrorCode::NativeLost),
+        (Some(killed), None, ErrorCode::NativeLost),
+        (None, Some(0), ErrorCode::NativeLostRunning),
+    ];
+    for (stopped, removes, code) in cases {
+        let (scan, world) = cacache();
+        let plan = reviewed(&scan, &world).plan;
+        let lost = Script {
+            removes,
+            status: NativeStatus::Lost { stopped },
+            ..Script::default()
+        };
+
+        let outcome = scripted(&plan, &scan, &world, lost);
+
+        assert_eq!(
+            outcome.status(),
+            Status::Indeterminate,
+            "{code:?}: {outcome:?}"
+        );
+        assert_eq!(error_of(&outcome), Some(code), "{outcome:?}");
+    }
+}
+
 /// Catches a command that changed nothing read as anything but failed, and one that
 /// ended badly or by a signal after removing something read as failed, which would let
 /// the next run treat what is left as untouched (pinned 32).
@@ -1132,8 +1167,8 @@ fn stderr_never_persisted() {
         status: exited(1),
         removes: Some(0),
         output: NativeOutput {
-            stdout: format!("stdout {SECRET}").into_bytes(),
-            stderr: format!("stderr {SECRET}").into_bytes(),
+            stdout: Printed::all(format!("stdout {SECRET}").into_bytes()),
+            stderr: Printed::all(format!("stderr {SECRET}").into_bytes()),
         },
         ..Script::default()
     };
@@ -1174,7 +1209,7 @@ fn stderr_never_persisted() {
             ..
         } = event
         {
-            Some(output.stderr.clone())
+            Some(output.stderr.bytes.clone())
         } else {
             None
         }
@@ -1279,11 +1314,12 @@ fn second_interrupt_leaves_the_item_indeterminate() {
     assert_eq!(world.state().ran, [ItemId(0)], "never run again");
 }
 
-/// Catches a second run of a command while the first still runs, after kipple ended
-/// mid-run: the running child shows up as activity in the target, which holds the item
-/// at planning and at apply (pinned 28).
+/// Catches a native item whose target is in use after kipple ended mid-run planned or
+/// run again: activity in the target, which is what a child kipple left running shows
+/// (the platform's `a_running_child_shows_its_checked_directory_to_the_process_probe`),
+/// holds the item at planning and at apply, and the command started once (pinned 28).
 #[test]
-fn running_native_child_holds_the_next_run() {
+fn a_native_item_in_use_after_a_crash_is_held_at_plan_and_apply() {
     let (mut scan, world) = worktree(&["a", "b"]);
     let plan = reviewed(&scan, &world).plan;
     world.state().crash = Some(Crash::AfterRemovals(1));

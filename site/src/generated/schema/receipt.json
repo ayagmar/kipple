@@ -512,6 +512,8 @@
         "native-failed",
         "native-timed-out",
         "native-unconfirmed",
+        "native-lost",
+        "native-lost-running",
         "tool-changed",
         "io"
       ]
@@ -1875,7 +1877,8 @@
         "tool-unreadable",
         "tool-unknown-version",
         "tool-unverified-version",
-        "tool-changed"
+        "tool-changed",
+        "tool-script"
       ]
     },
     "TotalsOut": {

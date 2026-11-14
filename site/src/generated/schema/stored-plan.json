@@ -259,6 +259,43 @@
       "type": "string",
       "pattern": "^[0-9]+:[0-9]+$"
     },
+    "FingerprintOut": {
+      "description": "What changes when a file is changed in place.",
+      "type": "object",
+      "properties": {
+        "born": {
+          "description": "The birth time, where the OS reports one.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StampOut"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "changed": {
+          "description": "The status change time.",
+          "$ref": "#/$defs/StampOut"
+        },
+        "modified": {
+          "description": "The modification time.",
+          "$ref": "#/$defs/StampOut"
+        },
+        "size": {
+          "description": "The length in bytes.",
+          "type": "integer",
+          "format": "uint64",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "changed",
+        "modified",
+        "size"
+      ]
+    },
     "ItemMethod": {
       "type": "string",
       "enum": [
@@ -508,6 +545,28 @@
         }
       ]
     },
+    "StampOut": {
+      "description": "A time as the file system recorded it.",
+      "type": "object",
+      "properties": {
+        "nanos": {
+          "description": "Nanoseconds within that second.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "secs": {
+          "description": "Seconds since the Unix epoch.",
+          "type": "integer",
+          "format": "int64"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "secs",
+        "nanos"
+      ]
+    },
     "StandingOut": {
       "description": "The bucket an item was planned in.",
       "oneOf": [
@@ -611,6 +670,10 @@
       "description": "A file a native tool runs from.",
       "type": "object",
       "properties": {
+        "fingerprint": {
+          "description": "What changes when it is rewritten in place.",
+          "$ref": "#/$defs/FingerprintOut"
+        },
         "identity": {
           "description": "Its identity.",
           "$ref": "#/$defs/FileIdentity"
@@ -623,13 +686,18 @@
       "additionalProperties": false,
       "required": [
         "path",
-        "identity"
+        "identity",
+        "fingerprint"
       ]
     },
     "ToolOut": {
       "description": "A native tool as found on this machine.",
       "type": "object",
       "properties": {
+        "fingerprint": {
+          "description": "What changes when its executable is rewritten in place.",
+          "$ref": "#/$defs/FingerprintOut"
+        },
         "identity": {
           "description": "Its executable's identity.",
           "$ref": "#/$defs/FileIdentity"
@@ -663,6 +731,7 @@
         "tool",
         "path",
         "identity",
+        "fingerprint",
         "version"
       ]
     },

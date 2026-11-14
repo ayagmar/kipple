@@ -477,6 +477,11 @@ named! {
         /// A tool's own command exited 0, and what it was to do couldn't be confirmed: its
         /// target is still there, or git still lists it or couldn't be asked.
         NativeUnconfirmed = "native-unconfirmed",
+        /// A tool's own command started, and kipple couldn't wait for it or read what it
+        /// printed, so it stopped the command.
+        NativeLost = "native-lost",
+        /// As [`Self::NativeLost`], and even stopping it failed: it may still run.
+        NativeLostRunning = "native-lost-running",
         /// A tool's own command never started: its executable isn't the file that was
         /// reviewed, or is one kipple never runs, such as a `.cmd` shim.
         ToolChanged = "tool-changed",

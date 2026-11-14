@@ -169,7 +169,8 @@ impl App {
         let Some(Cleaning::Applying(applying)) = &mut self.cleaning else {
             return;
         };
-        applying.notices.extend(review::notices(&event));
+        let plan = applying.review.prepared.plan();
+        applying.notices.extend(review::notices(&event, plan));
         match event {
             ApplyEvent::RunStarted { run, .. } => applying.run = Some(run),
             ApplyEvent::Item {

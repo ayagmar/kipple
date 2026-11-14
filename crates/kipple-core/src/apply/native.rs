@@ -6,9 +6,10 @@
 //! returns. What comes back is settled here, and only one way leads to `done`: the command
 //! exited 0 by itself, the runner saw its postcondition, the sync barrier held, and for a
 //! worktree git, asked once more, no longer lists it. Anything else that may have changed
-//! the target is `indeterminate`, never done: a missed deadline, a failed sync, git unable
-//! to say, or a target that isn't as it was. Only a run that changed nothing is `failed`.
-//! A command that never started did nothing and is `failed` with no effect.
+//! the target is `indeterminate`, never done: a missed deadline, a command kipple lost
+//! sight of after it started, a failed sync, git unable to say, or a target that isn't as
+//! it was. Only a run that changed nothing is `failed`. A command that never started did
+//! nothing and is `failed` with no effect: the runner returns an error only then.
 //!
 //! Nothing was enumerated, so the receipt measures the target before the re-check and
 //! after the run, and says "not measured" when either fell short. What the command printed
@@ -96,12 +97,16 @@ fn settle(
     cancel: &CancelToken,
 ) -> ItemOutcome {
     let end = ended.status.end();
-    if let NativeStatus::TimedOut(_) = ended.status {
+    let unproven = match ended.status {
         // Its own child was killed; what it started may still be at work.
-        return ItemOutcome::Indeterminate(Found::Unproven(ApplyError::native(
-            ErrorCode::NativeTimedOut,
-            end,
-        )));
+        NativeStatus::TimedOut(_) => Some(ErrorCode::NativeTimedOut),
+        // Nobody saw it end by itself, whatever the target looks like now.
+        NativeStatus::Lost { stopped: Some(_) } => Some(ErrorCode::NativeLost),
+        NativeStatus::Lost { stopped: None } => Some(ErrorCode::NativeLostRunning),
+        NativeStatus::Ended(_) => None,
+    };
+    if let Some(code) = unproven {
+        return ItemOutcome::Indeterminate(Found::Unproven(ApplyError::native(code, end)));
     }
     if let Err(error) = &ended.synced {
         return ItemOutcome::Indeterminate(Found::Unsynced(error.clone()));
