@@ -104,16 +104,19 @@ impl Home {
         let roots = temp.path().join("roots.txt");
         fs::write(&roots, file).unwrap();
         let config_file = temp.path().join("config.toml");
-        // The roots file, the config named by `KIPPLE_CONFIG`, and `PATH`, so git can be
-        // asked.
-        let mut vars = vec![
+        // The roots file, the config named by `KIPPLE_CONFIG`, and the demo's `PATH`, so
+        // git can be asked and nothing else of the host's can start.
+        let vars = [
             (OsString::from("KIPPLE_TEST_ROOTS"), roots.into_os_string()),
             (
                 OsString::from(config::VAR),
                 config_file.clone().into_os_string(),
             ),
+            (
+                OsString::from("PATH"),
+                demo_home::path(temp.path()).unwrap(),
+            ),
         ];
-        vars.extend(std::env::var_os("PATH").map(|path| (OsString::from("PATH"), path)));
         let home = Self {
             temp,
             env: Environment::from_vars(vars),

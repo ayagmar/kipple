@@ -1,12 +1,13 @@
 //! Launching cargo and the gate tools.
 
+use std::ffi::OsStr;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, Result, bail};
 
 /// A command for `program` that runs in the workspace root.
-pub(crate) fn command(program: &str, root: &Path) -> Command {
+pub(crate) fn command(program: impl AsRef<OsStr>, root: &Path) -> Command {
     #[expect(
         clippy::disallowed_methods,
         reason = "xtask is the developer task runner; launching cargo and the gate tools is its job"

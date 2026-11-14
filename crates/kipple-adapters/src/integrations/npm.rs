@@ -152,7 +152,7 @@ impl Integration for Npm {
                 runtimes: &["node"],
                 stores: &[],
             }],
-            revision: 2,
+            revision: 3,
         }
     }
 

@@ -1140,6 +1140,108 @@ expression: "serde_json::to_string_pretty(&report)?"
         "reason": "unsupported",
         "state": "unknown"
       },
+      "category": "package-cache",
+      "consequence": null,
+      "evidence": [
+        {
+          "entry": "_cacache/index-v5",
+          "kind": "signature"
+        }
+      ],
+      "integration": "npm",
+      "lens": "dev",
+      "level": "careful",
+      "path": {
+        "display": "<demo>/home/.npm/_cacache"
+      },
+      "rule": "builtin.npm.inventory",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 65659,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "message": "this OS doesn't show which paths running programs use, beyond their executable",
+        "reason": "unsupported",
+        "state": "unknown"
+      },
+      "category": "package-cache",
+      "consequence": null,
+      "evidence": [
+        {
+          "entry": "_logs",
+          "kind": "signature"
+        }
+      ],
+      "integration": "npm",
+      "lens": "dev",
+      "level": "careful",
+      "path": {
+        "display": "<demo>/home/.npm/_logs"
+      },
+      "rule": "builtin.npm.inventory",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 14,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "message": "this OS doesn't show which paths running programs use, beyond their executable",
+        "reason": "unsupported",
+        "state": "unknown"
+      },
+      "category": "package-cache",
+      "consequence": null,
+      "evidence": [
+        {
+          "entry": "_npx",
+          "kind": "signature"
+        }
+      ],
+      "integration": "npm",
+      "lens": "dev",
+      "level": "careful",
+      "path": {
+        "display": "<demo>/home/.npm/_npx"
+      },
+      "rule": "builtin.npm.inventory",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 90,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "message": "this OS doesn't show which paths running programs use, beyond their executable",
+        "reason": "unsupported",
+        "state": "unknown"
+      },
       "category": "cache",
       "consequence": {
         "cost": "low",
