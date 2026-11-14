@@ -602,7 +602,7 @@ fn generic_artifact_inside_a_closed_store_is_protected_at_scan() {
         "a person's project is no tool's store: {control}"
     );
     // Windows can't tell whether a `node_modules` is in use (D-050).
-    if !cfg!(windows) {
+    if kipple_platform::PLATFORM != kipple_core::Platform::Windows {
         assert_eq!(control["bucket"], "safe", "{control}");
     }
 }
@@ -670,7 +670,8 @@ fn scan_and_plan_agree_on_every_closed_finding() {
 }
 
 /// Catches the fix closing what D-076 opens: an agent's own rule in its own open area, on
-/// the demo's verified layouts, keeps the verdict it had.
+/// the demo's verified layouts, keeps the verdict it had. These rules remove on Linux
+/// alone (spec M4 pinned 39), so off Linux the scan has none of their findings.
 #[test]
 fn open_areas_still_open_at_scan() {
     let (_temp, env) = demo();
@@ -686,6 +687,10 @@ fn open_areas_still_open_at_scan() {
     ];
     for (rule, bucket) in opened {
         let found: Vec<&Value> = findings.iter().filter(|f| f["rule"] == rule).collect();
+        if kipple_platform::PLATFORM != kipple_core::Platform::Linux {
+            assert!(found.is_empty(), "{rule} runs on Linux alone: {found:?}");
+            continue;
+        }
         assert!(!found.is_empty(), "the demo has {rule}");
         for finding in &found {
             let reasons = finding["verdict"]["reasons"].as_array().unwrap();
@@ -694,12 +699,10 @@ fn open_areas_still_open_at_scan() {
                 "{rule} is in an area its store opens to it: {finding}"
             );
         }
-        if std::env::consts::OS == "linux" {
-            assert!(
-                found.iter().any(|f| f["verdict"]["bucket"] == bucket),
-                "{rule} keeps a {bucket} finding on Linux: {found:?}"
-            );
-        }
+        assert!(
+            found.iter().any(|f| f["verdict"]["bucket"] == bucket),
+            "{rule} keeps a {bucket} finding on Linux: {found:?}"
+        );
     }
 }
 
