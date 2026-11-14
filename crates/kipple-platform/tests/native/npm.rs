@@ -2,7 +2,7 @@
 //! by the native runner the way apply runs it, removes `_cacache` and nothing else, past
 //! every npmrc that tries to move its logs, its prefix or its global config, and against a
 //! process that swaps what it runs on. It also measures a 20,000-file cache against
-//! `NPM_DEADLINE`. Linux alone starts a native command.
+//! `NativeCommands::NPM_DEADLINE`. Linux alone starts a native command.
 //!
 //! CI installs each npm into a prefix of its own and names the prefix in
 //! [`VERSIONS`]' variable: `<prefix>/lib/node_modules/npm` is the package and
@@ -29,7 +29,7 @@ use std::fs;
 use std::io::Write as _;
 use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use kipple_core::{
     ApplyError, DeleteOp, Marks, NativeCommand, NativeExit, NativeOp, NativeRunner as _,
@@ -61,10 +61,6 @@ const VERSIONS: [Verified; 2] = [
         cache: npm_v12_2_1::cache,
     },
 ];
-
-/// `NPM_DEADLINE` in `kipple-platform/src/native.rs`, which a test can't read. A
-/// 20,000-file cache must clean in a twentieth of it.
-const NPM_DEADLINE: Duration = Duration::from_mins(5);
 
 struct Verified {
     var: &'static str,
@@ -359,7 +355,7 @@ fn a_20000_file_cache_cleans_well_inside_npm_deadline() {
         std::io::stdout().write_all(measured.as_bytes()).unwrap();
         assert!(done(&exit), "npm {version} cleaned the cache: {exit:?}");
         assert!(
-            took < NPM_DEADLINE / 20,
+            took < NativeCommands::NPM_DEADLINE / 20,
             "npm {version} took {took:?}, too close to NPM_DEADLINE"
         );
     }

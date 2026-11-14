@@ -40,12 +40,13 @@ const NULL_DEVICE: &str = "NUL";
 /// How long `git worktree remove` may take (pinned 28).
 pub(crate) const WORKTREE_DEADLINE: Duration = Duration::from_mins(5);
 
-/// How long `npm cache clean` may take (pinned 28). Node removes a 20,000-file `_cacache` in
-/// about half a second on a fast SSD, and npm's own start adds less than that; this leaves
-/// room for a cache ten times larger on a disk fifty times slower. The contract test
-/// (`tests/native/npm.rs`) measures the real clean and fails above a twentieth of it.
+/// How long `npm cache clean` may take: pinned 28's 10 minutes, kept until the contract
+/// test (`tests/native/npm.rs`) has measured real npm in CI, which fails above a twentieth
+/// of it. Only a proxy was measured here: node's `fs.rmSync` removing a 20,000-file
+/// `_cacache` (cacache's index and content, half each) took 0.41 to 0.52 s on a btrfs SSD
+/// and 0.11 to 0.16 s on tmpfs (Ryzen 9 9950X3D, node 26.13.0), without npm's own start.
 /// Missing it leaves a partial cache, which npm reads as misses.
-pub(crate) const NPM_DEADLINE: Duration = Duration::from_mins(5);
+pub(crate) const NPM_DEADLINE: Duration = Duration::from_mins(10);
 
 /// Where npm's configuration boundary lives below kipple's data directory, one name at a
 /// time: the prefix and logs directories and the two config files `NPM_CACHE_CLEAN`
@@ -118,6 +119,11 @@ struct Deadlines {
 }
 
 impl NativeCommands {
+    /// How long `npm cache clean` may run before it is killed. Public for the contract
+    /// test, which judges the measured clean against it.
+    #[doc(hidden)]
+    pub const NPM_DEADLINE: Duration = NPM_DEADLINE;
+
     /// The runner for the machine `env` describes, with kipple's data directory `data`
     /// when it has one.
     #[must_use]
