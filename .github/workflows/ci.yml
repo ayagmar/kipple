@@ -145,6 +145,29 @@ jobs:
             Write-Warning 'ReFS is not available on this runner; its test is skipped'
           }
 
+      # The npm contract runs the real `npm cache clean` of each verified npm on a fixture
+      # cache (crates/kipple-platform/tests/native/npm.rs). Each variable names a prefix
+      # holding that npm and a node inside its `engines`; the tests fail without them.
+      - name: Install node for the npm contract (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "26.13.0"
+          package-manager-cache: false
+
+      - name: Install the verified npm versions (Linux)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node="$(command -v node)"
+          for version in 11.20.0 12.2.1; do
+            prefix="$RUNNER_TEMP/npm-$version"
+            npm install --global --no-audit --no-fund --prefix "$prefix" "npm@$version"
+            ln -s "$node" "$prefix/bin/node"
+            echo "KIPPLE_TEST_NPM_${version//./_}=$prefix" >> "$GITHUB_ENV"
+          done
+
       # The runner VM is disposable, so the native-backend tests may read its real state.
       - name: Run the native-backend tests
         run: cargo xtask test-native
