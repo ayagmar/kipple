@@ -155,18 +155,28 @@ jobs:
           node-version: "26.13.0"
           package-manager-cache: false
 
-      - name: Install the verified npm versions (Linux)
+      # Each npm is the registry's tarball, checked against its SHA-256 and unpacked where
+      # an install would put it. Nothing is installed through a package manager.
+      - name: Unpack the verified npm versions (Linux)
         if: runner.os == 'Linux'
         shell: bash
         run: |
           set -euo pipefail
           node="$(command -v node)"
-          for version in 11.20.0 12.2.1; do
-            prefix="$RUNNER_TEMP/npm-$version"
-            npm install --global --no-audit --no-fund --prefix "$prefix" "npm@$version"
+          unpack() {
+            local version="$1" sum="$2"
+            local prefix="$RUNNER_TEMP/npm-$version"
+            local tarball="$RUNNER_TEMP/npm-$version.tgz"
+            curl --fail --silent --show-error --location \
+              --output "$tarball" "https://registry.npmjs.org/npm/-/npm-$version.tgz"
+            echo "$sum  $tarball" | sha256sum --check --strict
+            mkdir -p "$prefix/lib/node_modules/npm" "$prefix/bin"
+            tar -xzf "$tarball" -C "$prefix/lib/node_modules/npm" --strip-components=1
             ln -s "$node" "$prefix/bin/node"
             echo "KIPPLE_TEST_NPM_${version//./_}=$prefix" >> "$GITHUB_ENV"
-          done
+          }
+          unpack 11.20.0 d1a92f40e6c407b84c3a00c3cf978a10b24fd42f153c527e2016cef7bb34a483
+          unpack 12.2.1 228bd64aaef23270dbdbd2cf3d5ef5c467602ef38c4066246cef1984adab9a67
 
       # The runner VM is disposable, so the native-backend tests may read its real state.
       - name: Run the native-backend tests
