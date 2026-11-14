@@ -40,9 +40,12 @@ const NULL_DEVICE: &str = "NUL";
 /// How long `git worktree remove` may take (pinned 28).
 pub(crate) const WORKTREE_DEADLINE: Duration = Duration::from_mins(5);
 
-/// How long `npm cache clean` may take (pinned 28). M4c-npm sets it from its contract
-/// test's measurement of a large cache.
-pub(crate) const NPM_DEADLINE: Duration = Duration::from_mins(10);
+/// How long `npm cache clean` may take (pinned 28). Node removes a 20,000-file `_cacache` in
+/// about half a second on a fast SSD, and npm's own start adds less than that; this leaves
+/// room for a cache ten times larger on a disk fifty times slower. The contract test
+/// (`tests/native/npm.rs`) measures the real clean and fails above a twentieth of it.
+/// Missing it leaves a partial cache, which npm reads as misses.
+pub(crate) const NPM_DEADLINE: Duration = Duration::from_mins(5);
 
 /// Where npm's configuration boundary lives below kipple's data directory, one name at a
 /// time: the prefix and logs directories and the two config files `NPM_CACHE_CLEAN`
