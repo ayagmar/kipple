@@ -405,7 +405,8 @@ fn a_commit_an_older_branch_line_names_holds_it() {
         assert_eq!(failed(finding), vec![UNREFERENCED], "{days} days");
         let removed = Repo::new();
         let lost = visited_after(&removed, days);
-        removed.wt(&["worktree", "remove", "."]);
+        // From the main checkout: Windows can't delete the directory git itself stands in.
+        removed.git(&["worktree", "remove", "../wt"]);
         for repo in [&kept, &removed] {
             repo.git(&[
                 "reflog",
