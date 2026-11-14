@@ -180,32 +180,37 @@ impl Repo {
     }
 
     fn scan_in(&self, env: &Environment) -> Scan {
-        let packs = builtin::packs(&semver::Version::new(0, 0, 0)).unwrap();
-        let rules = packs.into_iter().flat_map(|pack| pack.rules).collect();
-        let ports = Ports {
-            fs: Box::new(NoFollowFs),
-            sizer: Box::new(Walker::new().unwrap()),
-            processes: Box::new(NoProcesses),
-            clock: Box::new(SystemClock),
-            tracked: Box::new(GitQuery::new(env)),
-            tools: Box::new(PathTools::new(env)),
-            worktrees: Box::new(GitQuery::new(env)),
-        };
-        let engine = Engine::new(ports, builtin::integrations(), rules).unwrap();
-        let cancel = CancelToken::new();
-        let EventChannel { tx: events, rx } = event_channel(4096, &cancel);
-        let request = ScanRequest {
-            roots: self.roots(env),
-            lens: None,
-            exclude: Vec::new(),
-            // The host protects every finding, as the default does: these tests read
-            // the facts, which its answer leaves as they are.
-            protections: kipple_core::Protections::default(),
-        };
-        let report = engine.scan(&request, &events, &cancel);
-        drop(rx);
-        Scan(report)
+        scan_of(env, self.roots(env))
     }
+}
+
+/// Scans `roots` as given, with nothing of their spelling resolved.
+fn scan_of(env: &Environment, roots: Roots) -> Scan {
+    let packs = builtin::packs(&semver::Version::new(0, 0, 0)).unwrap();
+    let rules = packs.into_iter().flat_map(|pack| pack.rules).collect();
+    let ports = Ports {
+        fs: Box::new(NoFollowFs),
+        sizer: Box::new(Walker::new().unwrap()),
+        processes: Box::new(NoProcesses),
+        clock: Box::new(SystemClock),
+        tracked: Box::new(GitQuery::new(env)),
+        tools: Box::new(PathTools::new(env)),
+        worktrees: Box::new(GitQuery::new(env)),
+    };
+    let engine = Engine::new(ports, builtin::integrations(), rules).unwrap();
+    let cancel = CancelToken::new();
+    let EventChannel { tx: events, rx } = event_channel(4096, &cancel);
+    let request = ScanRequest {
+        roots,
+        lens: None,
+        exclude: Vec::new(),
+        // The host protects every finding, as the default does: these tests read
+        // the facts, which its answer leaves as they are.
+        protections: kipple_core::Protections::default(),
+    };
+    let report = engine.scan(&request, &events, &cancel);
+    drop(rx);
+    Scan(report)
 }
 
 /// What a scan found.
@@ -1168,5 +1173,101 @@ fn a_repository_moved_in_reach_keeps_one_finding_per_worktree() {
     assert_eq!(
         scan.fact("registration_state"),
         FactValue::Enum(RegistrationState::RegisteredInvalid.name())
+    );
+}
+
+/// The project root `projects`, reached as `<temp>/link/projects` through a link to the
+/// temp dir, as a root below a linked home or macOS's `/var` is: git, asked from there,
+/// prints every path it resolved, which is outside the root as the scan opened it.
+#[cfg(unix)]
+fn through_a_link(repo: &Repo) -> PathBuf {
+    let link = repo.temp.path().join("link");
+    std::os::unix::fs::symlink(repo.temp.path(), &link).unwrap();
+    link.join("projects")
+}
+
+#[cfg(unix)]
+fn linked_root(repo: &Repo, root: &Path) -> Scan {
+    let mut roots = Roots::default();
+    let projects = SymbolicRoot::ProjectRoots;
+    let source = kipple_core::RootSource::CommandLine;
+    let resolved = kipple_core::ResolvedRoot::new(projects, root.to_owned(), source);
+    roots.add(projects, Ok(resolved));
+    scan_of(&repo.env(), roots)
+}
+
+/// Catches every worktree read as unread on a linked root, the default on macOS's temp
+/// dirs and on a `~/projects` that is a link: git prints the resolved path, outside the
+/// root, so the worktree was only reported, and apart from the artifacts inside it.
+#[cfg(unix)]
+#[test]
+fn worktree_under_a_linked_root_is_found_by_the_roots_spelling() {
+    let repo = Repo::new();
+    let root = through_a_link(&repo);
+
+    let scan = linked_root(&repo, &root);
+
+    let git: Vec<_> = scan
+        .0
+        .findings
+        .iter()
+        .filter(|f| f.integration.0 == "git")
+        .collect();
+    assert_eq!(git.len(), 1, "one finding: {git:?}");
+    let finding = git.first().unwrap();
+    assert_eq!(finding.path, root.join("wt"), "the root's spelling");
+    assert_ne!(finding.rule.0, "builtin.git.worktree-anomalies");
+    assert!(
+        finding.size.is_some(),
+        "it was read and measured: {finding:?}"
+    );
+    let facts = &finding.facts.as_ref().unwrap().supplied.values;
+    assert_eq!(
+        facts.get("registration_state"),
+        Some(&FactValue::Enum(
+            RegistrationState::RegisteredPresent.name()
+        ))
+    );
+    assert_eq!(
+        facts.get("worktree.unclassified_ignored"),
+        Some(&FactValue::Count(0))
+    );
+}
+
+/// Catches a copy standing for the worktree whose `.git` it hard-links: the file is the
+/// worktree's own, so its identity matches, but the registration names another directory,
+/// and the copy's own state would be shown at the worktree's place, while the worktree
+/// itself had no finding.
+#[cfg(unix)]
+#[test]
+fn a_hard_linked_git_file_never_stands_for_the_worktree() {
+    let repo = Repo::new();
+    let copy = repo.projects().join("aside/wt");
+    fs::create_dir_all(&copy).unwrap();
+    fs::hard_link(repo.checkout.join(".git"), copy.join(".git")).unwrap();
+    let root = through_a_link(&repo);
+
+    let scan = linked_root(&repo, &root);
+
+    let at = |path: &Path| {
+        let mut found = scan.0.findings.iter().filter(|f| f.path == path);
+        let finding = found.next().unwrap();
+        assert!(found.next().is_none(), "one finding at {}", path.display());
+        *finding
+            .facts
+            .as_ref()
+            .unwrap()
+            .supplied
+            .values
+            .get("registration_state")
+            .unwrap()
+    };
+    assert_eq!(
+        at(&root.join("wt")),
+        FactValue::Enum(RegistrationState::RegisteredPresent.name())
+    );
+    assert_eq!(
+        at(&root.join("aside/wt")),
+        FactValue::Enum(RegistrationState::PresentUnregistered.name())
     );
 }

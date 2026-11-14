@@ -224,6 +224,13 @@ struct Listing {
     registration: Registration,
 }
 
+/// What git said of a record, and where the checkout is as the walk reached it.
+struct Asked {
+    /// The checkout as the walk spells it, or as git printed it when no walk reached it.
+    at: PathBuf,
+    state: WorktreeState,
+}
+
 /// The rules each kind of finding goes to on this platform.
 struct Rules<'rules> {
     /// Registered and present, inside an opened root: only where removal can ship.
@@ -398,17 +405,15 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
             return Ok(());
         };
         if printed_twice(&listings) {
-            return self.registered(safest, invalid());
+            return self.registered(safest, printed(safest, invalid()));
         }
-        let worktrees = self.cx.worktrees();
-        let cancel = self.cx.cancel_token();
-        let asked = listings
+        let answers: Vec<Asked> = listings.iter().map(|l| self.ask(&l.registration)).collect();
+        let placed = answers
             .iter()
-            .map(|l| worktrees.inspect(&l.registration, cancel));
-        let states: Vec<WorktreeState> = asked.collect();
-        let placed = states.iter().find_map(|state| state.place.as_ref().ok());
+            .find_map(|asked| asked.state.place.as_ref().ok());
         let Some(common) = placed.map(|place| place.common_dir.clone()) else {
-            return self.registered(safest, agreed(states));
+            let states = answers.into_iter().map(|asked| asked.state).collect();
+            return self.registered(safest, printed(safest, agreed(states)));
         };
         let owner = self.owner(path, &common);
         // Asking found its repository's own record of this path, which settles it with these.
@@ -418,17 +423,65 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
         }
         let state = match owner {
             Ok(owner) => {
-                let mut records = listings.iter().zip(states);
-                let own = records.find(|(l, state)| l.main.path == owner && state.place.is_ok());
-                if let Some((listing, state)) = own {
-                    return self.registered(listing, state);
+                let mut records = listings.iter().zip(answers);
+                let own =
+                    records.find(|(l, asked)| l.main.path == owner && asked.state.place.is_ok());
+                if let Some((listing, asked)) = own {
+                    return self.registered(listing, asked);
                 }
                 invalid()
             }
             Err(_) if self.cx.is_cancelled() => return Err(IntegrationError::Stopped),
             Err(gap) => WorktreeState::unknown(gap),
         };
-        self.registered(safest, state)
+        self.registered(safest, printed(safest, state))
+    }
+
+    /// What git says of `registration`, at the checkout as the walk reached it. Git prints
+    /// the path it resolved, so below a link in a root's parents, or on Windows below a
+    /// root given in short names, the printed path is outside every root kipple opened,
+    /// while the walk reached the same checkout under the root's spelling. A walked
+    /// checkout of the same name stands for it only when git, asked from there, proves by
+    /// identity that it is this registration's: the registration's `gitdir` names that
+    /// directory and its `.git` file, and the witness built from there is the one built
+    /// from the printed path. Path strings decide nothing.
+    fn ask(&self, registration: &Registration) -> Asked {
+        let worktrees = self.cx.worktrees();
+        let cancel = self.cx.cancel_token();
+        let state = worktrees.inspect(registration, cancel);
+        let printed = registration.path.clone();
+        let Ok(witness) = &state.witness else {
+            return Asked { at: printed, state };
+        };
+        if self.inside(&printed) {
+            return Asked { at: printed, state };
+        }
+        let name = printed.file_name();
+        let walked = self.unconfirmed.iter();
+        let candidates =
+            walked.filter(|dir| dir.file_name() == name && !self.listed.contains(*dir));
+        for dir in candidates {
+            let there = Registration {
+                path: dir.clone(),
+                ..registration.clone()
+            };
+            let found = worktrees.inspect(&there, cancel);
+            let present = found.registration == Ok(RegistrationState::RegisteredPresent);
+            if present && found.witness.as_ref() == Ok(witness) {
+                return Asked {
+                    at: dir.clone(),
+                    state: found,
+                };
+            }
+        }
+        Asked { at: printed, state }
+    }
+
+    /// Whether `path` is a directory inside a root this scan opened.
+    fn inside(&self, path: &Path) -> bool {
+        self.cx
+            .metadata(path)
+            .is_ok_and(|meta| meta.kind == EntryKind::Dir)
     }
 
     /// The main worktree of the repository whose common directory is `common`, by git's own
@@ -446,14 +499,13 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
         Ok(main)
     }
 
-    fn registered(
-        &mut self,
-        listing: &Listing,
-        state: WorktreeState,
-    ) -> Result<(), IntegrationError> {
+    fn registered(&mut self, listing: &Listing, asked: Asked) -> Result<(), IntegrationError> {
         let Listing { main, registration } = listing;
+        let Asked { at, state } = asked;
         self.settled.insert(registration.path.clone());
-        let agent = label(self.cx, &registration.path);
+        // The walk's spelling of a checkout git printed otherwise is its finding now.
+        self.listed.insert(at.clone());
+        let agent = label(self.cx, &at);
         let values = facts(main, registration, &state, &self.tool);
         let advice = self.advice(&state);
         let chosen = state.registration;
@@ -474,7 +526,7 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
             activity: ActivityEvidence::ScopedPaths,
             advice,
         };
-        self.add(&registration.path, chosen, agent, supplied)
+        self.add(&at, chosen, agent, supplied)
     }
 
     /// Adds the one finding of a registration. What isn't a directory inside an opened root
@@ -486,10 +538,7 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
         agent: AgentLabel,
         supplied: Supplied,
     ) -> Result<(), IntegrationError> {
-        let inside = self
-            .cx
-            .metadata(path)
-            .is_ok_and(|meta| meta.kind == EntryKind::Dir);
+        let inside = self.inside(path);
         let anomaly = matches!(
             state,
             Ok(RegistrationState::RegisteredMissing | RegistrationState::RegisteredInvalid)
@@ -618,6 +667,14 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
 fn safest(listings: &[Listing]) -> Option<&Listing> {
     let locked = listings.iter().find(|l| l.registration.locked.is_some());
     locked.or_else(|| listings.first())
+}
+
+/// `state`, said of `listing` at the path git printed.
+fn printed(listing: &Listing, state: WorktreeState) -> Asked {
+    Asked {
+        at: listing.registration.path.clone(),
+        state,
+    }
 }
 
 /// What `states`, none of which could be placed, say of one path: the state they share, and

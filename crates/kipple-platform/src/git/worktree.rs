@@ -194,7 +194,11 @@ impl Links {
         if !exists(&back)? {
             return Ok(Seen::Left);
         }
-        if !same_file(&back, &gitfile)? || !holds_record(&admin, registration)? {
+        // The registration names this directory, not just a `.git` file: a hard link of a
+        // worktree's `.git` in another directory is the same file.
+        let named = back.parent().unwrap_or(&back);
+        let names_this = same_file(&back, &gitfile)? && same_file(named, &checkout)?;
+        if !names_this || !holds_record(&admin, registration)? {
             return invalid;
         }
         let common = admin.join(common);
