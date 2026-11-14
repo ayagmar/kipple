@@ -5,14 +5,17 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use kipple::doctor::{ConfigStatus, IntegrationRoots, Probed, Report, RootCheck};
+use kipple::doctor::{
+    ConfigStatus, IntegrationRoots, LookedNpm, NpmCheck, Probed, Report, RootCheck,
+};
 use kipple::theme::Ink;
 use kipple::{CANCELLED, exit_code};
 use kipple_adapters::builtin::descriptors;
 use kipple_core::{
-    FileIdentity, HeldPath, IntegrationId, Inventory, Lens, Lineage, Observer, Owners, ProbeError,
-    ProcessSnapshot, Protection, Protections, ResolvedRoot, RootLink, RootSource, Roots,
-    SymbolicRoot, UnresolvedRoot,
+    FileIdentity, Fingerprint, HeldPath, IntegrationId, Inventory, Lens, Lineage, NativeTool,
+    Observer, Owners, ProbeError, ProcessSnapshot, Protection, Protections, ResolvedRoot,
+    ResolvedTool, RootLink, RootSource, Roots, Stamp, SymbolicRoot, ToolFile, ToolGap,
+    UnresolvedRoot,
 };
 use kipple_platform::{KippleDir, KippleDirs};
 
@@ -60,6 +63,7 @@ fn report(cache_error: io::ErrorKind) -> Report {
         }],
         integrations: Vec::new(),
         tools: Vec::new(),
+        npm: NpmCheck::NotNeeded,
         processes: Ok(ProcessSnapshot {
             processes: Vec::new(),
             inventory: Inventory::Complete,
@@ -135,6 +139,133 @@ fn a_root_resolved_through_a_link_shows_the_link_and_where_it_leads() {
         PathBuf::from("/mnt/ssd/cache").display()
     );
     assert!(output.contains(&shown), "{output}");
+}
+
+/// npm as the resolver gives it: its script and the node beside it.
+#[expect(
+    clippy::unwrap_used,
+    reason = "a fixture that fails to build fails the test"
+)]
+fn npm() -> ResolvedTool {
+    let stamp = Stamp::new(1_793_458_575, 0).unwrap();
+    let fingerprint = Fingerprint {
+        changed: stamp,
+        modified: stamp,
+        born: None,
+        size: 1,
+    };
+    ResolvedTool {
+        tool: NativeTool::Npm,
+        path: PathBuf::from("/usr/lib/node_modules/npm/bin/npm-cli.js"),
+        identity: FileIdentity { volume: 1, file: 3 },
+        fingerprint,
+        version: "11.20.0".to_owned(),
+        runtime: Some(ToolFile {
+            path: PathBuf::from("/usr/bin/node"),
+            identity: FileIdentity { volume: 1, file: 4 },
+            fingerprint,
+        }),
+    }
+}
+
+/// Catches `doctor` leaving a person unable to tell why npm's cache is held: it shows the
+/// npm a clean would run, both files of it, or why there is none, and where the cache is
+/// and what placed it.
+#[test]
+fn doctor_shows_the_npm_that_would_run_and_where_its_cache_is() {
+    let mut report = report(io::ErrorKind::NotFound);
+    let cache = ResolvedRoot::new(
+        SymbolicRoot::NpmCache,
+        PathBuf::from("/home/u/code/npm-cache"),
+        RootSource::Setting {
+            file: "the user npmrc",
+            key: "cache",
+        },
+    );
+    report.roots.push(RootCheck {
+        root: SymbolicRoot::NpmCache,
+        status: Ok(Probed {
+            meta: Err(ProbeError::io(&cache.path, io::ErrorKind::NotFound.into())),
+            at: cache,
+        }),
+    });
+    report.npm = looked(Ok(npm()), None);
+    let resolved = printed(&report);
+    let json = report.to_json();
+    report.npm = looked(Err(ToolGap::UnverifiedVersion), Some("12.2.2"));
+    let gap = printed(&report);
+    let gap_json = report.to_json();
+
+    let pair = format!(
+        "\n  npm         11.20.0  {} run by {}\n",
+        PathBuf::from("/usr/lib/node_modules/npm/bin/npm-cli.js").display(),
+        PathBuf::from("/usr/bin/node").display()
+    );
+    assert!(resolved.contains(&pair), "{resolved}");
+    assert!(resolved.contains("(cache in the user npmrc)"), "{resolved}");
+    let npm_out = json.tools.iter().find(|tool| tool.name == "npm");
+    assert!(
+        npm_out.is_some_and(|tool| tool.runtime.is_some()),
+        "the JSON names its node"
+    );
+    let unverified = "\n  npm         can't be used: it is version 12.2.2, and kipple runs only npm \
+                      11.20.0 or npm 12.2.1\n";
+    assert!(gap.contains(unverified), "{gap}");
+    let found = gap_json.tools.iter().find(|tool| tool.name == "npm");
+    assert_eq!(
+        found.and_then(|tool| tool.version.as_deref()),
+        Some("12.2.2"),
+        "the JSON names the version read"
+    );
+}
+
+/// Catches a gap worded as something it isn't: an npm installed without a node of its
+/// own read as not installed, Debian's layout as a script, a node outside `engines` as
+/// an npm version kipple hasn't verified, and a platform where nothing runs npm shown as
+/// one where it would.
+#[test]
+fn doctor_says_what_keeps_npm_from_running() {
+    let mut report = report(io::ErrorKind::NotFound);
+    let cases = [
+        (ToolGap::NoRuntime, "has no node of its own"),
+        (
+            ToolGap::UnknownLayout,
+            "isn't laid out as an install kipple knows",
+        ),
+        (
+            ToolGap::UnsupportedRuntime,
+            "its node is a version outside the `engines`",
+        ),
+    ];
+    for (gap, said) in cases {
+        report.npm = looked(Err(gap), Some("11.20.0"));
+
+        let output = printed(&report);
+
+        let line = output.lines().find(|line| line.starts_with("  npm "));
+        assert!(
+            line.is_some_and(|line| line.contains(said)),
+            "{gap:?}: {output}"
+        );
+    }
+    report.npm = NpmCheck::NotNeeded;
+    let output = printed(&report);
+    assert!(
+        output.contains("npm         not looked for: its cache is only reported on"),
+        "{output}"
+    );
+}
+
+/// What looking for npm gave, with the versions the npm integration runs.
+fn looked(tool: Result<ResolvedTool, ToolGap>, found: Option<&str>) -> NpmCheck {
+    let npm = descriptors()
+        .into_iter()
+        .find(|d| d.id == IntegrationId("npm"));
+    NpmCheck::Looked(Box::new(LookedNpm {
+        tool,
+        found: found.map(str::to_owned),
+        verified: npm.map_or(&[], |npm| npm.verified),
+    }))
 }
 
 // Catches the longest root name filling its column and running into what is said of it.

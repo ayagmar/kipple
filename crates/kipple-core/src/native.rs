@@ -46,6 +46,14 @@ named! {
         /// It is a script that names its interpreter (`#!`), such as a wrapper or a
         /// version manager's shim: what runs is another program, so kipple never starts it.
         Script = "tool-script",
+        /// It is laid out in a way kipple doesn't know, such as npm packaged outside
+        /// `lib/node_modules/npm`, so what it would run can't be told.
+        UnknownLayout = "tool-unknown-layout",
+        /// The runtime it runs with isn't there: npm with no `node` in its own install.
+        NoRuntime = "tool-no-runtime",
+        /// Its runtime is a version the tool itself doesn't support: a node outside npm's
+        /// `engines`.
+        UnsupportedRuntime = "tool-unsupported-runtime",
     }
 }
 

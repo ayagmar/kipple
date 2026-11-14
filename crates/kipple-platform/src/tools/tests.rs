@@ -10,6 +10,8 @@ use tempfile::TempDir;
 use super::PathTools;
 use crate::environment::Environment;
 
+mod npm;
+
 /// Catches a wrapper or a version manager's shim named `git` becoming the reviewed tool,
 /// which would start a shell that picks a git by its own rules (pinned 27): a file that
 /// names its interpreter is refused, and nothing runs it, not even for its version.

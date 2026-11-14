@@ -7,6 +7,8 @@
 mod executor;
 #[path = "native/gate.rs"]
 mod gate;
+#[path = "native/npm.rs"]
+mod npm;
 #[path = "native/profiles.rs"]
 mod profiles;
 #[path = "native/runner.rs"]

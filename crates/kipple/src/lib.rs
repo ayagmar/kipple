@@ -696,6 +696,7 @@ fn explain(
     let judged = explain::Judged {
         report: &report,
         policy: &settings.policy,
+        env: host.env,
     };
     let written =
         explain::write_path(stdout, &ink, builtin, &path, judged).and_then(|()| stdout.flush());

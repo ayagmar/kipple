@@ -245,7 +245,7 @@ Every integration descriptor declares its **protected subresources** (04 §3.9),
 | Pi | Logs and ephemeral files only where upstream identifies them | Sessions, packages, extensions, cloned repos, auth and config |
 | Cursor | Project artifacts under roots; tool cache and logs only if separated from history | Workspace DBs, local history, model and embedding stores, release installs |
 | Cargo | Project `target/` (honouring the resolved target dir and busy evidence) | Registry and git stores (Cargo auto-GC; advice shown) |
-| Node | Project `node_modules`; npm download cache via a typed native op, once its contract fixtures pass | pnpm shared store (hard links), globally installed tool state |
+| Node | Project `node_modules`; npm download cache via a typed native op (`npm cache clean`, Linux, verified npm versions only) | pnpm shared store (hard links), globally installed tool state |
 | Python | `.venv` with project evidence; `__pycache__` | Global interpreters, unowned venvs; `uv cache prune` later |
 | Gradle, Maven, Playwright, JetBrains | Report-only inventory | Deferred until lifecycle and locking are verified |
 | Pacman, AUR helpers, apt, dnf, journald | Report-only, plus native retention advice (`paccache -rk3` with a timer, `journalctl --vacuum-time`) | Never executed in v0.1 (root) |
@@ -254,7 +254,7 @@ Every integration descriptor declares its **protected subresources** (04 §3.9),
 
 ### 5a. Built today
 
-The Cargo, Node and Python rules propose `remove-files` with `delete` or `trash`, and so do, on Linux only, the closed-log rules of Claude Code and Pi, Codex's old TUI log and its plugin catalog cache; and on Linux Codex's stale releases go through `remove-verified-release`; the trash, pacman, journald, git and npm rules and Cursor's only report. kipple finds, sizes and classifies each finding into its bucket (D-047), and `kipple clean` and the home screen remove only what a reviewed plan holds, through the executor. Each integration lists the upstream versions its fixtures were built from, and `kipple rules` and the generated support matrix show them. The consequence column is what the integration verified for a finding whose layout it recognised (04 §2a); an unrecognised layout and a report-only finding have none.
+The Cargo, Node and Python rules propose `remove-files` with `delete` or `trash`, and so do, on Linux only, the closed-log rules of Claude Code and Pi, Codex's old TUI log and its plugin catalog cache; and on Linux Codex's stale releases go through `remove-verified-release`, and npm's download cache through `native.npm-cache-clean`, which runs npm's own `cache clean`; the trash, pacman, journald and git rules, npm's inventory and Cursor's only report. kipple finds, sizes and classifies each finding into its bucket (D-047), and `kipple clean` and the home screen remove only what a reviewed plan holds, through the executor, or for npm's cache through npm after a person reviewed the command: `--yes`, a profile and a plan file leave it out. Each integration lists the upstream versions its fixtures were built from, and `kipple rules` and the generated support matrix show them. The consequence column is what the integration verified for a finding whose layout it recognised (04 §2a); an unrecognised layout and a report-only finding have none.
 
 | Integration | Lens | Finds | Evidence | Consequence | Verified against |
 | --- | --- | --- | --- | --- | --- |
@@ -269,7 +269,7 @@ The Cargo, Node and Python rules propose `remove-files` with `delete` or `trash`
 | Pi | agents | on Linux, four named logs of the agent directory; its store, reported only | the verified install layout and an idle installer | `none`, loses `history`, Review at every level | Pi 1.5.0 |
 | Cursor | agents | on Windows, its application data, reported only; advice | none: nothing is verified, so it opens nothing | — (report only, advice) | nothing verified |
 | Git worktrees | agents | each linked worktree of the repositories under a project root or an agent's location, and each checkout none of them lists, with what git says of it | the facts git gave, past the roots | — (report only) | git 2.56.0 |
-| npm | dev | nothing yet: it has its descriptor, its closed roots and its rules as `report` | — | — | nothing yet |
+| npm | dev | the cache root's `_cacache` (on Linux under the download cache's rule, with the npm that would clean it; elsewhere reported); `_npx` and `_logs`, reported only | cacache's `index-v5/` and `content-v2/` in a `_cacache` that is a real directory; `CACHEDIR.TAG` proves nothing | `redownload`, loses `cache-warmth` and `offline-ability` | npm 11.20.0, 12.2.1 |
 
 A `target`, `node_modules` or `.venv` with no recognised signature is still reported, with `no-signature` evidence, so an unknown layout is visible but can never become eligible. A candidate that can't be listed, including a `__pycache__`, is reported with no layout evidence at all. Generic `dirs-matching` and `files-matching` rules from third-party packs are validated but not evaluated before M5.
 

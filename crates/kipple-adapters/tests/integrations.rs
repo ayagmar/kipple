@@ -319,19 +319,17 @@ fn every_builtin_rule_applies_only_where_its_integration_runs() {
 
 /// Catches a stub reporting its layout as supported, which would open whatever its roots
 /// declare before anything has verified them, or finding something with no fixture behind
-/// it.
+/// it. Cursor is the one integration left with nothing verified.
 #[test]
 fn a_stub_finds_nothing_and_keeps_its_roots_closed() {
     let Scanned { report, .. } = scan(&demo_home::tree(demo_home::looked_at()));
 
-    for id in ["cursor", "npm"] {
-        let integration = report.integrations.iter().find(|i| i.id.0 == id).unwrap();
-        assert_eq!(integration.owner, OwnerStatus::Unsupported, "{id}");
-        assert!(
-            report.findings.iter().all(|f| f.integration.0 != id),
-            "{id} found nothing"
-        );
-    }
+    let cursor = report.integrations.iter().find(|i| i.id.0 == "cursor");
+    assert_eq!(cursor.unwrap().owner, OwnerStatus::Unsupported);
+    assert!(
+        report.findings.iter().all(|f| f.integration.0 != "cursor"),
+        "cursor found nothing"
+    );
 }
 
 /// Catches `prune` advised for a checkout still on disk: it drops the admin directory, which

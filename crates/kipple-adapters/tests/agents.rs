@@ -12,9 +12,11 @@ mod pi_v1_5_0;
 #[path = "fixtures/tree.rs"]
 mod tree;
 
-// Sparse files are for the size-driven fixtures, and this suite has none yet.
+// Sparse files are for the size-driven fixtures, and this suite has none yet. Only npm's
+// suite changes its tool between a scan and apply.
 const _: () = {
     let _ = tree::FixtureTree::sized;
+    let _ = host::Scan::resolve_npm;
 };
 
 #[path = "agents/claude.rs"]
