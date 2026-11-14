@@ -518,9 +518,10 @@ fn reads_as_json(text: &str) -> bool {
         || text.starts_with(|c: char| c.is_ascii_digit())
 }
 
-/// `text` without the white space JavaScript's `trim` removes, a byte order mark included.
+/// `text` without the white space JavaScript's `trim` removes: Unicode's white space
+/// but for U+0085, which JavaScript keeps, and a byte order mark, which it removes.
 fn js_trim(text: &str) -> &str {
-    text.trim_matches(|c: char| c.is_whitespace() || c == '\u{feff}')
+    text.trim_matches(|c: char| (c.is_whitespace() && c != '\u{85}') || c == '\u{feff}')
 }
 
 /// What a reference to an unset variable without `?` becomes.

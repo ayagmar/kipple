@@ -289,6 +289,12 @@ fn where_npm_could_read_another_cache_it_is_unknown() {
     let from_env = host.cache(&padded);
     assert!(from_env.is_err(), "a padded variable holds: {from_env:?}");
 
+    // npm trims with JavaScript's `trim`, which keeps U+0085 where Rust's doesn't: the
+    // cache is where npm would put it, the character included.
+    let next_line = [("npm_config_cache", "/x/y\u{85}")];
+    let kept = host.cache(&next_line).map(|(path, _)| path);
+    assert_eq!(kept, Ok(PathBuf::from("/x/y\u{85}")), "U+0085 is kept");
+
     let elsewhere = [("K", "elsewhere"), ("P", "/p")];
     host.write("home/.npmrc", "${K}=/a\ncache=${P}\n");
     let found = host.cache(&elsewhere).map(|(path, _)| path);
