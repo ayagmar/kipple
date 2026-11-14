@@ -1,6 +1,13 @@
 //! The words for git worktrees and the agents that leave them.
 
-use kipple_core::AgentLabel;
+use std::path::Path;
+
+use kipple_core::{AgentLabel, Finding, Subject, WorktreeWitness};
+
+use super::escaped;
+
+/// How many characters of a commit's id name it to a person, as git abbreviates one.
+const SHORT_ID: usize = 7;
 
 /// Whose location a worktree is in. The location is all this says: it grants nothing.
 const fn agent(label: AgentLabel) -> &'static str {
@@ -19,6 +26,35 @@ const fn agent(label: AgentLabel) -> &'static str {
 /// The evidence a worktree finding rests on.
 pub(crate) fn evidence(label: AgentLabel) -> String {
     format!("a git worktree, in {} location", agent(label))
+}
+
+/// What a worktree's removal leaves, said beside its review line: the repository it
+/// belongs to, when `finding` says, what it has checked out, and that its branch is kept.
+pub(crate) fn removal(witness: &WorktreeWitness, finding: Option<&Finding>) -> String {
+    let checkout = witness.branch.as_ref().map_or_else(
+        || {
+            let id = &witness.head.0;
+            let short = id.get(..SHORT_ID).unwrap_or(id);
+            format!("detached at {}; no branch is removed", escaped(short))
+        },
+        |branch| format!("on branch {}; the branch is kept", escaped(branch)),
+    );
+    finding.and_then(repository).map_or_else(
+        || format!("a worktree {checkout}"),
+        |repository| {
+            let repository = escaped(&repository.display().to_string());
+            format!("a worktree of {repository}, {checkout}")
+        },
+    )
+}
+
+/// The main worktree of the repository that lists `finding`, when it is a worktree.
+fn repository(finding: &Finding) -> Option<&Path> {
+    let facts = finding.facts.as_ref()?;
+    match &facts.supplied.subject {
+        Subject::Worktree(worktree) => Some(&worktree.repository),
+        Subject::Plain | Subject::Release(_) | Subject::Semantic(_) => None,
+    }
 }
 
 /// What an agent removes by itself from where it keeps worktrees, when it says so. Each one

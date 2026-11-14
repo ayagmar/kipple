@@ -185,6 +185,15 @@ pub struct WorktreeState {
     pub index_locked: Result<bool, GitGap>,
     /// Whether a local branch holds its HEAD.
     pub head_reachable: Result<bool, GitGap>,
+    /// How many commits only its admin directory names (its reflogs and the pseudo-refs
+    /// git writes there), which no local branch holds: the removal deletes their last name.
+    pub unreferenced_commits: Result<u64, GitGap>,
+    /// How many entries of its admin directory kipple doesn't know, which the removal
+    /// would delete unread.
+    pub unknown_admin_entries: Result<u64, GitGap>,
+    /// Whether its admin directory holds config of its own (`config.worktree`), which goes
+    /// with it.
+    pub own_config: Result<bool, GitGap>,
     /// What apply compares.
     pub witness: Result<WorktreeWitness, GitGap>,
 }
@@ -206,6 +215,9 @@ impl WorktreeState {
             per_worktree_refs: Err(gap),
             index_locked: Err(gap),
             head_reachable: Err(gap),
+            unreferenced_commits: Err(gap),
+            own_config: Err(gap),
+            unknown_admin_entries: Err(gap),
             witness: Err(gap),
         }
     }

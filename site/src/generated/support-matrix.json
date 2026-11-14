@@ -832,6 +832,24 @@
           "meaning": "whether a local branch holds its HEAD"
         },
         {
+          "name": "worktree.unreferenced_commits",
+          "kind": "count",
+          "selector": "registered-linked-worktrees",
+          "meaning": "commits its own reflog or pseudo-refs name that gc would drop sooner once it is gone: no local branch holds them, and no surviving reflog names them as recently"
+        },
+        {
+          "name": "worktree.unknown_admin_entries",
+          "kind": "count",
+          "selector": "registered-linked-worktrees",
+          "meaning": "files in its admin directory (`.git/worktrees/<name>`) kipple doesn't recognise, which removing it would delete unread"
+        },
+        {
+          "name": "worktree.own_config",
+          "kind": "bool",
+          "selector": "registered-linked-worktrees",
+          "meaning": "whether it has config of its own (`config.worktree`), which goes with it"
+        },
+        {
           "name": "git_inventory",
           "kind": "enum",
           "values": [
@@ -862,7 +880,7 @@
           "platform": "linux",
           "discover": true,
           "report": true,
-          "mutate": false
+          "mutate": true
         },
         {
           "platform": "macos",

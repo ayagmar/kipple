@@ -204,6 +204,58 @@ jobs:
       - name: Check advisories, licenses, bans and sources
         run: cargo deny check
 
+  # Worktree removal runs on any git from 2.39.5 up (WORKTREE_REMOVE_OLDEST), and the
+  # runners' git is far newer. This job builds that oldest git from its checksummed
+  # source, puts it first on PATH and runs the worktree gate, removal and swap tests on
+  # it; KIPPLE_EXPECT_GIT makes them fail on any other git.
+  git-floor:
+    name: git 2.39.5
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-nextest@0.9.146
+
+      - name: Build git 2.39.5
+        shell: bash
+        run: |
+          set -euo pipefail
+          tarball="$RUNNER_TEMP/git-2.39.5.tar.xz"
+          curl --fail --silent --show-error --location --output "$tarball" \
+            https://mirrors.edge.kernel.org/pub/software/scm/git/git-2.39.5.tar.xz
+          echo "c58da92c378df4a986ca33266897a7397e86c22ee266a284d8c2432c39066b59  $tarball" \
+            | sha256sum --check --strict
+          mkdir "$RUNNER_TEMP/git-src"
+          tar -xJf "$tarball" -C "$RUNNER_TEMP/git-src" --strip-components=1
+          # git 2.39.5 predates C23, which newer compilers default to: its own
+          # `unreachable` clashes with the keyword-like macro there.
+          make -C "$RUNNER_TEMP/git-src" -j"$(nproc)" prefix="$RUNNER_TEMP/git-2.39.5" \
+            CFLAGS="-g -O2 -std=gnu17" \
+            NO_CURL=1 NO_EXPAT=1 NO_GETTEXT=1 NO_OPENSSL=1 NO_PERL=1 NO_PYTHON=1 NO_TCLTK=1 \
+            install
+          echo "$RUNNER_TEMP/git-2.39.5/bin" >> "$GITHUB_PATH"
+
+      - name: Run the worktree tests on git 2.39.5
+        shell: bash
+        env:
+          KIPPLE_EXPECT_GIT: "2.39.5"
+        run: |
+          set -euo pipefail
+          git --version
+          cargo nextest run --locked -p kipple --test git_worktrees
+          cargo nextest run --locked -p kipple --profile native -E 'package(kipple) & binary(native)'
+          cargo nextest run --locked -p kipple-platform --test git
+
   # The workflows and shell scripts, which `cargo xtask check` doesn't read. actionlint also
   # runs shellcheck on every `run:` block, and finds the pinned shellcheck first on PATH.
   lint:

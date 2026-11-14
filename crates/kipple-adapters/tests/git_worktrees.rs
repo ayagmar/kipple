@@ -1,6 +1,6 @@
 //! git worktrees against git 2.56.0's on-disk layout, built with `FixtureTree`, with what git
-//! says scripted. The rules are `report` with no predicates until m4c, so these tests read
-//! the facts supplied, never a verdict. The tests that run real git are in
+//! says scripted. Most read the facts supplied; the ones that judge use Linux's rules, where
+//! the removal ships, whatever OS runs them. The tests that run real git are in
 //! `crates/kipple/tests/git_worktrees.rs`: this crate can't reach the platform's `GitQuery`.
 #![expect(
     clippy::indexing_slicing,
@@ -11,6 +11,8 @@
 mod demo;
 #[path = "fixtures/git/harness.rs"]
 mod harness;
+#[path = "fixtures/git/rules.rs"]
+mod rules;
 #[path = "fixtures/tree.rs"]
 #[expect(dead_code, reason = "this test binary uses part of the builder")]
 mod tree;
@@ -18,13 +20,14 @@ mod tree;
 mod v2_56_0;
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use harness::{Built, Run, Script, built, built_with, clean};
+use harness::{Built, Run, Script, built, built_with, clean, witnessed};
 use kipple_adapters::builtin;
 use kipple_core::{
-    AgentLabel, ConfigGate, Evidence, FactValue, FileIdentity, Finding, GitGap, HeldPath, Lineage,
-    Omission, OwnerStatus, Proposal, Protection, Protections, RegistrationState, Subject,
-    WorktreeState,
+    AgentLabel, Clause, ConfigGate, Evidence, FactState, FactValue, FileIdentity, Finding, GitGap,
+    HeldPath, Level, Lineage, Modified, NativeKind, Omission, OwnerStatus, Platform, Policy,
+    Proposal, Protection, Protections, RegistrationState, Subject, Unmet, Verdict, WorktreeState,
 };
 use tree::FixtureTree;
 use v2_56_0::{APP, Links, PRESENT, SWIFT_FOX, WARSAW};
@@ -155,6 +158,190 @@ fn eight_agent_worktrees_classified_with_labels() {
         state_name(RegistrationState::PresentUnregistered)
     );
     assert_eq!(run.of("git").len(), 8);
+
+    expected_column_on_linux();
+}
+
+/// S5 git §8's Expected column with Linux's rules: only the clean one is eligible, and only
+/// for review; the rest hold on the fact their row names, or are only reported.
+#[expect(
+    clippy::panic,
+    reason = "a finding missing from the report fails the test"
+)]
+fn expected_column_on_linux() {
+    let judged = eight_judged();
+    let finding_at = |path: &str| judged.only(&judged.built.at(path));
+    let held = [
+        (PRESENT[0].1, Vec::new()),
+        (PRESENT[1].1, vec!["worktree.locked"]),
+        (PRESENT[2].1, vec!["git.tracked_changes"]),
+        (PRESENT[3].1, vec!["worktree.head_reachable"]),
+        (PRESENT[4].1, vec!["worktree.unclassified_ignored"]),
+        (PRESENT[5].1, vec!["worktree.submodules"]),
+    ];
+    for (path, facts) in held {
+        let finding = finding_at(path);
+        assert_eq!(finding.rule.0, REMOVE, "{path}");
+        assert_eq!(unmet(finding), facts, "{path}");
+    }
+    let eligible = finding_at(PRESENT[0].1);
+    assert_eq!(
+        facts_of(eligible).proposal,
+        Proposal::Native(NativeKind::GitWorktreeRemove)
+    );
+    for verdict in verdicts(eligible) {
+        assert!(
+            matches!(verdict, Verdict::Review(_)),
+            "the clean one is Review at every level: {verdict:?}"
+        );
+    }
+    let dependencies = judged.built.at(PRESENT[2].1).join("node_modules");
+    let node = judged.of("node");
+    let found = node.iter().find(|finding| finding.path == dependencies);
+    let found = found.unwrap_or_else(|| panic!("found in {node:?}"));
+    assert!(
+        matches!(facts_of(found).proposal, Proposal::Remove(_)),
+        "fix-b's dependencies are a finding of their own"
+    );
+    for (path, state) in [
+        (SWIFT_FOX, RegistrationState::RegisteredMissing),
+        (WARSAW, RegistrationState::PresentUnregistered),
+    ] {
+        let finding = finding_at(path);
+        assert_eq!(finding.rule.0, ANOMALIES, "{path}");
+        assert!(is_report(finding), "{path} is only reported");
+        assert_eq!(
+            judged.fact(&judged.built.at(path), "registration_state"),
+            state_name(state)
+        );
+    }
+    assert!(
+        judged
+            .snippets()
+            .contains(&"git worktree prune --dry-run --verbose".to_owned()),
+        "the missing one is advised a prune"
+    );
+}
+
+/// Catches the removal reaching a git it was never proven on: below the floor a worktree is
+/// still classified, and its removal holds on that fact alone. At the floor nothing holds.
+#[test]
+fn git_below_the_removal_floor_classifies_and_holds() {
+    for (version, removal, held) in [
+        ("2.39.4", "unsupported", true),
+        (REMOVAL_FLOOR, "supported", false),
+        ("2.39.5 (Apple Git-154)", "supported", false),
+        ("2.56.0", "supported", false),
+        ("2.36.0", "unsupported", true),
+    ] {
+        let tree = repository_with(&[CHECKOUT], |_| {});
+        let (main, path) = (tree.at(MAIN), tree.at(CHECKOUT));
+        let script = Script::repository(&main, &[&path]).state(&path, witnessed(&main, &path));
+
+        let run = tree.scan_judged(script, rules::on(Platform::Linux), version);
+
+        let finding = run.only(&path);
+        assert_eq!(finding.rule.0, REMOVE, "{version}");
+        assert_eq!(
+            run.fact(&path, "registration_state"),
+            state_name(RegistrationState::RegisteredPresent),
+            "{version}"
+        );
+        assert_eq!(
+            run.fact(&path, "worktree.removal_git"),
+            FactValue::Enum(removal),
+            "{version}"
+        );
+        let expected = held.then_some(Unmet {
+            fact: "worktree.removal_git",
+            clause: Clause::Requirement,
+            state: FactState::Failed,
+        });
+        assert_eq!(
+            facts_of(finding).unmet,
+            expected.into_iter().collect::<Vec<_>>(),
+            "{version}"
+        );
+    }
+}
+
+/// The oldest git a worktree's removal is proven on, as `git --version` prints it.
+const REMOVAL_FLOOR: &str = "2.39.5";
+const REMOVE: &str = "builtin.git.worktree-remove";
+
+/// S5 git §8's eight, each in the state its row gives, judged by Linux's rules with the
+/// removal behind pinned 17's predicates and a git at the removal floor.
+fn eight_judged() -> Run {
+    let base = built_with(|base| {
+        let mut tree = FixtureTree::new();
+        v2_56_0::eight(&mut tree, Links::Absolute(base));
+        tree
+    });
+    let main = base.at(APP);
+    let paths: Vec<PathBuf> = PRESENT.iter().map(|(_, path)| base.at(path)).collect();
+    let missing = base.at(SWIFT_FOX);
+    let linked: Vec<&Path> = paths
+        .iter()
+        .map(PathBuf::as_path)
+        .chain([missing.as_path()])
+        .collect();
+    let mut gone = clean(&main, &missing);
+    gone.registration = Ok(RegistrationState::RegisteredMissing);
+    let mut script = Script::repository(&main, &linked)
+        .record(&missing, |record| record.prunable = true)
+        .record(&base.at(PRESENT[1].1), |record| {
+            record.locked = Some("any text at all".to_owned());
+        })
+        .state(&missing, gone);
+    for (index, path) in paths.iter().enumerate() {
+        let mut state = witnessed(&main, path);
+        match index {
+            2 => {
+                state.tracked_changes = Ok(1);
+                state.ignored = Ok(vec![PathBuf::from("node_modules/")]);
+            }
+            3 => state.head_reachable = Ok(false),
+            4 => state.ignored = Ok(vec![PathBuf::from(".env")]),
+            5 => state.submodules = Ok(true),
+            _ => {}
+        }
+        script = script.state(path, state);
+    }
+    base.scan_judged(script, rules::on(Platform::Linux), REMOVAL_FLOOR)
+}
+
+/// The facts of `finding`, which was measured.
+#[expect(clippy::expect_used, reason = "a finding with no facts fails the test")]
+const fn facts_of(finding: &Finding) -> &kipple_core::Facts {
+    finding.facts.as_ref().expect("it was measured")
+}
+
+/// The facts of `finding` its rule's predicates find wanting, by name.
+fn unmet(finding: &Finding) -> Vec<&'static str> {
+    facts_of(finding)
+        .unmet
+        .iter()
+        .map(|unmet| unmet.fact)
+        .collect()
+}
+
+/// What each level makes of `finding` with nothing of the host's holding it, untouched for
+/// a year: these files have no identities and no times, so the host can't rule out its
+/// protected areas here, and nothing says how old they are.
+fn verdicts(finding: &Finding) -> Vec<Verdict> {
+    let mut facts = facts_of(finding).clone();
+    facts.host = None;
+    facts.modified = Modified::Ago(Duration::from_hours(365 * 24));
+    Level::ALL
+        .iter()
+        .map(|level| {
+            let policy = Policy {
+                level: *level,
+                ..Policy::default()
+            };
+            policy.verdict(&finding.rule, &finding.path, &facts)
+        })
+        .collect()
 }
 
 /// Catches a report twin of a worktree: it would stand at the same path as the removal and
@@ -446,6 +633,36 @@ fn artifacts_inside_a_project_worktree_stay_removable() {
         matches!(proposal, Some(Proposal::Remove(_))),
         "its rule removes it: {proposal:?}"
     );
+}
+
+/// Catches the removal opening an agent's closed store: a worktree in an unverified Codex's
+/// `<codex home>/worktrees` is eligible by every fact git gives, and the host still holds
+/// it, while one in a project root is the host's to let through.
+#[test]
+fn a_worktree_in_an_unverified_codex_home_is_held_by_the_host() {
+    let run = eight_judged();
+    let descriptors = builtin::descriptors();
+    let held = |at: &Path| HeldPath {
+        forms: vec![at.to_owned()],
+        lineage: Lineage(vec![Some(FileIdentity { volume: 1, file: 2 })]),
+        note: None,
+    };
+    let data = run.built.at("home/.local/share/kipple");
+    let protections = Protections::of_host(&run.built.roots(), Some(&data), &descriptors, &held);
+    let check = |path: &str| {
+        let finding = run.only(&run.built.at(path));
+        protections.check(
+            &finding.path,
+            &Lineage(vec![Some(FileIdentity { volume: 1, file: 1 })]),
+            finding.integration,
+            &run.report.owners(),
+        )
+    };
+
+    let codex = PRESENT[3].1;
+    assert_eq!(run.only(&run.built.at(codex)).rule.0, REMOVE);
+    assert_eq!(check(codex), Some(Protection::Subresource));
+    assert_eq!(check(PRESENT[0].1), None);
 }
 
 /// Catches the recorded limit lifted by accident: a worktree in Codex's closed home holds its

@@ -360,7 +360,7 @@ fn today(draft: &DraftProfile, scanned: &Scanned, cancel: &CancelToken) -> Vec<L
         return vec![Line::new(Role::Text, words::NOTHING_TODAY.to_owned())];
     }
     let mut lines = vec![Line::new(Role::Title, words::TODAY.to_owned())];
-    lines.extend(prompt::item_lines(prepared.plan()));
+    lines.extend(prompt::item_lines(prepared.plan(), &scanned.report));
     let shown = Shown {
         review: &[],
         policy: &machine.settings().policy,

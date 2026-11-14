@@ -6,5 +6,9 @@
     reason = "a fixture that fails to build fails the test"
 )]
 
+#[path = "git_worktrees/apply.rs"]
+mod apply;
 #[path = "git_worktrees/gate.rs"]
 mod gate;
+#[path = "git_worktrees/repo.rs"]
+mod repo;

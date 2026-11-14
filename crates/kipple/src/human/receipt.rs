@@ -6,7 +6,7 @@
 use std::path::Path;
 
 use kipple_core::{
-    Completeness, Effect, Ending, Execution, ItemMethod, ItemOutcome, Left, Method, Plan,
+    Completeness, Effect, Ending, Execution, Finding, ItemMethod, ItemOutcome, Left, Method, Plan,
     PlanEntry, RunState, SpaceEstimate, Status, Total, Totals,
 };
 
@@ -392,10 +392,11 @@ pub(crate) fn left_line(path: &Path, why: &str) -> String {
 }
 
 /// A plan item as the person confirming it sees it, at `path` as this frontend shows it.
-pub(crate) fn plan_line(entry: &PlanEntry, path: &Path) -> String {
+/// `finding` is the one it was planned from, when the frontend has it.
+pub(crate) fn plan_line(entry: &PlanEntry, path: &Path, finding: Option<&Finding>) -> String {
     let size = estimate(entry.estimate());
     match entry.execution() {
-        Execution::Native(spec) => native_line(spec, &size, path),
+        Execution::Native(spec) => native_line(spec, &size, path, finding),
         Execution::Files(_) => format!(
             "  {:<6}  {size:>10}  {}",
             method_word(entry.method()),

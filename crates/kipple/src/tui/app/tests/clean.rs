@@ -43,21 +43,21 @@ use std::thread;
 use std::time::{Duration, SystemTime};
 
 use kipple_core::{
-    AgentLabel, Allocated, Apparent, ApplyEvent, CancelToken, Checkout, CleanRequest, Completeness,
-    Effect as Ran, Ending, EventChannel, FileEffect, FileIdentity, Finding, FindingId, Fingerprint,
-    Finished, Found, IntegrationId, ItemEvent, ItemId, ItemMethod, ItemOutcome, JudgementField,
-    Kept, Left, LeftCount, LeftReason, Measured, NativeEffect, NativeEnd, NativeKind, NativeOutput,
-    NativeTool, ObjectId, PlanMode, Platform, Printed, Proposal, Receipt, ReceiptItem, Reconciled,
-    Registration, RegistrationState, Removed, ResolvedTool, RunId, ScanEvent, ScanReport,
-    Selection, Skip, SpaceEstimate, Stamp, Subject, WorktreeFacts, WorktreeWitness, event_channel,
-    prepare_clean,
+    AgentLabel, Allocated, Apparent, ApplyEvent, CancelToken, Checkout, Clause, CleanRequest,
+    Completeness, Effect as Ran, Ending, EventChannel, FactState, FileEffect, FileIdentity,
+    Finding, FindingId, Fingerprint, Finished, Found, IntegrationId, ItemEvent, ItemId, ItemMethod,
+    ItemOutcome, JudgementField, Kept, Left, LeftCount, LeftReason, Measured, NativeEffect,
+    NativeEnd, NativeKind, NativeOutput, NativeTool, ObjectId, PlanMode, Platform, Policy, Printed,
+    Proposal, Receipt, ReceiptItem, Reconciled, Registration, RegistrationState, Removed,
+    ResolvedTool, RunId, ScanEvent, ScanReport, Selection, Skip, SpaceEstimate, Stamp, Subject,
+    Tracked, Unmet, WorktreeFacts, WorktreeWitness, event_channel, prepare_clean,
 };
 use kipple_platform::{Environment, PLATFORM};
 use tempfile::TempDir;
 
 use super::{Paint, look, press, screen, to, typed};
 use crate::config::{self, Settings};
-use crate::human::{native, receipt, review};
+use crate::human::{self, native, receipt, review};
 use crate::machine::Machine;
 use crate::mutate::prompt_shows;
 use crate::setup::Builtin;
@@ -625,7 +625,7 @@ fn native_scan(home: &Home) -> ScanReport {
             bare: false,
         },
         state: RegistrationState::RegisteredPresent,
-        repository: finding.path.clone(),
+        repository: finding.path.with_file_name("main-repo"),
         admin: None,
         witness: Ok(witness),
         ignored: Ok(Vec::new()),
@@ -664,6 +664,11 @@ fn a_native_plan_says_it_cannot_be_undone_at_the_prompt_and_in_the_review() {
     let prompt = prompt_shows(&prepared.review(), &report, &machine.settings().policy).join("\n");
     assert!(prompt.contains(native::NATIVE_CANNOT_UNDO), "{prompt}");
     assert!(prompt.contains("worktree remove"), "{prompt}");
+    assert!(
+        prompt.contains("a worktree of ")
+            && prompt.contains("main-repo, detached at aaaaaaa; no branch is removed"),
+        "the repository and what it has checked out: {prompt}"
+    );
 
     let mut app = home.scanning(&report, 160, 48);
     app.update(Msg::Finished {
@@ -678,6 +683,59 @@ fn a_native_plan_says_it_cannot_be_undone_at_the_prompt_and_in_the_review() {
     assert!(
         review.contains("--no-optional-locks") && review.contains("rust-app"),
         "the command and what it acts on, which may wrap: {review}"
+    );
+    assert!(
+        review.contains("main-repo") && review.contains("aaaaaaa"),
+        "the repository and the commit, which may wrap: {review}"
+    );
+}
+
+// Catches the person reviewing a worktree's removal told that git tracks nothing inside
+// it, and a held one explained by fact names alone: the detail and `explain` both read
+// these lines.
+#[test]
+fn a_worktrees_detail_says_it_is_a_checkout_and_what_each_check_means() {
+    let home = Home::new("");
+    let mut report = native_scan(&home);
+    let finding = report
+        .findings
+        .iter_mut()
+        .find(|finding| finding.path.ends_with(RUST_APP))
+        .unwrap();
+    finding.integration = IntegrationId::GIT;
+    let facts = finding.facts.as_mut().unwrap();
+    facts.tracked = Tracked::NoRepository;
+    let unmet = |fact| Unmet {
+        fact,
+        clause: Clause::Eligibility,
+        state: FactState::Failed,
+    };
+    facts.unmet = vec![
+        unmet("worktree.head_reachable"),
+        unmet("git.untracked_files"),
+    ];
+
+    let lines = human::facts(finding, &Policy::default());
+
+    let said = |label| -> Vec<&str> {
+        lines
+            .iter()
+            .filter(|line| line.label == label)
+            .map(|line| line.text.as_str())
+            .collect()
+    };
+    let git = said("Git").join("");
+    assert!(
+        git.contains("checkout of its own") && !git.contains("tracks nothing"),
+        "{git}"
+    );
+    assert_eq!(
+        said("Eligibility"),
+        [
+            "worktree.head_reachable isn't met: whether a local branch holds its HEAD",
+            "git.untracked_files isn't met: untracked, non-ignored files in the enclosing \
+             work tree",
+        ]
     );
 }
 

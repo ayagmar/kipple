@@ -4,11 +4,14 @@
 //! that this module words (`docs/05-architecture.md` §4).
 
 use std::path::{MAIN_SEPARATOR, Path};
+use std::sync::LazyLock;
 
+use kipple_adapters::builtin;
 use kipple_core::{
-    Activity, ActivityGap, Bucket, Caution, Clause, Cost, FactState, Facts, Finding, Hold,
-    IntegrationDescriptor, Lens, Level, Loss, Method, Modified, Policy, Proposal, Protection,
-    Recovery, Rule, ScanOutcome, Seen, Tracked, Unmet, Verdict, WalkGap,
+    Activity, ActivityGap, Bucket, Caution, Clause, Cost, FactState, Facts, Finding, GENERIC_FACTS,
+    Hold, IntegrationDescriptor, IntegrationId, Lens, Level, Loss, Method, Modified, Policy,
+    Proposal, Protection, Recovery, Rule, ScanOutcome, Seen, Subject, Tracked, Unmet, Verdict,
+    WalkGap,
 };
 
 use crate::json::{CompletenessOut, SizeOut};
@@ -529,16 +532,22 @@ pub(crate) fn facts(finding: &Finding, policy: &Policy) -> Vec<Fact> {
         let settled = retained::settlement(facts.settlement);
         lines.push(Fact::new("Retention", settled));
     }
-    lines.extend(facts.unmet.iter().map(unmet));
-    lines.push(Fact::new("Git", tracked(&facts.tracked)));
+    lines.extend(
+        facts
+            .unmet
+            .iter()
+            .map(|fact| unmet(finding.integration, fact)),
+    );
+    lines.push(Fact::new("Git", git(facts)));
     lines.push(Fact::new("In use", activity(&facts.activity)));
     let window = policy.recent_window_days(&finding.rule, facts);
     lines.push(Fact::new("Last change", modified(facts, window)));
     lines
 }
 
-/// A predicate of its rule the finding doesn't satisfy, saying which part of the rule.
-fn unmet(unmet: &Unmet) -> Fact {
+/// A predicate of its rule the finding doesn't satisfy, saying which part of the rule, and
+/// what the fact it tests means, as `integration` or the engine publishes it.
+fn unmet(integration: IntegrationId, unmet: &Unmet) -> Fact {
     let label = match unmet.clause {
         Clause::Requirement => "Requirement",
         Clause::Eligibility => "Eligibility",
@@ -547,7 +556,26 @@ fn unmet(unmet: &Unmet) -> Fact {
         FactState::Failed => "isn't met",
         FactState::Unknown => "isn't known",
     };
-    Fact::new(label, format!("{} {state}", escaped(unmet.fact)))
+    let name = escaped(unmet.fact);
+    let said = format!("{name} {state}");
+    let text = fact_meaning(integration, unmet.fact)
+        .map_or_else(|| said.clone(), |meaning| format!("{said}: {meaning}"));
+    Fact::new(label, text)
+}
+
+/// The built-in integrations' descriptors, read once.
+static DESCRIPTORS: LazyLock<Vec<IntegrationDescriptor>> = LazyLock::new(builtin::descriptors);
+
+/// What the fact `name` means, from the integration that supplies it or the engine's
+/// generic facts, which every rule may test.
+fn fact_meaning(integration: IntegrationId, name: &str) -> Option<&'static str> {
+    let own = DESCRIPTORS
+        .iter()
+        .filter(|descriptor| descriptor.id == integration)
+        .flat_map(|descriptor| descriptor.facts);
+    own.chain(GENERIC_FACTS)
+        .find(|fact| fact.name == name)
+        .map(|fact| fact.meaning)
 }
 
 /// How expensive bringing it back is. An unknown cost is one kipple doesn't estimate;
@@ -584,6 +612,19 @@ fn losses(losses: &[Loss]) -> String {
         .collect();
     lost.join("; ")
 }
+
+/// What git tracks in it. A worktree's own `.git` is set aside when its repository is
+/// asked, so finding none there means no other repository: git tracks the checkout itself.
+fn git(facts: &Facts) -> String {
+    match (&facts.supplied.subject, &facts.tracked) {
+        (Subject::Worktree(_), Tracked::NoRepository) => WORKTREE_CHECKOUT.to_owned(),
+        (_, tracked) => self::tracked(tracked),
+    }
+}
+
+/// What the Git row says of a worktree no other repository holds or lives inside.
+const WORKTREE_CHECKOUT: &str = "a git checkout of its own, whose files its repository tracks; \
+     no other repository holds it or lives inside it";
 
 fn tracked(tracked: &Tracked) -> String {
     match tracked {

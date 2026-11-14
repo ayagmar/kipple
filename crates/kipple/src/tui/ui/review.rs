@@ -61,7 +61,8 @@ pub(super) fn lines(app: &App, review: &Review, look: Look<'_>) -> Vec<Text<'sta
             .map(|heading| line(Role::Title, heading)),
     );
     for entry in plan.entries() {
-        let text = receipt::plan_line(entry, &homed(entry.path(), home));
+        let finding = app.row(entry.finding()).map(|row| &row.finding);
+        let text = receipt::plan_line(entry, &homed(entry.path(), home), finding);
         lines.push(line(Role::Text, text));
         if let Some(cautions) = review::cautions(entry.standing()) {
             lines.push(line(Role::Review, cautions));
