@@ -85,9 +85,12 @@ impl Key {
 enum Raw {
     /// Text.
     Text(String),
-    /// A flag, `true`, `false`, `null`, a list, or a quoting kipple doesn't decode: never a
-    /// path kipple can place.
+    /// A flag, `true`, `false`, `null`, or a quoting kipple doesn't decode: never a path
+    /// kipple can place.
     Other,
+    /// A list (`key[]=`). `ini` adds every later line of the key to it, so it never
+    /// becomes a path again.
+    List,
 }
 
 /// What one source sets of the keys kipple reads.
@@ -99,8 +102,12 @@ impl Settings {
         self.0.get(key.index()).and_then(Option::as_ref)
     }
 
+    /// Sets `key` from a later line: it replaces the earlier value, except a list, which
+    /// `ini` keeps adding to.
     fn set(&mut self, key: Key, raw: Raw) {
-        if let Some(slot) = self.0.get_mut(key.index()) {
+        if let Some(slot) = self.0.get_mut(key.index())
+            && *slot != Some(Raw::List)
+        {
             *slot = Some(raw);
         }
     }
@@ -376,8 +383,14 @@ fn read(path: &Path) -> io::Result<Option<String>> {
 /// header ending the top level, a line `key = value` or a bare `key`, and the last of a
 /// key winning. A line JavaScript would split elsewhere, or a key this can't decode the
 /// way npm does, is an error, never a guess.
+///
+/// npm expands `${VAR}` in a key only after `ini` has stored every line, in the order each
+/// key first appeared, so a key that expands to one kipple reads can win over a later line
+/// or lose to it depending on that order: the file is an error.
 fn parse(text: &str, env: &Environment) -> Result<Settings, &'static str> {
     const UNPARSABLE: &str = "can't be read the way npm reads it";
+    const EXPANDED_KEY: &str = "names a setting that places npm's cache through a variable, which npm applies in an \
+         order kipple doesn't follow";
     let mut settings = Settings::default();
     for line in text.split(['\r', '\n']) {
         if line.contains(['\u{2028}', '\u{2029}', '\u{85}']) {
@@ -396,7 +409,8 @@ fn parse(text: &str, env: &Environment) -> Result<Settings, &'static str> {
         let Decoded::Text(decoded) = decode(key) else {
             continue;
         };
-        let written = if decoded.contains("${") {
+        let referenced = decoded.contains("${");
+        let written = if referenced {
             expand(&decoded, env, Unset::Keep).ok_or(UNPARSABLE)?
         } else {
             decoded
@@ -408,7 +422,11 @@ fn parse(text: &str, env: &Environment) -> Result<Settings, &'static str> {
         let Some(known) = Key::named(name) else {
             continue;
         };
+        if referenced {
+            return Err(EXPANDED_KEY);
+        }
         let raw = match (value.map(decode), list) {
+            (_, true) => Raw::List,
             (Some(Decoded::Text(set)), false)
                 if !matches!(set.as_str(), "true" | "false" | "null") =>
             {
@@ -564,7 +582,9 @@ fn exact_var<'env>(env: &'env Environment, name: &str) -> Option<&'env OsStr> {
 }
 
 /// `raw` as the absolute path npm reads for `key`: trimmed, references expanded, `~/`
-/// below the home, then folded. Anything else is an error naming `label` and `key` only.
+/// below the home, then folded. npm trims before it expands and never after, so a value
+/// whose expansion starts or ends with white space is one npm reads as a relative path.
+/// Anything else is an error naming `label` and `key` only.
 fn path_of(
     raw: &Raw,
     key: Key,
@@ -576,7 +596,10 @@ fn path_of(
         return Err(unplaced());
     };
     let text = expand(js_trim(text), reading.env, Unset::Refuse).ok_or_else(unplaced)?;
-    let text = js_trim(&text);
+    if js_trim(&text) != text {
+        return Err(unplaced());
+    }
+    let text = text.as_str();
     if !cfg!(windows) && text.contains('\\') {
         return Err(unplaced());
     }

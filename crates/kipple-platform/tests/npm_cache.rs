@@ -260,6 +260,40 @@ fn relative_and_unset_values_block() {
     }
 }
 
+/// Catches a cache placed where npm, reading the same file, could put it elsewhere (the
+/// fix round's review ran npm's own `ini` and `env-replace` on each): a key that expands to
+/// `cache` wins or loses by the order `ini` stored the keys in, a key that was once a list
+/// stays one, and white space a variable adds is kept, making the path relative.
+#[test]
+fn where_npm_could_read_another_cache_it_is_unknown() {
+    let host = Host::new();
+    let vars = [("K", "cache"), ("PAD", " /padded"), ("TAIL", "/tail ")];
+    let refused = [
+        "cache=/b\n${K}=/a\ncache=/c\n",
+        "${K}=/a\n",
+        "${KIPPLE_TEST_UNSET?}cache=/a\n",
+        "${K}[]=/a\n",
+        "cache[]=/a\ncache=/b\n",
+        "cache=/a\ncache[]=/b\n",
+        "cache=${PAD}\n",
+        "cache=${TAIL}\n",
+    ];
+    for npmrc in refused {
+        host.write("home/.npmrc", npmrc);
+        let found = host.cache(&vars);
+        assert!(found.is_err(), "{npmrc:?} holds, found {found:?}");
+    }
+    let padded = [("npm_config_cache", "${PAD}"), ("PAD", " /lead")];
+    host.write("home/.npmrc", "");
+    let from_env = host.cache(&padded);
+    assert!(from_env.is_err(), "a padded variable holds: {from_env:?}");
+
+    let elsewhere = [("K", "elsewhere"), ("P", "/p")];
+    host.write("home/.npmrc", "${K}=/a\ncache=${P}\n");
+    let found = host.cache(&elsewhere).map(|(path, _)| path);
+    assert_eq!(found, Ok(PathBuf::from("/p")), "a key npm reads elsewhere");
+}
+
 /// Catches an npmrc kipple can't read treated as one that sets nothing, which would leave
 /// a moved cache open.
 #[test]
@@ -387,6 +421,12 @@ fn npmrc_survives_generated_input() {
         "[]",
         "é",
         "\0",
+        "${K}",
+        "${PAD}",
+        "\n${K}=/k\n",
+        "\ncache[]=/l\n",
+        "\ncache=/s\n",
+        "\ncache=${PAD}\n",
     ];
     let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
     let mut next = move || {
@@ -402,7 +442,12 @@ fn npmrc_survives_generated_input() {
             .map(|_| pieces[usize::try_from(next() % count).unwrap()])
             .collect();
         host.write("home/.npmrc", &text);
-        if let Ok((path, _)) = host.cache(&[]) {
+        let found = host.cache(&[("K", "cache"), ("PAD", "/p ")]);
+        assert!(
+            !(must_hold(&text) && found.is_ok()),
+            "{text:?} could be another cache to npm, placed {found:?}"
+        );
+        if let Ok((path, _)) = found {
             assert!(path.is_absolute(), "{text:?} placed {path:?}");
             let default = host.home.join(".npm");
             let set = text.contains("cache");
@@ -412,4 +457,24 @@ fn npmrc_survives_generated_input() {
             );
         }
     }
+}
+
+/// Whether generated `text`, with `K=cache` and `PAD="/p "`, holds a line on which npm and
+/// kipple could disagree about the cache, before anything that could end the top level:
+/// a key that expands to `cache`, a scalar after a list, or a padded last value.
+fn must_hold(text: &str) -> bool {
+    let lines: Vec<&str> = text.split(['\r', '\n']).collect();
+    let top = lines.iter().take_while(|line| !line.starts_with('['));
+    let top: Vec<&str> = top.copied().collect();
+    let at = |wanted: &str| top.iter().position(|line| *line == wanted);
+    let expanded_key = at("${K}=/k").is_some();
+    let list_then_scalar =
+        at("cache[]=/l").is_some_and(|list| top.iter().skip(list).any(|line| *line == "cache=/s"));
+    let padded_last = at("cache=${PAD}").is_some_and(|padded| {
+        lines
+            .iter()
+            .skip(padded + 1)
+            .all(|line| !line.contains("cache") && !line.contains("${K"))
+    });
+    expanded_key || list_then_scalar || padded_last
 }
