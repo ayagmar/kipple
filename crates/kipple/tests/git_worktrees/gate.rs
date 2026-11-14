@@ -43,6 +43,7 @@ fn a_clean_worktree_reads_clear_on_every_row() {
         ("worktree.head_reachable", FactValue::Bool(true)),
         ("worktree.unreferenced_commits", FactValue::Count(0)),
         ("worktree.own_config", FactValue::Bool(false)),
+        ("worktree.unknown_admin_entries", FactValue::Count(0)),
     ] {
         assert_eq!(scan.fact(fact), value, "{fact}");
     }
@@ -60,6 +61,8 @@ struct Case {
     fact: &'static str,
     value: FactValue,
     head: Head,
+    /// Facts the state also fails, beside the one it exists to show.
+    also: &'static [&'static str],
 }
 
 /// What reaching a case does to the reviewed worktree's `HEAD`, which the witness holds.
@@ -77,6 +80,7 @@ const fn case(name: &'static str, set: fn(&Repo), fact: &'static str, value: Fac
         fact,
         value,
         head: Head::Stays,
+        also: &[],
     }
 }
 
@@ -162,11 +166,13 @@ fn reset_away(repo: &Repo) {
     repo.wt(&["reset", "-q", "--hard", "main"]);
 }
 
-/// A commit reset off the branch, with the worktree's reflog emptied: only `ORIG_HEAD`
-/// names it among what the removal deletes.
+/// A commit made on a detached `HEAD` and left, which `ORIG_HEAD` names as a reset or a
+/// merge leaves it, with the worktree's reflog emptied: only `ORIG_HEAD` names it among
+/// what the removal deletes, and no branch's reflog does.
 fn orig_head(repo: &Repo) {
-    repo.wt(&["commit", "-q", "--allow-empty", "-m", "undone"]);
-    repo.wt(&["reset", "-q", "--hard", "HEAD~"]);
+    left_behind(repo);
+    let left = repo.wt(&["rev-parse", "HEAD@{1}"]);
+    write(&repo.admin().join("ORIG_HEAD"), &left);
     write(&repo.admin().join("logs/HEAD"), b"");
 }
 
@@ -178,6 +184,18 @@ fn own_config(repo: &Repo) {
 /// The pseudo-ref `name` an operation writes, naming the worktree's own commit.
 fn pseudo_ref(repo: &Repo, name: &str) {
     write(&repo.admin().join(name), &repo.wt(&["rev-parse", "HEAD"]));
+}
+
+/// A notes merge stopped on a conflict: its partial commit, the ref it merges into and the
+/// notes being resolved are in the admin directory alone.
+fn notes_merge_stopped(repo: &Repo) {
+    repo.wt(&["notes", "--ref=x", "add", "-m", "one", "HEAD"]);
+    repo.wt(&["notes", "--ref=y", "add", "-m", "two", "HEAD"]);
+    let output = repo.run_git(&repo.checkout, &["notes", "--ref=x", "merge", "y"]);
+    assert!(
+        !output.status.success(),
+        "the notes merge stops: {output:?}"
+    );
 }
 
 fn one_way_registration(repo: &Repo) {
@@ -369,6 +387,21 @@ const CASES: &[Case] = &[
         "commit only ORIG_HEAD names",
         orig_head,
         UNREFERENCED,
+        FactValue::Count(1),
+    ),
+    Case {
+        also: &[UNREFERENCED],
+        ..case(
+            "stopped notes merge",
+            notes_merge_stopped,
+            OPERATION,
+            FactValue::Bool(true),
+        )
+    },
+    case(
+        "file git may add to the admin directory",
+        |repo| write(&repo.admin().join("SOMETHING_NEW"), b"x\n"),
+        "worktree.unknown_admin_entries",
         FactValue::Count(1),
     ),
     case(

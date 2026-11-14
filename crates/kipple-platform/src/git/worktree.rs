@@ -38,7 +38,7 @@ const WORKTREE_OLDEST: [u64; 2] = [2, 36];
 const LINK_LIMIT: u64 = 64 * 1024;
 
 /// What an operation in progress leaves in an admin directory.
-const OPERATIONS: [&str; 7] = [
+const OPERATIONS: [&str; 9] = [
     "rebase-merge",
     "rebase-apply",
     "BISECT_LOG",
@@ -46,15 +46,17 @@ const OPERATIONS: [&str; 7] = [
     "REVERT_HEAD",
     "MERGE_HEAD",
     "sequencer",
+    "NOTES_MERGE_REF",
+    "NOTES_MERGE_WORKTREE",
 ];
 
 /// The locks git takes in an admin directory while it changes the index or `HEAD`.
 const LOCKS: [&str; 2] = ["index.lock", "HEAD.lock"];
 
 /// The pseudo-refs git writes in a worktree's own admin directory that name commits by id,
-/// on every git from the removal floor up. `AUTO_MERGE` names a tree, not a commit, and is
-/// there only while a merge stopped on conflicts, which an operation in progress holds.
-const PSEUDO_REFS: [&str; 9] = [
+/// on every git from the removal floor up. `AUTO_MERGE` names a tree, not a commit.
+/// `NOTES_MERGE_PARTIAL` is the commit of a notes merge stopped on a conflict.
+const PSEUDO_REFS: [&str; 10] = [
     "HEAD",
     "ORIG_HEAD",
     "FETCH_HEAD",
@@ -64,6 +66,29 @@ const PSEUDO_REFS: [&str; 9] = [
     "REBASE_HEAD",
     "BISECT_HEAD",
     "BISECT_EXPECTED_REV",
+    "NOTES_MERGE_PARTIAL",
+];
+
+/// Every entry kipple knows in a linked worktree's admin directory: what git 2.56 leaves
+/// there after `worktree add`, commit, fetch, switch, stash, amend, rebase, pull, merge,
+/// cherry-pick and revert (`COMMIT_EDITMSG`, a message already committed; `AUTO_MERGE`, a
+/// tree), what a stopped rebase writes beside its own marker (`MERGE_MSG`), and what another
+/// row reads: the locks, the operations, the pseudo-refs, `locked`, `config.worktree`,
+/// `modules` and `reftable`. Anything else is something kipple can't say the loss of.
+const KNOWN_ENTRIES: [&str; 13] = [
+    "HEAD",
+    "index",
+    "logs",
+    "refs",
+    "commondir",
+    "gitdir",
+    "COMMIT_EDITMSG",
+    "AUTO_MERGE",
+    "MERGE_MSG",
+    "locked",
+    "config.worktree",
+    "modules",
+    "reftable",
 ];
 
 /// The most read of one reflog or pseudo-ref. Past it what the file names is unknown.
@@ -118,6 +143,7 @@ impl WorktreeQuery for GitQuery {
             per_worktree_refs: per_worktree_refs(&links.admin),
             index_locked: any_of(&links.admin, &LOCKS),
             own_config: exists(&links.admin.join("config.worktree")),
+            unknown_admin_entries: unknown_entries(&links.admin),
             ..WorktreeState::unknown(git.as_ref().map_or_else(|gap| *gap, |_| GitGap::Failed))
         };
         if let Ok(git) = git {
@@ -170,8 +196,29 @@ fn named_commits(admin: &Path) -> Result<BTreeSet<Vec<u8>>, GitGap> {
             named.extend(commit(id)?);
         }
     }
-    for log in files_below(&admin.join("logs"))? {
-        let text = whole_file(&log)?.ok_or(GitGap::Failed)?;
+    reflogs(&files_below(&admin.join("logs"))?, &mut named)?;
+    Ok(named)
+}
+
+/// Every commit a reflog that outlives the worktree names: the reflogs of the repository's
+/// local branches and the main worktree's `logs/HEAD`, all under the common directory
+/// `common`, read as the admin directory's are. A deleted branch has no reflog.
+fn retained_commits(common: &Path) -> Result<BTreeSet<Vec<u8>>, GitGap> {
+    refuse_reftable(common)?;
+    let mut logs = files_below(&common.join("logs/refs/heads"))?;
+    let head = common.join("logs/HEAD");
+    if whole_file(&head)?.is_some() {
+        logs.push(head);
+    }
+    let mut retained = BTreeSet::new();
+    reflogs(&logs, &mut retained)?;
+    Ok(retained)
+}
+
+/// Both columns of every line of the reflogs `logs`, into `named`.
+fn reflogs(logs: &[PathBuf], named: &mut BTreeSet<Vec<u8>>) -> Result<(), GitGap> {
+    for log in logs {
+        let text = whole_file(log)?.ok_or(GitGap::Failed)?;
         for line in lines(&text) {
             let mut ids = line.splitn(3, |byte| *byte == b' ');
             for id in [ids.next(), ids.next()] {
@@ -179,7 +226,24 @@ fn named_commits(admin: &Path) -> Result<BTreeSet<Vec<u8>>, GitGap> {
             }
         }
     }
-    Ok(named)
+    Ok(())
+}
+
+/// How many entries of the admin directory `admin` aren't in [`KNOWN_ENTRIES`] or read by
+/// a row as an operation, a lock or a pseudo-ref.
+fn unknown_entries(admin: &Path) -> Result<u64, GitGap> {
+    let entries = NoFollowFs.read_dir(admin).map_err(|_| GitGap::Failed)?;
+    let known = KNOWN_ENTRIES
+        .iter()
+        .chain(&OPERATIONS)
+        .chain(&LOCKS)
+        .chain(&PSEUDO_REFS);
+    let known: BTreeSet<&str> = known.copied().collect();
+    let unknown = entries
+        .iter()
+        .filter(|entry| entry.name.to_str().is_none_or(|name| !known.contains(name)))
+        .count();
+    count_of(unknown)
 }
 
 /// The commit id `bytes` hold, if it isn't all zeroes.
@@ -461,19 +525,41 @@ impl Asking<'_> {
         Ok(!refs.is_empty())
     }
 
-    /// How many commits only the admin directory names, which no local branch holds: the
-    /// same refs as [`Self::head_reachable`], since removal deletes no branch and nothing
-    /// else of the repository's is sure to stay (pinned decision 26). Each batch's commits
-    /// are collected, so one reachable from two batches counts once.
+    /// How many commits only the admin directory names, which neither a local branch nor a
+    /// reflog that outlives the removal retains. Local branches are the refs
+    /// [`Self::head_reachable`] counts, since removal deletes no branch (pinned decision 26).
+    /// A commit reachable from an entry of a surviving reflog is retained, as gc keeps it.
+    /// The surviving reflogs are read only when something would otherwise be lost.
     fn unreferenced_commits(&self) -> Result<u64, GitGap> {
         let named = named_commits(&self.links.admin)?;
-        let named: Vec<&str> = named
+        let lost = self.beyond_branches(&named, Missing::Unknown)?;
+        if lost.is_empty() {
+            return Ok(0);
+        }
+        let retained = retained_commits(&self.links.common)?;
+        let kept = self.beyond_branches(&retained, Missing::Skipped)?;
+        count_of(lost.difference(&kept).count())
+    }
+
+    /// Every commit reachable from `ids` that no local branch holds. Each batch's commits
+    /// are collected, so one reachable from two batches counts once. A missing commit is
+    /// unknown on the side that would be lost, and is passed over on the side that retains,
+    /// which retains less.
+    fn beyond_branches(
+        &self,
+        ids: &BTreeSet<Vec<u8>>,
+        missing: Missing,
+    ) -> Result<BTreeSet<Vec<u8>>, GitGap> {
+        let ids: Vec<&str> = ids
             .iter()
             .map(|id| std::str::from_utf8(id).map_err(|_| GitGap::Truncated))
             .collect::<Result<_, _>>()?;
-        let mut lost = BTreeSet::new();
-        for batch in named.chunks(COMMITS_PER_ASK) {
+        let mut found = BTreeSet::new();
+        for batch in ids.chunks(COMMITS_PER_ASK) {
             let mut tail = vec!["rev-list"];
+            if missing == Missing::Skipped {
+                tail.push("--ignore-missing");
+            }
             tail.extend(batch);
             tail.extend(["--not", "--branches", "--"]);
             let stdout = self.ask(&tail)?;
@@ -481,11 +567,20 @@ impl Asking<'_> {
                 return Err(GitGap::Truncated);
             }
             for line in lines(&stdout) {
-                lost.extend(commit(line)?);
+                found.extend(commit(line)?);
             }
         }
-        count_of(lost.len())
+        Ok(found)
     }
+}
+
+/// What a commit id git doesn't have means to a query.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Missing {
+    /// The answer is unknown.
+    Unknown,
+    /// It names nothing, and is passed over.
+    Skipped,
 }
 
 /// What `status --porcelain=v2 -z` printed.

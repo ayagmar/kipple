@@ -835,7 +835,13 @@
           "name": "worktree.unreferenced_commits",
           "kind": "count",
           "selector": "registered-linked-worktrees",
-          "meaning": "commits only its own reflog or pseudo-refs name, which no local branch holds"
+          "meaning": "commits only its own reflog or pseudo-refs name, which no local branch or surviving branch reflog keeps"
+        },
+        {
+          "name": "worktree.unknown_admin_entries",
+          "kind": "count",
+          "selector": "registered-linked-worktrees",
+          "meaning": "files in its admin directory (`.git/worktrees/<name>`) kipple doesn't recognise, which removing it would delete unread"
         },
         {
           "name": "worktree.own_config",

@@ -106,6 +106,170 @@ fn held_by(scan: &Scan, case: &Case) {
     }
 }
 
+/// A side branch made and committed on in the worktree, squash-merged into its branch and
+/// deleted: the side commit's branch reflog went with the branch, so only the worktree's
+/// own reflog names it.
+fn squashed_and_deleted(repo: &Repo) {
+    repo.wt(&["switch", "-q", "-c", "side"]);
+    commit_in_worktree(repo, "side.txt");
+    repo.wt(&["switch", "-q", "wt"]);
+    repo.wt(&["merge", "-q", "--squash", "side"]);
+    repo.wt(&["commit", "-q", "-m", "squashed"]);
+    repo.wt(&["branch", "-q", "-D", "side"]);
+}
+
+/// A commit of a new file `name` on the worktree's branch.
+fn commit_in_worktree(repo: &Repo, name: &str) {
+    write(&repo.checkout.join(name), b"x\n");
+    repo.wt(&["add", "--", name]);
+    repo.wt(&["commit", "-q", "-m", name]);
+}
+
+/// A commit on `main` and one on the worktree's branch, so the two have diverged.
+fn diverged(repo: &Repo) {
+    repo.commit("main.txt", b"m\n");
+    commit_in_worktree(repo, "wt.txt");
+}
+
+/// An ordinary history an agent's worktree may have, which loses nothing when removed.
+struct History {
+    name: &'static str,
+    set: fn(&Repo),
+}
+
+const HISTORIES: &[History] = &[
+    History {
+        name: "plain commits",
+        set: |repo| {
+            commit_in_worktree(repo, "a.txt");
+            commit_in_worktree(repo, "b.txt");
+        },
+    },
+    History {
+        name: "branch switch",
+        set: |repo| {
+            repo.wt(&["switch", "-q", "-c", "other"]);
+            commit_in_worktree(repo, "other.txt");
+            repo.wt(&["switch", "-q", "wt"]);
+        },
+    },
+    History {
+        name: "amend",
+        set: |repo| {
+            commit_in_worktree(repo, "a.txt");
+            repo.wt(&["commit", "-q", "--amend", "-m", "amended"]);
+        },
+    },
+    History {
+        name: "rebase",
+        set: |repo| {
+            diverged(repo);
+            repo.wt(&["rebase", "-q", "main"]);
+        },
+    },
+    History {
+        name: "pull --rebase",
+        set: |repo| {
+            diverged(repo);
+            repo.wt(&["pull", "-q", "--rebase", ".", "main"]);
+        },
+    },
+    History {
+        name: "reset --hard HEAD~1",
+        set: |repo| {
+            commit_in_worktree(repo, "a.txt");
+            repo.wt(&["reset", "-q", "--hard", "HEAD~1"]);
+        },
+    },
+    History {
+        name: "merge",
+        set: |repo| {
+            diverged(repo);
+            repo.wt(&["merge", "-q", "--no-edit", "main"]);
+        },
+    },
+    History {
+        name: "fetch and stash",
+        set: |repo| {
+            let main = repo.main.display().to_string();
+            repo.wt(&["fetch", "-q", &main, "main"]);
+            write(&repo.checkout.join("file.txt"), b"stashed\n");
+            repo.wt(&["stash", "-q"]);
+        },
+    },
+    History {
+        name: "cherry-pick",
+        set: |repo| {
+            repo.commit("main.txt", b"m\n");
+            repo.wt(&["cherry-pick", "main"]);
+        },
+    },
+    History {
+        name: "a commit the main worktree's reflog also names",
+        set: |repo| {
+            left_behind(repo);
+            let left = repo.wt(&["rev-parse", "HEAD@{1}"]);
+            let left = String::from_utf8_lossy(&left).trim().to_owned();
+            repo.git(&["checkout", "-q", "--detach", &left]);
+            repo.git(&["checkout", "-q", "main"]);
+        },
+    },
+];
+
+/// Catches the gate holding a worktree whose removal loses nothing: after each ordinary
+/// history every fact holds, since a commit it rewrote or reset away is still in a branch's
+/// reflog, which the removal keeps. A failure lists the admin directory, which an unknown
+/// entry would explain on another git.
+#[test]
+fn ordinary_histories_are_eligible() {
+    for history in HISTORIES {
+        let repo = Repo::new();
+        (history.set)(&repo);
+
+        let scan = repo.removal_on(Platform::Linux).scan();
+
+        let finding = scan.finding("wt");
+        let mut entries: Vec<String> = std::fs::read_dir(repo.admin())
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        entries.sort_unstable();
+        assert_eq!(
+            unmet(finding),
+            Vec::<&str>::new(),
+            "{}: admin directory {entries:?}",
+            history.name
+        );
+    }
+}
+
+/// Catches an amend's removal losing the commit it replaced, which the gate let through
+/// because the branch's reflog keeps it: after the real removal git still names it there,
+/// and `fsck` finds it reachable.
+#[test]
+fn an_amended_worktree_removed_keeps_the_replaced_commit() {
+    if !removes_here() {
+        return;
+    }
+    let repo = Repo::new();
+    commit_in_worktree(&repo, "a.txt");
+    let replaced = repo.wt(&["rev-parse", "HEAD"]);
+    let replaced = String::from_utf8_lossy(&replaced).trim().to_owned();
+    repo.wt(&["commit", "-q", "--amend", "-m", "amended"]);
+    let removal = repo.removal();
+    let scan = removal.scan();
+
+    let ran = removal.remove(&scan, &[scan.finding("wt")]);
+
+    assert!(matches!(ran.outcome(), ItemOutcome::Done(_)), "{ran:#?}");
+    let reflog = repo.git(&["reflog", "show", "--format=%H", "refs/heads/wt"]);
+    let reflog = String::from_utf8_lossy(&reflog);
+    assert!(reflog.contains(&replaced), "{replaced} in {reflog}");
+    let unreachable = repo.git(&["fsck", "--unreachable", "--no-progress"]);
+    let unreachable = String::from_utf8_lossy(&unreachable);
+    assert!(!unreachable.contains(&replaced), "{unreachable}");
+}
+
 /// A way to leave a commit only the worktree's admin directory names, and the revision
 /// that names it there.
 struct Lost {
@@ -135,6 +299,11 @@ fn a_commit_only_the_worktree_names_holds_it() {
             name: "ORIG_HEAD",
             set: orig_head,
             names: "ORIG_HEAD",
+        },
+        Lost {
+            name: "squash-merged side branch, deleted",
+            set: squashed_and_deleted,
+            names: "HEAD@{2}",
         },
     ];
     for Lost { name, set, names } in states {
@@ -327,7 +496,13 @@ fn held_at_apply(case: &Case, outcome: &ItemOutcome, now: &Finding) {
     }
     let failed = failed(now);
     if case.head == Head::Stays {
-        assert_eq!(failed, vec![case.fact], "{}", case.name);
+        let mut expected: Vec<&str> = std::iter::once(case.fact)
+            .chain(case.also.iter().copied())
+            .collect();
+        expected.sort_unstable();
+        let mut failed = failed;
+        failed.sort_unstable();
+        assert_eq!(failed, expected, "{}", case.name);
     } else {
         assert!(failed.contains(&case.fact), "{}: {failed:?}", case.name);
     }

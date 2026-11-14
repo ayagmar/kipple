@@ -243,6 +243,7 @@ pub(crate) fn clean(main: &Path, path: &Path) -> WorktreeState {
         head_reachable: Ok(true),
         unreferenced_commits: Ok(0),
         own_config: Ok(false),
+        unknown_admin_entries: Ok(0),
         witness: Err(GitGap::Failed),
     }
 }

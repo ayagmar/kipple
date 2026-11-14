@@ -119,7 +119,14 @@ const FACTS: &[FactSpec] = &[
     fact(
         "worktree.unreferenced_commits",
         FactKind::Count,
-        "commits only its own reflog or pseudo-refs name, which no local branch holds",
+        "commits only its own reflog or pseudo-refs name, which no local branch or surviving \
+         branch reflog keeps",
+    ),
+    fact(
+        "worktree.unknown_admin_entries",
+        FactKind::Count,
+        "files in its admin directory (`.git/worktrees/<name>`) kipple doesn't recognise, \
+         which removing it would delete unread",
     ),
     fact(
         "worktree.own_config",
@@ -1008,6 +1015,10 @@ fn facts(
             count(&state.unreferenced_commits),
         ),
         ("worktree.own_config", flag(&state.own_config)),
+        (
+            "worktree.unknown_admin_entries",
+            count(&state.unknown_admin_entries),
+        ),
         ("git_inventory", FactValue::Enum("complete")),
         (
             "storage_availability",

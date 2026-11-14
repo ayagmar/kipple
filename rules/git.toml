@@ -47,6 +47,7 @@ activity = "idle"
 "worktree.head_reachable" = true
 "worktree.unreferenced_commits" = "absent"
 "worktree.own_config" = false
+"worktree.unknown_admin_entries" = "absent"
 
 [rule.operation]
 kind = "git-worktree-remove"
