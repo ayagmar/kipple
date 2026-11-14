@@ -270,7 +270,8 @@ impl EngineRescan<'_> {
     /// What the release `ours`, read again, is now among the releases of its component in
     /// `scan`, each read again by its integration, judged by one new process snapshot and
     /// settled as the scan settles them. A release whose integration can't read it again
-    /// holds `ours`, and one the apply scan didn't measure leaves its group unsettled.
+    /// holds `ours`, and one the apply scan didn't measure, or a finding of its integration
+    /// that scan has no facts for, leaves its group unsettled.
     fn settled(
         &self,
         scan: &ScanReport,
@@ -284,6 +285,18 @@ impl EngineRescan<'_> {
         let ours_component = component(&ours);
         let integration = ours.integration;
         let path = ours.path.clone();
+        let unread = scan
+            .findings
+            .iter()
+            .any(|peer| peer.integration == integration && peer.facts.is_none());
+        if unread {
+            // A finding of its integration the apply scan stopped short of could be a release
+            // of this group, which leaves the group unsettled, as the scan leaves it.
+            return Ok(Settled {
+                activity: Activity::Unknown(ActivityGap::Unsupported),
+                settlement: Settlement::Unsettled,
+            });
+        }
         let peers = scan.findings.iter().filter(|peer| {
             peer.integration == integration
                 && peer.path != path

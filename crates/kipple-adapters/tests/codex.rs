@@ -2327,3 +2327,20 @@ fn scan_takes_no_lock() {
     assert_eq!(locks, Vec::<&String>::new(), "no lock opened");
     assert_eq!(scan.facts(OLD).settlement, CANDIDATE);
 }
+
+/// Catches apply settling a release beside a finding its scan stopped short of: that one
+/// may be a release of the group, the selected one even, so the group stays unsettled.
+#[test]
+fn a_release_the_apply_scan_left_unread_leaves_the_group_unsettled() {
+    let mut scan = verified().scan();
+    let active = scan.built.home().join(ACTIVE);
+    for finding in &mut scan.report.findings {
+        if finding.path == active {
+            finding.facts = None;
+        }
+    }
+
+    let now = scan.now(OLD).map(|now| now.settlement);
+
+    assert_eq!(now, Ok(Settlement::Unsettled));
+}
