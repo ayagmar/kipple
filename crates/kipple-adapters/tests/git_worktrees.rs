@@ -768,7 +768,8 @@ fn relative_links_are_read() {
         tree
     });
 
-    assert_eq!(run.of("git").len(), 8);
+    // S5 git §8's eight, and the one with a commit.
+    assert_eq!(run.of("git").len(), 9);
     let warsaw = run.built.at(WARSAW);
     assert_eq!(
         run.fact(&warsaw, "registration_state"),

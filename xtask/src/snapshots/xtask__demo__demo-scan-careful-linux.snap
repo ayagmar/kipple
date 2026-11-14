@@ -506,6 +506,46 @@ expression: "serde_json::to_string_pretty(&report)?"
       },
       "evidence": [
         {
+          "agent": "codex",
+          "kind": "worktree"
+        }
+      ],
+      "integration": "git",
+      "lens": "agents",
+      "level": "careful",
+      "path": {
+        "display": "<demo>/home/.codex/worktrees/cd34/app"
+      },
+      "rule": "builtin.git.worktree-remove",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 61,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "review",
+        "reasons": [
+          "recovery",
+          "loss"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "state": "idle",
+        "unchecked_system": 0
+      },
+      "category": "source-worktree",
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
+      "evidence": [
+        {
           "agent": "herdr",
           "kind": "worktree"
         }

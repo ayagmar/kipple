@@ -44,8 +44,8 @@ pub(crate) fn build(dir: &Path) -> Result<()> {
 
 /// `dir` as git would print it, so the demo's roots are spelled as git spells its
 /// worktrees. A scan maps git's spelling back to the walk's only for a checkout git builds
-/// a witness for, and the demo's have no commit, while its registered-missing one has
-/// nothing on disk to map to (docs/04 §11). Links are resolved, since macOS keeps its temp
+/// a witness for, and all but one of the demo's have no commit, while its
+/// registered-missing one has nothing on disk to map to (docs/04 §11). Links are resolved, since macOS keeps its temp
 /// directory below one, and on Windows the long names of a path the runner gives in short
 /// ones. Windows resolves to a verbatim path, which its tools don't all read, so a drive's
 /// loses that prefix and any other is left as given.

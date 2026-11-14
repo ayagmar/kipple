@@ -347,6 +347,40 @@ expression: "serde_json::to_string_pretty(&report)?"
       "consequence": null,
       "evidence": [
         {
+          "agent": "codex",
+          "kind": "worktree"
+        }
+      ],
+      "integration": "git",
+      "lens": "agents",
+      "level": "balanced",
+      "path": {
+        "display": "<demo>/home/.codex/worktrees/cd34/app"
+      },
+      "rule": "builtin.git.worktree-inventory",
+      "size": {
+        "allocated": "[redacted]",
+        "apparent": 61,
+        "completeness": "complete",
+        "unique_reclaim": "[redacted]"
+      },
+      "verdict": {
+        "bucket": "protected",
+        "reasons": [
+          "report-only"
+        ]
+      }
+    },
+    {
+      "activity": {
+        "message": "this OS doesn't show which paths running programs use, beyond their executable",
+        "reason": "unsupported",
+        "state": "unknown"
+      },
+      "category": "source-worktree",
+      "consequence": null,
+      "evidence": [
+        {
           "agent": "herdr",
           "kind": "worktree"
         }
