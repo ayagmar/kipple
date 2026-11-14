@@ -1339,16 +1339,18 @@ fn aliases_with_two_methods_conflict() {
 
 /// Catches a merge that discards a protection (04 §3.10; 11 M3's overlap regression
 /// "an alias across a protected root"): an alias that is in use, or that the host
-/// protects, holds the item even when only the other is selected.
+/// protects, holds the item even when only the other is selected. The host's answer
+/// for an alias is about this very directory, so the item is refused as protected
+/// itself, not as holding something.
 #[test]
 fn an_unselected_alias_keeps_its_protection() {
     let (world, item, alias) = aliases();
     let scan = scan_of(&[item, alias.clone()]);
     let mut busy = scan.clone();
     busy.findings[1].facts.as_mut().unwrap().activity = in_use();
-    let planned = plan_some(&busy, &[0], &Config::new(), &world);
+    let refused = plan_some(&busy, &[0], &Config::new(), &world);
     assert_eq!(
-        refusals(&planned),
+        refusals(&refused),
         [(
             FindingId(0),
             Skip::HoldsProtected {
@@ -1366,7 +1368,9 @@ fn an_unselected_alias_keeps_its_protection() {
     );
 }
 
-/// Catches an item removed while another finding inside it is in use (04 §3.10, §4).
+/// Catches an item removed while another finding inside it is in use or host-protected
+/// (04 §3.10, §4, §3.9), and an item refused for what it holds said to be protected
+/// itself, which `scan` contradicts by showing it Safe.
 #[test]
 fn a_protected_finding_inside_an_item_holds_it() {
     let (item, target) = project(0, 100, TARGET);
@@ -1376,16 +1380,30 @@ fn a_protected_finding_inside_an_item_holds_it() {
         &[id(103), id(100), id(99)],
     );
     let world = world_of(&[(item.clone(), target)]);
-    let mut scan = scan_of(&[item, tool.clone()]);
-    scan.findings[1].facts.as_mut().unwrap().activity = in_use();
-    let planned = plan_some(&scan, &[0], &Config::new(), &world);
+    let scan = scan_of(&[item, tool.clone()]);
+    let mut busy = scan.clone();
+    busy.findings[1].facts.as_mut().unwrap().activity = in_use();
+    let refused = plan_some(&busy, &[0], &Config::new(), &world);
+    assert_eq!(
+        refusals(&refused),
+        [(
+            FindingId(0),
+            Skip::HoldsProtected {
+                path: tool.path.clone(),
+                holds: vec![Hold::InUse],
+            }
+        )]
+    );
+    let mut closed = scan;
+    closed.findings[1].facts.as_mut().unwrap().host = Some(Protection::Subresource);
+    let planned = plan_some(&closed, &[0], &Config::new(), &world);
     assert_eq!(
         refusals(&planned),
         [(
             FindingId(0),
             Skip::HoldsProtected {
                 path: tool.path,
-                holds: vec![Hold::InUse],
+                holds: vec![Hold::Subresource],
             }
         )]
     );
