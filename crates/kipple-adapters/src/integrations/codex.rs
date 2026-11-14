@@ -712,6 +712,9 @@ struct Manifest {
     entrypoint: String,
 }
 
+/// The keys of a `codex-package.json` that kipple reads.
+const MANIFEST_KEYS: [&str; 4] = ["layoutVersion", "version", "target", "entrypoint"];
+
 /// What a `codex-package.json` turned out to be. Upstream ignores `layoutVersion`, but only
 /// 1 was read.
 #[derive(Debug)]
@@ -726,7 +729,19 @@ enum ManifestRead {
 
 impl ManifestRead {
     /// What `bytes` are. `execServer` is absent before 0.166.0, so nothing depends on it.
+    ///
+    /// Upstream's two prunes read a manifest more strictly than a JSON parser does: the
+    /// script keeps escapes raw and sees every repeat of a key, and the daemon refuses a
+    /// repeated field. Either keeps the release, so an escape anywhere or a key read here
+    /// that is written twice is nothing kipple takes for a manifest.
     fn parse(bytes: &[u8]) -> Self {
+        let plain = std::str::from_utf8(bytes).is_ok_and(|text| {
+            let once = |key: &&str| text.matches(&format!("\"{key}\"")).count() <= 1;
+            !text.contains('\\') && MANIFEST_KEYS.iter().all(once)
+        });
+        if !plain {
+            return Self::Unusable;
+        }
         let document = serde_json::from_slice::<Json>(bytes).ok();
         let manifest = document.as_ref().and_then(Json::as_object);
         let Some(layout) = manifest.and_then(|manifest| manifest.get("layoutVersion")) else {
@@ -1281,6 +1296,19 @@ impl Component {
         }
     }
 
+    /// Blocks its groups unless each lock a removal must hold is a regular file. Nothing
+    /// is opened or locked: a scan only looks (04 §3.1). Apply refuses a missing or odd
+    /// lock every time, so a release beside one must not read as removable.
+    fn check_locks(&mut self, cx: &ScanContext<'_>, home: &Path) {
+        let usable = self.locks(home).iter().all(|lock| {
+            cx.metadata(lock)
+                .is_ok_and(|meta| meta.kind == EntryKind::File)
+        });
+        if !usable {
+            self.block(GroupGap::NoLock);
+        }
+    }
+
     /// The facts of its store that only its own releases can be asked about.
     fn release_values(&self) -> [(&'static str, FactValue); 2] {
         let complete = self.listed && self.gap != Some(GroupGap::Unreadable);
@@ -1367,9 +1395,9 @@ impl Store {
             let known = COMPONENTS.iter().find(|name| entry.name == **name);
             match known {
                 Some(name) if entry.kind == EntryKind::Dir => {
-                    store
-                        .components
-                        .push(Component::read(cx, name, path, mount)?);
+                    let mut component = Component::read(cx, name, path, mount)?;
+                    component.check_locks(cx, home);
+                    store.components.push(component);
                 }
                 Some(_) | None => store.strays.push(path),
             }

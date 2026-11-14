@@ -662,6 +662,14 @@ fn manifest_cases() -> Vec<(&'static str, Scene)> {
             "another entrypoint",
             with_manifest("\"bin/codex\"", "\"bin/other\""),
         ),
+        (
+            "a key written twice, which upstream's prune keeps",
+            with_manifest("\"variant\": \"codex\"", "\"version\": \"0.163.0\""),
+        ),
+        (
+            "an escaped character, which upstream's script reads raw",
+            with_manifest("\"bin/codex\"", "\"bin\\u002fcodex\""),
+        ),
     ]
 }
 
@@ -2411,6 +2419,70 @@ fn install_lock_dir_made_before_the_item_holds() {
     let now = scan.now(OLD).map(|now| now.settlement);
 
     assert_eq!(now, Ok(kept_blocked(GroupGap::InstallerBusy)));
+}
+
+/// A store like [`verified`]'s, with no lock written: the caller puts what it wants there.
+fn unlocked(store: &'static str) -> Scene {
+    let mut scene = Scene::new();
+    let dir = at(&component(store));
+    let target = at(&release(store, &name(V166)));
+    scene
+        .releases(store, &[V164, V165, V166])
+        .history(store, &name(V166), &name(V165));
+    scene
+        .tree
+        .link(&format!("{dir}/current"), &target, Holds::AbsoluteInTree);
+    scene
+}
+
+/// Catches a release shown as removable beside a lock apply can never hold: a missing
+/// `install.lock`, or a link or directory in its place, is skipped at every apply, so the
+/// scan must hold the component instead of counting its space.
+#[test]
+fn a_missing_or_odd_install_lock_holds_at_scan() {
+    let lock = format!("{}/install.lock", at(&component(STANDALONE)));
+    let missing = unlocked(STANDALONE);
+    let mut linked = unlocked(STANDALONE);
+    linked.tree.file(&at("elsewhere.lock"), b"").link(
+        &lock,
+        &at("elsewhere.lock"),
+        Holds::AbsoluteInTree,
+    );
+    let mut directory = unlocked(STANDALONE);
+    directory.tree.dir(&lock);
+    let mut sound = unlocked(STANDALONE);
+    sound.tree.file(&lock, b"");
+
+    for scene in [missing, linked, directory] {
+        let scan = scene.scan();
+        assert_eq!(candidates(&scan), Vec::<String>::new());
+        assert_eq!(scan.facts(OLD).settlement, kept_blocked(GroupGap::NoLock));
+    }
+    assert_eq!(sound.scan().facts(OLD).settlement, CANDIDATE);
+}
+
+/// Catches the daemon store read as removable on `install.lock` alone: apply also needs
+/// `daemon.lock`, and without it every daemon release is skipped.
+#[test]
+fn a_daemon_store_without_its_daemon_lock_holds_at_scan() {
+    let mut scene = unlocked(DAEMON);
+    let lock = format!("{}/install.lock", at(&component(DAEMON)));
+    scene.tree.file(&lock, b"");
+
+    let mut sound = unlocked(DAEMON);
+    sound
+        .tree
+        .file(&lock, b"")
+        .file(&at("app-server-daemon/daemon.lock"), b"");
+
+    let held = settlements(&scene.scan());
+    let kept = kept_blocked(GroupGap::NoLock);
+
+    assert!(
+        held.iter().all(|(_, settled)| *settled == kept),
+        "every daemon release is held for the lock: {held:?}"
+    );
+    assert_eq!(candidates(&sound.scan()).len(), 1);
 }
 
 /// Catches apply settling among the members its scan had: a `.retired.*` entry an install

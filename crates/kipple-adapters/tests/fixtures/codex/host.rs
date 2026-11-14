@@ -546,6 +546,9 @@ impl Scene {
         self.tree
             .link(&format!("{dir}/current"), &target, Holds::AbsoluteInTree)
             .file(&format!("{dir}/install.lock"), b"");
+        if store == DAEMON {
+            self.tree.file(&at("app-server-daemon/daemon.lock"), b"");
+        }
         self
     }
 

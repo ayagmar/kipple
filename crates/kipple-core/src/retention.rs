@@ -58,6 +58,9 @@ named! {
         UnorderedVersion = "unordered-version",
         /// Its store changed between the scan and reading it again at apply.
         Changed = "changed",
+        /// A lock its installer takes is missing or isn't a regular file, so a removal
+        /// could never hold it.
+        NoLock = "no-lock",
     }
 }
 
