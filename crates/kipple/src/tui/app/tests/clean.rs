@@ -36,7 +36,7 @@ use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::fmt::Write as _;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{MAIN_SEPARATOR, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::thread;
@@ -750,7 +750,9 @@ fn cli_and_tui_show_the_same_native_lines() {
     app.update(Msg::Applied(Box::new(ended)));
     let shown = text(&app, 160, 48);
     for line in &printed {
-        assert!(shown.contains(line.trim_end()), "{line:?} in {shown}");
+        // The screen reads every path separator as `/`, and an escape as `\u{1b}` holds one.
+        let line = line.trim_end().replace(MAIN_SEPARATOR, "/");
+        assert!(shown.contains(&line), "{line:?} in {shown}");
     }
 }
 
