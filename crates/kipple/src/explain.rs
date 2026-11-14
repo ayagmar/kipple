@@ -6,9 +6,10 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 
 use kipple_core::{
-    IntegrationDescriptor, Operation, Pack, Policy, Rule, ScanOutcome, ScanReport, Selector,
+    Finding, IntegrationDescriptor, NativeKind, NativeTool, Operation, Pack, Policy, Rule,
+    ScanOutcome, ScanReport, Selector, Subject, ToolGap,
 };
-use kipple_platform::PLATFORM;
+use kipple_platform::{Environment, PLATFORM, PathTools};
 
 use crate::human::{self, bytes, escaped, size};
 use crate::json::{EvidenceOut, FindingOut};
@@ -159,11 +160,13 @@ fn selects(selector: &Selector) -> String {
     }
 }
 
-/// A scan's report and the policy its findings are judged by.
+/// A scan's report, the policy its findings are judged by, and the machine it scanned,
+/// whose files name the tool a finding's command would run.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Judged<'report> {
     pub(crate) report: &'report ScanReport,
     pub(crate) policy: &'report Policy,
+    pub(crate) env: &'report Environment,
 }
 
 /// Writes what was found at `path`, or that nothing was.
@@ -174,7 +177,11 @@ pub(crate) fn write_path(
     path: &Path,
     judged: Judged<'_>,
 ) -> io::Result<()> {
-    let Judged { report, policy } = judged;
+    let Judged {
+        report,
+        policy,
+        env,
+    } = judged;
     let findings = &report.findings;
     let wanted = comparable(path);
     let at = findings.iter().find(|f| comparable(&f.path) == wanted);
@@ -242,11 +249,39 @@ pub(crate) fn write_path(
     for human::Fact { label: name, text } in human::facts(finding, policy) {
         writeln!(out, "  {} {text}", label(ink, name))?;
     }
+    if let Some(line) = tool_line(finding, builtin, env) {
+        writeln!(out, "  {} {}", label(ink, "Tool"), escaped(&line))?;
+    }
     writeln!(out)?;
     match find_rule(builtin, &finding.rule.0) {
         Some(BuiltinRule { pack, rule }) => write_rule(out, ink, builtin, pack, rule),
         None => writeln!(out, "Found by {}.", finding.rule),
     }
+}
+
+/// The tool the finding's command would run, or why none can, worded as `doctor` words it:
+/// a version kipple hasn't verified is named, read from the tool's files, with the ones it
+/// runs. Nothing for a finding that runs no tool's command.
+fn tool_line(finding: &Finding, builtin: &Builtin, env: &Environment) -> Option<String> {
+    let facts = finding.facts.as_ref()?;
+    let Subject::Semantic(semantic) = &facts.supplied.subject else {
+        return None;
+    };
+    let tool = match semantic.kind {
+        NativeKind::NpmCacheClean => NativeTool::Npm,
+        NativeKind::GitWorktreeRemove => NativeTool::Git,
+    };
+    let unverified = semantic.tool.as_ref().err() == Some(&ToolGap::UnverifiedVersion);
+    let found = (unverified && tool == NativeTool::Npm)
+        .then(|| PathTools::new(env).npm_version_found())
+        .flatten();
+    let descriptor = builtin
+        .descriptors
+        .iter()
+        .find(|d| d.id == finding.integration);
+    let verified = descriptor.map_or(&[][..], |descriptor| descriptor.verified);
+    let said = human::outcome::native_tool(&semantic.tool, found.as_deref(), verified);
+    Some(format!("{} {said}", tool.program()))
 }
 
 /// What the scan couldn't cover, where the path may be after all.

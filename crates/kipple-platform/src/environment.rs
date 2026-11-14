@@ -62,4 +62,19 @@ impl Environment {
             .map(|(_, value)| value.as_os_str())
             .filter(|value| !value.is_empty())
     }
+
+    /// Every variable, empty ones included, in the order they were captured: for a tool
+    /// that reads a family of names in any case, such as npm's `npm_config_*`.
+    pub(crate) fn vars(&self) -> impl Iterator<Item = Var<'_>> {
+        self.vars.iter().map(|(name, value)| Var { name, value })
+    }
+}
+
+/// One variable of an [`Environment`].
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Var<'env> {
+    /// Its name, as it was set.
+    pub(crate) name: &'env OsStr,
+    /// Its value, possibly empty.
+    pub(crate) value: &'env OsStr,
 }

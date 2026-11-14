@@ -51,6 +51,15 @@ pub(crate) fn roots(file: &Path) -> Roots {
     roots
 }
 
+/// Whether `file` places npm's cache the way the platform does, from npm's variables and
+/// npmrc files below the environment's home and `PATH`, rather than at a path: a line
+/// `npm.cache = npmrc`. A test of what npm's configuration may reach runs the real reader.
+pub(crate) fn npm_cache_from_npmrc(file: &Path) -> bool {
+    lines(file)
+        .iter()
+        .any(|(name, value)| name == SymbolicRoot::NpmCache.name() && value == "npmrc")
+}
+
 /// The time a `now = <seconds since the Unix epoch>` line of `file` fixes, if any.
 pub(crate) fn now(file: &Path) -> Option<SystemTime> {
     let (_, value) = lines(file).into_iter().find(|(name, _)| name == "now")?;

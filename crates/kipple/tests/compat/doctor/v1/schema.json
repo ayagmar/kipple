@@ -411,7 +411,7 @@
           "type": "string"
         },
         "path": {
-          "description": "Where it was found on `PATH`.",
+          "description": "Where it was found on `PATH`: for npm, the `npm-cli.js` that would run.",
           "anyOf": [
             {
               "$ref": "#/$defs/PathOut"
@@ -422,10 +422,21 @@
           ]
         },
         "problem": {
-          "description": "Why the version probe failed.",
+          "description": "Why the version probe failed, or for npm why it can't be used.",
           "type": [
             "string",
             "null"
+          ]
+        },
+        "runtime": {
+          "description": "What runs it, when it is a script: npm's node.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PathOut"
+            },
+            {
+              "type": "null"
+            }
           ]
         },
         "version": {

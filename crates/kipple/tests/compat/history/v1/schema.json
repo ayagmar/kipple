@@ -1639,7 +1639,10 @@
         "tool-unknown-version",
         "tool-unverified-version",
         "tool-changed",
-        "tool-script"
+        "tool-script",
+        "tool-unknown-layout",
+        "tool-no-runtime",
+        "tool-unsupported-runtime"
       ]
     },
     "TotalsOut": {

@@ -17,11 +17,12 @@ use kipple_core::{
     Activity, Advice, Anchor, Apparent, CancelToken, Capabilities, Clock, CommandLines,
     Completeness, DirAccess, DirEntryMeta, Engine, EntryKind, EntryMeta, EventChannel, FactValue,
     Facts, FileIdentity, FileSystem, Finding, FrozenTree, FsProbe, GitGap, HeldPath, Hold,
-    IntegrationId, Inventory, Level, Lineage, Measurement, MountNamespace, NodeId, Now, Observer,
-    Omission, OwnerStatus, Platform, Policy, Ports, ProbeError, ProcessOutcome, ProcessOwner,
-    ProcessProbe, ProcessRecord, ProcessSnapshot, Proposal, Protection, Protections, Rescan as _,
-    ResolvedRoot, RootSource, Roots, ScanReport, ScanRequest, Sizer, Skip, SpaceEstimate,
-    SymbolicRoot, TrackedQuery, Unread, UnresolvedRoot, Verdict, event_channel,
+    IntegrationId, Inventory, Level, Lineage, Measurement, MountNamespace, NativeTool, NodeId, Now,
+    Observer, Omission, OwnerStatus, Platform, Policy, Ports, ProbeError, ProcessOutcome,
+    ProcessOwner, ProcessProbe, ProcessRecord, ProcessSnapshot, Proposal, Protection, Protections,
+    Rescan as _, ResolvedRoot, ResolvedTool, RootSource, Roots, ScanReport, ScanRequest, Sizer,
+    Skip, SpaceEstimate, SymbolicRoot, ToolGap, ToolResolver, TrackedQuery, Unread, UnresolvedRoot,
+    Verdict, event_channel,
 };
 
 use super::tree::FixtureTree;
@@ -46,6 +47,8 @@ const ROOTS: &[(SymbolicRoot, &str)] = &[
     (SymbolicRoot::PiHome, "home/.pi"),
     (SymbolicRoot::CursorConfig, "home/.cursor"),
     (SymbolicRoot::CursorAppData, "home/.config/Cursor"),
+    (SymbolicRoot::NpmCache, "home/.npm"),
+    (SymbolicRoot::NpmDefaultCache, "home/.npm"),
 ];
 
 /// `path` as the host takes it: Windows reads one with no drive as relative.
@@ -261,6 +264,28 @@ impl TrackedQuery for NoGit {
     }
 }
 
+/// What resolving npm gives, which a test can change between a scan and apply's reading.
+/// Every other tool is missing.
+type Npm = Arc<Mutex<Result<ResolvedTool, ToolGap>>>;
+
+#[derive(Debug)]
+struct Tools(Npm);
+
+impl ToolResolver for Tools {
+    fn resolve(&self, tool: NativeTool) -> Result<ResolvedTool, ToolGap> {
+        match tool {
+            NativeTool::Npm => self
+                .0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .clone(),
+            NativeTool::Git | NativeTool::Paccache | NativeTool::Journalctl => {
+                Err(ToolGap::Missing)
+            }
+        }
+    }
+}
+
 /// What the process probe shows, which a test can change between a scan and apply's reading.
 #[derive(Debug, Clone)]
 pub(crate) struct Processes {
@@ -369,6 +394,8 @@ pub(crate) struct Host {
     pub(crate) names: Names,
     /// Paths below the tree the OS refuses, `/`-separated.
     pub(crate) denied: Vec<String>,
+    /// What resolving npm gives: missing unless a test says otherwise.
+    pub(crate) npm: Result<ResolvedTool, ToolGap>,
     roots: BTreeMap<SymbolicRoot, Vec<String>>,
     unresolved: Vec<SymbolicRoot>,
 }
@@ -398,6 +425,7 @@ impl Host {
             platform: Platform::Linux,
             names: Names::AsTheDiskDoes,
             denied: Vec::new(),
+            npm: Err(ToolGap::Missing),
             roots,
             unresolved: Vec::new(),
         }
@@ -446,6 +474,7 @@ impl Host {
         };
         let reads = Reads::default();
         let shown = Arc::new(Mutex::new(self.processes));
+        let npm = Arc::new(Mutex::new(self.npm));
         let fs = TempFs {
             reads: Arc::clone(&reads),
             names: self.names,
@@ -455,7 +484,11 @@ impl Host {
                 .map(|path| below(self.temp.path(), path))
                 .collect(),
         };
-        let engine = engine(self.platform, self.now, &shown, fs);
+        let moved = Moved {
+            shown: &shown,
+            npm: &npm,
+        };
+        let engine = engine(self.platform, self.now, moved, fs);
         let cancel = CancelToken::new();
         let EventChannel { tx, rx } = event_channel(4096, &cancel);
         let report = engine.scan(&request, &tx, &cancel);
@@ -467,6 +500,7 @@ impl Host {
             request,
             reads,
             shown,
+            npm,
         }
     }
 }
@@ -477,19 +511,26 @@ fn below(base: &Path, relative: &str) -> PathBuf {
         .fold(base.to_owned(), |at, part| at.join(part))
 }
 
+/// What a test can change after the scan, shared with the engine's ports.
+#[derive(Debug, Clone, Copy)]
+struct Moved<'host> {
+    shown: &'host Shown,
+    npm: &'host Npm,
+}
+
 /// An engine with the integrations and rules of `platform`, as the binary composes one there.
 #[expect(
     clippy::unwrap_used,
     reason = "a host that can't be set up fails the test"
 )]
-fn engine(platform: Platform, now: SystemTime, shown: &Shown, fs: TempFs) -> Engine {
+fn engine(platform: Platform, now: SystemTime, moved: Moved<'_>, fs: TempFs) -> Engine {
     let ports = Ports {
         fs: Box::new(fs),
         sizer: Box::new(TimeSizer),
-        processes: Box::new(Snapshot(Arc::clone(shown))),
+        processes: Box::new(Snapshot(Arc::clone(moved.shown))),
         clock: Box::new(Fixed(now)),
         tracked: Box::new(NoGit),
-        tools: Box::new(kipple_core::Unavailable),
+        tools: Box::new(Tools(Arc::clone(moved.npm))),
         worktrees: Box::new(kipple_core::Unavailable),
     };
     let packs = builtin::packs(&semver::Version::new(0, 0, 0)).unwrap();
@@ -514,6 +555,7 @@ pub(crate) struct Scan {
     request: ScanRequest,
     reads: Reads,
     shown: Shown,
+    npm: Npm,
 }
 
 #[expect(
@@ -643,6 +685,11 @@ impl Scan {
     /// Changes what the process probe shows from here on.
     pub(crate) fn show(&self, change: impl FnOnce(&mut Processes)) {
         change(&mut self.shown.lock().unwrap_or_else(PoisonError::into_inner));
+    }
+
+    /// Changes what resolving npm gives from here on.
+    pub(crate) fn resolve_npm(&self, npm: Result<ResolvedTool, ToolGap>) {
+        *self.npm.lock().unwrap_or_else(PoisonError::into_inner) = npm;
     }
 
     /// What apply reads again about the finding at `relative`.
