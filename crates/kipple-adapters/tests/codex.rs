@@ -1,7 +1,7 @@
 //! Codex against upstream layouts built with `FixtureTree`: what each entry of its store and
 //! home is reported as, the facts supplied with it, and what stays closed
-//! (`docs/06-adapters-and-rules.md` §4, S5 codex §7). `builtin.codex.stale-releases` is
-//! `report` here, so its tests assert what is supplied and never a verdict.
+//! (`docs/06-adapters-and-rules.md` §4, S5 codex §7), how its releases settle, and what
+//! apply reads again (spec M4 pinned 11 to 14).
 #![expect(
     clippy::unwrap_used,
     clippy::indexing_slicing,
@@ -2212,4 +2212,118 @@ fn a_link_made_again_without_its_history_holds_at_apply() {
 
     let now = scan.now(ACTIVE).map(|now| now.settlement);
     assert_eq!(now, Ok(kept_blocked(GroupGap::HistoryStale)));
+}
+
+/// Catches a release removed on a fact the rule requires but didn't hold on while it was
+/// `report`, which proved none of them: a candidate of a sound store is Safe, and each
+/// fact that fails, and each settlement but a candidate's, holds it.
+#[test]
+fn each_release_fact_holds() {
+    let scan = verified().scan();
+    assert_eq!(scan.verdict(OLD), Verdict::Safe);
+    assert_eq!(scan.holds(ACTIVE), [Hold::Retained]);
+    assert_eq!(scan.holds(ROLLBACK), [Hold::Retained]);
+
+    let mut partial = verified();
+    partial.inventory = Inventory::Partial {
+        reason: "hidepid".to_owned(),
+    };
+    let mut staged = verified();
+    let staging = release(STANDALONE, &format!(".staging.{}.4242", name("0.167.0")));
+    staged.tree.dir(&at(&staging));
+    let mut stale = Scene::new();
+    stale
+        .releases(STANDALONE, &[V164, V165, V166])
+        .select(STANDALONE, &name(V166))
+        .history(STANDALONE, &name(V165), &name(V164));
+    for (case, scene, expected) in [
+        (
+            "an incomplete process list",
+            partial,
+            vec![Hold::UnknownActivity, Hold::Retained],
+        ),
+        (
+            "an install under way",
+            staged,
+            vec![Hold::Retained, Hold::FactUnmet],
+        ),
+        (
+            "a history of another selection",
+            stale,
+            vec![Hold::Retained],
+        ),
+    ] {
+        let held = scene.scan();
+        assert_eq!(held.holds(OLD), expected, "{case}");
+    }
+}
+
+/// Catches a level that lowers retention: Thorough keeps every release Balanced keeps.
+#[test]
+fn thorough_retains_the_same_releases() {
+    let scan = five_plus_three().scan();
+    let thorough = Policy {
+        level: kipple_core::Level::Thorough,
+        ..Policy::default()
+    };
+
+    for (path, _) in settlements(&scan) {
+        let balanced = scan.verdict(&path);
+        let at_thorough = scan.verdict_at(&path, &thorough);
+        assert_eq!(
+            balanced == Verdict::Safe,
+            at_thorough == Verdict::Safe,
+            "{path}: {balanced:?} at Balanced, {at_thorough:?} at Thorough"
+        );
+    }
+}
+
+/// Catches a frontend shown a release as Safe before its group settled: every update the
+/// scan streams for a release that isn't a candidate holds it.
+#[test]
+fn no_unsettled_release_is_ever_streamed_safe() {
+    for scene in [five_plus_three(), verified(), before_the_switch()] {
+        let scan = scene.scan();
+        let rules: std::collections::BTreeMap<_, _> = scan
+            .report
+            .findings
+            .iter()
+            .map(|finding| (finding.id, (&finding.rule, &finding.path)))
+            .collect();
+        let mut releases = 0;
+        for event in &scan.events {
+            let kipple_core::ScanEvent::FindingUpdated { id, facts, .. } = event else {
+                continue;
+            };
+            if !matches!(facts.supplied.subject, kipple_core::Subject::Release(_)) {
+                continue;
+            }
+            releases += 1;
+            let (rule, path) = rules[id];
+            let verdict = Policy::default().verdict(rule, path, facts);
+            if facts.settlement != CANDIDATE {
+                assert_ne!(verdict, Verdict::Safe, "{path:?}: {:?}", facts.settlement);
+            }
+        }
+        assert!(releases > 0, "expected releases streamed");
+    }
+}
+
+/// Catches a scan touching the installer's lock: only apply takes it (`docs/04-safety-model.md`
+/// §3.1), so a scan never opens it, and a lock held elsewhere doesn't change what it finds.
+#[test]
+fn scan_takes_no_lock() {
+    let mut scene = verified();
+    scene.store(DAEMON, &[V164, V165, V166], V166, V165);
+    scene.tree.file(&at("app-server-daemon/daemon.lock"), b"");
+
+    let scan = scene.scan();
+
+    let opened = scan.opened();
+    let locks: Vec<&String> = opened
+        .iter()
+        .filter(|path| path.to_ascii_lowercase().ends_with(".lock"))
+        .collect();
+    assert_eq!(locks, Vec::<&String>::new(), "no lock opened");
+    assert_eq!(scan.facts(OLD).settlement, CANDIDATE);
 }

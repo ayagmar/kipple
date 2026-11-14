@@ -137,9 +137,9 @@ How the codes apply to the cases the table leaves open: a value outside a fixed 
 
 ## 4. Hard cases
 
-### Codex stale releases (keep active + running + pending + 1 per component/channel)
+### Codex stale releases (keep upstream's keep set, and never less)
 
-Today `builtin.codex.stale-releases` is a `report` rule with no requirements and no retention: kipple reads both release stores, supplies the facts below and reports each release, and removes none. The rule below is what it becomes when releases are removed (M4b), and its `requirements` and `retention` are not accepted on a `report` rule until then.
+On Linux `builtin.codex.stale-releases` removes the releases retention lets go, one item per release directory, through `remove-verified-release`, which plans like `remove-files`. On macOS and Windows it reports: no lock kipple knows to match Codex's installer is held there, and `builtin.codex.release-inventory` reports Windows's releases. Codex prunes its own stores at each install since 0.164.0, so on a current store this rule usually finds nothing; it cleans what that prune skipped.
 
 ```toml
 [[rule]]
@@ -148,8 +148,9 @@ integration = "codex"
 title = "Codex releases"
 category = "release-install"
 description = "Releases left after an update. The selected, previous, running and pending releases are always kept."
-why = "Codex keeps every downloaded release after self-updating."
-loss = "The removed versions; Codex re-downloads a version only if you install it again."
+why = "Codex keeps the selected and previous release and prunes the rest when it installs, but skips that when it can't prove a release is unused, and never on Windows."
+loss = "The removed versions. Codex downloads one again only if you install it."
+platforms = ["linux"]
 
 [rule.scope]
 root = "codex.release-store"
@@ -159,6 +160,7 @@ selection = "verified-release-directories"
 layout = "supported"
 inventory = "complete"
 installer_activity = "idle"
+"codex.version_supported" = "supported"
 
 [rule.retention]
 group_by = ["component", "target"]
@@ -170,23 +172,28 @@ unparsable_version = "keep"
 
 [rule.operation]
 kind = "remove-verified-release"
-methods = ["delete"]
-
-[rule.selection]
-default = "unselected"
+methods = ["delete", "trash"]
 ```
 
-Semantics:
-- Kept per group: every active target, every release with a running executable, every pending install, plus the newest remaining release.
-- A malformed `current` link blocks its group. Unknown version directories are kept.
-- At apply, activity and the `current` target are re-probed, and the target set can only shrink.
+`[rule.retention]` only states what the host keeps: each key is fixed, and a rule that says otherwise is refused. There is no `keep_additional`: on Linux and macOS Codex's next install deletes whatever is kept beyond this set.
 
-Fixtures needed:
+Semantics (`kipple-core/src/retention.rs`, `engine/settle.rs`):
+- A group is a component (`standalone`, `app-server-daemon`) and a target. Kept in each: the release `current` selects, the `previous` that `selection-history` names, every release a process runs, and one an install is bringing in. When the history names no rollback in a group, the newest release left there stays, a prerelease ordering below its release.
+- A release runs when a process's executable lies anywhere under its directory, helpers such as `codex-path/rg` included, or when a process runs a file with the identity of one of its files from elsewhere, as through a hard link. Never by name.
+- What a component records answers for all of its groups. A `current` or `selection-history` that can't be relied on, an install marker (`.staging.*`, `.current.*`, `.migration-current`, `install.lock.d`, `install-lock-*`), a part of the store that can't be read, a process under `.retired.*` and a process that may run any of its releases but can't be inspected each keep every release of the component, as each stops Codex's own prune. A version that can't be ordered keeps its group, and a group with a member left unmeasured stays unsettled, which holds it.
+- A release that fails §3's signature, `local-*`, `.retired.*` and `.staging.*` is never a candidate. A mount inside a release, a same-device bind mount included (Linux compares `statx` mount IDs), fails the signature.
+- The scan takes no lock. Apply takes Codex's locks for one item without waiting and without creating them: `install.lock`, and `app-server-daemon/daemon.lock` for the daemon's store. A missing or held lock skips the item as `installer-busy`. Then it freezes the release, reads the release and every release of its component again (links, history, manifests and listing), takes one new process snapshot and settles them with the scan's code, so the set only shrinks.
+
+Fixtures (`crates/kipple-adapters/tests/codex.rs`, `crates/kipple-core/tests/retention.rs`, `crates/kipple-core/tests/apply/releases.rs`, `crates/kipple-platform/tests/store_lock.rs`, `crates/kipple/tests/codex_gate.rs`):
 - active v3 with stopped v2 and v1 keeps v3 and v2
-- active v3, running v1, stopped v2 and v0 keeps v3, v1 and v2
+- active v3, running v1, stopped v2 keeps v3, v1 and v2
 - the standalone and app-server-daemon groups keep their own rollbacks
+- 5+3 releases with one older running (docs/11 M4 Verify): the active, running and rollback releases are kept
+- a pruned store has no candidates; a rollback older than another release is kept, not the newest
 - a link that changes before apply protects the new release
-- incomplete process inventory blocks the group
+- incomplete process inventory, `hidepid`, an uninspectable Codex process, a malformed `current` and a staging directory block the group
+- a held or missing install lock, and a held daemon lock, skip the release
+- a property over generated stores: settle never keeps less than a model of Codex's prune
 
 ### Git worktrees (any agent)
 

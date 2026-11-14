@@ -1,6 +1,7 @@
-//! The gate of Codex's two removing rules: `builtin.codex.legacy-tui-log` and
-//! `builtin.codex.plugin-catalog-cache` on the real probe and the real executor, over a store
-//! whose `selection-history` was written from a real `lstat`. Everything is below a temp dir
+//! The gate of Codex's removing rules: `builtin.codex.legacy-tui-log`,
+//! `builtin.codex.plugin-catalog-cache` and `builtin.codex.stale-releases` on the real
+//! probe, the real locks and the real executor, over a store whose `selection-history` was
+//! written from a real `lstat`. Everything is below a temp dir
 //! and no process is looked at, so it runs on every OS with the rest of the tests: the
 //! adapters' own tests script the stamp and never remove anything.
 #![expect(
@@ -29,11 +30,11 @@ use kipple_adapters::builtin;
 use kipple_core::{
     ApplyPorts, CancelToken, CleanRequest, Clock, Confirmed, DirEntryMeta, Ending, Engine,
     EntryMeta, EventChannel, Finding, Finished, FsProbe, GroupGap, HeldPath, IntegrationId,
-    Inventory, Judge, Lineage, Method, Methods, MutationPorts, Observer, PlanMode, Platform,
-    Policy, Ports, ProbeError, ProcessProbe, ProcessSnapshot, Protections, ReleaseFacts,
-    ReleaseRole, ReleaseState, ResolvedRoot, RootSource, Roots, Rule, ScanReport, ScanRequest,
-    Selection, Session, Subject, SymbolicRoot, Unavailable, event_channel, prepare_clean,
-    run_prepared,
+    Inventory, ItemOutcome, Judge, Lineage, LockGap, Method, Methods, MutationPorts, Observer,
+    PlanMode, Platform, Policy, Ports, ProbeError, ProcessProbe, ProcessSnapshot, Protections,
+    ReleaseFacts, ReleaseRole, ReleaseState, ResolvedRoot, RootSource, Roots, Rule, ScanReport,
+    ScanRequest, Selection, Session, Skip, StoreLocks as _, Subject, SymbolicRoot, Unavailable,
+    event_channel, prepare_clean, run_prepared,
 };
 use kipple_platform::{
     ConfinedFs, ConfinedTrash, Environment, FileLocks, FileRunStore, GitQuery, NativeCommands,
@@ -400,4 +401,53 @@ fn a_stamp_the_os_cant_give_blocks_every_group() {
             "{version}"
         );
     }
+}
+
+/// The release the demo's store holds beside its selected and rollback ones, relative to
+/// the home.
+const STALE_RELEASE: &str = "packages/standalone/releases/0.164.0-x86_64-unknown-linux-musl";
+
+/// Catches the release rule failing where only real files show it: the release retention
+/// lets go is removed under Codex's own install lock by the real executor, the selected
+/// and rollback releases stay, and while another holder has the lock nothing is removed.
+#[test]
+fn the_stale_release_goes_under_codexs_lock() {
+    if PLATFORM != Platform::Linux {
+        return;
+    }
+    let gate = Gate::new();
+    let report = gate.scan(Box::new(NoFollowFs), rules_of(PLATFORM));
+    let finding = at(&gate, &report, STALE_RELEASE);
+    assert_eq!(finding.rule.0, "builtin.codex.stale-releases");
+    let lock = gate.temp.path().join(STORE).join("install.lock");
+    let installer = FileLocks.try_hold(std::slice::from_ref(&lock)).unwrap();
+
+    let busy = gate.delete(&report, finding);
+
+    assert_eq!(
+        busy.receipt.items[0].outcome,
+        ItemOutcome::Skipped(Skip::InstallerBusy(LockGap::Held))
+    );
+    assert!(present(&gate.home().join(STALE_RELEASE)), "kept while held");
+    drop(installer);
+
+    let finished = gate.delete(&report, finding);
+
+    assert_eq!(finished.ending, Ending::Done, "{finished:#?}");
+    assert!(
+        !present(&gate.home().join(STALE_RELEASE)),
+        "the stale release is gone"
+    );
+    let releases = gate.home().join("packages/standalone/releases");
+    let left: BTreeSet<String> = fs::read_dir(releases)
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(
+        left,
+        BTreeSet::from([
+            "0.165.0-x86_64-unknown-linux-musl".to_owned(),
+            "0.166.0-x86_64-unknown-linux-musl".to_owned(),
+        ])
+    );
 }

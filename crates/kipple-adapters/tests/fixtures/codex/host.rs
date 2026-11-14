@@ -27,8 +27,9 @@ use kipple_core::{
     Inventory, Lineage, Measurement, Mount, MountNamespace, NodeId, Now, Observer, Omission,
     OwnerStatus, Owners, Platform, Policy, Ports, ProbeError, ProcessOutcome, ProcessOwner,
     ProcessProbe, ProcessRecord, ProcessSnapshot, Protections, ReleaseFacts, Rescan as _,
-    ResolvedRoot, RootSource, Roots, ScanReport, ScanRequest, Sizer, Skip, SpaceEstimate, Subject,
-    SymbolicRoot, TrackedQuery, Unread, UnresolvedRoot, Verdict, event_channel,
+    ResolvedRoot, RootSource, Roots, ScanEvent, ScanReport, ScanRequest, Sizer, Skip,
+    SpaceEstimate, Subject, SymbolicRoot, TrackedQuery, Unread, UnresolvedRoot, Verdict,
+    event_channel,
 };
 
 /// Where the Codex home is in a tree, as it is by default.
@@ -673,12 +674,14 @@ impl Built {
         let cancel = CancelToken::new();
         let EventChannel { tx, rx } = event_channel(4096, &cancel);
         let report = engine.scan(&request, &tx, &cancel);
-        drop(rx);
+        drop(tx);
+        let events = rx.map(|sequenced| sequenced.event).collect();
         Scan {
             built: Rc::clone(self),
             engine,
             request,
             report,
+            events,
         }
     }
 
@@ -725,6 +728,8 @@ pub(crate) struct Scan {
     engine: Engine,
     request: ScanRequest,
     pub(crate) report: ScanReport,
+    /// What the scan streamed, in order.
+    pub(crate) events: Vec<ScanEvent>,
 }
 
 impl Scan {
@@ -830,9 +835,14 @@ impl Scan {
 
     /// The verdict at `path`, under the default policy.
     pub(crate) fn verdict(&self, path: &str) -> Verdict {
+        self.verdict_at(path, &Policy::default())
+    }
+
+    /// The verdict at `path`, under `policy`.
+    pub(crate) fn verdict_at(&self, path: &str, policy: &Policy) -> Verdict {
         let finding = self.finding(path);
         let facts = finding.facts.as_ref().unwrap();
-        Policy::default().verdict(&finding.rule, &finding.path, facts)
+        policy.verdict(&finding.rule, &finding.path, facts)
     }
 
     /// Why `path` is held, if it is.

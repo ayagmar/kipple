@@ -294,9 +294,8 @@ rules = ["builtin.node.node-modules"]
 [review]
 confirm_by_typing_above = "5 GB"
 
-# Not supported yet: kipple exits 2 on this until it is built.
-# [retention]
-# "builtin.codex.stale-releases" = { keep_additional = 1 }
+# Not supported: kipple exits 2 on a [retention] table. A release's tool prunes
+# whatever kipple would keep beyond its own keep set.
 
 # Every built-in rule can be tuned or switched off.
 [rules."builtin.node.node-modules"]
@@ -367,7 +366,7 @@ Exits 2 with the line and column: an unknown action or key name, two entries tak
 | `rules.<id>.level` | string | the three levels | overrides `care.level` for this rule |
 | `rules.<id>.recent_days` | integer | 1–365 | can only lengthen the effective window (04 §2a): the window is the longest of the level's, the rule's and this one. A shorter value is accepted but has no effect; `doctor` doesn't warn about it yet |
 | `rules.<id>.method` | string | one of the rule's `operation.methods` | not supported yet |
-| `retention.<id>.*` | per rule | ≥ the rule's defaults | not supported yet; can only keep more |
+| `retention.<id>.*` | per rule | | not supported: a release's tool prunes whatever kipple would keep beyond its own keep set |
 | `review.confirm_by_typing_above` | integer or string | whole bytes, or a number with `B`, `KB`, `MB`, `GB`, `TB` (powers of 1000) or `KiB`, `MiB`, `GiB`, `TiB` (powers of 1024) | above it, a clean asks for the plan's size to be typed instead of `y`, in the TUI and on the command line (J3); `--yes` ignores it. Read by `kipple clean`, `kipple apply` and the TUI, and shown by `config show` |
 
 `clean.method` is the method `clean`, `plan` and the TUI's clean use when `--method` isn't given. A key listed as not supported yet exits 2 with that message.
@@ -381,7 +380,7 @@ Precedence:
 
 Unknown keys and invalid values exit with code 2. No override can relax required facts, grants, protected sets, retention protections or any invariant in 04 §3.
 
-Exclusions are persistent and honoured by every frontend and automation. `retention` overrides can only keep *more* than a rule's default, never less than its protections.
+Exclusions are persistent and honoured by every frontend and automation. There are no `retention` overrides: a rule keeps what its tool keeps, and never less.
 
 ## 7. State on disk
 
