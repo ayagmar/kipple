@@ -6,15 +6,20 @@ mod removing;
 
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+#[cfg(unix)]
+use std::path::PathBuf;
 
 use kipple_core::{
-    CancelToken, Checkout, FactValue, Registration, RegistrationState, Roots, SymbolicRoot,
-    WorktreeQuery as _,
+    CancelToken, Checkout, FactValue, Registration, RegistrationState, WorktreeQuery as _,
 };
+#[cfg(unix)]
+use kipple_core::{Roots, SymbolicRoot};
 use kipple_platform::GitQuery;
 
-use crate::repo::{Refs, Repo, Scan, scan_of, write};
+#[cfg(unix)]
+use crate::repo::scan_of;
+use crate::repo::{Refs, Repo, Scan, write};
 
 /// Catches a false block: every row reads clear on a clean worktree, or nothing could
 /// ever be eligible once m4c gives these rules predicates.

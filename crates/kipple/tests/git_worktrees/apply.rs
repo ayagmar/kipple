@@ -12,12 +12,14 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use kipple_adapters::builtin;
+#[cfg(unix)]
+use kipple_core::{Anchor, Freezer as _, RelPath, VerifiedRoot};
 use kipple_core::{
-    Anchor, ApplyPorts, CancelToken, CleanRequest, Confirmed, Engine, EventChannel, Finding,
-    Finished, Freezer as _, FsProbe as _, HeldPath, ItemOutcome, Judge, Lineage, Methods,
-    MutationPorts, NativeTool, Plan, PlanMode, Platform, Policy, Ports, Prepared, RelPath,
-    ResolvedRoot, ResolvedTool, RootSource, Roots, Rule, ScanRequest, Selection, Session,
-    SymbolicRoot, ToolGap, ToolResolver, VerifiedRoot, event_channel, prepare_clean, run_prepared,
+    ApplyPorts, CancelToken, CleanRequest, Confirmed, Engine, EventChannel, Finding, Finished,
+    FsProbe as _, HeldPath, ItemOutcome, Judge, Lineage, Methods, MutationPorts, NativeTool, Plan,
+    PlanMode, Platform, Policy, Ports, Prepared, ResolvedRoot, ResolvedTool, RootSource, Roots,
+    Rule, ScanRequest, Selection, Session, SymbolicRoot, ToolGap, ToolResolver, event_channel,
+    prepare_clean, run_prepared,
 };
 use kipple_platform::{
     ConfinedFs, ConfinedTrash, Environment, FileLocks, FileRunStore, GitQuery, NativeCommands,
@@ -40,17 +42,20 @@ pub(crate) enum Tool {
     /// The one `PATH` finds, resolved as kipple resolves it.
     Found,
     /// A program the test wrote, standing in for git's executable.
+    #[cfg(unix)]
     Program(PathBuf),
 }
 
 /// A program the test wrote, resolved as it is now, with the version of the git it stands
 /// in for: the scan and the apply each resolve it, and must agree.
 #[derive(Debug)]
+#[cfg(unix)]
 struct Written {
     path: PathBuf,
     version: String,
 }
 
+#[cfg(unix)]
 impl ToolResolver for Written {
     fn resolve(&self, tool: NativeTool) -> Result<ResolvedTool, ToolGap> {
         if tool != NativeTool::Git {
@@ -131,6 +136,7 @@ impl ToolResolver for Counted {
 }
 
 /// The file at `path` as the executor reads it, frozen from the directory holding it.
+#[cfg(unix)]
 fn frozen(path: &Path) -> Option<kipple_core::EntrySnapshot> {
     let parent = path.parent()?;
     let identity = |at: &Path| NoFollowFs.metadata(at).ok()?.identity;
@@ -160,30 +166,32 @@ pub(crate) struct Removal<'repo> {
 impl Repo {
     /// Its removals, on this OS's rules, by the git `PATH` finds.
     pub(crate) fn removal(&self) -> Removal<'_> {
-        self.removal_with(pack::on(PLATFORM), Tool::Found)
+        self.removal_with(pack::on(PLATFORM), &Tool::Found)
     }
 
     /// Its removals by the rules of `platform`, wherever the test runs.
     pub(crate) fn removal_on(&self, platform: Platform) -> Removal<'_> {
-        self.removal_with(pack::on(platform), Tool::Found)
+        self.removal_with(pack::on(platform), &Tool::Found)
     }
 
     /// Its removals run by the program at `program`, on this OS's rules.
+    #[cfg(unix)]
     pub(crate) fn removal_by(&self, program: &Path) -> Removal<'_> {
-        self.removal_with(pack::on(PLATFORM), Tool::Program(program.to_owned()))
+        self.removal_with(pack::on(PLATFORM), &Tool::Program(program.to_owned()))
     }
 
     /// Its removals run by the program at `program`, every question to git asked in `env`.
+    #[cfg(unix)]
     pub(crate) fn removal_through(&self, env: Environment, program: &Path) -> Removal<'_> {
         Removal::new(
             self,
             env,
             pack::on(PLATFORM),
-            Tool::Program(program.to_owned()),
+            &Tool::Program(program.to_owned()),
         )
     }
 
-    fn removal_with(&self, rules: Vec<Rule>, tool: Tool) -> Removal<'_> {
+    fn removal_with(&self, rules: Vec<Rule>, tool: &Tool) -> Removal<'_> {
         Removal::new(self, self.env(), rules, tool)
     }
 
@@ -201,11 +209,12 @@ impl Repo {
     reason = "a fixture that fails to build fails the test"
 )]
 impl<'repo> Removal<'repo> {
-    fn new(repo: &'repo Repo, env: Environment, rules: Vec<Rule>, tool: Tool) -> Self {
+    fn new(repo: &'repo Repo, env: Environment, rules: Vec<Rule>, tool: &Tool) -> Self {
         let inner: Box<dyn ToolResolver> = match tool {
             Tool::Found => Box::new(PathTools::new(&env)),
+            #[cfg(unix)]
             Tool::Program(path) => Box::new(Written {
-                path,
+                path: path.clone(),
                 version: repo.real_git().version,
             }),
         };
@@ -235,6 +244,7 @@ impl<'repo> Removal<'repo> {
     }
 
     /// The project root opened at `root`, a spelling of the test's `projects`.
+    #[cfg(unix)]
     pub(crate) fn projects_at(mut self, root: PathBuf) -> Self {
         self.projects = root;
         self

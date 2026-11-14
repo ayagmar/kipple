@@ -3,13 +3,14 @@
 //! runs takes the checkout and nothing else. The removal ships on Linux alone, so a test
 //! that removes returns early elsewhere; one that only judges runs Linux's rules anywhere.
 
-use std::fs;
 use std::path::Path;
 
 use kipple_core::{
-    Confirmed, Ending, Execution, FactValue, Finding, ItemOutcome, Level, NativeArg, NativeKind,
-    PlanEntry, PlanMode, Platform, Policy, Proposal, Skip, Verdict,
+    Confirmed, Ending, FactValue, Finding, ItemOutcome, Level, NativeKind, PlanMode, Platform,
+    Policy, Proposal, Skip, Verdict,
 };
+#[cfg(unix)]
+use kipple_core::{Execution, NativeArg, PlanEntry};
 
 use super::{CASES, Case, Repo, Scan, write};
 use crate::apply::{Approval, Between, REMOVE, removes_here};
@@ -173,6 +174,7 @@ fn gate_ran_on_the_expected_git() {
 }
 
 /// The removal's arguments in the plan the person saw.
+#[cfg(unix)]
 #[expect(clippy::panic, reason = "an item that isn't native fails the test")]
 pub(super) fn reviewed_argv(ran: &crate::apply::Ran) -> Vec<NativeArg> {
     let entries = ran.plan.entries();
@@ -416,6 +418,7 @@ fn sync_covers_the_parent_and_registration_dirs() {
 #[cfg(unix)]
 #[test]
 fn partial_removal_is_indeterminate() {
+    use std::fs;
     use std::os::unix::fs::PermissionsExt as _;
 
     if !removes_here() {
