@@ -179,6 +179,10 @@ pub enum SettingProblem {
     /// It includes other files, which kipple doesn't read, and one of them may set it.
     #[error("includes other files where the setting may be, which kipple doesn't read")]
     Includes,
+    /// It sets the root in a way kipple can't follow, said without quoting it: a config
+    /// file can hold credentials beside the setting.
+    #[error("{0}")]
+    Unusable(&'static str),
 }
 
 /// Why a root has no path. Every one of these makes the root unknown: kipple never

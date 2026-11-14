@@ -21,6 +21,7 @@ use self::tool_path::{Tool, folded};
 use crate::environment::Environment;
 use crate::fs_probe::exact;
 use crate::os::{self, ConfigFile};
+use crate::tools::{self, npmrc};
 
 /// The config file's name inside kipple's config directory.
 pub const CONFIG_FILE: &str = "config.toml";
@@ -334,9 +335,29 @@ fn agent_roots(env: &Environment, roots: &mut Roots) {
         roots.add(SymbolicRoot::PiSessionDir, resolved);
     }
     cursor_roots(env, roots);
+    let cache = npm_cache(env, roots);
+    roots.insert(SymbolicRoot::NpmCache, cache);
     for resolved in agent_locations(roots) {
         roots.add(SymbolicRoot::GitAgentLocations, resolved);
     }
+}
+
+/// npm's cache, where its variables and npmrc files put it, read as the npm found first on
+/// `PATH` reads them (`tools/npmrc.rs`). Anything kipple can't read as npm does leaves it
+/// unknown, which holds npm's own findings; `npm.default-cache` stays closed either way.
+fn npm_cache(env: &Environment, roots: &Roots) -> Result<ResolvedRoot, UnresolvedRoot> {
+    let home = match roots.get(SymbolicRoot::Home) {
+        Some(Ok(home)) => Some(home.path.as_path()),
+        Some(Err(_)) | None => None,
+    };
+    let install = tools::configured_npm(env);
+    let reading = npmrc::Reading {
+        env,
+        home,
+        install: install.as_ref(),
+    };
+    let placed = npmrc::cache(&reading)?;
+    configured_dir(SymbolicRoot::NpmCache, placed.path, placed.source)
 }
 
 /// Where Cursor's config may also be, past the default paths: `$CURSOR_CONFIG_DIR`, and its
