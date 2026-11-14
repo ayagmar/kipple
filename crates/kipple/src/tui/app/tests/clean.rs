@@ -176,12 +176,14 @@ impl Home {
             received.for_each(drop);
             scan.join().unwrap()
         });
-        // The projects' findings only, in path order: the system's differ by system.
+        // The projects' findings only, in path order: the system's differ by system, and
+        // so do the worktrees, by what its git can say.
         report.findings.retain(|finding| {
-            finding
-                .path
-                .ancestors()
-                .any(|above| above.ends_with("home/projects"))
+            finding.integration != IntegrationId::GIT
+                && finding
+                    .path
+                    .ancestors()
+                    .any(|above| above.ends_with("home/projects"))
         });
         report.findings.sort_by(|a, b| a.path.cmp(&b.path));
         for (finding, mib) in report.findings.iter_mut().zip((1..).map(|n: u64| 8 * n)) {
@@ -685,9 +687,9 @@ fn a_clean_shows_what_its_plan_frees_and_not_the_selections_total() {
 
     let shown = text(&app, 80, 24);
     let frees = if REVIEW_FINDINGS {
-        "delete 176.0 MiB in 2 items"
+        "delete 112.0 MiB in 2 items"
     } else {
-        "delete 72.0 MiB in 1 item"
+        "delete 40.0 MiB in 1 item"
     };
     assert!(shown.contains(frees), "{shown}");
     assert!(!shown.contains("frees"), "{shown}");
