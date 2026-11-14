@@ -2344,3 +2344,23 @@ fn a_release_the_apply_scan_left_unread_leaves_the_group_unsettled() {
 
     assert_eq!(now, Ok(Settlement::Unsettled));
 }
+
+/// Catches apply trusting the scan's process list once the probe fails: a list with gaps
+/// at apply keeps every release of the component, and a Codex started since keeps its own.
+#[test]
+fn a_process_list_read_again_at_apply_decides() {
+    let scan = verified().scan();
+    assert_eq!(scan.facts(OLD).settlement, CANDIDATE);
+
+    scan.show(|shown| shown.running.push(at(&format!("{OLD}/bin/codex"))));
+    assert_eq!(scan.now(OLD).map(|now| now.settlement), Ok(KEPT_RUNNING));
+
+    scan.show(|shown| {
+        shown.running.clear();
+        shown.inventory = Inventory::Partial {
+            reason: "hidepid".to_owned(),
+        };
+    });
+    let now = scan.now(OLD).map(|now| now.settlement);
+    assert_eq!(now, Ok(kept_blocked(GroupGap::ActivityUnknown)));
+}
