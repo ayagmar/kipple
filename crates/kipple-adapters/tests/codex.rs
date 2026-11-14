@@ -1165,6 +1165,32 @@ fn running_codex_holds_catalog_and_log() {
     }
 }
 
+/// Catches a `.migration-current` that can't be read passing for no install in progress:
+/// the release it names is about to be selected.
+#[test]
+fn unreadable_migration_marker_blocks_the_group() {
+    let mut scene = Scene::new();
+    scene.store(DAEMON, &[V164, V165, V166], V166, V165);
+    let marker = at(&format!("{}/.migration-current", component(DAEMON)));
+    scene.tree.link(
+        &marker,
+        &at(&release(DAEMON, &name(V164))),
+        Holds::AbsoluteInTree,
+    );
+    scene.denied.push(marker);
+
+    let scan = scene.scan();
+
+    for version in [V164, V165, V166] {
+        let path = release(DAEMON, &name(version));
+        assert_eq!(
+            scan.release(&path).state,
+            blocked(GroupGap::Unreadable),
+            "{version}"
+        );
+    }
+}
+
 /// Catches a removing rule reaching another OS, where nothing here was verified on a real
 /// store, or an OS's selected release being offered for review.
 #[test]

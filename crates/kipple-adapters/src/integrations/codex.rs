@@ -918,8 +918,30 @@ impl Component {
             }
             Err(gap) => self.block(gap),
         }
-        let migration = cx.read_link(&self.dir.join(".migration-current"));
-        self.pending = migration.ok().and_then(|to| landed(&self.dir, &to));
+        match self.migration(cx) {
+            Ok(Some(to)) => {
+                self.busy = true;
+                self.pending = landed(&self.dir, &to);
+            }
+            Ok(None) => {}
+            Err(gap) => self.block(gap),
+        }
+    }
+
+    /// What `.migration-current` names: `None` when it isn't there. Anything else there is
+    /// an install under way that names nothing kipple can read, and a marker that can't be
+    /// read may name any release, so neither reads as no pending install.
+    fn migration(&self, cx: &ScanContext<'_>) -> Result<Option<PathBuf>, GroupGap> {
+        let marker = self.dir.join(".migration-current");
+        match cx.metadata(&marker) {
+            Ok(meta) if meta.kind == EntryKind::Symlink => {}
+            Ok(_) => return Err(GroupGap::InstallerBusy),
+            Err(error) if error.io_kind() == Some(std::io::ErrorKind::NotFound) => return Ok(None),
+            Err(_) => return Err(GroupGap::Unreadable),
+        }
+        cx.read_link(&marker)
+            .map(Some)
+            .map_err(|_| GroupGap::Unreadable)
     }
 
     /// The name `current` selects, when that is a release of this component.
