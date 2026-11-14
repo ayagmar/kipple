@@ -22,8 +22,8 @@ use kipple_core::{
     OwnerStatus, Platform, Policy, Ports, Predicate, ProbeError, ProcessOutcome, ProcessProbe,
     ProcessRecord, ProcessSnapshot, Proposal, Protections, Recovery, Registration,
     RegistrationState, ReleaseFacts, ReleaseGroup, ReleaseRole, ReleaseState, ReleaseVersion,
-    RepositoryDir, Rescan as _, ResolvedRoot, Retention, RootLink, RootSource, Roots, Rule, RuleId,
-    RuleText, ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Selector,
+    RepositoryDir, Rescan as _, ResolvedRoot, Retained, Retention, RootLink, RootSource, Roots,
+    Rule, RuleId, RuleText, ScanContext, ScanEvent, ScanOutcome, ScanReport, ScanRequest, Selector,
     SemanticFacts, Settlement, Sizer, Skip, SpaceEstimate, StateDeclaration, Subject, Supplied,
     SymbolicRoot, Test, ToolGap, Tracked, TrackedQuery, Unresolved, UnresolvedRoot, Verdict,
     WalkGap, WorktreeFacts, event_channel,
@@ -108,6 +108,7 @@ impl FsProbe for FakeFs {
             Ok(kind) => Ok(EntryMeta {
                 kind,
                 identity: self.identities.get(path).copied(),
+                mount: kipple_core::Mount::ByDevice,
             }),
             Err(kind) => Err(ProbeError::io(path, kind.into())),
         }
@@ -2333,7 +2334,8 @@ fn a_finding_that_is_not_plain_is_announced_once_and_stays_held() {
     let [facts] = updates.as_slice() else {
         panic!("one update, got {updates:?}");
     };
-    assert_eq!(facts.settlement, Settlement::Unsettled);
+    // The only release of its group is the newest left there, so it stays in its place.
+    assert_eq!(facts.settlement, Settlement::Retained(Retained::NewestLeft));
     assert!(
         matches!(events.last(), Some(ScanEvent::ScanCompleted { .. })),
         "the scan ends last, got {:?}",

@@ -15,11 +15,13 @@ use crate::cancel::CancelToken;
 use crate::discovery::Walks;
 use crate::event::event_channel;
 use crate::facts::{Evaluated, unmet};
-use crate::integration::{IntegrationId, ScanContext};
+use crate::integration::{
+    Integration, IntegrationError, IntegrationId, Listed, Reread, ScanContext,
+};
 use crate::outcome::Skip;
 use crate::planner::Unjudged;
-use crate::policy::{Activity, ActivityGap, Hold, Unmet};
-use crate::retention::Settlement;
+use crate::policy::{Activity, ActivityGap, Facts, Hold, Unmet};
+use crate::retention::{GroupGap, ReleaseState, Retained, Settlement};
 use crate::root::ResolvedRoot;
 use crate::size::SpaceEstimate;
 use crate::supplied::{Subject, Supplied};
@@ -103,15 +105,36 @@ impl Engine {
         }
     }
 
-    /// What `finding`'s integration reads again now, `None` when it reads nothing. One that
-    /// fails or panics holds the item: an unread fact is never taken for a good one.
-    fn revisit(
+    /// What `at.finding`'s integration reads again now, `None` when it reads nothing. One
+    /// that fails or panics holds the item: an unread fact is never taken for a good one.
+    fn revisit(&self, at: &Reading<'_>) -> Result<Option<Supplied>, Skip> {
+        self.read_again(at, &|integration, cx| integration.revisit(cx, at.finding))
+    }
+
+    /// Everything `at.finding`'s integration reads again now that the finding is decided
+    /// among, in one reading ([`Integration::revisit_group`]), with the same holds as
+    /// [`revisit`].
+    ///
+    /// [`revisit`]: Self::revisit
+    fn revisit_group(&self, at: &Reading<'_>) -> Result<Option<Vec<Reread>>, Skip> {
+        self.read_again(at, &|integration, cx| {
+            integration.revisit_group(cx, at.finding)
+        })
+    }
+
+    /// What `read` gives through `at.finding`'s integration, with the context the apply
+    /// scan opened for it. A failure or a panic holds the item.
+    fn read_again<T>(
         &self,
-        request: &ScanRequest,
-        scan: &ScanReport,
-        finding: &Finding,
-        cancel: &CancelToken,
-    ) -> Result<Option<Supplied>, Skip> {
+        at: &Reading<'_>,
+        read: &dyn Fn(&dyn Integration, &ScanContext<'_>) -> Result<T, IntegrationError>,
+    ) -> Result<T, Skip> {
+        let Reading {
+            request,
+            scan,
+            finding,
+            cancel,
+        } = *at;
         let unread = || Skip::Protected(vec![Hold::FactUnknown]);
         let registered = self
             .integrations
@@ -130,11 +153,10 @@ impl Engine {
             walks: &walks,
             walked: RefCell::default(),
         };
-        let read = panic::catch_unwind(AssertUnwindSafe(|| {
-            registered.integration.revisit(&cx, finding)
-        }));
-        match read {
-            Ok(Ok(supplied)) => Ok(supplied),
+        let integration = registered.integration.as_ref();
+        let done = panic::catch_unwind(AssertUnwindSafe(|| read(integration, &cx)));
+        match done {
+            Ok(Ok(done)) => Ok(done),
             Ok(Err(_)) | Err(_) => Err(unread()),
         }
     }
@@ -221,8 +243,11 @@ impl Rescan for EngineRescan<'_> {
             .facts
             .as_ref()
             .ok_or(Skip::Unjudged(Unjudged::Unmeasured))?;
+        if matches!(facts.supplied.subject, Subject::Release(_)) {
+            return self.release_now(scan, finding, cancel);
+        }
         let plain = matches!(facts.supplied.subject, Subject::Plain);
-        let supplied = match self.engine.revisit(self.request, scan, finding, cancel)? {
+        let supplied = match self.engine.revisit(&self.reading(scan, finding, cancel))? {
             Some(supplied) => supplied,
             None if plain => facts.supplied.clone(),
             None => return Err(Skip::RevisitMissing),
@@ -237,7 +262,6 @@ impl Rescan for EngineRescan<'_> {
         judged.supplied = supplied;
         current.facts = Some(judged.clone());
         judged.activity = self.activity(scan, &current, snapshot);
-        // Nothing decides a release yet, which holds it.
         judged.settlement = Settlement::Unsettled;
         current.facts = Some(judged.clone());
         Ok(Now {
@@ -255,6 +279,120 @@ impl Rescan for EngineRescan<'_> {
 }
 
 impl EngineRescan<'_> {
+    /// Where `finding` of `scan` is read again from.
+    const fn reading<'run>(
+        &'run self,
+        scan: &'run ScanReport,
+        finding: &'run Finding,
+        cancel: &'run CancelToken,
+    ) -> Reading<'run> {
+        Reading {
+            request: self.request,
+            scan,
+            finding,
+            cancel,
+        }
+    }
+
+    /// What the release `finding` of `scan` is now: its integration reads its component
+    /// again in one reading, under the item's locks, and the release is settled among every
+    /// entry that reading lists, judged by one new process snapshot, as a scan of the store
+    /// at this moment settles it. A release this run removed is no longer listed, and one
+    /// that appeared since counts. An entry the apply scan didn't measure as it is now (new,
+    /// replaced, or listed without facts) leaves its group unsettled and its component's
+    /// activity unknown. The release itself must be listed at its path, by its rule, with
+    /// the identity the scan read, or it holds as `changed`; listed without facts, it is
+    /// unsettled.
+    fn release_now(
+        &self,
+        scan: &ScanReport,
+        finding: &Finding,
+        cancel: &CancelToken,
+    ) -> Result<Now, Skip> {
+        let facts = finding
+            .facts
+            .as_ref()
+            .ok_or(Skip::Unjudged(Unjudged::Unmeasured))?;
+        let group = self
+            .engine
+            .revisit_group(&self.reading(scan, finding, cancel))?
+            .ok_or(Skip::RevisitMissing)?;
+        let ours = group
+            .iter()
+            .find(|read| read.rule == finding.rule && read.path == finding.path)
+            .filter(|_| self.unchanged(finding));
+        let Some(ours) = ours else {
+            return Ok(changed(facts));
+        };
+        let mut members = Vec::new();
+        let mut unmeasured = Vec::new();
+        for read in &group {
+            let Subject::Release(release) = &read.supplied.subject else {
+                continue;
+            };
+            let measured = scan.findings.iter().find(|found| {
+                read.listed == Listed::Read
+                    && found.integration == finding.integration
+                    && found.rule == read.rule
+                    && found.path == read.path
+                    && found.facts.is_some()
+                    && self.unchanged(found)
+            });
+            match measured {
+                Some(found) => members.push(read_now(found, read)),
+                None => unmeasured.push(release),
+            }
+        }
+        let fresh = Fresh {
+            processes: Processes::default(),
+            identities: Identities::default(),
+            taken: self.engine.ports.clock.now(),
+        };
+        for member in &mut members {
+            let activity = self.engine.activity_now(&fresh, self.request, scan, member);
+            if let Some(member_facts) = member.facts.as_mut() {
+                member_facts.activity = activity;
+            }
+        }
+        let scope = Scope {
+            fs: self.engine.ports.fs.as_ref(),
+            identities: &fresh.identities,
+            home: self.engine.home(&self.request.roots),
+            roots: &self.request.roots,
+        };
+        self.engine
+            .settle_releases(&mut members, &unmeasured, &fresh.processes, scope);
+        let current = members
+            .into_iter()
+            .find(|member| member.path == finding.path && member.rule == finding.rule);
+        let Some((current, judged)) =
+            current.and_then(|member| member.facts.clone().map(|judged| (member, judged)))
+        else {
+            return Ok(unsettled(facts, ours));
+        };
+        Ok(Now {
+            unmet: self.engine.unmet_now(&current).unwrap_or(judged.unmet),
+            activity: judged.activity,
+            supplied: ours.supplied.clone(),
+            settlement: judged.settlement,
+        })
+    }
+
+    /// Whether the entry at `found`'s path is the one the apply scan read there: its
+    /// identity is read again without following a link, and one that can't be read on
+    /// either side is not the same.
+    fn unchanged(&self, found: &Finding) -> bool {
+        let then = found.facts.as_ref().and_then(|facts| facts.lineage.own());
+        let now = self
+            .engine
+            .ports
+            .fs
+            .metadata(&found.path)
+            .ok()
+            .and_then(|meta| meta.identity);
+        then.is_some() && then == now
+    }
+
     /// Whether a program uses `finding` of `scan` now, from a snapshot of that age.
     fn activity(&self, scan: &ScanReport, finding: &Finding, snapshot: Snapshot) -> Activity {
         let now = self.engine.ports.clock.now();
@@ -298,4 +436,48 @@ fn opened_roots(
         })
         .cloned()
         .collect()
+}
+
+/// What a release that its integration no longer lists as it was is now: held as
+/// `changed`, which keeps its whole component.
+fn changed(facts: &Facts) -> Now {
+    let mut supplied = facts.supplied.clone();
+    if let Subject::Release(release) = &mut supplied.subject {
+        release.state = ReleaseState::Blocked(GroupGap::Changed);
+    }
+    Now {
+        activity: Activity::Unknown(ActivityGap::Unsupported),
+        supplied,
+        settlement: Settlement::Retained(Retained::GroupBlocked(GroupGap::Changed)),
+        unmet: facts.unmet.clone(),
+    }
+}
+
+/// One item read again: the request and scan that found it, and the run's cancel token.
+#[derive(Clone, Copy)]
+struct Reading<'run> {
+    request: &'run ScanRequest,
+    scan: &'run ScanReport,
+    finding: &'run Finding,
+    cancel: &'run CancelToken,
+}
+
+/// The apply scan's `found` with what its integration supplies for it now.
+fn read_now(found: &Finding, read: &Reread) -> Finding {
+    let mut member = found.clone();
+    if let Some(facts) = member.facts.as_mut() {
+        facts.supplied = read.supplied.clone();
+    }
+    member
+}
+
+/// What a release is now when it is still there as the scan read it, but the scan didn't
+/// measure it as it is now or its facts can't be read: it is not settled.
+fn unsettled(facts: &Facts, ours: &Reread) -> Now {
+    Now {
+        activity: Activity::Unknown(ActivityGap::Unsupported),
+        supplied: ours.supplied.clone(),
+        settlement: Settlement::Unsettled,
+        unmet: facts.unmet.clone(),
+    }
 }

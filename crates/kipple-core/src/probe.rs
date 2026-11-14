@@ -43,6 +43,20 @@ pub struct EntryMeta {
     pub kind: EntryKind,
     /// Its identity, where the platform reports one.
     pub identity: Option<FileIdentity>,
+    /// The mount it is on.
+    pub mount: Mount,
+}
+
+/// Which mount an entry is on. A bind mount shows a directory of the same device
+/// somewhere else, so only a mount's own ID tells it from the directory around it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Mount {
+    /// The kernel's ID of its mount.
+    Id(u64),
+    /// The platform has no mount IDs, so its device tells mounts apart.
+    ByDevice,
+    /// The platform has mount IDs, but this entry's couldn't be read.
+    Unknown,
 }
 
 /// Who may enter a directory, as far as it decides whether another user's process could

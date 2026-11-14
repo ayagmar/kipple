@@ -1,7 +1,16 @@
 //! Which releases of a store may go (`docs/06-adapters-and-rules.md` §4, spec M4 pinned
 //! 12). Whether one may depends on the others in its group, so this is a decision the core
-//! makes, from what an integration read. `settle` keeps everything until the rule that
-//! needs it lands: an unsettled release is held at every level.
+//! makes, from what an integration read.
+//!
+//! It keeps what the tool's own prune keeps, and never less: the selected release, the
+//! rollback the store names and anything a program runs. When the store names no rollback
+//! in a group, the newest release left there stays in its place. Whatever a component
+//! records answers for every group of it, so a component that can't be relied on keeps
+//! every release of it, and so does anything that stops the tool's own prune of it: an
+//! install bringing a release in, a process under a release already set aside, or one that
+//! may use any of its releases but couldn't be inspected. A version that can't be ordered
+//! keeps its group, and a group with a member that wasn't measured isn't settled at all,
+//! which holds it too.
 
 use std::cmp::Ordering;
 use std::fmt;
@@ -45,6 +54,10 @@ named! {
         RetiredRunning = "retired-running",
         /// Part of its store couldn't be read, so its listing may be short.
         Unreadable = "unreadable",
+        /// A release's version can't be ordered against the others.
+        UnorderedVersion = "unordered-version",
+        /// Its store changed between the scan and reading it again at apply.
+        Changed = "changed",
     }
 }
 
@@ -63,6 +76,12 @@ pub struct ReleaseGroup {
 pub struct ReleaseVersion(pub String);
 
 impl ReleaseVersion {
+    /// Whether it reads as a version at all.
+    #[must_use]
+    pub fn is_version(&self) -> bool {
+        self.parts().is_some()
+    }
+
     /// The numbers of its core and its prerelease, if it reads as a version.
     fn parts(&self) -> Option<(Vec<u64>, Option<&str>)> {
         let (core, prerelease) = match self.0.split_once('-') {
@@ -202,9 +221,121 @@ pub enum Settlement {
     Retained(Retained),
 }
 
-/// What retention decides for each of `views`, in their order. Decides nothing yet, which
-/// keeps every release.
+/// What retention decides for each of `views`, in their order.
+///
+/// A view's group is its component and target; a [`Retired`](ReleaseRole::Retired) one belongs
+/// to no group, since what is left of it may name no target, and answers for its component.
 #[must_use]
 pub fn settle(views: &[ReleaseView<'_>]) -> Vec<Settlement> {
-    vec![Settlement::Unsettled; views.len()]
+    (0..views.len()).map(|at| decide(at, views)).collect()
+}
+
+/// What retention decides for the view at `at` among `views`.
+fn decide(at: usize, views: &[ReleaseView<'_>]) -> Settlement {
+    let Some(view) = views.get(at) else {
+        return Settlement::Unsettled;
+    };
+    let facts = view.facts;
+    if let Some(gap) = component_gap(&facts.group.component, views) {
+        return Settlement::Retained(Retained::GroupBlocked(gap));
+    }
+    match facts.role {
+        ReleaseRole::Retired => return Settlement::Unsettled,
+        ReleaseRole::PendingInstall => return Settlement::Retained(Retained::Pending),
+        ReleaseRole::Installed | ReleaseRole::Active | ReleaseRole::Previous => {}
+    }
+    let installing = views.iter().any(|other| {
+        other.facts.group.component == facts.group.component
+            && other.facts.role == ReleaseRole::PendingInstall
+    });
+    if installing {
+        return Settlement::Retained(Retained::GroupBlocked(GroupGap::InstallerBusy));
+    }
+    let group: Vec<(usize, &ReleaseView<'_>)> = views
+        .iter()
+        .enumerate()
+        .filter(|(_, other)| other.facts.role != ReleaseRole::Retired)
+        .filter(|(_, other)| other.facts.group == facts.group)
+        .collect();
+    if group.iter().any(|(_, member)| !is_measured(member)) {
+        return Settlement::Unsettled;
+    }
+    if let Some(gap) = group_gap(&group) {
+        return Settlement::Retained(Retained::GroupBlocked(gap));
+    }
+    if let Some(why) = kept(view) {
+        return Settlement::Retained(why);
+    }
+    let has_rollback = group
+        .iter()
+        .any(|(_, member)| member.facts.role == ReleaseRole::Previous);
+    let newest_left = group
+        .iter()
+        .filter(|(_, member)| kept(member).is_none())
+        .map(|(_, member)| &member.facts.version)
+        .max();
+    if !has_rollback && newest_left == Some(&facts.version) {
+        Settlement::Retained(Retained::NewestLeft)
+    } else {
+        Settlement::Candidate
+    }
+}
+
+/// Why everything of `component` stays, if something does: what it records can't be relied
+/// on, a release of it already set aside is in use, or whether a program uses one of its
+/// releases isn't known, as each stops the tool's own prune of it. What it records is read
+/// before any release's role, so a blocked component keeps even its selected release.
+fn component_gap(component: &str, views: &[ReleaseView<'_>]) -> Option<GroupGap> {
+    let members = || {
+        views
+            .iter()
+            .filter(move |view| view.facts.group.component == component)
+    };
+    let state = members().find_map(|view| match view.facts.state {
+        ReleaseState::Blocked(gap) => Some(gap),
+        ReleaseState::Sound => None,
+    });
+    let retired_running = || {
+        members()
+            .filter(|view| view.facts.role == ReleaseRole::Retired)
+            .any(|view| matches!(view.activity, Activity::InUse { .. }))
+            .then_some(GroupGap::RetiredRunning)
+    };
+    let unknown = || {
+        members()
+            .any(|view| matches!(view.activity, Activity::Unknown(_)))
+            .then_some(GroupGap::ActivityUnknown)
+    };
+    state.or_else(retired_running).or_else(unknown)
+}
+
+/// Why everything of one group stays, if something does: a release's version can't be
+/// ordered against the others.
+fn group_gap(group: &[(usize, &ReleaseView<'_>)]) -> Option<GroupGap> {
+    let unordered = group
+        .iter()
+        .any(|(_, view)| !view.facts.version.is_version());
+    unordered.then_some(GroupGap::UnorderedVersion)
+}
+
+/// Whether `view` was measured to the end: a release stopped short of may hold anything.
+const fn is_measured(view: &ReleaseView<'_>) -> bool {
+    matches!(
+        view.measured,
+        Some(Completeness::Complete | Completeness::Incomplete { .. })
+    )
+}
+
+/// Why `view` stays whatever the rest of its group is, if it does.
+const fn kept(view: &ReleaseView<'_>) -> Option<Retained> {
+    match view.facts.role {
+        ReleaseRole::Active => return Some(Retained::Active),
+        ReleaseRole::Previous => return Some(Retained::Previous),
+        ReleaseRole::PendingInstall => return Some(Retained::Pending),
+        ReleaseRole::Installed | ReleaseRole::Retired => {}
+    }
+    match view.activity {
+        Activity::InUse { .. } => Some(Retained::Running),
+        Activity::Idle | Activity::IdleExceptSystem { .. } | Activity::Unknown(_) => None,
+    }
 }

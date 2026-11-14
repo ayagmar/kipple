@@ -133,13 +133,13 @@ Every error has one of these stable codes plus the file, line, column and a mess
 | `unknown-capability` | a root, selector, fact or operation this engine doesn't publish (the message names the engine version) |
 | `not-permitted` | a third-party pack using an integration selector or fact, a first-party-only operation, or the `builtin.` prefix |
 
-How the codes apply to the cases the table leaves open: a value outside a fixed set (a category, platform, method, enum fact value, `selection.default`) and a reference that isn't an HTTPS URL are `wrong-type`. Too many references or markers, an empty `platforms`, `methods` or enum list, and a duration over 100 years are `invalid-range`. A malformed duration or byte size is `wrong-type`. An operation that declares retention requires `[rule.retention]` (`missing-key`), and on any other operation the key is `unknown-key`. `group_by` names `component`, `target` or both; `keep_active`, `keep_previous`, `keep_running` and `keep_pending_install` must be `true` and `unparsable_version` must be `keep`, because the host fixes what a group keeps, so anything else is `invalid-range`. A third-party pack naming a first-party operation or an integration fact is `not-permitted`. A rule tests the generic facts and its own integration's: a fact of another integration, or one scoped to another selector, is `unknown-capability`. So is `registered-linked-worktrees` under anything but `git-worktree-remove` or `report`, and `verified-release-directories` under anything but `remove-verified-release` or `report`. `requirements` and `eligibility` on a `report` rule are `unknown-key`, built-in packs included: a report rule selects by its selector alone, so a predicate there would decide nothing. A pack with no `[[rule]]` is `missing-key`. Errors in the `[pack]` table and in the rules are reported together whenever the pack's ID and platforms are valid.
+How the codes apply to the cases the table leaves open: a value outside a fixed set (a category, platform, method, enum fact value, `selection.default`) and a reference that isn't an HTTPS URL are `wrong-type`. Too many references or markers, an empty `platforms`, `methods` or enum list, and a duration over 100 years are `invalid-range`. A malformed duration or byte size is `wrong-type`. An operation that declares retention requires `[rule.retention]` (`missing-key`), and on any other operation the key is `unknown-key`. `group_by` must name `component` and `target`, once each, in either order; `keep_active`, `keep_previous`, `keep_running` and `keep_pending_install` must be `true` and `unparsable_version` must be `keep`, because the host fixes how releases group and what a group keeps, so anything else is `invalid-range`. A third-party pack naming a first-party operation or an integration fact is `not-permitted`. A rule tests the generic facts and its own integration's: a fact of another integration, or one scoped to another selector, is `unknown-capability`. So is `registered-linked-worktrees` under anything but `git-worktree-remove` or `report`, and `verified-release-directories` under anything but `remove-verified-release` or `report`. `requirements` and `eligibility` on a `report` rule are `unknown-key`, built-in packs included: a report rule selects by its selector alone, so a predicate there would decide nothing. A pack with no `[[rule]]` is `missing-key`. Errors in the `[pack]` table and in the rules are reported together whenever the pack's ID and platforms are valid.
 
 ## 4. Hard cases
 
-### Codex stale releases (keep active + running + pending + 1 per component/channel)
+### Codex stale releases (keep upstream's keep set, and never less)
 
-Today `builtin.codex.stale-releases` is a `report` rule with no requirements and no retention: kipple reads both release stores, supplies the facts below and reports each release, and removes none. The rule below is what it becomes when releases are removed (M4b), and its `requirements` and `retention` are not accepted on a `report` rule until then.
+On Linux `builtin.codex.stale-releases` removes the releases retention lets go, one item per release directory, through `remove-verified-release`, which plans like `remove-files`. On macOS and Windows it reports: no lock kipple knows to match Codex's installer is held there, and `builtin.codex.release-inventory` reports Windows's releases. Codex prunes its own stores at each install since 0.164.0, so on a current store this rule usually finds nothing; it cleans what that prune skipped.
 
 ```toml
 [[rule]]
@@ -148,8 +148,9 @@ integration = "codex"
 title = "Codex releases"
 category = "release-install"
 description = "Releases left after an update. The selected, previous, running and pending releases are always kept."
-why = "Codex keeps every downloaded release after self-updating."
-loss = "The removed versions; Codex re-downloads a version only if you install it again."
+why = "Codex keeps the selected and previous release and prunes the rest when it installs, but skips that when it can't prove a release is unused, and never on Windows."
+loss = "The removed versions. Codex downloads one again only if you install it."
+platforms = ["linux"]
 
 [rule.scope]
 root = "codex.release-store"
@@ -159,6 +160,7 @@ selection = "verified-release-directories"
 layout = "supported"
 inventory = "complete"
 installer_activity = "idle"
+"codex.version_supported" = "supported"
 
 [rule.retention]
 group_by = ["component", "target"]
@@ -170,23 +172,31 @@ unparsable_version = "keep"
 
 [rule.operation]
 kind = "remove-verified-release"
-methods = ["delete"]
-
-[rule.selection]
-default = "unselected"
+methods = ["delete", "trash"]
 ```
 
-Semantics:
-- Kept per group: every active target, every release with a running executable, every pending install, plus the newest remaining release.
-- A malformed `current` link blocks its group. Unknown version directories are kept.
-- At apply, activity and the `current` target are re-probed, and the target set can only shrink.
+`[rule.retention]` only states what the host keeps: each key is fixed, and a rule that says otherwise is refused. There is no `keep_additional`: on Linux and macOS Codex's next install deletes whatever is kept beyond this set.
 
-Fixtures needed:
+Semantics (`kipple-core/src/retention.rs`, `engine/settle.rs`):
+- A group is a component (`standalone`, `app-server-daemon`) and a target. Kept in each: the release `current` selects, the `previous` that `selection-history` names, every release a process runs, and one an install is bringing in. When the history names no rollback in a group, the newest release left there stays, a prerelease ordering below its release.
+- A release runs when a process's executable lies anywhere under its directory, helpers such as `codex-path/rg` included, or when a process runs a file with the identity of one of its files from elsewhere, as through a hard link. Never by name.
+- What a component records answers for all of its groups. A `current` or `selection-history` that can't be relied on, an install marker (`.staging.*`, `.current.*`, `.migration-current`, `install.lock.d`, `install-lock-*`), a part of the store that can't be read, a process under `.retired.*` and a process that may run any of its releases but can't be inspected each keep every release of the component, as each stops Codex's own prune. A version that can't be ordered keeps its group, and a group with a member left unmeasured stays unsettled, which holds it.
+- A release that fails §3's signature, `local-*`, `.retired.*` and `.staging.*` is never a candidate, and neither is a release whose target isn't one of the four upstream's prune considers (`{x86_64,aarch64}-unknown-linux-musl`, `{x86_64,aarch64}-apple-darwin`): a Windows release in a Linux store is only reported. A mount inside a release, at a directory or a file, a same-device bind mount included (Linux compares `statx` mount IDs), fails the signature.
+- The scan takes no lock. Apply takes Codex's locks for one item without waiting and without creating them: `install.lock`, and `app-server-daemon/daemon.lock` for the daemon's store. A missing or held lock skips the item as `installer-busy`. Then it freezes the release and reads every home again in one reading through the scan's code (`Integration::revisit_group`: links, history, markers, manifests and listing). The release is settled among every entry that reading lists for its component, releases and `.retired.*` alike, under one new process snapshot. A release this run or another prune removed is no longer listed, so a run removes every stale release of a component. The release must be listed at its path with the identity the scan read, or it holds as `changed`. An entry the apply scan didn't measure as it is now (new, replaced, or listed without facts) makes its component's activity unknown, which keeps every release of it. So apply never removes what a scan at that moment keeps.
+
+Fixtures (`crates/kipple-adapters/tests/codex.rs`, `crates/kipple-core/tests/retention.rs`, `crates/kipple-core/tests/apply/releases.rs`, `crates/kipple-platform/tests/store_lock.rs`, `crates/kipple/tests/codex_gate.rs`):
 - active v3 with stopped v2 and v1 keeps v3 and v2
-- active v3, running v1, stopped v2 and v0 keeps v3, v1 and v2
+- active v3, running v1, stopped v2 keeps v3, v1 and v2
 - the standalone and app-server-daemon groups keep their own rollbacks
+- 5+3 releases with one older running (docs/11 M4 Verify): the active, running and rollback releases are kept
+- a pruned store has no candidates; a rollback older than another release is kept, not the newest
 - a link that changes before apply protects the new release
-- incomplete process inventory blocks the group
+- two stale releases of one component go in one run; a peer removed by someone else mid-run leaves the item a candidate; a `.retired.*` entry or an `install.lock.d` that appears mid-run keeps the component
+- a Windows release in a Linux store, and a file bind-mounted inside a release, are only reported
+- incomplete process inventory, `hidepid`, an uninspectable Codex process, a malformed `current` and a staging directory block the group
+- a held or missing install lock, and a held daemon lock, skip the release
+- a property over generated stores: settle never keeps less than a model of Codex's prune
+- a property over generated stores on disk: no candidate is an entry upstream's prune keeps, judged from the entry's target, program and alias; and after a generated change between two items (an install, a flip, an entry set aside, a removal, a process list with gaps) apply never admits what a fresh scan keeps
 
 ### Git worktrees (any agent)
 

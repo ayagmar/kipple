@@ -24,11 +24,12 @@ use kipple_core::{
     Advice, Anchor, Apparent, CancelToken, Capabilities, Clock, CommandLines, Completeness,
     DirAccess, DirEntryMeta, Engine, EntryKind, EntryMeta, EventChannel, FactValue, Facts,
     FileIdentity, FileSystem, Finding, FrozenTree, FsProbe, GitGap, HeldPath, Hold, IntegrationId,
-    Inventory, Lineage, Measurement, MountNamespace, NodeId, Observer, Omission, OwnerStatus,
-    Owners, Platform, Policy, Ports, ProbeError, ProcessOutcome, ProcessOwner, ProcessProbe,
-    ProcessRecord, ProcessSnapshot, Protections, ReleaseFacts, ResolvedRoot, RootSource, Roots,
-    ScanReport, ScanRequest, Sizer, SpaceEstimate, Subject, SymbolicRoot, TrackedQuery, Unread,
-    UnresolvedRoot, Verdict, event_channel,
+    Inventory, Lineage, Measurement, Mount, MountNamespace, NodeId, Now, Observer, Omission,
+    OwnerStatus, Owners, Platform, Policy, Ports, ProbeError, ProcessOutcome, ProcessOwner,
+    ProcessProbe, ProcessRecord, ProcessSnapshot, Protections, ReleaseFacts, Rescan as _,
+    ResolvedRoot, RootSource, Roots, ScanEvent, ScanReport, ScanRequest, Sizer, Skip,
+    SpaceEstimate, Subject, SymbolicRoot, TrackedQuery, Unread, UnresolvedRoot, Verdict,
+    event_channel,
 };
 
 /// Where the Codex home is in a tree, as it is by default.
@@ -74,19 +75,35 @@ pub(crate) fn add_release(tree: &mut FixtureTree, store: &str, version: &str) {
     }
 }
 
+/// The identity the host gives the file at `path`, off any mount.
+fn identity(path: &Path) -> FileIdentity {
+    let mut hasher = DefaultHasher::new();
+    path.hash(&mut hasher);
+    FileIdentity {
+        volume: 1,
+        file: u128::from(hasher.finish()),
+    }
+}
+
 /// A file system with the scripted parts of [`Scene`] over the real one.
 #[derive(Debug, Clone, Default)]
 struct Disk {
-    /// Paths that can't be read, nor anything below them.
-    denied: Vec<PathBuf>,
+    /// Paths that can't be read, nor anything below them. A test may add one after a scan.
+    denied: Arc<Mutex<Vec<PathBuf>>>,
     /// Directories that can't be listed, though what is below them can be reached.
     unlistable: Vec<PathBuf>,
     /// Paths that are neither a file, a directory nor a link, such as a FIFO.
     odd: Vec<PathBuf>,
     /// Directories that are mounts: they and everything below them are another volume.
     mounts: Vec<PathBuf>,
+    /// Directories that are bind mounts: they and everything below them are another mount
+    /// of the same volume.
+    binds: Vec<PathBuf>,
     /// Links that read as holding the second path, and not what the OS made of it.
     stored: Vec<(PathBuf, PathBuf)>,
+    /// Links an installer made again after the scan, with what each now holds: both what
+    /// they read as and their stamp follow.
+    relinked: Arc<Mutex<Vec<(PathBuf, PathBuf)>>>,
     /// The home directory, which only its user may enter.
     home: PathBuf,
     /// Every file that was opened, in order.
@@ -95,7 +112,10 @@ struct Disk {
 
 impl Disk {
     fn check(&self, path: &Path) -> Result<(), ProbeError> {
-        let denied = self.denied.iter().any(|at| path.starts_with(at));
+        let denied = {
+            let denied = self.denied.lock().unwrap_or_else(PoisonError::into_inner);
+            denied.iter().any(|at| path.starts_with(at))
+        };
         if denied {
             return Err(ProbeError::io(path, io::ErrorKind::PermissionDenied.into()));
         }
@@ -123,21 +143,44 @@ impl Disk {
     }
 
     fn identity(&self, path: &Path) -> FileIdentity {
-        let mut hasher = DefaultHasher::new();
-        path.hash(&mut hasher);
         let mounted = self.mounts.iter().any(|mount| path.starts_with(mount));
         FileIdentity {
             volume: if mounted { 2 } else { 1 },
-            file: u128::from(hasher.finish()),
+            ..identity(path)
+        }
+    }
+
+    /// The mount `path` is on, by an ID as Linux gives one.
+    fn mount(&self, path: &Path) -> Mount {
+        if self.mounts.iter().any(|mount| path.starts_with(mount)) {
+            Mount::Id(3)
+        } else if self.binds.iter().any(|bind| path.starts_with(bind)) {
+            Mount::Id(2)
+        } else {
+            Mount::Id(1)
         }
     }
 
     /// What Unix records of the link at `path`, whether or not this test can read it.
     fn stamp(path: &Path) -> Result<String, ProbeError> {
         let target = fs::read_link(path).map_err(|e| ProbeError::io(path, e))?;
+        Ok(Self::stamp_of(&target))
+    }
+
+    /// The stamp of a link that holds `target`.
+    fn stamp_of(target: &Path) -> String {
         let mut hasher = DefaultHasher::new();
         target.hash(&mut hasher);
-        Ok(format!("50 {} 1793458575.030397325", hasher.finish()))
+        format!("50 {} 1793458575.030397325", hasher.finish())
+    }
+
+    /// What the link at `path` holds since an installer made it again, if one did.
+    fn relinked(&self, path: &Path) -> Option<PathBuf> {
+        let relinked = self.relinked.lock().unwrap_or_else(PoisonError::into_inner);
+        let found = relinked.iter().rev().find(|(link, _)| link == path);
+        let target = found.map(|(_, target)| target.clone());
+        drop(relinked);
+        target
     }
 }
 
@@ -148,6 +191,7 @@ impl FsProbe for Disk {
         Ok(EntryMeta {
             kind: self.kind(path, meta.file_type()),
             identity: Some(self.identity(path)),
+            mount: self.mount(path),
         })
     }
 
@@ -205,6 +249,9 @@ impl FsProbe for Disk {
 
     fn read_link(&self, path: &Path) -> Result<PathBuf, ProbeError> {
         self.check(path)?;
+        if let Some(target) = self.relinked(path) {
+            return Ok(target);
+        }
         let stored = self.stored.iter().find(|(link, _)| link == path);
         if let Some((_, target)) = stored {
             return Ok(target.clone());
@@ -214,7 +261,8 @@ impl FsProbe for Disk {
 
     fn link_stamp(&self, path: &Path) -> Result<String, ProbeError> {
         self.check(path)?;
-        Self::stamp(path)
+        self.relinked(path)
+            .map_or_else(|| Self::stamp(path), |target| Ok(Self::stamp_of(&target)))
     }
 }
 
@@ -269,12 +317,58 @@ impl TrackedQuery for NoGit {
     }
 }
 
+/// What the process probe shows, which a test can change between a scan and apply's reading.
+#[derive(Debug, Clone)]
+pub(crate) struct Shown {
+    /// Paths in the tree that a process of the user runs from.
+    pub(crate) running: Vec<String>,
+    /// Processes of the user that run a hard link to a file in the tree from elsewhere.
+    pub(crate) linked: Vec<HardLink>,
+    /// Commands of processes of the user that couldn't be inspected.
+    pub(crate) uninspected: Vec<String>,
+    /// Whether every process was listed.
+    pub(crate) inventory: Inventory,
+}
+
+/// The processes of the host as they are shown when asked.
 #[derive(Debug)]
-struct Snapshot(ProcessSnapshot);
+struct Snapshot {
+    tree: PathBuf,
+    root_dir: FileIdentity,
+    shown: Arc<Mutex<Shown>>,
+}
 
 impl ProcessProbe for Snapshot {
     fn snapshot(&self) -> Result<ProcessSnapshot, ProbeError> {
-        Ok(self.0.clone())
+        let shown = self.shown.lock().unwrap_or_else(PoisonError::into_inner);
+        let shell = self.tree.join("usr/bin/zsh");
+        let mut processes = session(&shell, self.root_dir);
+        for (pid, path) in (3000..).zip(&shown.running) {
+            let executable = self.tree.join(path);
+            processes.push(inspected(pid, &executable, self.root_dir));
+        }
+        for (pid, link) in (4000..).zip(&shown.linked) {
+            let mut process = inspected(pid, &self.tree.join(&link.runs), self.root_dir);
+            if let ProcessOutcome::Identified { identity: id, .. } = &mut process.outcome {
+                *id = identity(&self.tree.join(&link.file));
+            }
+            processes.push(process);
+        }
+        for (pid, command) in (5000..).zip(&shown.uninspected) {
+            let command = self.tree.join(command);
+            let command = command.to_string_lossy();
+            processes.push(uninspectable(pid, ProcessOwner::CurrentUser, &[&command]));
+        }
+        Ok(ProcessSnapshot {
+            processes,
+            inventory: shown.inventory.clone(),
+            observer: Observer {
+                mount_namespace: Ok(OUR_NAMESPACE),
+                root_dir: Ok(self.root_dir),
+                command_lines: CommandLines::Public,
+                process_paths: true,
+            },
+        })
     }
 }
 
@@ -356,6 +450,13 @@ fn session(shell: &Path, root_dir: FileIdentity) -> Vec<ProcessRecord> {
     ]
 }
 
+/// A process running, from `runs`, a hard link to `file`: both are paths in the tree.
+#[derive(Debug, Clone)]
+pub(crate) struct HardLink {
+    pub(crate) runs: String,
+    pub(crate) file: String,
+}
+
 /// What `selection-history` holds for a store.
 #[derive(Debug)]
 struct History {
@@ -385,12 +486,21 @@ pub(crate) struct Scene {
     pub(crate) odd: Vec<String>,
     /// Paths in the tree that are mounts.
     pub(crate) mounts: Vec<String>,
+    /// Paths in the tree that are bind mounts of a directory on the same volume.
+    pub(crate) binds: Vec<String>,
     /// Links that read as holding what the test says.
     pub(crate) stored: Vec<StoredLink>,
     /// Which OS's rules apply.
     pub(crate) platform: Platform,
     /// Paths in the tree that a process of the user runs from.
     pub(crate) running: Vec<String>,
+    /// Processes of the user that run a hard link to a file in the tree from elsewhere.
+    pub(crate) linked: Vec<HardLink>,
+    /// Commands, paths in the tree, of processes of the user that couldn't be inspected.
+    pub(crate) uninspected: Vec<String>,
+    /// The user's home directory in the tree, which holds the Codex home unless a test
+    /// moves it.
+    pub(crate) user_home: &'static str,
     /// Whether every process was listed.
     pub(crate) inventory: Inventory,
     /// Why the home has no path, if it hasn't.
@@ -409,9 +519,13 @@ impl Scene {
             unlistable: Vec::new(),
             odd: Vec::new(),
             mounts: Vec::new(),
+            binds: Vec::new(),
             stored: Vec::new(),
             platform: Platform::Linux,
             running: Vec::new(),
+            linked: Vec::new(),
+            uninspected: Vec::new(),
+            user_home: "home",
             inventory: Inventory::Complete,
             unresolved: None,
         }
@@ -467,20 +581,23 @@ impl Scene {
     pub(crate) fn build(self) -> Rc<Built> {
         let temp = tempfile::tempdir().unwrap();
         self.tree.build_in(temp.path()).unwrap();
+        fs::create_dir_all(temp.path().join(self.user_home)).unwrap();
         let root = temp.path();
         let inside = |paths: &[String]| paths.iter().map(|path| root.join(path)).collect();
         let disk = Disk {
-            denied: inside(&self.denied),
+            denied: Arc::new(Mutex::new(inside(&self.denied))),
             unlistable: inside(&self.unlistable),
             odd: inside(&self.odd),
             mounts: inside(&self.mounts),
+            binds: inside(&self.binds),
             stored: self
                 .stored
                 .iter()
                 .map(|stored| (root.join(&stored.link), root.join(&stored.target)))
                 .collect(),
-            home: root.join("home"),
+            home: root.join(self.user_home),
             opened: Arc::default(),
+            relinked: Arc::default(),
         };
         for history in &self.histories {
             let dir = root.join(at(&component(history.store)));
@@ -492,8 +609,12 @@ impl Scene {
             temp,
             disk,
             platform: self.platform,
-            running: self.running,
-            inventory: self.inventory,
+            shown: Arc::new(Mutex::new(Shown {
+                running: self.running,
+                linked: self.linked,
+                uninspected: self.uninspected,
+                inventory: self.inventory,
+            })),
             unresolved: self.unresolved,
         })
     }
@@ -510,8 +631,7 @@ pub(crate) struct Built {
     temp: tempfile::TempDir,
     disk: Disk,
     platform: Platform,
-    running: Vec<String>,
-    inventory: Inventory,
+    shown: Arc<Mutex<Shown>>,
     unresolved: Option<UnresolvedRoot>,
 }
 
@@ -529,7 +649,7 @@ impl Built {
 
     fn roots(&self) -> Roots {
         let mut roots = Roots::default();
-        let home = self.temp.path().join("home");
+        let home = self.disk.home.clone();
         let fixed = |root, path| ResolvedRoot::new(root, path, RootSource::Fixed);
         roots.insert(SymbolicRoot::Home, Ok(fixed(SymbolicRoot::Home, home)));
         let store = self.home().join("packages");
@@ -548,36 +668,25 @@ impl Built {
         roots
     }
 
-    fn snapshot(&self) -> ProcessSnapshot {
-        let root_dir = self.disk.identity(&abs("/"));
-        let shell = self.temp.path().join("usr/bin/zsh");
-        let mut processes = session(&shell, root_dir);
-        for (pid, path) in (3000..).zip(&self.running) {
-            let executable = self.temp.path().join(path);
-            processes.push(inspected(pid, &executable, root_dir));
-        }
-        ProcessSnapshot {
-            processes,
-            inventory: self.inventory.clone(),
-            observer: Observer {
-                mount_namespace: Ok(OUR_NAMESPACE),
-                root_dir: Ok(root_dir),
-                command_lines: CommandLines::Public,
-                process_paths: true,
-            },
-        }
-    }
-
     /// Scans it as it is now, for a test that changed a file since it was built.
     pub(crate) fn scan(self: &Rc<Self>) -> Scan {
+        let (engine, request) = self.engine();
+        let cancel = CancelToken::new();
+        let EventChannel { tx, rx } = event_channel(4096, &cancel);
+        let report = engine.scan(&request, &tx, &cancel);
+        drop(tx);
+        let events = rx.map(|sequenced| sequenced.event).collect();
         Scan {
             built: Rc::clone(self),
-            report: self.report(),
+            engine,
+            request,
+            report,
+            events,
         }
     }
 
-    /// What a scan with Codex's rules of this OS finds now.
-    fn report(&self) -> ScanReport {
+    /// An engine with Codex's rules of this OS, and what it scans.
+    fn engine(&self) -> (Engine, ScanRequest) {
         let packs = builtin::packs(&semver::Version::new(0, 0, 0)).unwrap();
         let rules = packs
             .into_iter()
@@ -592,24 +701,24 @@ impl Built {
         let ports = Ports {
             fs: Box::new(self.disk.clone()),
             sizer: Box::new(OldFiles),
-            processes: Box::new(Snapshot(self.snapshot())),
+            processes: Box::new(Snapshot {
+                tree: self.temp.path().to_owned(),
+                root_dir: self.disk.identity(&abs("/")),
+                shown: Arc::clone(&self.shown),
+            }),
             clock: Box::new(YearLater),
             tracked: Box::new(NoGit),
             tools: Box::new(kipple_core::Unavailable),
             worktrees: Box::new(kipple_core::Unavailable),
         };
         let engine = Engine::new(ports, integrations, rules).unwrap();
-        let cancel = CancelToken::new();
-        let EventChannel { tx, rx } = event_channel(4096, &cancel);
         let request = ScanRequest {
             roots: self.roots(),
             lens: None,
             exclude: Vec::new(),
             protections: self.protections(),
         };
-        let report = engine.scan(&request, &tx, &cancel);
-        drop(rx);
-        report
+        (engine, request)
     }
 
     /// The host's protections, as the binary composes them: every built-in integration's
@@ -634,10 +743,70 @@ impl Built {
 #[derive(Debug)]
 pub(crate) struct Scan {
     pub(crate) built: Rc<Built>,
+    engine: Engine,
+    request: ScanRequest,
     pub(crate) report: ScanReport,
+    /// What the scan streamed, in order.
+    pub(crate) events: Vec<ScanEvent>,
 }
 
 impl Scan {
+    /// What apply reads again about the finding at `path`, as the host is now.
+    pub(crate) fn now(&self, path: &str) -> Result<Now, Skip> {
+        let rescan = self.engine.rescan(&self.request);
+        rescan.now(&self.report, self.finding(path), &CancelToken::new())
+    }
+
+    /// Plays an install selecting `selected` in `store` after the scan: `current` made
+    /// again, then `selection-history` written for it with `previous`.
+    pub(crate) fn select(&self, store: &str, selected: &str, previous: &str) {
+        let dir = self.built.home().join(component(store));
+        let link = dir.join("current");
+        let target = self.built.home().join(release(store, selected));
+        let stamp = Disk::stamp_of(&target);
+        self.built
+            .disk
+            .relinked
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .push((link, target));
+        let history = format!("{selected}\n{previous}\n{stamp}\n");
+        fs::write(dir.join("selection-history"), history).unwrap();
+    }
+
+    /// Writes `tree` into the host after the scan, as an installer does.
+    pub(crate) fn add(&self, tree: &FixtureTree) {
+        tree.build_in(self.built.temp.path()).unwrap();
+    }
+
+    /// Removes the directory `path`, relative to the home, after the scan, as this run or
+    /// another prune does.
+    pub(crate) fn remove(&self, path: &str) {
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "the test plays a release removed between two items of a run"
+        )]
+        fs::remove_dir_all(self.built.home().join(path)).unwrap();
+    }
+
+    /// Changes what the process probe shows from here on.
+    pub(crate) fn show(&self, change: impl FnOnce(&mut Shown)) {
+        change(
+            &mut self
+                .built
+                .shown
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner),
+        );
+    }
+
+    /// Makes `path`, relative to the home, unreadable from here on.
+    pub(crate) fn deny(&self, path: &str) {
+        let denied = &self.built.disk.denied;
+        let mut denied = denied.lock().unwrap_or_else(PoisonError::into_inner);
+        denied.push(self.built.home().join(path));
+    }
+
     fn relative(&self, path: &Path) -> String {
         let home = self.built.home();
         let parts = path.strip_prefix(&home).unwrap_or(path).components();
@@ -699,9 +868,14 @@ impl Scan {
 
     /// The verdict at `path`, under the default policy.
     pub(crate) fn verdict(&self, path: &str) -> Verdict {
+        self.verdict_at(path, &Policy::default())
+    }
+
+    /// The verdict at `path`, under `policy`.
+    pub(crate) fn verdict_at(&self, path: &str, policy: &Policy) -> Verdict {
         let finding = self.finding(path);
         let facts = finding.facts.as_ref().unwrap();
-        Policy::default().verdict(&finding.rule, &finding.path, facts)
+        policy.verdict(&finding.rule, &finding.path, facts)
     }
 
     /// Why `path` is held, if it is.

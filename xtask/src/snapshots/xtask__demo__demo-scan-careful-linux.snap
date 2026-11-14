@@ -304,9 +304,10 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unique_reclaim": "[redacted]"
       },
       "verdict": {
-        "bucket": "protected",
+        "bucket": "review",
         "reasons": [
-          "report-only"
+          "recovery",
+          "loss"
         ]
       }
     },
@@ -345,7 +346,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       "verdict": {
         "bucket": "protected",
         "reasons": [
-          "report-only"
+          "retained"
         ]
       }
     },
@@ -384,7 +385,7 @@ expression: "serde_json::to_string_pretty(&report)?"
       "verdict": {
         "bucket": "protected",
         "reasons": [
-          "report-only"
+          "retained"
         ]
       }
     },

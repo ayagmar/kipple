@@ -153,6 +153,7 @@ impl FsProbe for Disk {
                 EntryKind::Dir
             },
             identity: Some(self.identity(path)),
+            mount: kipple_core::Mount::ByDevice,
         })
     }
 

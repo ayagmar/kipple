@@ -736,6 +736,31 @@ fn a_release_rule_comes_through_with_its_retention() {
     );
 }
 
+/// Catches a pack grouping releases by fewer keys than upstream's prune: grouped by
+/// component alone, the only release of one target would settle against another target's
+/// newer one and be offered for removal.
+#[test]
+fn group_by_is_exactly_component_and_target() {
+    let grouped = |keys: &str| {
+        let from = "group_by = [\"component\", \"target\"]";
+        release_rule(&RETENTION.replacen(from, &format!("group_by = [{keys}]"), 1))
+    };
+    refused_builtin(
+        ErrorCode::InvalidRange,
+        &[
+            grouped("\"component\""),
+            grouped("\"target\""),
+            grouped("\"component\", \"component\""),
+            grouped("\"component\", \"target\", \"target\""),
+        ],
+    );
+    let swapped = check(&grouped("\"target\", \"component\""), Origin::Builtin).unwrap();
+    let Operation::RemoveVerifiedRelease { retention, .. } = &swapped.rules[0].operation else {
+        panic!("not a release rule: {:?}", swapped.rules[0].operation);
+    };
+    assert_eq!(retention.group_by, [GroupKey::Component, GroupKey::Target]);
+}
+
 /// Catches a release rule with no retention table reaching the planner with nothing saying
 /// how to group what it may remove.
 #[test]

@@ -1,7 +1,7 @@
 //! Codex against upstream layouts built with `FixtureTree`: what each entry of its store and
 //! home is reported as, the facts supplied with it, and what stays closed
-//! (`docs/06-adapters-and-rules.md` §4, S5 codex §7). `builtin.codex.stale-releases` is
-//! `report` here, so its tests assert what is supplied and never a verdict.
+//! (`docs/06-adapters-and-rules.md` §4, S5 codex §7), how its releases settle, and what
+//! apply reads again (spec M4 pinned 11 to 14).
 #![expect(
     clippy::unwrap_used,
     clippy::indexing_slicing,
@@ -22,12 +22,15 @@ mod host;
 
 use std::fs;
 
-use host::{DAEMON, HOME, MUSL, STANDALONE, Scan, Scene, StoredLink, at, component, name, release};
-use kipple_core::{
-    ActivityEvidence, Evidence, FactValue, GroupGap, Hold, IntegrationId, Inventory, Omission,
-    OwnerStatus, Platform, Policy, Proposal, ReleaseRole, ReleaseState, UnresolvedRoot, Verdict,
+use host::{
+    DAEMON, HOME, HardLink, MUSL, STANDALONE, Scan, Scene, StoredLink, at, component, name, release,
 };
-use tree::Holds;
+use kipple_core::{
+    Activity, ActivityEvidence, Evidence, FactValue, GroupGap, Hold, IntegrationId, Inventory, Now,
+    Omission, OwnerStatus, Platform, Policy, Proposal, ReleaseRole, ReleaseState, Retained,
+    Settlement, UnresolvedRoot, Verdict,
+};
+use tree::{FixtureTree, Holds};
 
 const V164: &str = "0.164.0";
 const V165: &str = codex_v0_165_0::VERSION;
@@ -624,6 +627,8 @@ fn damaged_cases() -> Vec<(&'static str, Scene)> {
         scene.odd.push(path);
     });
     let mount = plain_release(|scene, dir| scene.mounts.push(format!("{dir}/codex-resources")));
+    let bind = plain_release(|scene, dir| scene.binds.push(format!("{dir}/codex-resources")));
+    let file_bind = plain_release(|scene, dir| scene.binds.push(format!("{dir}/bin/codex")));
     let mut linked = verified();
     linked
         .tree
@@ -635,6 +640,8 @@ fn damaged_cases() -> Vec<(&'static str, Scene)> {
         ("a link inside", extra_link),
         ("a FIFO inside", fifo),
         ("a mount inside", mount),
+        ("a bind mount of the same device inside", bind),
+        ("a file bind mounted inside", file_bind),
         ("itself a link", linked),
     ]
 }
@@ -1165,6 +1172,115 @@ fn running_codex_holds_catalog_and_log() {
     }
 }
 
+/// What apply reads again of `path`, which must be read.
+fn now(scan: &Scan, path: &str) -> Now {
+    let now = scan.now(path);
+    assert!(now.is_ok(), "{path} wasn't read again: {now:?}");
+    now.ok().unwrap()
+}
+
+/// Catches a `log_dir` written to the config during a long apply going unseen: Codex then
+/// writes the log again, and the apply would remove it on the scan's answer.
+#[test]
+fn log_dir_set_during_apply_keeps_the_log() {
+    let scan = verified_with_files().scan();
+    assert_eq!(now(&scan, TUI_LOG).unmet, []);
+
+    fs::write(
+        scan.built.home().join("config.toml"),
+        b"log_dir = \"logs\"\n",
+    )
+    .unwrap();
+
+    let now = now(&scan, TUI_LOG);
+    let configured = now.supplied.values.get("log_dir.configured").copied();
+    assert_eq!(configured, Some(FactValue::Bool(true)));
+    assert_eq!(now.unmet.len(), 1, "expected log_dir.configured unmet");
+}
+
+/// Catches a Codex started during the apply being missed for the log and the catalog,
+/// which it may be writing.
+#[test]
+fn codex_started_during_apply_keeps_log_and_catalog() {
+    let scan = verified_with_files().scan();
+
+    scan.show(|shown| shown.running.push(at(&format!("{ACTIVE}/bin/codex"))));
+
+    for path in [TUI_LOG, CATALOG] {
+        let now = now(&scan, path);
+        assert!(
+            matches!(now.activity, Activity::InUse { .. }),
+            "expected {path} in use, got {:?}",
+            now.activity
+        );
+    }
+}
+
+/// Catches apply removing a catalog file on the scan's word after Codex renamed it: what is
+/// at that path now is no file the rule found.
+#[test]
+fn catalog_renamed_during_apply_is_dropped() {
+    let scan = verified_with_files().scan();
+    let home = scan.built.home();
+
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the test plays Codex renaming its own file"
+    )]
+    fs::rename(
+        home.join(CATALOG),
+        home.join("cache/remote_plugin_catalog/other.json"),
+    )
+    .unwrap();
+
+    let now = now(&scan, CATALOG);
+    assert_eq!(now.supplied.values.get("layout"), Some(&FactValue::Unknown));
+    assert_eq!(now.unmet.len(), 1, "expected the layout unknown");
+}
+
+/// Catches a config file that can't be read at apply passing for one that says nothing:
+/// `log_dir` may be set in it.
+#[test]
+fn unreadable_config_during_apply_holds() {
+    let mut scene = verified_with_files();
+    scene.tree.file(&at("config.toml"), b"model = \"o3\"\n");
+    let scan = scene.scan();
+    assert_eq!(now(&scan, TUI_LOG).unmet, []);
+
+    scan.deny("config.toml");
+
+    let now = now(&scan, TUI_LOG);
+    let configured = now.supplied.values.get("log_dir.configured").copied();
+    assert_eq!(configured, Some(FactValue::Unknown));
+    assert_eq!(now.unmet.len(), 1, "expected log_dir.configured unknown");
+}
+
+/// Catches a `.migration-current` that can't be read passing for no install in progress:
+/// the release it names is about to be selected.
+#[test]
+fn unreadable_migration_marker_blocks_the_group() {
+    let mut scene = Scene::new();
+    scene.store(DAEMON, &[V164, V165, V166], V166, V165);
+    let marker = at(&format!("{}/.migration-current", component(DAEMON)));
+    scene.tree.link(
+        &marker,
+        &at(&release(DAEMON, &name(V164))),
+        Holds::AbsoluteInTree,
+    );
+    scene.denied.push(marker);
+
+    let scan = scene.scan();
+
+    for version in [V164, V165, V166] {
+        let path = release(DAEMON, &name(version));
+        assert_eq!(
+            scan.release(&path).state,
+            blocked(GroupGap::Unreadable),
+            "{version}"
+        );
+    }
+}
+
 /// Catches a removing rule reaching another OS, where nothing here was verified on a real
 /// store, or an OS's selected release being offered for review.
 #[test]
@@ -1604,4 +1720,1040 @@ fn manifest_survives_generated_input() {
     }
     assert_ne!(signed, 0, "the generator must reach valid input");
     assert_ne!(kept, 0, "the generator must reach invalid input");
+}
+
+const KEPT_ACTIVE: Settlement = Settlement::Retained(Retained::Active);
+const KEPT_PREVIOUS: Settlement = Settlement::Retained(Retained::Previous);
+const KEPT_RUNNING: Settlement = Settlement::Retained(Retained::Running);
+const KEPT_NEWEST: Settlement = Settlement::Retained(Retained::NewestLeft);
+const CANDIDATE: Settlement = Settlement::Candidate;
+
+const fn kept_blocked(gap: GroupGap) -> Settlement {
+    Settlement::Retained(Retained::GroupBlocked(gap))
+}
+
+/// The release `version` of `store`, relative to the home.
+fn of(store: &str, version: &str) -> String {
+    release(store, &name(version))
+}
+
+/// Every release a scan found, with how it settled, sorted by path.
+fn settlements(scan: &Scan) -> Vec<(String, Settlement)> {
+    let mut settled: Vec<(String, Settlement)> = scan
+        .rows()
+        .into_iter()
+        .filter_map(|row| {
+            let path = row.split_once(' ').map_or(row.as_str(), |(_, path)| path);
+            let finding = scan.get(path)?;
+            let facts = finding.facts.as_ref()?;
+            matches!(facts.supplied.subject, kipple_core::Subject::Release(_))
+                .then(|| (path.to_owned(), facts.settlement))
+        })
+        .collect();
+    settled.sort_by(|a, b| a.0.cmp(&b.0));
+    settled
+}
+
+/// The releases of a scan that settled as candidates.
+fn candidates(scan: &Scan) -> Vec<String> {
+    let candidate = |(path, settled): (String, Settlement)| (settled == CANDIDATE).then_some(path);
+    settlements(scan)
+        .into_iter()
+        .filter_map(candidate)
+        .collect()
+}
+
+/// Asserts how each of `expected` settled.
+fn assert_settled(scan: &Scan, expected: &[(&str, Settlement)]) {
+    for (path, settlement) in expected {
+        assert_eq!(scan.facts(path).settlement, *settlement, "{path}");
+    }
+}
+
+/// Catches the selected release or the store's rollback becoming a candidate.
+#[test]
+fn active_v3_keeps_v3_and_v2() {
+    let scan = verified().scan();
+
+    assert_settled(
+        &scan,
+        &[
+            (ACTIVE, KEPT_ACTIVE),
+            (ROLLBACK, KEPT_PREVIOUS),
+            (OLD, CANDIDATE),
+        ],
+    );
+}
+
+/// Catches a release a program runs from becoming a candidate because it is old.
+#[test]
+fn running_v1_keeps_v3_v1_and_v2() {
+    let mut scene = verified();
+    scene.running.push(at(&format!("{OLD}/bin/codex")));
+
+    let scan = scene.scan();
+
+    assert_settled(
+        &scan,
+        &[
+            (ACTIVE, KEPT_ACTIVE),
+            (ROLLBACK, KEPT_PREVIOUS),
+            (OLD, KEPT_RUNNING),
+        ],
+    );
+}
+
+/// Catches the two stores' releases settling as one group, so one store's rollback
+/// would answer for the other's.
+#[test]
+fn standalone_and_daemon_keep_their_own_rollbacks() {
+    let mut scene = verified();
+    scene.store(DAEMON, &[V164, V165, V166], V166, V164);
+
+    let scan = scene.scan();
+
+    assert_settled(
+        &scan,
+        &[
+            (OLD, CANDIDATE),
+            (ROLLBACK, KEPT_PREVIOUS),
+            (&of(DAEMON, V164), KEPT_PREVIOUS),
+            (&of(DAEMON, V165), CANDIDATE),
+            (&of(DAEMON, V166), KEPT_ACTIVE),
+        ],
+    );
+}
+
+/// The 5+3 store of `docs/11-delivery-plan.md` M4's Verify list, with S5 codex §7's
+/// versions: the state a prune skipped by a process held open leaves.
+fn five_plus_three() -> Scene {
+    let mut scene = Scene::new();
+    scene
+        .store(
+            STANDALONE,
+            &["0.162.1", "0.163.0", V164, V165, V166],
+            V166,
+            V165,
+        )
+        .store(DAEMON, &[V164, V165, V166], V166, V165);
+    let running = of(STANDALONE, "0.163.0");
+    scene.running.push(at(&format!("{running}/bin/codex")));
+    scene
+}
+
+/// Catches the docs/11 Verify case: the active, running and rollback releases are kept,
+/// and only the rest of each store is a candidate.
+#[test]
+fn five_plus_three_with_one_older_running() {
+    let scan = five_plus_three().scan();
+
+    assert_eq!(
+        candidates(&scan),
+        [
+            of(DAEMON, V164),
+            of(STANDALONE, "0.162.1"),
+            of(STANDALONE, V164),
+        ]
+    );
+    assert_settled(
+        &scan,
+        &[
+            (&of(STANDALONE, "0.163.0"), KEPT_RUNNING),
+            (ROLLBACK, KEPT_PREVIOUS),
+            (ACTIVE, KEPT_ACTIVE),
+            (&of(DAEMON, V165), KEPT_PREVIOUS),
+            (&of(DAEMON, V166), KEPT_ACTIVE),
+        ],
+    );
+}
+
+/// Catches kipple finding something to remove in a store Codex's own prune left as it
+/// should: the selected release and its rollback.
+#[test]
+fn pruned_store_has_no_candidates() {
+    let mut scene = Scene::new();
+    scene
+        .store(STANDALONE, &[V165, V166], V166, V165)
+        .store(DAEMON, &[V165, V166], V166, V165);
+
+    let scan = scene.scan();
+
+    assert_eq!(candidates(&scan), Vec::<String>::new());
+    assert_eq!(settlements(&scan).len(), 4, "{:#?}", settlements(&scan));
+}
+
+/// Catches keeping the newest release beside the selected one instead of the rollback the
+/// store names: removing 0.164.0 here would remove Codex's own way back.
+#[test]
+fn rollback_is_previous_not_newest() {
+    let mut scene = Scene::new();
+    scene.store(STANDALONE, &[V164, V165, V166], V166, V164);
+
+    let scan = scene.scan();
+
+    assert_settled(
+        &scan,
+        &[
+            (ACTIVE, KEPT_ACTIVE),
+            (OLD, KEPT_PREVIOUS),
+            (ROLLBACK, CANDIDATE),
+        ],
+    );
+}
+
+/// Catches a store that names no rollback losing every way back: the newest release left
+/// stays, and a prerelease orders below its release.
+#[test]
+fn empty_previous_keeps_the_newest_left() {
+    let alpha = "0.165.0-alpha.5.1";
+    let mut scene = Scene::new();
+    scene
+        .releases(STANDALONE, &[V164, alpha, V165, V166])
+        .select(STANDALONE, &name(V166))
+        .history(STANDALONE, &name(V166), "");
+
+    let scan = scene.scan();
+
+    assert_settled(
+        &scan,
+        &[
+            (ACTIVE, KEPT_ACTIVE),
+            (ROLLBACK, KEPT_NEWEST),
+            (&of(STANDALONE, alpha), CANDIDATE),
+            (OLD, CANDIDATE),
+        ],
+    );
+}
+
+/// The release `version` of `store` for `target`, relative to the home.
+fn of_target(store: &str, version: &str, target: &str) -> String {
+    release(store, &format!("{version}-{target}"))
+}
+
+/// Catches two targets of one component settling as one group, and a marker of the
+/// component blocking only one of them.
+#[test]
+fn two_targets_settle_apart() {
+    let arm = "aarch64-unknown-linux-musl";
+    let two_targets = || {
+        let mut scene = verified();
+        for version in [V165, V166] {
+            let dir = at(&of_target(STANDALONE, version, arm));
+            codex_v0_166_0::release(&mut scene.tree, &dir, version, arm);
+        }
+        scene
+    };
+    let arm_newest = of_target(STANDALONE, V166, arm);
+    let arm_older = of_target(STANDALONE, V165, arm);
+
+    let scan = two_targets().scan();
+
+    assert_settled(
+        &scan,
+        &[
+            (ACTIVE, KEPT_ACTIVE),
+            (ROLLBACK, KEPT_PREVIOUS),
+            (OLD, CANDIDATE),
+            (&arm_newest, KEPT_NEWEST),
+            (&arm_older, CANDIDATE),
+        ],
+    );
+
+    let mut staged = two_targets();
+    let staging = release(STANDALONE, &format!(".staging.{}.4242", name("0.167.0")));
+    staged.tree.dir(&at(&staging));
+    let busy = staged.scan();
+    let blocked = kept_blocked(GroupGap::InstallerBusy);
+    for path in [
+        ACTIVE,
+        ROLLBACK,
+        OLD,
+        arm_newest.as_str(),
+        arm_older.as_str(),
+    ] {
+        assert_eq!(busy.facts(path).settlement, blocked, "{path}");
+    }
+}
+
+/// Catches an install that is under way being judged by what it left half done.
+#[test]
+fn staging_blocks_the_group() {
+    let mut scene = verified();
+    let staging = release(STANDALONE, &format!(".staging.{}.4242", name("0.167.0")));
+    scene.tree.dir(&at(&staging));
+
+    let scan = scene.scan();
+
+    assert_eq!(candidates(&scan), Vec::<String>::new());
+    assert_eq!(
+        scan.facts(OLD).settlement,
+        kept_blocked(GroupGap::InstallerBusy)
+    );
+}
+
+/// Catches a `current` kipple can't follow leaving the rest of its store's releases free
+/// to go, when it can't tell which one is in use.
+#[test]
+fn malformed_current_blocks_its_group() {
+    let mut scene = Scene::new();
+    scene.releases(STANDALONE, &[V164, V165, V166]);
+    let dir = at(&component(STANDALONE));
+    scene
+        .tree
+        .link(&format!("{dir}/current"), "nowhere", Holds::AsWritten)
+        .file(&format!("{dir}/install.lock"), b"");
+
+    let scan = scene.scan();
+
+    assert_eq!(candidates(&scan), Vec::<String>::new());
+    for path in [ACTIVE, ROLLBACK, OLD] {
+        let settled = scan.facts(path).settlement;
+        assert!(
+            matches!(settled, Settlement::Retained(Retained::GroupBlocked(_))),
+            "expected {path} blocked by its group, got {settled:?}"
+        );
+    }
+}
+
+/// Catches a process list with gaps read as one without them.
+#[test]
+fn incomplete_inventory_blocks_the_group() {
+    let mut scene = verified();
+    scene.inventory = Inventory::Partial {
+        reason: "a process exited while it was read".to_owned(),
+    };
+
+    let scan = scene.scan();
+
+    assert_eq!(candidates(&scan), Vec::<String>::new());
+    assert_eq!(
+        scan.facts(OLD).settlement,
+        kept_blocked(GroupGap::ActivityUnknown)
+    );
+}
+
+/// Catches a release whose only running file is a helper, such as `rg`, read as idle:
+/// removing it breaks the Codex that looks the helper up.
+#[test]
+fn helper_process_keeps_its_release() {
+    let mut scene = verified();
+    scene.running.push(at(&format!("{OLD}/codex-path/rg")));
+
+    let scan = scene.scan();
+
+    assert_eq!(scan.facts(OLD).settlement, KEPT_RUNNING);
+}
+
+/// Catches a process under a release already set aside being ignored, when upstream's
+/// prune would stop for it.
+#[test]
+fn process_under_retired_blocks_the_group() {
+    let retired = release(STANDALONE, ".retired.AbCdEfGh");
+    let mut scene = verified();
+    codex_v0_166_0::release(
+        &mut scene.tree,
+        &at(&format!("{retired}/release")),
+        "0.163.0",
+        MUSL,
+    );
+    scene
+        .running
+        .push(at(&format!("{retired}/release/bin/codex")));
+
+    let scan = scene.scan();
+
+    assert_eq!(candidates(&scan), Vec::<String>::new());
+    assert_eq!(
+        scan.facts(OLD).settlement,
+        kept_blocked(GroupGap::RetiredRunning)
+    );
+}
+
+/// Catches a release run through a hard link from outside it read as idle: the process
+/// holds a file of the release, wherever it runs it from.
+#[test]
+fn hard_linked_running_binary_keeps_its_release() {
+    let mut scene = verified();
+    scene.linked.push(HardLink {
+        runs: "usr/local/bin/codex".to_owned(),
+        file: at(&format!("{OLD}/bin/codex")),
+    });
+
+    let scan = scene.scan();
+
+    assert_eq!(scan.facts(OLD).settlement, KEPT_RUNNING);
+    assert_eq!(scan.facts(ROLLBACK).settlement, KEPT_PREVIOUS);
+}
+
+/// Catches a pid file read as a running daemon: the process it names is gone, and only the
+/// process table says what runs.
+#[test]
+fn stale_pid_file_is_not_running() {
+    let mut scene = verified();
+    scene.store(DAEMON, &[V164, V165, V166], V166, V165);
+    scene
+        .tree
+        .file(&at("app-server-daemon/daemon.pid"), br#"{"pid":99999}"#);
+
+    let scan = scene.scan();
+
+    assert_eq!(scan.facts(&of(DAEMON, V164)).settlement, CANDIDATE);
+}
+
+/// Catches root's processes, which can't run from a home only its user can enter, blocking
+/// every release.
+#[test]
+fn root_process_is_a_notice_not_a_block() {
+    let scan = verified().scan();
+
+    assert!(
+        matches!(
+            scan.facts(OLD).activity,
+            Activity::IdleExceptSystem { unchecked, .. } if unchecked > 0
+        ),
+        "expected root's processes noted, got {:?}",
+        scan.facts(OLD).activity
+    );
+    assert_eq!(scan.facts(OLD).settlement, CANDIDATE);
+}
+
+/// Catches a Codex process of the user that couldn't be inspected read as idle, when it
+/// may run any release.
+#[test]
+fn unreadable_codex_process_blocks() {
+    let mut scene = verified();
+    scene.uninspected.push("usr/local/bin/codex".to_owned());
+
+    let scan = scene.scan();
+
+    assert_eq!(candidates(&scan), Vec::<String>::new());
+    assert_eq!(
+        scan.facts(OLD).settlement,
+        kept_blocked(GroupGap::ActivityUnknown)
+    );
+}
+
+/// Catches `/proc` mounted with `hidepid`, which hides processes without an error for each,
+/// read as a full list.
+#[test]
+fn hidepid_blocks() {
+    let mut scene = verified();
+    scene.inventory = Inventory::Partial {
+        reason: "/proc is mounted with hidepid=2".to_owned(),
+    };
+
+    let scan = scene.scan();
+
+    assert_eq!(
+        scan.facts(OLD).settlement,
+        kept_blocked(GroupGap::ActivityUnknown)
+    );
+}
+
+/// Catches a store outside the user's home settling as one inside it: another user's
+/// process could run from it, so no release of it goes, though the home's advice stands.
+#[test]
+fn store_outside_home_gets_advice_only() {
+    let mut scene = verified();
+    scene.user_home = "users/me";
+
+    let scan = scene.scan();
+
+    assert_eq!(candidates(&scan), Vec::<String>::new());
+    assert_eq!(
+        scan.facts(OLD).settlement,
+        kept_blocked(GroupGap::ActivityUnknown)
+    );
+    assert_eq!(scan.advice().len(), 1);
+}
+
+/// A store whose newest release was installed but not selected, as an interrupted update
+/// leaves one: 0.165.0 selected after 0.164.0, and 0.166.0 beside them.
+fn before_the_switch() -> Scene {
+    let mut scene = Scene::new();
+    scene.store(STANDALONE, &[V164, V165, V166], V165, V164);
+    scene
+}
+
+/// Catches a release judged by the selection it had at the scan: an install that selects
+/// it before apply, or between two items of a run, makes it the active one, and a scan
+/// after that plans it as one.
+#[test]
+fn link_changed_before_apply_protects_new_release() {
+    let scan = before_the_switch().scan();
+    assert_eq!(scan.facts(ACTIVE).settlement, CANDIDATE);
+    assert_eq!(scan.now(OLD).map(|now| now.settlement), Ok(KEPT_PREVIOUS));
+
+    scan.select(STANDALONE, &name(V166), &name(V165));
+
+    assert_eq!(scan.now(ACTIVE).map(|now| now.settlement), Ok(KEPT_ACTIVE));
+    assert_eq!(
+        scan.now(ROLLBACK).map(|now| now.settlement),
+        Ok(KEPT_PREVIOUS)
+    );
+    assert_eq!(scan.now(OLD).map(|now| now.settlement), Ok(CANDIDATE));
+    let replanned = scan.built.scan();
+    assert_eq!(replanned.facts(ACTIVE).settlement, KEPT_ACTIVE);
+    assert_eq!(candidates(&replanned), [OLD.to_owned()]);
+}
+
+/// Catches apply settling a release from the scan's facts after the store changed: a
+/// `current` made again without its history, as an install that stopped between the two
+/// leaves it, keeps every release.
+#[test]
+fn a_link_made_again_without_its_history_holds_at_apply() {
+    let scan = before_the_switch().scan();
+
+    scan.select(STANDALONE, &name(V166), &name(V165));
+    let history = scan
+        .built
+        .home()
+        .join(component(STANDALONE))
+        .join("selection-history");
+    fs::write(history, format!("{}\n{}\nstale\n", name(V166), name(V165))).unwrap();
+
+    let now = scan.now(ACTIVE).map(|now| now.settlement);
+    assert_eq!(now, Ok(kept_blocked(GroupGap::HistoryStale)));
+}
+
+/// Catches a release removed on a fact the rule requires but didn't hold on while it was
+/// `report`, which proved none of them: a candidate of a sound store is Safe, and each
+/// fact that fails, and each settlement but a candidate's, holds it.
+#[test]
+fn each_release_fact_holds() {
+    let scan = verified().scan();
+    assert_eq!(scan.verdict(OLD), Verdict::Safe);
+    assert_eq!(scan.holds(ACTIVE), [Hold::Retained]);
+    assert_eq!(scan.holds(ROLLBACK), [Hold::Retained]);
+
+    let mut partial = verified();
+    partial.inventory = Inventory::Partial {
+        reason: "hidepid".to_owned(),
+    };
+    let mut staged = verified();
+    let staging = release(STANDALONE, &format!(".staging.{}.4242", name("0.167.0")));
+    staged.tree.dir(&at(&staging));
+    let mut stale = Scene::new();
+    stale
+        .releases(STANDALONE, &[V164, V165, V166])
+        .select(STANDALONE, &name(V166))
+        .history(STANDALONE, &name(V165), &name(V164));
+    for (case, scene, expected) in [
+        (
+            "an incomplete process list",
+            partial,
+            vec![Hold::UnknownActivity, Hold::Retained],
+        ),
+        (
+            "an install under way",
+            staged,
+            vec![Hold::Retained, Hold::FactUnmet],
+        ),
+        (
+            "a history of another selection",
+            stale,
+            vec![Hold::Retained],
+        ),
+    ] {
+        let held = scene.scan();
+        assert_eq!(held.holds(OLD), expected, "{case}");
+    }
+}
+
+/// Catches a level that lowers retention: Thorough keeps every release Balanced keeps.
+#[test]
+fn thorough_retains_the_same_releases() {
+    let scan = five_plus_three().scan();
+    let thorough = Policy {
+        level: kipple_core::Level::Thorough,
+        ..Policy::default()
+    };
+
+    for (path, _) in settlements(&scan) {
+        let balanced = scan.verdict(&path);
+        let at_thorough = scan.verdict_at(&path, &thorough);
+        assert_eq!(
+            balanced == Verdict::Safe,
+            at_thorough == Verdict::Safe,
+            "{path}: {balanced:?} at Balanced, {at_thorough:?} at Thorough"
+        );
+    }
+}
+
+/// Catches a frontend shown a release as Safe before its group settled: every update the
+/// scan streams for a release that isn't a candidate holds it.
+#[test]
+fn no_unsettled_release_is_ever_streamed_safe() {
+    for scene in [five_plus_three(), verified(), before_the_switch()] {
+        let scan = scene.scan();
+        let rules: std::collections::BTreeMap<_, _> = scan
+            .report
+            .findings
+            .iter()
+            .map(|finding| (finding.id, (&finding.rule, &finding.path)))
+            .collect();
+        let mut releases = 0;
+        for event in &scan.events {
+            let kipple_core::ScanEvent::FindingUpdated { id, facts, .. } = event else {
+                continue;
+            };
+            if !matches!(facts.supplied.subject, kipple_core::Subject::Release(_)) {
+                continue;
+            }
+            releases += 1;
+            let (rule, path) = rules[id];
+            let verdict = Policy::default().verdict(rule, path, facts);
+            if facts.settlement != CANDIDATE {
+                assert_ne!(verdict, Verdict::Safe, "{path:?}: {:?}", facts.settlement);
+            }
+        }
+        assert!(releases > 0, "expected releases streamed");
+    }
+}
+
+/// Catches a scan touching the installer's lock: only apply takes it (`docs/04-safety-model.md`
+/// §3.1), so a scan never opens it, and a lock held elsewhere doesn't change what it finds.
+#[test]
+fn scan_takes_no_lock() {
+    let mut scene = verified();
+    scene.store(DAEMON, &[V164, V165, V166], V166, V165);
+    scene.tree.file(&at("app-server-daemon/daemon.lock"), b"");
+
+    let scan = scene.scan();
+
+    let opened = scan.opened();
+    let locks: Vec<&String> = opened
+        .iter()
+        .filter(|path| path.to_ascii_lowercase().ends_with(".lock"))
+        .collect();
+    assert_eq!(locks, Vec::<&String>::new(), "no lock opened");
+    assert_eq!(scan.facts(OLD).settlement, CANDIDATE);
+}
+
+/// Catches apply settling a release beside a finding its scan stopped short of: that one
+/// may be a release of the group, the selected one even, and a process may run it, so
+/// apply, which never measured it, keeps the whole component.
+#[test]
+fn a_release_the_apply_scan_left_unread_keeps_the_component() {
+    let mut scan = verified().scan();
+    let active = scan.built.home().join(ACTIVE);
+    for finding in &mut scan.report.findings {
+        if finding.path == active {
+            finding.facts = None;
+        }
+    }
+
+    let now = scan.now(OLD).map(|now| now.settlement);
+
+    assert_eq!(now, Ok(kept_blocked(GroupGap::ActivityUnknown)));
+}
+
+/// Catches apply trusting the scan's process list once the probe fails: a list with gaps
+/// at apply keeps every release of the component, and a Codex started since keeps its own.
+#[test]
+fn a_process_list_read_again_at_apply_decides() {
+    let scan = verified().scan();
+    assert_eq!(scan.facts(OLD).settlement, CANDIDATE);
+
+    scan.show(|shown| shown.running.push(at(&format!("{OLD}/bin/codex"))));
+    assert_eq!(scan.now(OLD).map(|now| now.settlement), Ok(KEPT_RUNNING));
+
+    scan.show(|shown| {
+        shown.running.clear();
+        shown.inventory = Inventory::Partial {
+            reason: "hidepid".to_owned(),
+        };
+    });
+    let now = scan.now(OLD).map(|now| now.settlement);
+    assert_eq!(now, Ok(kept_blocked(GroupGap::ActivityUnknown)));
+}
+
+/// Catches a release upstream's prune never considers settling as a candidate: one built
+/// for Windows in a Linux store has no `bin/codex` and no `codex` alias, so upstream keeps
+/// it, and kipple only reports it, the older of two too.
+#[test]
+fn foreign_target_release_is_kept() {
+    let target = "x86_64-pc-windows-msvc";
+    let mut scene = verified();
+    let foreign: Vec<String> = ["0.162.1", "0.163.0"]
+        .into_iter()
+        .map(|version| {
+            let path = release(STANDALONE, &format!("{version}-{target}"));
+            codex_v0_166_0::windows_release(&mut scene.tree, &at(&path), version, target);
+            path
+        })
+        .collect();
+
+    let scan = scene.scan();
+
+    for path in &foreign {
+        assert_eq!(scan.rule(path), "release-inventory", "{path}");
+        assert!(is_report(&scan, path), "{path}: expected report only");
+        assert!(
+            has_signature(&scan, path),
+            "{path}: expected a signed release"
+        );
+    }
+    assert_eq!(candidates(&scan), [OLD.to_owned()]);
+}
+
+/// Catches an installer without `flock(1)`, whose lock is the directory `install.lock.d`
+/// that kipple's lock doesn't conflict with, going unseen at apply: one made since the
+/// scan is read again after the item's locks and keeps every release of the component.
+#[test]
+fn install_lock_dir_made_before_the_item_holds() {
+    let scan = verified().scan();
+    assert_eq!(scan.facts(OLD).settlement, CANDIDATE);
+    let mut lock = FixtureTree::new();
+    lock.dir(&at(&format!("{}/install.lock.d", component(STANDALONE))));
+    scan.add(&lock);
+
+    let now = scan.now(OLD).map(|now| now.settlement);
+
+    assert_eq!(now, Ok(kept_blocked(GroupGap::InstallerBusy)));
+}
+
+/// Catches apply settling among the members its scan had: a `.retired.*` entry an install
+/// set aside after the scan, a Codex still running from it, is no member there, so apply
+/// would remove a release a scan at that moment keeps. Apply never measured the entry, so
+/// it keeps the component on that, where a scan now names the process.
+#[test]
+fn a_retired_entry_that_appears_mid_run_keeps_the_component() {
+    let scan = verified().scan();
+    assert_eq!(scan.facts(OLD).settlement, CANDIDATE);
+    let retired = release(STANDALONE, ".retired.AbCdEfGh");
+    let mut set_aside = FixtureTree::new();
+    let dir = at(&format!("{retired}/release"));
+    codex_v0_166_0::release(&mut set_aside, &dir, "0.163.0", MUSL);
+    scan.add(&set_aside);
+    scan.show(|shown| shown.running.push(format!("{dir}/bin/codex")));
+
+    let now = scan.now(OLD).map(|now| now.settlement);
+
+    assert_eq!(now, Ok(kept_blocked(GroupGap::ActivityUnknown)));
+    let rescanned = scan.built.scan();
+    let fresh = rescanned.facts(OLD).settlement;
+    assert_eq!(fresh, kept_blocked(GroupGap::RetiredRunning));
+}
+
+/// Pins a release removed beside the item since the scan, by another prune or by this run:
+/// apply settles among what is there now, as a scan at that moment does, so the item is
+/// still a candidate rather than held for a change that leaves its own place as it was.
+#[test]
+fn a_peer_removed_by_someone_else_mid_run_settles_afresh() {
+    let scan = five_plus_three().scan();
+    let older = of(STANDALONE, "0.162.1");
+    let old = of(STANDALONE, V164);
+    assert_eq!(
+        candidates(&scan),
+        [of(DAEMON, V164), older.clone(), old.clone()]
+    );
+
+    scan.remove(&older);
+
+    assert_eq!(scan.now(&old).map(|now| now.settlement), Ok(CANDIDATE));
+    assert_eq!(candidates(&scan.built.scan()), [of(DAEMON, V164), old]);
+}
+
+/// Whether an entry's `codex` alias reads `bin/codex`, as upstream writes it, or another
+/// file of the release.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Alias {
+    Program,
+    Other,
+}
+
+/// One entry of a generated store.
+#[derive(Debug, Clone)]
+struct Planted {
+    version: &'static str,
+    target: &'static str,
+    alias: Alias,
+}
+
+impl Planted {
+    fn name(&self) -> String {
+        format!("{}-{}", self.version, self.target)
+    }
+
+    fn path(&self) -> String {
+        release(STANDALONE, &self.name())
+    }
+
+    fn program(&self) -> String {
+        let program = if self.target.contains("windows") {
+            "bin/codex.exe"
+        } else {
+            "bin/codex"
+        };
+        at(&format!("{}/{program}", self.path()))
+    }
+
+    fn write(&self, tree: &mut FixtureTree) {
+        let dir = at(&self.path());
+        if self.target.contains("windows") {
+            codex_v0_166_0::windows_release(tree, &dir, self.version, self.target);
+            return;
+        }
+        match self.alias {
+            Alias::Program => codex_v0_166_0::release(tree, &dir, self.version, self.target),
+            Alias::Other => {
+                let manifest = codex_v0_166_0::manifest(self.version, self.target, "bin/codex");
+                tree.file(&format!("{dir}/codex-package.json"), manifest.as_bytes())
+                    .file(&format!("{dir}/bin/codex"), b"\x7fELF")
+                    .file(&format!("{dir}/bin/other"), b"\x7fELF")
+                    .link(&format!("{dir}/codex"), "bin/other", Holds::AsWritten);
+            }
+        }
+    }
+}
+
+/// A generated store: its entries, the selected one, its rollback, and the one a process
+/// runs, by index.
+#[derive(Debug)]
+struct Planting {
+    entries: Vec<Planted>,
+    active: usize,
+    previous: Option<usize>,
+    running: Option<usize>,
+}
+
+const PLANTED_VERSIONS: [&str; 7] = ["0.160.0", "0.161.0", "0.162.1", "0.163.0", V164, V165, V166];
+const PLANTED_TARGETS: [&str; 5] = [
+    MUSL,
+    MUSL,
+    MUSL,
+    "aarch64-unknown-linux-musl",
+    "x86_64-pc-windows-msvc",
+];
+
+impl Seeded {
+    fn pick<T: Copy>(&mut self, from: &[T]) -> T {
+        from[self.next() % from.len()]
+    }
+
+    fn one_in(&mut self, odds: usize) -> bool {
+        self.next().is_multiple_of(odds)
+    }
+
+    fn other_than(&mut self, count: usize, not: usize) -> Option<usize> {
+        let picked = self.next() % count;
+        (picked != not).then_some(picked)
+    }
+
+    fn planting(&mut self) -> Planting {
+        let mut entries: Vec<Planted> = Vec::new();
+        for _ in 0..3 + self.next() % 5 {
+            let alias = if self.one_in(5) {
+                Alias::Other
+            } else {
+                Alias::Program
+            };
+            let planted = Planted {
+                version: self.pick(&PLANTED_VERSIONS),
+                target: self.pick(&PLANTED_TARGETS),
+                alias,
+            };
+            if entries.iter().all(|entry| entry.name() != planted.name()) {
+                entries.push(planted);
+            }
+        }
+        let active = self.next() % entries.len();
+        let previous = self.other_than(entries.len(), active);
+        let running = (self.one_in(3)).then(|| self.next() % entries.len());
+        Planting {
+            entries,
+            active,
+            previous,
+            running,
+        }
+    }
+}
+
+impl Planting {
+    fn scene(&self) -> Scene {
+        let mut scene = Scene::new();
+        for entry in &self.entries {
+            entry.write(&mut scene.tree);
+        }
+        let selected = self.entries[self.active].name();
+        let previous = self
+            .previous
+            .map_or_else(String::new, |at| self.entries[at].name());
+        scene
+            .select(STANDALONE, &selected)
+            .history(STANDALONE, &selected, &previous);
+        scene
+            .running
+            .extend(self.running.map(|at| self.entries[at].program()));
+        scene
+    }
+
+    /// Whether upstream's prune (`prune_standalone_releases` at `rust-v0.166.0`) would
+    /// consider the entry `at`, from what is on disk: neither selected nor the rollback,
+    /// unused, one of its four targets, `bin/codex` its program and the `codex` alias.
+    fn upstream_considers(&self, at: usize) -> bool {
+        let entry = &self.entries[at];
+        at != self.active
+            && Some(at) != self.previous
+            && Some(at) != self.running
+            && [
+                "aarch64-apple-darwin",
+                "x86_64-apple-darwin",
+                "aarch64-unknown-linux-musl",
+                "x86_64-unknown-linux-musl",
+            ]
+            .contains(&entry.target)
+            && entry.alias == Alias::Program
+    }
+}
+
+/// Whether the finding at `path` settled as a candidate, if there is one.
+fn is_candidate(scan: &Scan, path: &str) -> bool {
+    scan.get(path)
+        .and_then(|finding| finding.facts.as_ref())
+        .is_some_and(|facts| facts.settlement == CANDIDATE)
+}
+
+/// Catches a scan offering what upstream's own prune keeps, over generated stores: each
+/// entry is judged by upstream's reading of what is on disk (its target, its program, its
+/// alias), not by a role kipple assigned, so a release kipple reads the wrong way shows.
+#[test]
+fn no_candidate_is_one_upstream_keeps() {
+    let mut candidates = 0;
+    for seed in 0..96 {
+        let planting = Seeded(seed).planting();
+        let scan = planting.scene().scan();
+        for (at, entry) in planting.entries.iter().enumerate() {
+            if is_candidate(&scan, &entry.path()) {
+                candidates += 1;
+                let considered = planting.upstream_considers(at);
+                assert!(
+                    considered,
+                    "seed {seed}: upstream keeps {entry:?} of {planting:?}"
+                );
+            }
+        }
+    }
+    assert_ne!(
+        candidates, 0,
+        "the generated stores never reach a candidate"
+    );
+}
+
+/// What changes between two items of a run.
+#[derive(Debug, Clone, Copy)]
+enum Change {
+    /// An install adds a release.
+    Install,
+    /// An install selects another release.
+    Flip,
+    /// An install sets a release aside, a process still running from it or not.
+    Retire(Running),
+    /// This run, or another prune, removes an entry.
+    Remove,
+    /// The process list comes back with gaps.
+    FailedProbe,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Running {
+    Yes,
+    No,
+}
+
+const CHANGES: [Change; 6] = [
+    Change::Install,
+    Change::Flip,
+    Change::Retire(Running::Yes),
+    Change::Retire(Running::No),
+    Change::Remove,
+    Change::FailedProbe,
+];
+
+impl Seeded {
+    fn change(&mut self, planting: &Planting, scan: &Scan) -> Change {
+        let change = self.pick(&CHANGES);
+        let count = planting.entries.len();
+        match change {
+            Change::Install => {
+                let planted = Planted {
+                    version: "0.167.0",
+                    target: self.pick(&PLANTED_TARGETS),
+                    alias: Alias::Program,
+                };
+                let mut tree = FixtureTree::new();
+                planted.write(&mut tree);
+                scan.add(&tree);
+            }
+            Change::Flip => {
+                let selected = &planting.entries[self.next() % count];
+                let previous = planting.entries[planting.active].name();
+                scan.select(STANDALONE, &selected.name(), &previous);
+            }
+            Change::Retire(running) => {
+                let dir = at(&release(STANDALONE, ".retired.Generated/release"));
+                let mut tree = FixtureTree::new();
+                codex_v0_166_0::release(&mut tree, &dir, "0.159.0", MUSL);
+                scan.add(&tree);
+                if matches!(running, Running::Yes) {
+                    scan.show(|shown| shown.running.push(format!("{dir}/bin/codex")));
+                }
+            }
+            Change::Remove => {
+                // This run's own removals are of candidates; another prune's are of any.
+                let paths: Vec<String> = planting.entries.iter().map(Planted::path).collect();
+                let candidates: Vec<&String> = paths
+                    .iter()
+                    .filter(|path| is_candidate(scan, path))
+                    .collect();
+                let path = if candidates.is_empty() || self.one_in(3) {
+                    &paths[self.next() % count]
+                } else {
+                    candidates[self.next() % candidates.len()]
+                };
+                scan.remove(path);
+            }
+            Change::FailedProbe => scan.show(|shown| {
+                shown.inventory = Inventory::Partial {
+                    reason: "hidepid".to_owned(),
+                };
+            }),
+        }
+        change
+    }
+}
+
+/// Catches apply admitting what a scan at that moment keeps, over generated stores and a
+/// generated change between two items of a run (an install, a flip, an entry set aside,
+/// one removed, a process list with gaps): apply settles among the store as it is now.
+#[test]
+fn apply_never_admits_what_a_fresh_settle_keeps() {
+    let mut admitted = 0;
+    for seed in 0..256 {
+        let mut rng = Seeded(seed);
+        let planting = rng.planting();
+        let scan = planting.scene().scan();
+        let change = rng.change(&planting, &scan);
+        let rescanned = scan.built.scan();
+        for entry in &planting.entries {
+            let path = entry.path();
+            if scan.get(&path).is_none() {
+                continue;
+            }
+            let now = scan.now(&path).map(|now| now.settlement);
+            if now == Ok(CANDIDATE) {
+                admitted += 1;
+                let fresh = is_candidate(&rescanned, &path);
+                assert!(
+                    fresh,
+                    "seed {seed}: {change:?} keeps {entry:?} of {planting:?}"
+                );
+            }
+        }
+    }
+    assert_ne!(
+        admitted, 0,
+        "apply never admits anything in the generated runs"
+    );
 }

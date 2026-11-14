@@ -55,7 +55,7 @@ Levels change classification only. The removal method is a separate setting (03 
 
 **Effective recent window** for a rule = the largest of: its level's window, the manifest's `selection.recent_days`, and the config override `rules.<id>.recent_days`. Overrides can only lengthen it. This one value drives the bucket, the "recent" label and every group shortcut.
 
-Never Safe at any level: `history` loss, `none` recovery, `high` cost, third-party rules (recovery `none`), anything unknown or blocked. Retention protections (keep active, keep running, keep N) apply at every level. Thorough doesn't lower `keep_additional`; it only lets that retained-rollback loss count as Safe.
+Never Safe at any level: `history` loss, `none` recovery, `high` cost, third-party rules (recovery `none`), anything unknown or blocked. Retention (keep active, previous, running and pending, and the newest left where no rollback is named) applies at every level: Thorough keeps the same releases as Careful.
 
 What this means in practice:
 - **Careful:** only build output and regenerated caches.
@@ -87,7 +87,7 @@ What this means in practice:
 
 ## 4. Busy and activity detection
 
-- A running executable's identity (exe path and file identity) protects its release, whatever a `current` link says.
+- A running executable's identity (exe path and file identity) protects its release, whatever a `current` link says: a process whose executable lies under the release, or that runs a file with the identity of one of the release's files from elsewhere, as a hard link does. A copy has another identity and isn't seen.
 - Each integration declares what activity evidence it needs: process identity, a lockfile the tool documents, or an open-handle probe where it is cheap.
 - If the evidence is incomplete, the affected operation is blocked, not just the item.
 - Process names alone never count as proof that something is inactive.
@@ -200,6 +200,8 @@ Required failure scenarios:
 - Codex's `current` is judged by its text against the root's path. If an ancestor of the home is a link (`/home -> /var/home`), upstream's canonical target differs from kipple's root, the selection fails and the home closes, so Codex is report-only on such a host. Windows junction targets may do the same.
 - `<home>/log/codex-tui.log` can be written by a Codex older than 0.166.0 installed outside the store, which the version fact can't see. Only the check for a running Codex covers it.
 - Codex's `selection-history` can't be validated on Windows, so every release group there is blocked as unreadable. Windows is report-only anyway.
+- Codex's releases are removed only on Linux. kipple holds `install.lock`, and `daemon.lock` for the daemon's store, only for one removal; whether a live daemon holds `daemon.lock` for long, and what it does on finding kipple holding it, are unverified. If one holds it, the daemon's releases stay `installer-busy`. A person running a release by a stale absolute path while kipple deletes it is not seen after the re-probe that follows the freeze.
+- At apply a release is settled among its component's entries as one reading after the item's locks lists them. An installer without `flock(1)` takes the directory `install.lock.d` instead, which kipple's lock doesn't conflict with: one made before that reading keeps the component, but one made between that reading and the delete isn't seen.
 - Every artifact inside a partial clone is held, on every git, and reads as git having failed. `ls-files` there can start a lazy fetch, a fetch reaches programs and URLs the repository's config names, and no version number says which gits honour `GIT_NO_LAZY_FETCH`. Such an artifact is reported and never removed.
 - A git worktree on a disk that isn't mounted reads as absent: it gets the `git worktree prune --dry-run` advice like a deleted one, and a checkout copied from it gets the `repair` advice. A locked one keeps its lock, but an unlocked one can't be told from a deleted one.
 - Git prints the path it resolved, so a worktree below a project root that is reached through a link (a root's own parents, or macOS's `/var`), or on Windows below a root given in short names, is reported under git's spelling, which is outside the root as kipple opened it. Such a worktree is only reported, under `builtin.git.worktree-inventory`, and shows with a different path from the artifacts inside it.

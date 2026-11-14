@@ -20,6 +20,7 @@ impl FsProbe for NoFollowFs {
         Ok(EntryMeta {
             kind: kind_of(meta.file_type()),
             identity: os::identity(&exact, &meta),
+            mount: os::mount(&exact),
         })
     }
 

@@ -41,6 +41,7 @@ impl FsProbe for Disk {
                 volume: 1,
                 file: u128::from(hasher.finish()),
             }),
+            mount: kipple_core::Mount::ByDevice,
         })
     }
 
