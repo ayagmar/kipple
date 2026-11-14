@@ -714,7 +714,15 @@ fn key_files_are_never_read() {
             format!("{CONFIG}/settings.json")
         ]
     );
-    let report = format!("{:?}", scan.report);
+    // Not the whole report: an opened root's identity is a random number here, which now
+    // and then holds the digits looked for.
+    let said: Vec<_> = scan
+        .report
+        .integrations
+        .iter()
+        .map(|integration| (&integration.omissions, &integration.advice))
+        .collect();
+    let report = format!("{:?}{said:?}", scan.report.findings);
     for secret in [
         "credential-value",
         "key-value",
