@@ -13,6 +13,9 @@ const fn gap(gap: GroupGap) -> &'static str {
         GroupGap::ActivityUnknown => "a program may be using one of its releases",
         GroupGap::RetiredRunning => "a program runs a release set aside for removal",
         GroupGap::Unreadable => "part of its store can't be read",
+        GroupGap::UnorderedVersion => "a release's version can't be ordered",
+        GroupGap::Changed => "its store changed since the scan",
+        GroupGap::NoLock => "its install lock is missing or isn't a file",
     }
 }
 

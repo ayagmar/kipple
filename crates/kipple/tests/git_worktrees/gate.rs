@@ -198,6 +198,9 @@ impl Repo {
             roots: self.roots(env),
             lens: None,
             exclude: Vec::new(),
+            // The host protects every finding, as the default does: these tests read
+            // the facts, which its answer leaves as they are.
+            protections: kipple_core::Protections::default(),
         };
         let report = engine.scan(&request, &events, &cancel);
         drop(rx);

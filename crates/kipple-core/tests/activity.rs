@@ -153,6 +153,7 @@ impl FsProbe for Disk {
                 EntryKind::Dir
             },
             identity: Some(self.identity(path)),
+            mount: kipple_core::Mount::ByDevice,
         })
     }
 
@@ -384,6 +385,7 @@ impl Host {
             roots: self.roots(),
             lens: None,
             exclude: Vec::new(),
+            protections: kipple_core::Protections::default(),
         }
     }
 

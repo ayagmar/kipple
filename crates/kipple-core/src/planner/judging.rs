@@ -28,7 +28,8 @@ pub(crate) struct Scene<'scan> {
     scan: &'scan ScanReport,
     /// Each finding's verdict under the current policy, `None` when it wasn't measured.
     verdicts: Vec<Option<Verdict>>,
-    /// What of the host's protects each finding, if anything does.
+    /// What of the host's protects each finding, if anything does: the answer its scan
+    /// gave, so planning and apply never disagree with what the scan showed.
     hosts: Vec<Option<Protection>>,
     /// Findings the host protects, that are Protected or that weren't measured.
     sheltered: Placed,
@@ -138,16 +139,10 @@ impl<'scan> Scene<'scan> {
             cautioned: Placed::default(),
             by_place: HashMap::new(),
         };
-        let owners = scan.owners();
         for (index, finding) in scan.findings.iter().enumerate() {
             let verdict = finding.verdict(judge.policy);
             let lineage = finding.facts.as_ref().map(|facts| &facts.lineage);
-            let host = lineage.and_then(|lineage| {
-                let integration = finding.integration;
-                judge
-                    .protections
-                    .check(&finding.path, lineage, integration, &owners)
-            });
+            let host = finding.facts.as_ref().and_then(|facts| facts.host);
             match (&host, &verdict) {
                 (None, Some(Verdict::Safe)) => {}
                 (None, Some(Verdict::Review(_))) => scene.cautioned.add(index, lineage),
@@ -235,27 +230,29 @@ impl<'scan> Scene<'scan> {
     }
 
     /// Fails when a finding other than `index`, at the same directory or inside it, is
-    /// protected by the host, is Protected or wasn't measured.
+    /// protected by the host, is Protected or wasn't measured. An alias the host protects
+    /// is this directory under another name, so the item is protected itself; anything
+    /// else is something the item holds.
     fn unsheltered(&self, index: usize, finding: &Finding, facts: &Facts) -> Result<(), Skip> {
-        let Some(other) = self
+        let Some(inner) = self
             .sheltered
             .within(self.scan, finding, facts)
-            .find(|other| *other != index)
+            .find(|inner| *inner != index)
         else {
             return Ok(());
         };
-        if let Some(Some(why)) = self.hosts.get(other) {
-            return Err(Skip::HostProtected(*why));
+        let found = self.scan.findings.get(inner);
+        let host = self.hosts.get(inner).copied().flatten();
+        if let Some(why) = host
+            && found.is_some_and(|alias| aliases(finding, facts, alias))
+        {
+            return Err(Skip::HostProtected(why));
         }
-        let path = self
-            .scan
-            .findings
-            .get(other)
-            .map(|other| other.path.clone())
-            .unwrap_or_default();
-        let holds = match self.verdicts.get(other) {
-            Some(Some(Verdict::Protected(holds))) => holds.clone(),
-            Some(Some(Verdict::Safe | Verdict::Review(_)) | None) | None => Vec::new(),
+        let path = found.map(|held| held.path.clone()).unwrap_or_default();
+        let holds = match (host, self.verdicts.get(inner)) {
+            (Some(why), _) => vec![Hold::from(why)],
+            (None, Some(Some(Verdict::Protected(holds)))) => holds.clone(),
+            (None, Some(Some(Verdict::Safe | Verdict::Review(_)) | None) | None) => Vec::new(),
         };
         Err(Skip::HoldsProtected { path, holds })
     }
@@ -317,6 +314,13 @@ impl<'scan> Scene<'scan> {
         };
         Ok((anchor, own))
     }
+}
+
+/// Whether `other` is the directory `finding` is, under the same path or another one.
+fn aliases(finding: &Finding, facts: &Facts, other: &Finding) -> bool {
+    let own = facts.lineage.own();
+    let theirs = other.facts.as_ref().and_then(|seen| seen.lineage.own());
+    other.path == finding.path || own.is_some_and(|own| theirs == Some(own))
 }
 
 /// The command for `kind` on the item at `anchor`, from what its integration read. Only

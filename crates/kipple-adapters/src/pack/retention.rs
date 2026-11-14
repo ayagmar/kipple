@@ -78,23 +78,25 @@ fn required_value(
     fine
 }
 
+/// `group_by`, which is fixed too: a release is compared only with releases of its own
+/// component and target, as upstream's prune compares them, so either key alone would
+/// settle a release against another platform's.
 fn group_by(c: &mut Checker<'_>, value: &Value<'_>) -> Option<Vec<GroupKey>> {
+    const FIXED: [GroupKey; 2] = [GroupKey::Component, GroupKey::Target];
     let items = c.array(value)?;
-    if items.is_empty() {
-        let message = "name at least one group key";
-        c.error(ErrorCode::InvalidRange, value.span(), message);
-        return None;
-    }
     let mut keys = Vec::new();
     for item in items {
-        let key = c.one_of(
+        keys.push(c.one_of(
             item,
             GroupKey::from_name,
             "a group key: component or target",
-        )?;
-        if !keys.contains(&key) {
-            keys.push(key);
-        }
+        )?);
     }
-    Some(keys)
+    let fixed = keys.len() == FIXED.len() && FIXED.iter().all(|key| keys.contains(key));
+    if !fixed {
+        let message = "`group_by` is fixed: name `component` and `target`, once each";
+        c.error(ErrorCode::InvalidRange, value.span(), message);
+        return None;
+    }
+    Some(FIXED.to_vec())
 }

@@ -70,6 +70,9 @@ fn lineage(path: &Path) -> Lineage {
     Lineage(path.ancestors().map(identity).map(Some).collect())
 }
 
+/// kipple's data directory, below the tree.
+const DATA: &str = "home/.local/share/kipple";
+
 fn held(path: &Path) -> HeldPath {
     HeldPath {
         forms: vec![path.to_owned()],
@@ -151,6 +154,7 @@ impl FsProbe for TempFs {
         Ok(EntryMeta {
             kind: kind(meta.file_type()),
             identity: Some(identity(path)),
+            mount: kipple_core::Mount::ByDevice,
         })
     }
 
@@ -432,10 +436,13 @@ impl Host {
         for root in &self.unresolved {
             roots.add(*root, Err(UnresolvedRoot::NotSet { var: "UNSET" }));
         }
+        let data = below(self.temp.path(), DATA);
+        let protections = Protections::of_host(&roots, Some(&data), &builtin::descriptors(), &held);
         let request = ScanRequest {
             roots,
             lens: None,
             exclude: Vec::new(),
+            protections,
         };
         let reads = Reads::default();
         let shown = Arc::new(Mutex::new(self.processes));
@@ -610,13 +617,7 @@ impl Scan {
         integration: IntegrationId,
     ) -> Option<Protection> {
         let path = self.path(relative);
-        let data = self.path("home/.local/share/kipple");
-        let host = Protections::of_host(
-            &self.request.roots,
-            Some(&data),
-            &builtin::descriptors(),
-            &held,
-        );
+        let host = &self.request.protections;
         host.check(&path, &lineage(&path), integration, &self.report.owners())
     }
 

@@ -39,6 +39,10 @@ pub(crate) fn write_rule(
     } else {
         "not on this OS"
     };
+    let descriptor = builtin
+        .descriptors
+        .iter()
+        .find(|d| d.id == rule.integration);
     let mut rows = vec![
         (
             "Integration",
@@ -49,16 +53,12 @@ pub(crate) fn write_rule(
         ),
         ("Category", rule.category.name().to_owned()),
         ("Platforms", format!("{} ({here})", platforms.join(", "))),
-        ("Looks in", rule.root.name().to_owned()),
+        ("Looks in", human::looks_in(rule, descriptor)),
         ("Selects", selects(&rule.selector)),
         ("Why it's there", rule.text.why.clone()),
         ("What you lose", rule.text.loss.clone()),
         ("Operation", operation(&rule.operation)),
     ];
-    let descriptor = builtin
-        .descriptors
-        .iter()
-        .find(|d| d.id == rule.integration);
     rows.extend(descriptor.into_iter().flat_map(published_rows));
     let title = escaped(&format!("{}: {}", rule.id, rule.text.title));
     writeln!(out, "{}", ink.paint(Role::Title, &title))?;

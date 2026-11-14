@@ -27,8 +27,7 @@ use std::time::{Duration, Instant};
 use kipple_core::format::base64;
 use kipple_core::{
     ApplyEvent, CancelToken, Engine, EventChannel, EventRx, Finished, Prepared, ScanOutcome,
-    ScanReport, ScanRequest, Selection, Selector, StoreRefusal, SymbolicRoot, event_channel,
-    suggest,
+    ScanReport, Selection, Selector, StoreRefusal, SymbolicRoot, event_channel, suggest,
 };
 use kipple_platform::{
     Environment, ProjectSearch, SearchLimits, SystemClock, kipple_dirs, search_projects,
@@ -366,11 +365,7 @@ where
     fn start(&mut self) {
         self.stop();
         let settings = &self.store.settings;
-        let request = ScanRequest {
-            roots: settings.roots.clone(),
-            lens: None,
-            exclude: settings.policy.exclude.clone(),
-        };
+        let request = settings.scan_request(None);
         let cancel = CancelToken::new();
         let EventChannel {
             tx: events,

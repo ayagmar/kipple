@@ -412,6 +412,7 @@ fn unverified_claude_version_holds_logs() {
     assert_eq!(
         scan.holds(&held),
         [
+            Hold::Subresource,
             Hold::UnknownLayout,
             Hold::UnknownConsequence,
             Hold::FactUnmet
@@ -477,6 +478,23 @@ fn override_scans_only_the_resolved_root() {
     );
 }
 
+/// Catches an unsupported owner closing its store only at plan: the scan that finds the
+/// log under a Claude Code it doesn't recognise holds it as inside a tool's own data, with
+/// the same answer the planner refuses it on.
+#[test]
+fn unsupported_owner_is_protected_at_scan() {
+    let mut tree = FixtureTree::new();
+    fixture::config(&mut tree, CONFIG);
+    fixture::install(&mut tree, "home", "2.1.319");
+
+    let scan = scan(tree);
+
+    assert_eq!(scan.owner(CLAUDE), OwnerStatus::Unsupported);
+    let facts = scan.finding(&closed_log()).facts.as_ref().unwrap();
+    assert_eq!(facts.host, Some(Protection::Subresource));
+    assert_eq!(scan.holds(&closed_log()).first(), Some(&Hold::Subresource));
+}
+
 /// Catches a move kipple's resolver can't see going unnoticed: `env.CLAUDE_CONFIG_DIR` in
 /// `settings.json` means this may not be the store at all (§7.8). Its value stays unread.
 #[test]
@@ -489,6 +507,7 @@ fn settings_env_override_makes_the_root_unknown() {
     assert_eq!(
         scan.holds(&held),
         [
+            Hold::Subresource,
             Hold::UnknownLayout,
             Hold::UnknownConsequence,
             Hold::FactUnmet
@@ -532,7 +551,7 @@ fn an_unresolved_config_path_holds_every_log() {
     assert_eq!(scan.fact(&closed_log(), "layout"), SUPPORTED);
     assert_eq!(
         scan.protection(&closed_log(), CLAUDE),
-        Some(Protection::Subresource)
+        Some(Protection::Unlocated)
     );
 }
 
@@ -546,6 +565,7 @@ fn unusable_settings_leave_the_layout_unknown() {
         assert_eq!(
             scan.holds(&closed_log()),
             [
+                Hold::Subresource,
                 Hold::UnknownLayout,
                 Hold::UnknownConsequence,
                 Hold::FactUnknown
@@ -694,7 +714,25 @@ fn key_files_are_never_read() {
             format!("{CONFIG}/settings.json")
         ]
     );
-    let report = format!("{:?}", scan.report);
+    // Not the report's whole `Debug`: the identities of roots and of each finding's
+    // directories are random numbers here, which now and then hold the digits looked for.
+    let said: Vec<_> = scan
+        .report
+        .integrations
+        .iter()
+        .map(|integration| (&integration.omissions, &integration.advice))
+        .collect();
+    let found: Vec<_> = scan
+        .report
+        .findings
+        .iter()
+        .map(|finding| {
+            let facts = finding.facts.as_ref();
+            let supplied = facts.map(|facts| (&facts.supplied, &facts.unmet, &facts.activity));
+            (&finding.path, &finding.rule, &finding.evidence, supplied)
+        })
+        .collect();
+    let report = format!("{found:?}{said:?}");
     for secret in [
         "credential-value",
         "key-value",

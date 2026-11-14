@@ -1,6 +1,6 @@
 # Integrations and rules
 
-Status: partly built. §3 is the normative schema v1 contract, and its validator exists since M1 (`kipple_adapters::pack::validate`, tested against every error case below). The rule types live in `kipple-core`. The built-in integrations of §5a, their packs in `rules/` and the advice of §6 for pacman, journald and Claude Code exist since M1, and their findings are classified into buckets since M2. Since M4a the Codex, Claude Code, Pi, Cursor and git integrations discover and report as §5a says, and the closed logs of Claude Code and Pi, Codex's old TUI log and its plugin catalog cache are removable on Linux; Codex's releases and every git worktree stay `report`. The other TOML examples have been parse-checked only.
+Status: partly built. §3 is the normative schema v1 contract, and its validator exists since M1 (`kipple_adapters::pack::validate`, tested against every error case below). The rule types live in `kipple-core`. The built-in integrations of §5a, their packs in `rules/` and the advice of §6 for pacman, journald and Claude Code exist since M1, and their findings are classified into buckets since M2. Since M4a the Codex, Claude Code, Pi, Cursor and git integrations discover and report as §5a says, and the closed logs of Claude Code and Pi, Codex's old TUI log and its plugin catalog cache are removable on Linux. Since M4b Codex's stale releases are removable on Linux too (§4); every git worktree stays `report`. The other TOML examples have been parse-checked only.
 
 ## 1. Two layers
 
@@ -133,13 +133,13 @@ Every error has one of these stable codes plus the file, line, column and a mess
 | `unknown-capability` | a root, selector, fact or operation this engine doesn't publish (the message names the engine version) |
 | `not-permitted` | a third-party pack using an integration selector or fact, a first-party-only operation, or the `builtin.` prefix |
 
-How the codes apply to the cases the table leaves open: a value outside a fixed set (a category, platform, method, enum fact value, `selection.default`) and a reference that isn't an HTTPS URL are `wrong-type`. Too many references or markers, an empty `platforms`, `methods` or enum list, and a duration over 100 years are `invalid-range`. A malformed duration or byte size is `wrong-type`. An operation that declares retention requires `[rule.retention]` (`missing-key`), and on any other operation the key is `unknown-key`. `group_by` names `component`, `target` or both; `keep_active`, `keep_previous`, `keep_running` and `keep_pending_install` must be `true` and `unparsable_version` must be `keep`, because the host fixes what a group keeps, so anything else is `invalid-range`. A third-party pack naming a first-party operation or an integration fact is `not-permitted`. A rule tests the generic facts and its own integration's: a fact of another integration, or one scoped to another selector, is `unknown-capability`. So is `registered-linked-worktrees` under anything but `git-worktree-remove` or `report`, and `verified-release-directories` under anything but `remove-verified-release` or `report`. `requirements` and `eligibility` on a `report` rule are `unknown-key`, built-in packs included: a report rule selects by its selector alone, so a predicate there would decide nothing. A pack with no `[[rule]]` is `missing-key`. Errors in the `[pack]` table and in the rules are reported together whenever the pack's ID and platforms are valid.
+How the codes apply to the cases the table leaves open: a value outside a fixed set (a category, platform, method, enum fact value, `selection.default`) and a reference that isn't an HTTPS URL are `wrong-type`. Too many references or markers, an empty `platforms`, `methods` or enum list, and a duration over 100 years are `invalid-range`. A malformed duration or byte size is `wrong-type`. An operation that declares retention requires `[rule.retention]` (`missing-key`), and on any other operation the key is `unknown-key`. `group_by` must name `component` and `target`, once each, in either order; `keep_active`, `keep_previous`, `keep_running` and `keep_pending_install` must be `true` and `unparsable_version` must be `keep`, because the host fixes how releases group and what a group keeps, so anything else is `invalid-range`. A third-party pack naming a first-party operation or an integration fact is `not-permitted`. A rule tests the generic facts and its own integration's: a fact of another integration, or one scoped to another selector, is `unknown-capability`. So is `registered-linked-worktrees` under anything but `git-worktree-remove` or `report`, and `verified-release-directories` under anything but `remove-verified-release` or `report`. `requirements` and `eligibility` on a `report` rule are `unknown-key`, built-in packs included: a report rule selects by its selector alone, so a predicate there would decide nothing. A pack with no `[[rule]]` is `missing-key`. Errors in the `[pack]` table and in the rules are reported together whenever the pack's ID and platforms are valid.
 
 ## 4. Hard cases
 
-### Codex stale releases (keep active + running + pending + 1 per component/channel)
+### Codex stale releases (keep upstream's keep set, and never less)
 
-Today `builtin.codex.stale-releases` is a `report` rule with no requirements and no retention: kipple reads both release stores, supplies the facts below and reports each release, and removes none. The rule below is what it becomes when releases are removed (M4b), and its `requirements` and `retention` are not accepted on a `report` rule until then.
+On Linux `builtin.codex.stale-releases` removes the releases retention lets go, one item per release directory, through `remove-verified-release`, which plans like `remove-files`. The rule runs on Linux only: no lock kipple knows to match Codex's installer is held on macOS or Windows, so there `builtin.codex.release-inventory` reports every release but the selected one and nothing is removed. Codex prunes its own stores at each install since 0.164.0, so on a current store this rule usually finds nothing; it cleans what that prune skipped.
 
 ```toml
 [[rule]]
@@ -148,8 +148,9 @@ integration = "codex"
 title = "Codex releases"
 category = "release-install"
 description = "Releases left after an update. The selected, previous, running and pending releases are always kept."
-why = "Codex keeps every downloaded release after self-updating."
-loss = "The removed versions; Codex re-downloads a version only if you install it again."
+why = "Codex keeps the selected and previous release and prunes the rest when it installs, but skips that when it can't prove a release is unused, and never on Windows."
+loss = "The removed versions. Codex downloads one again only if you install it."
+platforms = ["linux"]
 
 [rule.scope]
 root = "codex.release-store"
@@ -159,6 +160,7 @@ selection = "verified-release-directories"
 layout = "supported"
 inventory = "complete"
 installer_activity = "idle"
+"codex.version_supported" = "supported"
 
 [rule.retention]
 group_by = ["component", "target"]
@@ -170,23 +172,32 @@ unparsable_version = "keep"
 
 [rule.operation]
 kind = "remove-verified-release"
-methods = ["delete"]
-
-[rule.selection]
-default = "unselected"
+methods = ["delete", "trash"]
 ```
 
-Semantics:
-- Kept per group: every active target, every release with a running executable, every pending install, plus the newest remaining release.
-- A malformed `current` link blocks its group. Unknown version directories are kept.
-- At apply, activity and the `current` target are re-probed, and the target set can only shrink.
+`[rule.retention]` only states what the host keeps: each key is fixed, and a rule that says otherwise is refused. There is no `keep_additional`: on Linux and macOS Codex's next install deletes whatever is kept beyond this set.
 
-Fixtures needed:
+Semantics (`kipple-core/src/retention.rs`, `engine/settle.rs`):
+- A group is a component (`standalone`, `app-server-daemon`) and a target. Kept in each: the release `current` selects, the `previous` that `selection-history` names, every release a process runs, and one an install is bringing in. When the history names no rollback in a group, the newest release left there stays, a prerelease ordering below its release.
+- A release runs when a process's executable lies anywhere under its directory, helpers such as `codex-path/rg` included, or when a process runs a file with the identity of one of its files from elsewhere, as through a hard link. Never by name.
+- What a component records answers for all of its groups. A `current` or `selection-history` that can't be relied on, an install marker (`.staging.*`, `.current.*`, `.migration-current`, `install.lock.d`, `install-lock-*`), a part of the store that can't be read, a process under `.retired.*` and a process that may run any of its releases but can't be inspected each keep every release of the component, as each stops Codex's own prune. A version that can't be ordered keeps its group, and a group with a member left unmeasured stays unsettled, which holds it.
+- A release that fails §3's signature, `local-*`, `.retired.*` and `.staging.*` is never a candidate, and neither is a release whose target isn't one of the four upstream's prune considers (`{x86_64,aarch64}-unknown-linux-musl`, `{x86_64,aarch64}-apple-darwin`): a Windows release in a Linux store is only reported. A mount inside a release, at a directory or a file, a same-device bind mount included (Linux compares `statx` mount IDs), fails the signature.
+- The scan takes no lock, but it looks at each one: a lock that is missing, or a link, directory or anything else but a regular file in its place, keeps every release of its component (`no-lock`), since apply could never hold it. Apply takes Codex's locks for one item without waiting and without creating them: `install.lock`, and `app-server-daemon/daemon.lock` for the daemon's store. A missing or held lock skips the item as `installer-busy`. Then it freezes the release and reads every home again in one reading through the scan's code (`Integration::revisit_group`: links, history, markers, manifests and listing). The release is settled among every entry that reading lists for its component, releases and `.retired.*` alike, under one new process snapshot. A release this run or another prune removed is no longer listed, so a run removes every stale release of a component. The release must be listed at its path with the identity the scan read, or it holds as `changed`. An entry the apply scan didn't measure as it is now (new, replaced, or listed without facts) makes its component's activity unknown, which keeps every release of it. So apply never removes what a scan at that moment keeps.
+
+Fixtures (`crates/kipple-adapters/tests/codex.rs`, `crates/kipple-core/tests/retention.rs`, `crates/kipple-core/tests/apply/releases.rs`, `crates/kipple-platform/tests/store_lock.rs`, `crates/kipple/tests/codex_gate.rs`):
 - active v3 with stopped v2 and v1 keeps v3 and v2
-- active v3, running v1, stopped v2 and v0 keeps v3, v1 and v2
+- active v3, running v1, stopped v2 keeps v3, v1 and v2
 - the standalone and app-server-daemon groups keep their own rollbacks
+- 5+3 releases with one older running (docs/11 M4 Verify): the active, running and rollback releases are kept
+- a pruned store has no candidates; a rollback older than another release is kept, not the newest
 - a link that changes before apply protects the new release
-- incomplete process inventory blocks the group
+- two stale releases of one component go in one run; a peer removed by someone else mid-run leaves the item a candidate; a `.retired.*` entry or an `install.lock.d` that appears mid-run keeps the component
+- a Windows release in a Linux store, and a file bind-mounted inside a release, are only reported
+- incomplete process inventory, `hidepid`, an uninspectable Codex process, a malformed `current` and a staging directory block the group
+- a held or missing install lock, and a held daemon lock, skip the release
+- a missing or odd `install.lock`, and a daemon store without its `daemon.lock`, hold at scan
+- a property over generated stores: settle never keeps less than a model of Codex's prune
+- a property over generated stores on disk: no candidate is an entry upstream's prune keeps, judged from the entry's target, program and alias; and after a generated change between two items (an install, a flip, an entry set aside, a removal, a process list with gaps) apply never admits what a fresh scan keeps
 
 ### Git worktrees (any agent)
 
@@ -228,7 +239,7 @@ Every integration descriptor declares its **protected subresources** (04 §3.9),
 
 | Integration | v0.1 mutable | Report-only or protected |
 | --- | --- | --- |
-| Codex | Inactive releases per component and channel; closed diagnostic logs; verified ephemeral artifacts | Histories, state DBs, plugin and runtime stores until proven disposable, credentials and config, active or unknown versions |
+| Codex | On Linux, stale releases per component and target (no channel exists on disk); closed diagnostic logs; verified ephemeral artifacts | Histories, state DBs, plugin and runtime stores until proven disposable, credentials and config, active or unknown versions |
 | Git worktrees (any agent) | Artifacts inside worktrees; strictly eligible registered linked-worktree removal (§4) | Registration anomalies (report plus `prune --dry-run` advice), dirty, locked or unreachable HEAD |
 | Claude Code | Closed debug logs | Sessions, checkpoints and file history, memory, plugins, skills and config; broken or dirty worktrees; installed versions, which the installer prunes and a stale lock can't prove unused |
 | Pi | Logs and ephemeral files only where upstream identifies them | Sessions, packages, extensions, cloned repos, auth and config |
@@ -243,7 +254,7 @@ Every integration descriptor declares its **protected subresources** (04 §3.9),
 
 ### 5a. Built today
 
-The Cargo, Node and Python rules propose `remove-files` with `delete` or `trash`, and so do, on Linux only, the closed-log rules of Claude Code and Pi, Codex's old TUI log and its plugin catalog cache; the trash, pacman, journald, git and npm rules, Cursor's and the release rules of Codex only report. kipple finds, sizes and classifies each finding into its bucket (D-047), and `kipple clean` and the home screen remove only what a reviewed plan holds, through the executor. Each integration lists the upstream versions its fixtures were built from, and `kipple rules` and the generated support matrix show them. The consequence column is what the integration verified for a finding whose layout it recognised (04 §2a); an unrecognised layout and a report-only finding have none.
+The Cargo, Node and Python rules propose `remove-files` with `delete` or `trash`, and so do, on Linux only, the closed-log rules of Claude Code and Pi, Codex's old TUI log and its plugin catalog cache; and on Linux Codex's stale releases go through `remove-verified-release`; the trash, pacman, journald, git and npm rules and Cursor's only report. kipple finds, sizes and classifies each finding into its bucket (D-047), and `kipple clean` and the home screen remove only what a reviewed plan holds, through the executor. Each integration lists the upstream versions its fixtures were built from, and `kipple rules` and the generated support matrix show them. The consequence column is what the integration verified for a finding whose layout it recognised (04 §2a); an unrecognised layout and a report-only finding have none.
 
 | Integration | Lens | Finds | Evidence | Consequence | Verified against |
 | --- | --- | --- | --- | --- | --- |
@@ -254,7 +265,7 @@ The Cargo, Node and Python rules propose `remove-files` with `delete` or `trash`
 | Pacman | system | the package cache, when not empty (Linux) | the root | — (report only, advice) | pacman 7.1.0 |
 | journald | system | the persistent journal, when not empty (Linux) | the root | — (report only, advice) | systemd 262 |
 | Claude Code | agents | on Linux, the debug logs of closed sessions; everywhere, installed versions and the rest of its store, reported only; advice | the verified install layout and no open session marker naming the log | `none` for the logs, loses `history`, Review at every level; versions: `redownload`, loses `rollback-ability` | Claude Code 2.1.318 |
-| Codex | agents | the release stores: every release reported on Linux, and elsewhere every release but the selected one; on Linux, `log/codex-tui.log` and the plugin catalog cache files; its logs and caches, reported only; advice | the selected release of a verified version in a store of a known layout | the log: `none`, loses `history`, Review at every level; the cache: `automatic`, loses `cache-warmth` | Codex 0.165.0, 0.166.0 |
+| Codex | agents | the release stores: on Linux, the stale releases retention lets go (§4), and every other release but the selected one reported; elsewhere every release but the selected one; on Linux, `log/codex-tui.log` and the plugin catalog cache files; its logs and caches, reported only; advice | the selected release of a verified version in a store of a known layout | releases: `redownload`, loses `offline-ability`; the log: `none`, loses `history`, Review at every level; the cache: `automatic`, loses `cache-warmth` | Codex 0.165.0, 0.166.0 |
 | Pi | agents | on Linux, four named logs of the agent directory; its store, reported only | the verified install layout and an idle installer | `none`, loses `history`, Review at every level | Pi 1.5.0 |
 | Cursor | agents | on Windows, its application data, reported only; advice | none: nothing is verified, so it opens nothing | — (report only, advice) | nothing verified |
 | Git worktrees | agents | each linked worktree of the repositories under a project root or an agent's location, and each checkout none of them lists, with what git says of it | the facts git gave, past the roots | — (report only) | git 2.56.0 |

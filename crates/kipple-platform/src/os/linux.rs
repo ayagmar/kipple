@@ -6,16 +6,17 @@
 use std::ffi::{CStr, OsStr};
 use std::fs;
 use std::io;
+use std::os::fd::AsRawFd as _;
 use std::os::unix::ffi::OsStrExt as _;
-use std::os::unix::fs::MetadataExt as _;
+use std::os::unix::fs::{MetadataExt as _, OpenOptionsExt as _};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::{mem, ptr};
 
 use kipple_core::{
-    Capabilities, CommandLines, Inventory, MountNamespace, Observer, Platform, ProbeError, Probed,
-    ProcessOutcome, ProcessOwner, ResolvedRoot, RootSource, Roots, SettingProblem, SymbolicRoot,
-    UnresolvedRoot,
+    Capabilities, CommandLines, Inventory, LockGap, Mount, MountNamespace, Observer, Platform,
+    ProbeError, Probed, ProcessOutcome, ProcessOwner, ResolvedRoot, RootSource, Roots,
+    SettingProblem, SymbolicRoot, UnresolvedRoot,
 };
 
 /// Where an open directory can be named, however its ancestors have moved.
@@ -443,6 +444,74 @@ pub(crate) fn grants_acl(path: &CStr) -> io::Result<bool> {
     match error.raw_os_error() {
         Some(libc::ENODATA | libc::ENOTSUP) => Ok(false),
         _ => Err(error),
+    }
+}
+
+/// The ID of the mount the entry at `path` is on, without following a link there. A
+/// kernel too old to report one (before 5.8) leaves it unknown.
+#[expect(unsafe_code, reason = "libc's statx is a raw call")]
+pub(crate) fn mount(path: &Path) -> Mount {
+    let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return Mount::Unknown;
+    };
+    let mut stat = mem::MaybeUninit::<libc::statx>::uninit();
+    let flags = libc::AT_SYMLINK_NOFOLLOW | libc::AT_STATX_DONT_SYNC;
+    // SAFETY: the path is NUL-terminated and `stat` is large enough for the result.
+    let done = unsafe {
+        libc::statx(
+            libc::AT_FDCWD,
+            path.as_ptr(),
+            flags,
+            libc::STATX_MNT_ID,
+            stat.as_mut_ptr(),
+        )
+    };
+    if done != 0 {
+        return Mount::Unknown;
+    }
+    // SAFETY: `statx` succeeded, so it filled `stat`.
+    let stat = unsafe { stat.assume_init() };
+    if stat.stx_mask & libc::STATX_MNT_ID == 0 {
+        return Mount::Unknown;
+    }
+    Mount::Id(stat.stx_mnt_id)
+}
+
+/// Takes the lock Codex's installer takes on each of `paths` (S5 codex §6): `flock`, held
+/// exclusively, on a descriptor opened read-only without following a link and never
+/// creating the file. Never waits: a lock held elsewhere is [`LockGap::Held`]. A FIFO in
+/// a lock's place is opened without waiting for a writer, and is no lock.
+pub(crate) fn hold_locks(paths: &[PathBuf]) -> Result<Vec<fs::File>, LockGap> {
+    if paths.is_empty() {
+        return Err(LockGap::Missing);
+    }
+    paths.iter().map(|path| hold_lock(path)).collect()
+}
+
+#[expect(unsafe_code, reason = "libc's flock is a raw call")]
+fn hold_lock(path: &Path) -> Result<fs::File, LockGap> {
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)
+        .map_err(|error| {
+            if error.kind() == io::ErrorKind::NotFound {
+                LockGap::Missing
+            } else {
+                LockGap::Unreadable
+            }
+        })?;
+    let regular = file.metadata().is_ok_and(|meta| meta.file_type().is_file());
+    if !regular {
+        return Err(LockGap::Unreadable);
+    }
+    // SAFETY: the descriptor is open for as long as `file` lives.
+    if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
+        return Ok(file);
+    }
+    match io::Error::last_os_error().raw_os_error() {
+        Some(libc::EWOULDBLOCK) => Err(LockGap::Held),
+        _ => Err(LockGap::Unreadable),
     }
 }
 

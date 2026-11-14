@@ -33,7 +33,7 @@ use crate::policy::{
 };
 use crate::probe::{Clock, EntryKind, EntryMeta, FileIdentity, FsProbe, ProbeError, Sizer};
 use crate::process::ProcessProbe;
-use crate::protect::{OwnerStatus, Owners};
+use crate::protect::{OwnerStatus, Owners, Protection, Protections};
 use crate::retention::Settlement;
 use crate::root::{ResolvedRoot, Roots, SymbolicRoot, UnresolvedRoot};
 use crate::rule::{Category, Lens, Operation, Rule, RuleId};
@@ -250,6 +250,10 @@ pub struct ScanRequest {
     pub lens: Option<Lens>,
     /// The paths `exclude.paths` names: the project walk doesn't enter them.
     pub exclude: Vec<HeldPath>,
+    /// What the host protects whatever any rule says, which every finding's
+    /// [`Facts::host`] is asked of. The default knows no home directory, so it protects
+    /// every finding.
+    pub protections: Protections,
 }
 
 /// Why an engine can't be built.
@@ -313,6 +317,7 @@ struct Shared<'scan> {
     processes: &'scan Processes,
     identities: &'scan Identities,
     home: Option<FileIdentity>,
+    protections: &'scan Protections,
 }
 
 /// One integration's findings and report.
@@ -417,6 +422,7 @@ impl Engine {
             processes: &processes,
             identities: &identities,
             home,
+            protections: &req.protections,
         };
         let runs = self.run_all(&selected, shared);
         let outcome = if cancel.is_cancelled() {
@@ -427,7 +433,9 @@ impl Engine {
         let mut report = report(outcome, runs);
         report.unchecked_system = processes.left_out();
         report.by_command_line = processes.by_command_line();
-        let changed = self.settle_scan(&mut report.findings, shared);
+        let owners = report.owners();
+        let mut changed = protect(&mut report.findings, &req.protections, &owners);
+        changed.extend(self.settle_scan(&mut report.findings, shared));
         announce_changed(&report.findings, &changed, shared);
         events.deliver(ScanEvent::ScanCompleted { outcome }, cancel);
         report
@@ -523,6 +531,7 @@ impl Engine {
             registered,
             advice: advice.len(),
             roots: &opened,
+            status,
         };
         let findings = self.measure_all(found, owner, shared, &mut omissions);
         let report = IntegrationReport {
@@ -663,7 +672,7 @@ impl Engine {
         omissions: &mut Vec<Omission>,
     ) -> (Option<SpaceEstimate>, Facts) {
         if one.reading == Reading::Unread {
-            return (None, Self::unread_facts(one, owner));
+            return (None, Self::unread_facts(one, owner, shared));
         }
         let measured = self.ports.sizer.size(&one.finding.path, shared.cancel);
         let measurement = match measured {
@@ -679,8 +688,9 @@ impl Engine {
     }
 
     /// The facts of a finding kipple doesn't read: whatever reading it would say is unknown.
-    fn unread_facts(found: &Found, owner: Owner<'_>) -> Facts {
+    fn unread_facts(found: &Found, owner: Owner<'_>, shared: Shared<'_>) -> Facts {
         let rule = owner.rule(&found.finding.rule);
+        let lineage = Lineage::default();
         Facts {
             proposal: owner.proposal(rule, found.supplied.advice),
             layout_verified: layout_verified(&found.finding),
@@ -689,7 +699,8 @@ impl Engine {
             activity: Activity::Unknown(ActivityGap::Unsupported),
             modified: Modified::Unknown(WalkGap::Unread),
             recent_days: rule.and_then(|rule| rule.recent_days),
-            lineage: Lineage::default(),
+            host: owner.host(&found.finding.path, &lineage, shared),
+            lineage,
             supplied: found.supplied.clone(),
             unmet: Vec::new(),
             settlement: Settlement::Unsettled,
@@ -746,6 +757,7 @@ impl Engine {
             activity: shared.processes.activity(processes, scope, subject),
             modified,
             recent_days: rule.and_then(|rule| rule.recent_days),
+            host: owner.host(path, &lineage, shared),
             lineage,
             supplied: found.supplied.clone(),
             unmet: Vec::new(),
@@ -854,18 +866,30 @@ impl Identities {
     }
 }
 
-/// The integration whose findings are measured, how much advice it gave, and the roots it
-/// read.
+/// The integration whose findings are measured, how much advice it gave, the roots it
+/// read, and whether it recognised what it read.
 #[derive(Debug, Clone, Copy)]
 struct Owner<'engine> {
     registered: &'engine Registered,
     advice: usize,
     roots: &'engine [ResolvedRoot],
+    status: OwnerStatus,
 }
 
 impl<'a> Owner<'a> {
     fn rule(&self, id: &RuleId) -> Option<&'a Rule> {
         self.registered.rules.iter().find(|rule| &rule.id == id)
+    }
+
+    /// What the host protects this integration's finding at `path` as, while the scan
+    /// runs. Only this integration's own status is final yet, so every other owner counts
+    /// as unsupported and its roots stay closed until [`protect`] asks again with them
+    /// all. A root opens only to more owners, never fewer, so this never opens what the
+    /// finished scan closes.
+    fn host(&self, path: &Path, lineage: &Lineage, shared: Shared<'_>) -> Option<Protection> {
+        let id = self.registered.descriptor.id;
+        let owners = Owners(BTreeMap::from([(id, self.status)]));
+        shared.protections.check(path, lineage, id, &owners)
     }
 
     /// The directory of `finding`'s project.
@@ -942,6 +966,24 @@ fn announce(finding: &Finding, shared: Shared<'_>) -> Result<(), Stopped> {
         facts,
     };
     shared.events.send(event, shared.cancel)
+}
+
+/// Asks the host again about every measured finding, now that `owners` holds every
+/// integration's status, and returns the findings whose answer changed, which are
+/// announced again. Each answer only opens: see [`Owner::host`].
+fn protect(findings: &mut [Finding], protections: &Protections, owners: &Owners) -> Vec<FindingId> {
+    let mut changed = Vec::new();
+    for finding in findings {
+        let Some(facts) = finding.facts.as_mut() else {
+            continue;
+        };
+        let host = protections.check(&finding.path, &facts.lineage, finding.integration, owners);
+        if host != facts.host {
+            facts.host = host;
+            changed.push(finding.id);
+        }
+    }
+    changed
 }
 
 /// Announces again each of `findings` that `changed` names.

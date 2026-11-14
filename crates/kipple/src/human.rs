@@ -6,9 +6,9 @@
 use std::path::{MAIN_SEPARATOR, Path};
 
 use kipple_core::{
-    Activity, ActivityGap, Bucket, Caution, Clause, Cost, FactState, Facts, Finding, Hold, Lens,
-    Level, Loss, Method, Modified, Policy, Proposal, Recovery, ScanOutcome, Seen, Tracked, Unmet,
-    Verdict, WalkGap,
+    Activity, ActivityGap, Bucket, Caution, Clause, Cost, FactState, Facts, Finding, Hold,
+    IntegrationDescriptor, Lens, Level, Loss, Method, Modified, Policy, Proposal, Protection,
+    Recovery, Rule, ScanOutcome, Seen, Tracked, Unmet, Verdict, WalkGap,
 };
 
 use crate::json::{CompletenessOut, SizeOut};
@@ -292,6 +292,20 @@ pub(crate) const fn method_about(method: Method) -> &'static str {
     }
 }
 
+/// Every root `rule` finds things in, as `explain` names them: its own, then each other
+/// root its integration (`descriptor`) reads, each once. The engine opens all of them for
+/// the integration, so a finding of the rule can come from any.
+pub(crate) fn looks_in(rule: &Rule, descriptor: Option<&IntegrationDescriptor>) -> String {
+    let mut roots = vec![rule.root];
+    for root in descriptor.map_or(&[][..], |descriptor| descriptor.roots) {
+        if !roots.contains(root) {
+            roots.push(*root);
+        }
+    }
+    let names: Vec<&str> = roots.iter().map(|root| root.name()).collect();
+    names.join(", ")
+}
+
 /// Where the default method is used, while the home screen removes nothing.
 pub(crate) const METHOD_USED_BY: &str = "used by kipple clean; nothing is removed here";
 
@@ -371,6 +385,33 @@ const fn hold_text(hold: Hold) -> (&'static str, &'static str) {
         Hold::TrackedInsideNative => (
             "git tracks files in it",
             "git tracks files inside it, and a tool's own command can't leave them out.",
+        ),
+        Hold::FileSystemRoot => host_text(Protection::FileSystemRoot),
+        Hold::Home => host_text(Protection::Home),
+        Hold::Subresource => host_text(Protection::Subresource),
+        Hold::Unlocated => host_text(Protection::Unlocated),
+    }
+}
+
+/// The holds that come from what the host protects, worded apart from the rule and
+/// state holds since each names a location rather than a property of the item.
+const fn host_text(protection: Protection) -> (&'static str, &'static str) {
+    match protection {
+        Protection::FileSystemRoot => (
+            "a disk's top folder",
+            "It is the top folder of a disk, which kipple never removes.",
+        ),
+        Protection::Home => (
+            "may hold your home",
+            "Removing it could remove your home folder, or kipple couldn't rule that out.",
+        ),
+        Protection::Subresource => (
+            "a tool's own data",
+            "It is inside, or holds, data a tool or kipple keeps for itself, and that data isn't open to its rule, or kipple doesn't recognise that tool's version.",
+        ),
+        Protection::Unlocated => (
+            "location unknown",
+            "kipple can't locate its own data folder or a tool's data, so it can't show this is outside them. kipple doctor shows which location is unknown and why.",
         ),
     }
 }

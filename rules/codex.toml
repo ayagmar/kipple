@@ -23,8 +23,23 @@ platforms = ["linux"]
 root = "codex.release-store"
 selection = "verified-release-directories"
 
+[rule.requirements]
+layout = "supported"
+inventory = "complete"
+installer_activity = "idle"
+"codex.version_supported" = "supported"
+
+[rule.retention]
+group_by = ["component", "target"]
+keep_active = true
+keep_previous = true
+keep_running = true
+keep_pending_install = true
+unparsable_version = "keep"
+
 [rule.operation]
-kind = "report"
+kind = "remove-verified-release"
+methods = ["delete", "trash"]
 
 [[rule]]
 id = "builtin.codex.release-inventory"
