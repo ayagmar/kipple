@@ -35,13 +35,22 @@ pub(crate) fn build(dir: &Path) -> Result<()> {
     Ok(())
 }
 
-/// `dir` with its links resolved, so the demo's roots are spelled as git prints a worktree:
-/// macOS keeps its temp directory below a link. Windows resolves to a verbatim path, which
-/// its tools don't all read, so there `dir` stays as given.
+/// `dir` as git would print it, so the demo's roots are spelled as a worktree's path is:
+/// links resolved, since macOS keeps its temp directory below one, and on Windows the long
+/// names of a path the runner gives in short ones. Windows resolves to a verbatim path,
+/// which its tools don't all read, so a drive's loses that prefix and any other is left as
+/// given.
 fn physical(dir: &Path) -> PathBuf {
-    match fs::canonicalize(dir) {
-        Ok(resolved) if !resolved.to_string_lossy().starts_with(r"\\?\") => resolved,
-        _ => dir.to_owned(),
+    let Ok(resolved) = fs::canonicalize(dir) else {
+        return dir.to_owned();
+    };
+    let Some(text) = resolved.to_str() else {
+        return dir.to_owned();
+    };
+    match text.strip_prefix(r"\\?\") {
+        None => resolved,
+        Some(rest) if rest.starts_with("UNC") => dir.to_owned(),
+        Some(rest) => PathBuf::from(rest),
     }
 }
 
