@@ -12,11 +12,12 @@ use super::tree::FixtureTree;
 use kipple_adapters::builtin;
 use kipple_core::{
     Anchor, Apparent, CancelToken, Checkout, Clock, Completeness, ConfigGate, DirEntryMeta, Engine,
-    EntryKind, EntryMeta, EventChannel, FactValue, Finding, FrozenTree, FsProbe, GitGap, Inventory,
-    Measurement, NodeId, ObjectId, Observer, Ports, ProbeError, ProcessProbe, ProcessSnapshot,
-    Protections, Registration, RegistrationState, ResolvedRoot, RootSource, Roots, ScanReport,
-    ScanRequest, Sizer, SpaceEstimate, SymbolicRoot, TrackedQuery, Unavailable, WorktreePlace,
-    WorktreeQuery, WorktreeState, event_channel,
+    EntryKind, EntryMeta, EventChannel, FactValue, FileIdentity, Finding, Fingerprint, FrozenTree,
+    FsProbe, GitGap, Inventory, Measurement, NativeTool, NodeId, ObjectId, Observer, Ports,
+    ProbeError, ProcessProbe, ProcessSnapshot, Protections, Registration, RegistrationState,
+    ResolvedRoot, ResolvedTool, RootSource, Roots, Rule, ScanReport, ScanRequest, Sizer,
+    SpaceEstimate, Stamp, SymbolicRoot, ToolGap, ToolResolver, TrackedQuery, Unavailable,
+    WorktreePlace, WorktreeQuery, WorktreeState, WorktreeWitness, event_channel,
 };
 
 /// The real file system, read without following links.
@@ -160,6 +161,51 @@ impl TrackedQuery for NothingTracked {
         _: &CancelToken,
     ) -> Result<Vec<NodeId>, GitGap> {
         Ok(Vec::new())
+    }
+}
+
+/// A git that reports `0`'s version, wherever it is: only the version is read at scan.
+#[derive(Debug)]
+struct GitAt(String);
+
+impl ToolResolver for GitAt {
+    #[expect(
+        clippy::unwrap_used,
+        reason = "a fixture that fails to build fails the test"
+    )]
+    fn resolve(&self, tool: NativeTool) -> Result<ResolvedTool, ToolGap> {
+        if tool != NativeTool::Git {
+            return Err(ToolGap::Missing);
+        }
+        let stamp = Stamp::new(1, 0).unwrap();
+        Ok(ResolvedTool {
+            tool,
+            path: PathBuf::from("git"),
+            identity: FileIdentity { volume: 1, file: 9 },
+            fingerprint: Fingerprint {
+                changed: stamp,
+                modified: stamp,
+                born: None,
+                size: 1,
+            },
+            version: self.0.clone(),
+            runtime: None,
+        })
+    }
+}
+
+/// What `inspect` says of a clean worktree whose witness git built.
+pub(crate) fn witnessed(main: &Path, path: &Path) -> WorktreeState {
+    WorktreeState {
+        witness: Ok(WorktreeWitness {
+            common: FileIdentity { volume: 1, file: 1 },
+            admin: FileIdentity { volume: 1, file: 2 },
+            gitfile: FileIdentity { volume: 1, file: 3 },
+            gitdir_file: FileIdentity { volume: 1, file: 4 },
+            head: ObjectId("a".repeat(40)),
+            branch: Some("wt".to_owned()),
+        }),
+        ..clean(main, path)
     }
 }
 
@@ -400,13 +446,26 @@ impl Built {
     pub(crate) fn scan(self, script: Script) -> Run {
         let packs = builtin::packs(&semver::Version::new(0, 0, 0)).unwrap();
         let rules = packs.into_iter().flat_map(|pack| pack.rules).collect();
+        self.scan_with(script, rules, Box::new(Unavailable))
+    }
+
+    /// Scans the tree with `rules`, git answering from `script` and found at `version`.
+    pub(crate) fn scan_judged(self, script: Script, rules: Vec<Rule>, version: &str) -> Run {
+        self.scan_with(script, rules, Box::new(GitAt(version.to_owned())))
+    }
+
+    #[expect(
+        clippy::unwrap_used,
+        reason = "a fixture that fails to build fails the test"
+    )]
+    fn scan_with(self, script: Script, rules: Vec<Rule>, tools: Box<dyn ToolResolver>) -> Run {
         let ports = Ports {
             fs: Box::new(TempFs),
             sizer: Box::new(NoSizes),
             processes: Box::new(NoProcesses),
             clock: Box::new(Epoch),
             tracked: Box::new(NothingTracked),
-            tools: Box::new(Unavailable),
+            tools,
             worktrees: Box::new(script),
         };
         let engine = Engine::new(ports, builtin::integrations(), rules).unwrap();

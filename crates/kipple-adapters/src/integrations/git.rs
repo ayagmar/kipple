@@ -12,12 +12,12 @@ use std::io;
 use std::path::{Component, Path, PathBuf};
 
 use kipple_core::{
-    ActivityEvidence, Advice, AdviceId, AgentLabel, Checkout, Claim, ConfigGate, EntryKind,
-    Evidence, FactKind, FactSpec, FactValue, FindingSink, GitGap, Integration,
-    IntegrationDescriptor, IntegrationError, IntegrationId, IntegrationSelector, Lens, NativeTool,
-    OwnerStatus, Platform, ProbeError, Registration, RegistrationState, ResolvedTool, Rule, RuleId,
-    ScanContext, Subject, Supplied, SymbolicRoot, ToolGap, ToolVersion, WorktreeFacts,
-    WorktreeState,
+    ActivityEvidence, Advice, AdviceId, AgentLabel, Checkout, Claim, ConfigGate, Consequence, Cost,
+    EntryKind, Evidence, FactKind, FactSpec, FactValue, Finding, FindingSink, GitGap, Integration,
+    IntegrationDescriptor, IntegrationError, IntegrationId, IntegrationSelector, Lens, Loss,
+    NativeKind, NativeTool, Operation, OwnerStatus, Platform, ProbeError, Recovery, Registration,
+    RegistrationState, ResolvedTool, Rule, RuleId, ScanContext, Subject, Supplied, SymbolicRoot,
+    ToolGap, ToolVersion, WorktreeFacts, WorktreeState,
 };
 
 const SELECTORS: &[IntegrationSelector] = &[
@@ -132,6 +132,15 @@ const FACTS: &[FactSpec] = &[
 /// The oldest git the removal is proven on: the one `gate` runs on in CI.
 const WORKTREE_REMOVE_OLDEST: [u64; 3] = [2, 39, 5];
 
+/// What removing a checkout costs: its ignored and untracked inputs and its reflog don't
+/// come back, though the branch keeps its commits, and nothing says how long rebuilding
+/// what was in it takes. Never Safe, at any level.
+const REMOVED: Consequence = Consequence {
+    recovery: Recovery::None,
+    loss: &[Loss::History],
+    cost: Cost::Unknown,
+};
+
 /// The most read of a `.git` file: it holds one path.
 const GITFILE_LIMIT: u64 = 64 * 1024;
 
@@ -166,7 +175,7 @@ impl Integration for Git {
             artifacts: &[],
             owner_files: &[],
             verified: &["git 2.56.0"],
-            consequences: &[],
+            consequences: &[REMOVED],
             facts: FACTS,
             state: &[],
             evidences: &[ActivityEvidence::ScopedPaths],
@@ -191,7 +200,74 @@ impl Integration for Git {
         }
         scan.finish()
     }
+
+    /// Reads a worktree again right before its removal: git lists the repository again, the
+    /// record of the path git printed at the scan is asked about as it was, from the
+    /// checkout the item names, and the tool is resolved again. A registration that is gone,
+    /// or printed twice, supplies nothing known, which holds the item.
+    fn revisit(
+        &self,
+        cx: &ScanContext<'_>,
+        finding: &Finding,
+    ) -> Result<Option<Supplied>, IntegrationError> {
+        let Some(facts) = finding.facts.as_ref() else {
+            return Ok(None);
+        };
+        let Subject::Worktree(reviewed) = &facts.supplied.subject else {
+            return Ok(None);
+        };
+        let tool = cx.tool(NativeTool::Git);
+        let printed = &reviewed.registration.path;
+        let records = match cx.worktrees().list(&reviewed.repository, cx.cancel_token()) {
+            Ok(records) => records,
+            Err(_) if cx.is_cancelled() => return Err(IntegrationError::Stopped),
+            Err(gap) => {
+                let unknown = WorktreeState::unknown(gap);
+                let mut supplied = worktree(
+                    &reviewed.registration,
+                    &reviewed.registration,
+                    unknown,
+                    &tool,
+                    reviewed.agent,
+                );
+                // A list that failed is no inventory.
+                supplied.values.insert("git_inventory", FactValue::Unknown);
+                return Ok(Some(supplied));
+            }
+        };
+        let main = records.first().unwrap_or(&reviewed.registration);
+        let mut named = records
+            .iter()
+            .skip(1)
+            .filter(|record| record.path == *printed);
+        let (Some(record), None) = (named.next(), named.next()) else {
+            let gone = WorktreeState::unknown(GitGap::Failed);
+            return Ok(Some(worktree(
+                main,
+                &reviewed.registration,
+                gone,
+                &tool,
+                reviewed.agent,
+            )));
+        };
+        let walked = (finding.path != *printed).then_some(finding.path.as_path());
+        let Asked { at, state } = asked(cx, record, walked);
+        // What git was asked about must be the checkout the item removes.
+        let state = if at == finding.path { state } else { invalid() };
+        let classified = (state.ignored.is_ok() && state.ignored == reviewed.ignored)
+            .then(|| facts.supplied.values.get(UNCLASSIFIED).copied())
+            .flatten();
+        let mut supplied = worktree(main, record, state, &tool, reviewed.agent);
+        supplied
+            .values
+            .insert(UNCLASSIFIED, classified.unwrap_or(FactValue::Unknown));
+        Ok(Some(supplied))
+    }
 }
+
+/// The fact the scan settles once every integration ran: how many ignored paths aren't
+/// exactly a finding a rule removes on its own.
+const UNCLASSIFIED: &str = "worktree.unclassified_ignored";
 
 /// What a directory's `.git` file makes it.
 #[derive(Debug, PartialEq, Eq)]
@@ -437,51 +513,19 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
         self.registered(safest, printed(safest, state))
     }
 
-    /// What git says of `registration`, at the checkout as the walk reached it. Git prints
-    /// the path it resolved, so below a link in a root's parents, or on Windows below a
-    /// root given in short names, the printed path is outside every root kipple opened,
-    /// while the walk reached the same checkout under the root's spelling. A walked
-    /// checkout of the same name stands for it only when git, asked from there, proves by
-    /// identity that it is this registration's: the registration's `gitdir` names that
-    /// directory and its `.git` file, and the witness built from there is the one built
-    /// from the printed path. Path strings decide nothing.
+    /// What git says of `registration`, at the checkout as the walk reached it ([`asked`]):
+    /// any linked checkout of the same name no repository lists by its own spelling.
     fn ask(&self, registration: &Registration) -> Asked {
-        let worktrees = self.cx.worktrees();
-        let cancel = self.cx.cancel_token();
-        let state = worktrees.inspect(registration, cancel);
-        let printed = registration.path.clone();
-        let Ok(witness) = &state.witness else {
-            return Asked { at: printed, state };
-        };
-        if self.inside(&printed) {
-            return Asked { at: printed, state };
-        }
-        let name = printed.file_name();
+        let name = registration.path.file_name();
         let walked = self.unconfirmed.iter();
         let candidates =
             walked.filter(|dir| dir.file_name() == name && !self.listed.contains(*dir));
-        for dir in candidates {
-            let there = Registration {
-                path: dir.clone(),
-                ..registration.clone()
-            };
-            let found = worktrees.inspect(&there, cancel);
-            let present = found.registration == Ok(RegistrationState::RegisteredPresent);
-            if present && found.witness.as_ref() == Ok(witness) {
-                return Asked {
-                    at: dir.clone(),
-                    state: found,
-                };
-            }
-        }
-        Asked { at: printed, state }
+        asked(self.cx, registration, candidates.map(PathBuf::as_path))
     }
 
     /// Whether `path` is a directory inside a root this scan opened.
     fn inside(&self, path: &Path) -> bool {
-        self.cx
-            .metadata(path)
-            .is_ok_and(|meta| meta.kind == EntryKind::Dir)
+        inside(self.cx, path)
     }
 
     /// The main worktree of the repository whose common directory is `common`, by git's own
@@ -506,26 +550,10 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
         // The walk's spelling of a checkout git printed otherwise is its finding now.
         self.listed.insert(at.clone());
         let agent = label(self.cx, &at);
-        let values = facts(main, registration, &state, &self.tool);
         let advice = self.advice(&state);
         let chosen = state.registration;
-        let worktree = WorktreeFacts {
-            registration: registration.clone(),
-            // A row git couldn't prove never reads as present.
-            state: chosen.unwrap_or(RegistrationState::RegisteredInvalid),
-            repository: main.path.clone(),
-            admin: state.place.as_ref().ok().map(|place| place.git_dir.clone()),
-            witness: state.witness,
-            ignored: state.ignored,
-            tool: self.tool.clone(),
-            agent,
-        };
-        let supplied = Supplied {
-            values,
-            subject: Subject::Worktree(Box::new(worktree)),
-            activity: ActivityEvidence::ScopedPaths,
-            advice,
-        };
+        let supplied = worktree(main, registration, state, &self.tool, agent);
+        let supplied = Supplied { advice, ..supplied };
         self.add(&at, chosen, agent, supplied)
     }
 
@@ -553,9 +581,11 @@ impl<'run, 'context, 'findings> Discovery<'run, 'context, 'findings> {
         };
         let evidence = vec![Evidence::Worktree { agent }];
         if inside {
+            // Only the removal has a consequence: a report-only finding removes nothing.
+            let removes = rule.operation == Operation::Native(NativeKind::GitWorktreeRemove);
             let claim = Claim {
                 evidence,
-                consequence: None,
+                consequence: removes.then_some(REMOVED),
             };
             self.sink.add_supplied(rule, path, claim, supplied)
         } else {
@@ -669,11 +699,87 @@ fn safest(listings: &[Listing]) -> Option<&Listing> {
     locked.or_else(|| listings.first())
 }
 
+/// What git says of `registration`, at the checkout as the walk reached it. Git prints the
+/// path it resolved, so below a link in a root's parents, or on Windows below a root given
+/// in short names, the printed path is outside every root kipple opened, while the walk
+/// reached the same checkout under the root's spelling. One of `walked` stands for it only
+/// when git, asked from there, proves by identity that it is this registration's: the
+/// registration's `gitdir` names that directory and its `.git` file, and the witness built
+/// from there is the one built from the printed path. Path strings decide nothing.
+fn asked<'walked>(
+    cx: &ScanContext<'_>,
+    registration: &Registration,
+    walked: impl IntoIterator<Item = &'walked Path>,
+) -> Asked {
+    let worktrees = cx.worktrees();
+    let cancel = cx.cancel_token();
+    let state = worktrees.inspect(registration, cancel);
+    let printed = registration.path.clone();
+    let Ok(witness) = &state.witness else {
+        return Asked { at: printed, state };
+    };
+    if inside(cx, &printed) {
+        return Asked { at: printed, state };
+    }
+    for dir in walked {
+        let there = Registration {
+            path: dir.to_owned(),
+            ..registration.clone()
+        };
+        let found = worktrees.inspect(&there, cancel);
+        let present = found.registration == Ok(RegistrationState::RegisteredPresent);
+        if present && found.witness.as_ref() == Ok(witness) {
+            return Asked {
+                at: dir.to_owned(),
+                state: found,
+            };
+        }
+    }
+    Asked { at: printed, state }
+}
+
+/// Whether `path` is a directory inside a root `cx` opened.
+fn inside(cx: &ScanContext<'_>, path: &Path) -> bool {
+    cx.metadata(path)
+        .is_ok_and(|meta| meta.kind == EntryKind::Dir)
+}
+
 /// `state`, said of `listing` at the path git printed.
 fn printed(listing: &Listing, state: WorktreeState) -> Asked {
     Asked {
         at: listing.registration.path.clone(),
         state,
+    }
+}
+
+/// What `registration`, listed by the repository whose main worktree is `main`, supplies
+/// from `state`: its facts, and what apply builds its command from and compares.
+fn worktree(
+    main: &Registration,
+    registration: &Registration,
+    state: WorktreeState,
+    tool: &Result<ResolvedTool, ToolGap>,
+    agent: AgentLabel,
+) -> Supplied {
+    let values = facts(main, registration, &state, tool);
+    let worktree = WorktreeFacts {
+        registration: registration.clone(),
+        // A row git couldn't prove never reads as present.
+        state: state
+            .registration
+            .unwrap_or(RegistrationState::RegisteredInvalid),
+        repository: main.path.clone(),
+        admin: state.place.as_ref().ok().map(|place| place.git_dir.clone()),
+        witness: state.witness,
+        ignored: state.ignored,
+        tool: tool.clone(),
+        agent,
+    };
+    Supplied {
+        values,
+        subject: Subject::Worktree(Box::new(worktree)),
+        activity: ActivityEvidence::ScopedPaths,
+        advice: None,
     }
 }
 
@@ -873,7 +979,7 @@ fn facts(
         ("git.tracked_changes", count(&state.tracked_changes)),
         ("git.untracked_files", count(&state.untracked_files)),
         ("git.hidden_changes", count(&state.hidden_changes)),
-        ("worktree.unclassified_ignored", FactValue::Unknown),
+        (UNCLASSIFIED, FactValue::Unknown),
         (
             "worktree.operation_in_progress",
             flag(&state.operation_in_progress),

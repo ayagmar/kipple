@@ -3,8 +3,14 @@
 
 use std::os::unix::fs::PermissionsExt as _;
 
+use super::removing::{has_branch, listed, reviewed_argv};
 use super::*;
-use kipple_core::{GitGap, Omission, Tracked, TrackedQuery as _, WorktreeQuery as _};
+use crate::apply::removes_here;
+use kipple_core::{
+    GIT_ISOLATION, GitGap, ItemOutcome, NativeArg, Omission, Tracked, TrackedQuery as _,
+    WorktreeQuery as _,
+};
+use kipple_platform::Environment;
 
 /// A script the test's config names, which leaves a marker if anything runs it.
 struct Marker {
@@ -12,7 +18,7 @@ struct Marker {
     path: PathBuf,
 }
 
-fn executable(path: &Path, text: &str) {
+pub(super) fn executable(path: &Path, text: &str) {
     write(path, text.as_bytes());
     fs::set_permissions(path, fs::Permissions::from_mode(0o755)).unwrap();
 }
@@ -751,4 +757,263 @@ fn old_git_is_too_old_for_worktrees_only() {
         )
     });
     assert_eq!(too_old.count(), 1, "once for the repository");
+}
+
+/// A `git` that runs `before` where git starts, then the real git with its arguments.
+fn git_doing(repo: &Repo, before: &str) -> PathBuf {
+    let program = repo.temp.path().join("tool/git");
+    let text = format!(
+        "#!/bin/sh\n{before}\nexec '{}' \"$@\"\n",
+        real_git().display()
+    );
+    executable(&program, &text);
+    program
+}
+
+const fn removed(outcome: &ItemOutcome) -> bool {
+    matches!(outcome, ItemOutcome::Done(_))
+}
+
+/// Catches a removal that forces past what git alone refuses: a file written as git starts
+/// is one no check before it saw, and git, never forced, keeps it and the checkout.
+#[test]
+fn removal_never_passes_force() {
+    if !removes_here() {
+        return;
+    }
+    let repo = Repo::new();
+    let program = git_doing(&repo, "printf 'x\\n' > added.txt");
+    let removal = repo.removal_by(&program);
+    let scan = removal.scan();
+
+    let ran = removal.remove(&scan, &[scan.finding("wt")]);
+
+    let argv = reviewed_argv(&ran);
+    for forced in ["--force", "-f", "-ff", "-D", "-d", "--delete", "branch"] {
+        assert!(
+            !argv.contains(&NativeArg::Fixed(forced)),
+            "{forced} in {argv:?}"
+        );
+    }
+    assert!(!removed(ran.outcome()), "{:?}", ran.outcome());
+    assert!(
+        repo.checkout.join("added.txt").exists(),
+        "git kept the new file"
+    );
+    assert!(
+        repo.checkout.join("file.txt").exists(),
+        "the checkout stays"
+    );
+    assert!(listed(&repo, "wt"), "git still lists it");
+    assert!(has_branch(&repo, "wt"), "the branch stays");
+}
+
+/// Catches the removal's own `status` reading the repository's `status.showUntrackedFiles`:
+/// with `no`, git's check passes over an untracked file and deletes it. The override in the
+/// command shows it, so git refuses.
+#[test]
+fn remove_refuses_untracked_hidden_by_repo_config() {
+    if !removes_here() {
+        return;
+    }
+    let repo = Repo::new();
+    repo.git(&["config", "status.showUntrackedFiles", "no"]);
+    let program = git_doing(&repo, "printf 'x\\n' > hidden.txt");
+    let removal = repo.removal_by(&program);
+    let scan = removal.scan();
+
+    let ran = removal.remove(&scan, &[scan.finding("wt")]);
+
+    assert!(!removed(ran.outcome()), "{:?}", ran.outcome());
+    assert!(
+        repo.checkout.join("hidden.txt").exists(),
+        "the hidden file stayed"
+    );
+}
+
+/// Catches git started anywhere but the checkout the runner checked: its `.` is where it
+/// starts, and another worktree of the repository is left as it was.
+#[test]
+fn removal_runs_from_the_checked_checkout() {
+    if !removes_here() {
+        return;
+    }
+    let repo = Repo::new();
+    repo.git(&["worktree", "add", "-q", "-b", "other", "../other"]);
+    let other = repo.temp.path().join("projects/other");
+    let log = repo.temp.path().join("cwd.log");
+    let program = git_doing(&repo, &format!("pwd -P > '{}'", log.display()));
+    let checked = fs::canonicalize(&repo.checkout).unwrap();
+    let removal = repo.removal_by(&program);
+    let scan = removal.scan();
+
+    let ran = removal.remove(&scan, &[scan.finding("wt")]);
+
+    assert!(removed(ran.outcome()), "{ran:#?}");
+    let started = fs::read_to_string(&log).unwrap();
+    assert_eq!(Path::new(started.trim_end()), checked);
+    assert!(!repo.checkout.exists(), "the checkout went");
+    assert!(other.join("file.txt").exists(), "another worktree stays");
+    assert!(listed(&repo, "other"), "the other worktree is still listed");
+    assert!(repo.main.join("file.txt").exists(), "and so does main");
+}
+
+/// Catches a removal read as done because the path it was asked about is gone: a git that
+/// moves the checkout's directory aside and deletes a decoy at the old path leaves the
+/// reviewed checkout whole, and the runner's handles, not the path, say so.
+#[test]
+fn removed_decoy_is_indeterminate() {
+    if !removes_here() {
+        return;
+    }
+    let repo = Repo::bare_bones(Refs::Files);
+    repo.git(&["worktree", "add", "-q", "-b", "agent", "../agents/wt"]);
+    let agents = repo.temp.path().join("projects/agents");
+    let aside = repo.temp.path().join("projects/aside");
+    let fake = repo.temp.path().join("tool/git");
+    let text = format!(
+        "#!/bin/sh\n/bin/mv '{agents}' '{aside}'\n/bin/mkdir -p '{agents}/wt'\n\
+         printf decoy > '{agents}/wt/decoy'\n/bin/rm -rf '{agents}/wt'\n",
+        agents = agents.display(),
+        aside = aside.display(),
+    );
+    executable(&fake, &text);
+    let removal = repo.removal_by(&fake);
+    let scan = removal.scan();
+
+    let ran = removal.remove(&scan, &[scan.finding("agents/wt")]);
+
+    assert!(
+        matches!(ran.outcome(), ItemOutcome::Indeterminate(_)),
+        "{:?}",
+        ran.outcome()
+    );
+    assert!(
+        aside.join("wt/file.txt").exists(),
+        "the reviewed checkout is whole"
+    );
+}
+
+/// Catches the checks and the removal running under different isolation: every git that
+/// kipple starts, to ask or to remove, gets the same leading arguments and the same
+/// environment, and the removal has no `-C`.
+#[test]
+fn check_and_remove_share_isolation() {
+    if !removes_here() {
+        return;
+    }
+    let repo = Repo::new();
+    let log = repo.temp.path().join("runs.log");
+    let bin = repo.temp.path().join("bin");
+    let text = format!(
+        "#!/bin/sh\nprintf 'run %s\\nenv %s|%s|%s|%s|%s|%s|%s\\n' \"$*\" \
+         \"$GIT_CONFIG_NOSYSTEM\" \"$GIT_CONFIG_GLOBAL\" \"$GIT_OPTIONAL_LOCKS\" \"$GIT_PAGER\" \
+         \"$GIT_NO_LAZY_FETCH\" \"${{#GIT_ALLOW_PROTOCOL}}\" \"$XDG_CONFIG_HOME\" >> '{}'\n\
+         exec '{}' \"$@\"\n",
+        log.display(),
+        real_git().display()
+    );
+    let program = bin.join("git");
+    executable(&program, &text);
+    let removal = repo.removal_through(repo.env_with(bin.into_os_string()), &program);
+    let scan = removal.scan();
+
+    let ran = removal.remove(&scan, &[scan.finding("wt")]);
+
+    assert!(removed(ran.outcome()), "{ran:#?}");
+    let argv = reviewed_argv(&ran);
+    assert!(argv.starts_with(GIT_ISOLATION), "{argv:?}");
+    assert!(!argv.contains(&NativeArg::Fixed("-C")), "{argv:?}");
+    let logged = fs::read_to_string(&log).unwrap();
+    let lines: Vec<&str> = logged.lines().collect();
+    let runs = lines.iter().filter_map(|l| l.strip_prefix("run "));
+    let envs = lines.iter().filter_map(|l| l.strip_prefix("env "));
+    // Which git this is gets asked outside any repository, before anything is isolated.
+    let asked: Vec<(&str, &str)> = runs
+        .zip(envs)
+        .filter(|(run, _)| *run != "--version")
+        .collect();
+    let environments: BTreeSet<&str> = asked.iter().map(|(_, env)| *env).collect();
+    assert_eq!(
+        environments.len(),
+        1,
+        "one environment for every run: {logged}"
+    );
+    let isolation = "--no-pager -c core.fsmonitor=false -c core.hooksPath=/dev/null \
+                     -c help.autocorrect=0 --no-optional-locks ";
+    let unisolated = asked.iter().filter(|(run, _)| !run.contains(isolation));
+    assert_eq!(unisolated.count(), 0, "every run of {logged}");
+    let remove_run = format!("{isolation}-c status.showUntrackedFiles=all worktree remove .");
+    let removals = asked.iter().filter(|(run, _)| *run == remove_run);
+    assert_eq!(removals.count(), 1, "{logged}");
+}
+
+/// Catches a repository's config running a program while the worktree is read again or
+/// removed: each key, written once the apply scanned again, either holds the item at the
+/// gate before `status` runs, or is one isolation turns off, and the real removal runs with
+/// it there. No marker either way.
+#[test]
+fn no_repository_config_runs_a_program_at_apply() {
+    if !removes_here() {
+        return;
+    }
+    for key in [
+        "filter.mark.clean",
+        "filter.mark.smudge",
+        "filter.mark.process",
+    ] {
+        for scope in [Scope::Local, Scope::Included, Scope::Worktree] {
+            let repo = attributed();
+            let mark = marker(&repo);
+            let removal = repo.removal();
+            let scan = removal.scan();
+            let changed = repo.clone();
+            let script = mark.script.clone();
+
+            let ran = removal.remove_changed(
+                &scan,
+                &[scan.finding("wt")],
+                Box::new(move || {
+                    configure(&changed, scope, key, &script);
+                    touch(&changed);
+                }),
+            );
+
+            let what = format!("{key} by {scope:?}");
+            assert!(!mark.path.exists(), "{what} ran no program");
+            assert!(
+                matches!(ran.outcome(), ItemOutcome::Skipped(_)),
+                "{what}: {:?}",
+                ran.outcome()
+            );
+        }
+    }
+    for (key, value) in [
+        ("core.fsmonitor", None),
+        ("hook.mark.event", Some("post-index-change")),
+        ("diff.external", None),
+        ("diff.mark.textconv", None),
+    ] {
+        let repo = attributed();
+        let mark = marker(&repo);
+        let ungated = repo.removal();
+        let read = ungated.scan();
+        let changed = repo.clone();
+        let script = mark.script.clone();
+
+        let ran = ungated.remove_changed(
+            &read,
+            &[read.finding("wt")],
+            Box::new(move || {
+                changed.git(&["config", key, value.unwrap_or(&script)]);
+                if value.is_some() {
+                    changed.git(&["config", "hook.mark.command", &script]);
+                }
+                touch(&changed);
+            }),
+        );
+
+        assert!(!mark.path.exists(), "{key} ran no program");
+        assert!(removed(ran.outcome()), "{key}: {:?}", ran.outcome());
+    }
 }
