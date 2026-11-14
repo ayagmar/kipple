@@ -237,13 +237,22 @@ fn no_shell_and_cmd_shim_refused() {
 #[cfg(not(target_os = "linux"))]
 #[test]
 fn nothing_starts_where_no_handle_can_be_named() {
-    let scene = Scene::new();
-    let op = npm_op(&scene, npm(&scene, &logging(&scene)));
+    let ops: [fn(&Scene) -> NativeOp; 2] = [
+        |scene| npm_op(scene, npm(scene, &logging(scene))),
+        |scene| {
+            let witness = worktree_layout(scene);
+            worktree_op(scene, git(scene, &logging(scene)), witness)
+        },
+    ];
+    for (command, made) in ops.into_iter().enumerate() {
+        let scene = Scene::new();
+        let op = made(&scene);
 
-    let refused = scene.runner().run(&op).unwrap_err();
+        let refused = scene.runner().run(&op).unwrap_err();
 
-    assert_eq!(refused.code, ErrorCode::Unsupported);
-    assert_eq!(scene.logged(), Vec::<String>::new(), "nothing started");
+        assert_eq!(refused.code, ErrorCode::Unsupported, "command {command}");
+        assert_eq!(scene.logged(), Vec::<String>::new(), "command {command}");
+    }
 }
 
 #[cfg(target_os = "linux")]
