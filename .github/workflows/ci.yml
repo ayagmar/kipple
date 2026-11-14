@@ -204,7 +204,10 @@ jobs:
             | sha256sum --check --strict
           mkdir "$RUNNER_TEMP/git-src"
           tar -xJf "$tarball" -C "$RUNNER_TEMP/git-src" --strip-components=1
+          # git 2.39.5 predates C23, which newer compilers default to: its own
+          # `unreachable` clashes with the keyword-like macro there.
           make -C "$RUNNER_TEMP/git-src" -j"$(nproc)" prefix="$RUNNER_TEMP/git-2.39.5" \
+            CFLAGS="-g -O2 -std=gnu17" \
             NO_CURL=1 NO_EXPAT=1 NO_GETTEXT=1 NO_OPENSSL=1 NO_PERL=1 NO_PYTHON=1 NO_TCLTK=1 \
             install
           echo "$RUNNER_TEMP/git-2.39.5/bin" >> "$GITHUB_PATH"
