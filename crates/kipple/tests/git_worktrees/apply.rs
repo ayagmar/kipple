@@ -1,9 +1,9 @@
-//! A worktree's removal end to end, with git's rules from `removing.toml`: the real probe,
+//! A worktree's removal end to end, with the built-in rules: the real probe,
 //! the real `GitQuery`, the real runner and the real executor, over a repository the test
 //! made, a plan a person reviewed, and a run stored below the temp dir. Nothing runs on
 //! this machine's behalf: no process is looked at, and git reads none of the user's config.
 
-#[path = "../../../kipple-adapters/tests/fixtures/git/removing.rs"]
+#[path = "../../../kipple-adapters/tests/fixtures/git/rules.rs"]
 mod pack;
 
 use std::collections::BTreeMap;

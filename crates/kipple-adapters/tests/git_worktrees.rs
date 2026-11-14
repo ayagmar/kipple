@@ -1,6 +1,6 @@
 //! git worktrees against git 2.56.0's on-disk layout, built with `FixtureTree`, with what git
-//! says scripted. The rules are `report` with no predicates until m4c, so these tests read
-//! the facts supplied, never a verdict. The tests that run real git are in
+//! says scripted. Most read the facts supplied; the ones that judge use Linux's rules, where
+//! the removal ships, whatever OS runs them. The tests that run real git are in
 //! `crates/kipple/tests/git_worktrees.rs`: this crate can't reach the platform's `GitQuery`.
 #![expect(
     clippy::indexing_slicing,
@@ -11,8 +11,8 @@
 mod demo;
 #[path = "fixtures/git/harness.rs"]
 mod harness;
-#[path = "fixtures/git/removing.rs"]
-mod removing;
+#[path = "fixtures/git/rules.rs"]
+mod rules;
 #[path = "fixtures/tree.rs"]
 #[expect(dead_code, reason = "this test binary uses part of the builder")]
 mod tree;
@@ -238,7 +238,7 @@ fn git_below_the_removal_floor_classifies_and_holds() {
         let (main, path) = (tree.at(MAIN), tree.at(CHECKOUT));
         let script = Script::repository(&main, &[&path]).state(&path, witnessed(&main, &path));
 
-        let run = tree.scan_judged(script, removing::on(Platform::Linux), version);
+        let run = tree.scan_judged(script, rules::on(Platform::Linux), version);
 
         let finding = run.only(&path);
         assert_eq!(finding.rule.0, REMOVE, "{version}");
@@ -307,7 +307,7 @@ fn eight_judged() -> Run {
         }
         script = script.state(path, state);
     }
-    base.scan_judged(script, removing::on(Platform::Linux), REMOVAL_FLOOR)
+    base.scan_judged(script, rules::on(Platform::Linux), REMOVAL_FLOOR)
 }
 
 /// The facts of `finding`, which was measured.

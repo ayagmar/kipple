@@ -24,8 +24,30 @@ platforms = ["linux"]
 root = "config.project-roots"
 selection = "registered-linked-worktrees"
 
+[rule.requirements]
+"worktree.linked" = true
+"worktree.removal_git" = "supported"
+repository_identity = "verified"
+registration_state = "registered-present"
+"worktree.config_gate" = "clear"
+git_inventory = "complete"
+storage_availability = "available"
+activity = "idle"
+
+[rule.eligibility]
+"worktree.locked" = false
+"worktree.submodules" = false
+"git.tracked_changes" = "absent"
+"git.untracked_files" = "absent"
+"git.hidden_changes" = "absent"
+"worktree.unclassified_ignored" = "absent"
+"worktree.operation_in_progress" = false
+"worktree.per_worktree_refs" = "absent"
+"worktree.index_locked" = false
+"worktree.head_reachable" = true
+
 [rule.operation]
-kind = "report"
+kind = "git-worktree-remove"
 
 [[rule]]
 id = "builtin.git.worktree-inventory"

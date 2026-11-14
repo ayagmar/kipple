@@ -862,7 +862,7 @@
           "platform": "linux",
           "discover": true,
           "report": true,
-          "mutate": false
+          "mutate": true
         },
         {
           "platform": "macos",

@@ -1,7 +1,8 @@
 //! Git worktrees of any agent (`docs/06-adapters-and-rules.md` §4). Each path the repositories
 //! the walks reach list gets exactly one finding, and so does each checkout none of them
-//! lists. Every rule here reports, so this only supplies facts: a fact git
-//! couldn't prove is unknown, and the host decides what that holds.
+//! lists. It supplies facts, and the host evaluates every predicate: a fact git couldn't
+//! prove is unknown, which holds. On Linux a registered, present linked worktree inside an
+//! opened root goes to `builtin.git.worktree-remove`; elsewhere every rule reports.
 //!
 //! A worktree's repository can lie outside every root it may read, so what git says comes
 //! through [`WorktreeQuery`](kipple_core::WorktreeQuery). Only finding which directories are

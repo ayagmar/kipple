@@ -454,7 +454,13 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unchecked_system": 0
       },
       "category": "source-worktree",
-      "consequence": null,
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
       "evidence": [
         {
           "agent": "codex",
@@ -477,7 +483,8 @@ expression: "serde_json::to_string_pretty(&report)?"
       "verdict": {
         "bucket": "protected",
         "reasons": [
-          "report-only"
+          "fact-unmet",
+          "fact-unknown"
         ]
       }
     },
@@ -487,7 +494,13 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unchecked_system": 0
       },
       "category": "source-worktree",
-      "consequence": null,
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
       "evidence": [
         {
           "agent": "herdr",
@@ -510,7 +523,8 @@ expression: "serde_json::to_string_pretty(&report)?"
       "verdict": {
         "bucket": "protected",
         "reasons": [
-          "report-only"
+          "fact-unmet",
+          "fact-unknown"
         ]
       }
     },
@@ -520,7 +534,13 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unchecked_system": 0
       },
       "category": "source-worktree",
-      "consequence": null,
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
       "evidence": [
         {
           "agent": "unknown",
@@ -543,7 +563,8 @@ expression: "serde_json::to_string_pretty(&report)?"
       "verdict": {
         "bucket": "protected",
         "reasons": [
-          "report-only"
+          "fact-unmet",
+          "fact-unknown"
         ]
       }
     },
@@ -553,7 +574,13 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unchecked_system": 0
       },
       "category": "source-worktree",
-      "consequence": null,
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
       "evidence": [
         {
           "agent": "claude-code",
@@ -576,7 +603,8 @@ expression: "serde_json::to_string_pretty(&report)?"
       "verdict": {
         "bucket": "protected",
         "reasons": [
-          "report-only"
+          "fact-unmet",
+          "fact-unknown"
         ]
       }
     },
@@ -586,7 +614,13 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unchecked_system": 0
       },
       "category": "source-worktree",
-      "consequence": null,
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
       "evidence": [
         {
           "agent": "claude-code",
@@ -609,7 +643,8 @@ expression: "serde_json::to_string_pretty(&report)?"
       "verdict": {
         "bucket": "protected",
         "reasons": [
-          "report-only"
+          "fact-unmet",
+          "fact-unknown"
         ]
       }
     },
@@ -619,7 +654,13 @@ expression: "serde_json::to_string_pretty(&report)?"
         "unchecked_system": 0
       },
       "category": "source-worktree",
-      "consequence": null,
+      "consequence": {
+        "cost": "unknown",
+        "loss": [
+          "history"
+        ],
+        "recovery": "none"
+      },
       "evidence": [
         {
           "agent": "claude-code",
@@ -642,7 +683,8 @@ expression: "serde_json::to_string_pretty(&report)?"
       "verdict": {
         "bucket": "protected",
         "reasons": [
-          "report-only"
+          "fact-unmet",
+          "fact-unknown"
         ]
       }
     },

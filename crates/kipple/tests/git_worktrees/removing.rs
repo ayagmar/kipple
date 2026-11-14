@@ -1,4 +1,4 @@
-//! `builtin.git.worktree-remove` behind pinned 17's predicates (`removing.toml`), on real
+//! `builtin.git.worktree-remove` behind pinned 17's predicates, on real
 //! git: every gate fact holds the removal at review and again at apply, and a removal that
 //! runs takes the checkout and nothing else. The removal ships on Linux alone, so a test
 //! that removes returns early elsewhere; one that only judges runs Linux's rules anywhere.
