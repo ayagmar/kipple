@@ -16,12 +16,6 @@ mod bun_v1_4_2;
 mod cargo_v1_99_0;
 #[path = "../../kipple-adapters/tests/fixtures/claude-code/settings.rs"]
 mod claude_settings;
-#[path = "../../kipple-adapters/tests/fixtures/codex/demo.rs"]
-mod codex_demo;
-#[path = "../../kipple-adapters/tests/fixtures/codex/v0_165_0.rs"]
-mod codex_v0_165_0;
-#[path = "../../kipple-adapters/tests/fixtures/codex/v0_166_0.rs"]
-mod codex_v0_166_0;
 #[path = "../../kipple-adapters/tests/fixtures/demo_home.rs"]
 mod demo_home;
 #[path = "../../kipple-adapters/tests/fixtures/journald/v262.rs"]
@@ -59,11 +53,6 @@ use kipple_platform::{Environment, PLATFORM};
 use serde_json::Value;
 use tempfile::TempDir;
 
-// The demo's fixtures hold what other tests use too.
-const _: () = {
-    let _ = codex_v0_166_0::windows_release;
-};
-
 const TARGET: &str = "builtin.cargo.target";
 const ACME: &str = "home/projects/clients/acme/api/target";
 const RUST_APP: &str = "home/projects/rust-app/target";
@@ -98,25 +87,6 @@ impl Demo {
 
     fn at(&self, relative: &str) -> PathBuf {
         self.temp.path().join(relative)
-    }
-
-    /// Adds the Codex demo to the tree and its roots to the roots file, and says where its
-    /// home is.
-    fn with_codex(&self) -> PathBuf {
-        let root = self.temp.path();
-        let mut tree = tree::FixtureTree::new();
-        codex_demo::demo(&mut tree);
-        tree.build_in(root).unwrap();
-        codex_demo::selection_history(root, tree::FixtureTree::link_stamp).unwrap();
-        let home = root.join(codex_demo::HOME);
-        let mut file = fs::read_to_string(&self.roots).unwrap();
-        for name in ["codex.home", "codex.default-home"] {
-            writeln!(file, "{name} = {}", home.display()).unwrap();
-        }
-        let store = home.join("packages");
-        writeln!(file, "codex.release-store = {}", store.display()).unwrap();
-        fs::write(&self.roots, file).unwrap();
-        home
     }
 
     /// The environment a run sees: the roots file, and `PATH`, so git can be asked.
@@ -755,7 +725,7 @@ fn a_file_a_repository_tracks_is_left_out_of_the_plan_with_the_reason() {
         return;
     }
     let demo = Demo::new();
-    let home = demo.with_codex();
+    let home = demo.at("home/.codex");
     let file = "cache/remote_plugin_catalog/0123456789abcdef.json";
     git(&demo, &home, &["init", "-q"]);
     git(&demo, &home, &["add", "-f", "--", file]);

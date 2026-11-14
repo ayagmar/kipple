@@ -267,9 +267,13 @@ fn on_demo_home_the_header_names_the_project_root_at_80_by_24() {
         .map(|x| buffer.cell((x, 0)).map_or(" ", |cell| cell.symbol()))
         .collect();
     // The title line sits in the frame's top edge. However the temp dir is spelled on
-    // this system, the root ends in `projects`.
+    // this system, the root ends in `projects`. A scan that ends before the quit adds
+    // what it couldn't cover after the roots: this machine has no git to list worktrees.
     let title = header.trim_end_matches(['-', '+', ' ']);
-    assert!(title.ends_with("projects"), "{header}");
+    assert!(
+        title.split(" - ").any(|part| part.ends_with("projects")),
+        "{header}"
+    );
     assert!(title.starts_with("+ kipple - Balanced - "), "{header}");
 }
 

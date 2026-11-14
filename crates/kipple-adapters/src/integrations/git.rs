@@ -170,7 +170,7 @@ impl Integration for Git {
             facts: FACTS,
             state: &[],
             evidences: &[ActivityEvidence::ScopedPaths],
-            revision: 2,
+            revision: 3,
         }
     }
 

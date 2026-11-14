@@ -685,9 +685,9 @@ fn a_clean_shows_what_its_plan_frees_and_not_the_selections_total() {
 
     let shown = text(&app, 80, 24);
     let frees = if REVIEW_FINDINGS {
-        "delete 96.0 MiB in 2 items"
+        "delete 176.0 MiB in 2 items"
     } else {
-        "delete 32.0 MiB in 1 item"
+        "delete 72.0 MiB in 1 item"
     };
     assert!(shown.contains(frees), "{shown}");
     assert!(!shown.contains("frees"), "{shown}");

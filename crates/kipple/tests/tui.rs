@@ -17,8 +17,6 @@ mod bun_v1_4_2;
 mod cargo_v1_99_0;
 #[path = "../../kipple-adapters/tests/fixtures/claude-code/settings.rs"]
 mod claude_settings;
-#[path = "../../kipple-adapters/tests/fixtures/claude/v2_1_318.rs"]
-mod claude_v2_1_318;
 #[path = "../../kipple-adapters/tests/fixtures/demo_home.rs"]
 mod demo_home;
 #[path = "../../kipple-adapters/tests/fixtures/journald/v262.rs"]
@@ -114,21 +112,6 @@ impl Demo {
             roots,
             config,
         }
-    }
-
-    /// The demo with a verified native Claude Code in it, which holds one open session and
-    /// one closed. The demo's roots leave out where a native install keeps its versions.
-    fn with_claude() -> Self {
-        let demo = Self::new();
-        let mut tree = tree::FixtureTree::new();
-        claude_v2_1_318::config(&mut tree, "home/.claude");
-        claude_v2_1_318::install(&mut tree, "home", claude_v2_1_318::VERSION);
-        tree.build_in(demo.temp.path()).unwrap();
-        let versions = demo.at("home/.local/share/claude");
-        let mut file = fs::read_to_string(&demo.roots).unwrap();
-        writeln!(file, "claude.versions = {}", versions.display()).unwrap();
-        fs::write(&demo.roots, file).unwrap();
-        demo
     }
 
     fn at(&self, relative: &str) -> PathBuf {
@@ -466,12 +449,13 @@ fn s_enter_y_on_a_closed_claude_log_removes_it_and_keeps_the_open_one() {
     if !matches!(PLATFORM, Platform::Linux) {
         return;
     }
-    let demo = Demo::with_claude();
-    let closed = format!("debug/{}.txt", claude_v2_1_318::CLOSED_SESSION);
-    let open = format!("home/.claude/debug/{}.txt", claude_v2_1_318::OPEN_SESSION);
+    // The demo's Claude Code holds the log of a session that ended and of one still open.
+    let demo = Demo::new();
+    let closed = "debug/a3b1e2d4-58c7-4f9a-b6d0-2c9e7f1a3d55.txt";
+    let open = "home/.claude/debug/1f0c9d7e-6b2a-4c11-9a3e-7d5e2b8c4a10.txt";
     // The header repeats the filter, so the row is told by the whole path.
     let shown = format!("~/.claude/{closed}");
-    let mut script = filtered_to(&closed, Bucket::Review);
+    let mut script = filtered_to(closed, Bucket::Review);
     script.extend(press(&[Key::Char('s'), Key::Enter]));
     script.push(Step::Look);
     script.extend(press(&[Key::Char('y')]));
@@ -485,7 +469,7 @@ fn s_enter_y_on_a_closed_claude_log_removes_it_and_keeps_the_open_one() {
         !present(&demo.at(&format!("home/.claude/{closed}"))),
         "the closed log stays"
     );
-    assert!(present(&demo.at(&open)), "the open session's log went");
+    assert!(present(&demo.at(open)), "the open session's log went");
     assert!(
         present(&demo.at("home/.claude/sessions/4242.json")),
         "the session's marker went"

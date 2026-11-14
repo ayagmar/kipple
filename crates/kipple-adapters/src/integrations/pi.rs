@@ -204,7 +204,7 @@ impl Integration for Pi {
                 runtimes: &[],
                 stores: &[SymbolicRoot::PiAgent],
             }],
-            revision: 2,
+            revision: 3,
         }
     }
 

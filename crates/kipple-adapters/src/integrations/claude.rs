@@ -226,7 +226,7 @@ impl Integration for ClaudeCode {
             facts: FACTS,
             state: STATE,
             evidences: &[ActivityEvidence::ScopedPaths],
-            revision: 2,
+            revision: 3,
         }
     }
 

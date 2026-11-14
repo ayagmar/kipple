@@ -7,14 +7,14 @@ use std::io;
 use std::path::{MAIN_SEPARATOR_STR, Path, PathBuf};
 use std::time::SystemTime;
 
-// Only the adapters' own tests call these so far, and the other crates that include this
-// file would fail `dead_code` on them. Naming them here keeps the lint off them in one
-// place; drop a name once `demo_home` reaches it.
+// Each test binary that includes this file uses part of the builder, and would fail
+// `dead_code` on the rest. Naming these here keeps the lint off them in one place.
 const _: () = {
     let _ = FixtureTree::link;
     let _ = Holds::AsWritten;
     let _ = FixtureTree::bad_link;
     let _ = FixtureTree::modified_dir;
+    let _ = FixtureTree::after_build;
     let _ = FixtureTree::link_stamp;
 };
 
@@ -27,7 +27,11 @@ pub(crate) struct FixtureTree {
     links: Vec<(String, String, Holds)>,
     modified: Vec<(String, SystemTime)>,
     modified_dirs: Vec<(String, SystemTime)>,
+    after: Vec<AfterBuild>,
 }
+
+/// A step run on the directory a tree was built in.
+type AfterBuild = fn(&Path) -> io::Result<()>;
 
 #[derive(Debug)]
 enum Content {
@@ -104,6 +108,14 @@ impl FixtureTree {
         self
     }
 
+    /// Runs `step` on the directory the tree is built in, once everything in it exists and
+    /// before any time is set. For what can only be written from the built tree, such as a
+    /// file that records a link's stamp.
+    pub(crate) fn after_build(&mut self, step: AfterBuild) -> &mut Self {
+        self.after.push(step);
+        self
+    }
+
     /// What `lstat` reports for the built link at `path`, as Codex's `selection-history`
     /// records it: `<st_dev> <st_ino> <ctime_sec>.<ctime_nsec>`. A change time can't be set,
     /// so a fixture reads this once the link is in its final place and writes the file
@@ -157,6 +169,9 @@ impl FixtureTree {
                 Holds::AsWritten => PathBuf::from(target.replace('/', MAIN_SEPARATOR_STR)),
             };
             symlink(&target, &path)?;
+        }
+        for step in &self.after {
+            step(root)?;
         }
         for (dir, at) in &self.modified {
             let below = self

@@ -1,2 +1,2 @@
-builtin.pi.closed-logs ac532b931ebafdc78ccf5a0a389a8be9 02ee95c5799190f78a4e4eab2c47590f
-builtin.pi.store-inventory e277eb0e5aace7b91f8d0eade368e6c5 02ee95c5799190f78a4e4eab2c47590f
+builtin.pi.closed-logs ac532b931ebafdc78ccf5a0a389a8be9 8b4bf15e298451f388ee3fae37d56166
+builtin.pi.store-inventory e277eb0e5aace7b91f8d0eade368e6c5 8b4bf15e298451f388ee3fae37d56166

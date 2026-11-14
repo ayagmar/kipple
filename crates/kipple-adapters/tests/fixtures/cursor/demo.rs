@@ -1,5 +1,4 @@
-//! What `demo-home` shows of Cursor. `demo_home.rs` calls this once the demo step enables
-//! the hooks, so nothing compiles it before then.
+//! What `demo-home` shows of Cursor. `demo_home.rs` calls this.
 
 use super::tree::FixtureTree;
 

@@ -1,5 +1,5 @@
-//! What `demo-home` shows of npm. `demo_home.rs` calls this once the demo step enables
-//! the hooks, so nothing compiles it before then.
+//! What `demo-home` shows of npm. `demo_home.rs` calls this once npm has something to
+//! show, so nothing compiles it before then.
 
 use super::tree::FixtureTree;
 

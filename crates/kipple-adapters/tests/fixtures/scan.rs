@@ -169,7 +169,7 @@ pub(crate) fn scan_built(temp: tempfile::TempDir) -> Scanned {
     for (name, relative) in demo_home::ROOTS {
         let root = SymbolicRoot::from_name(name).unwrap();
         let resolved = ResolvedRoot::new(root, temp.path().join(relative), RootSource::Fixed);
-        roots.insert(root, Ok(resolved));
+        roots.add(root, Ok(resolved));
     }
     let packs = builtin::packs(&semver::Version::new(0, 0, 0)).unwrap();
     let rules = packs.into_iter().flat_map(|pack| pack.rules).collect();

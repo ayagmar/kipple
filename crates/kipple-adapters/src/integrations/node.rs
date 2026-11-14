@@ -44,7 +44,7 @@ impl Integration for Node {
                 // `node`, `bun` or `deno` run the packages from outside `node_modules`.
                 runtimes: &["node", "bun", "deno"],
             }],
-            revision: 1,
+            revision: 2,
         }
     }
 

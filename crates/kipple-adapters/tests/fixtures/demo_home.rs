@@ -1,13 +1,42 @@
 //! `demo-home`: the one shared tree used by the end-to-end tests, the docs demo and the
 //! tapes (`docs/06-adapters-and-rules.md` §7), built from the upstream layout fixtures.
 
+use std::io;
+use std::path::Path;
 use std::time::{Duration, SystemTime};
 
-use super::tree::FixtureTree;
+use super::tree::{self, FixtureTree};
 use super::{
     bun_v1_4_2, cargo_v1_99_0, claude_settings, journald_v262, npm_v11_19_0, pacman_v7_1_0,
     pnpm_v12_9_1, trash_v1_0, uv_v0_12_23, venv_v3_14_8,
 };
+
+// What the demo shows of each agent, from that agent's own fixtures. They are declared here
+// and not beside this file's other fixtures, so a crate that includes the demo names one
+// module and gets them all.
+#[path = "claude/demo.rs"]
+mod claude_demo;
+#[path = "claude/v2_1_318.rs"]
+#[expect(dead_code, reason = "the demo uses part of this layout's fixture")]
+mod claude_v2_1_318;
+#[path = "codex/demo.rs"]
+mod codex_demo;
+#[path = "codex/v0_165_0.rs"]
+mod codex_v0_165_0;
+#[path = "codex/v0_166_0.rs"]
+#[expect(dead_code, reason = "the demo uses part of this layout's fixture")]
+mod codex_v0_166_0;
+#[path = "cursor/demo.rs"]
+mod cursor_demo;
+#[path = "git/demo.rs"]
+mod git_demo;
+#[path = "pi/demo.rs"]
+mod pi_demo;
+#[path = "pi/v1_5_0.rs"]
+mod pi_v1_5_0;
+#[path = "git/v2_56_0.rs"]
+#[expect(dead_code, reason = "the demo uses part of this layout's fixture")]
+mod v2_56_0;
 
 /// Each symbolic root of the demo, with its path relative to the demo directory.
 pub(crate) const ROOTS: &[(&str, &str)] = &[
@@ -21,6 +50,22 @@ pub(crate) const ROOTS: &[(&str, &str)] = &[
     ("config.project-roots", "home/projects"),
     ("trash", "home/.local/share/Trash/files"),
     ("claude.config", "home/.claude"),
+    ("claude.home", "home/.claude"),
+    ("claude.config-file", "home/.claude.json"),
+    ("claude.versions", "home/.local/share/claude"),
+    ("claude.install-state", "home/.local/state/claude"),
+    ("codex.home", "home/.codex"),
+    ("codex.default-home", "home/.codex"),
+    ("codex.release-store", "home/.codex/packages"),
+    ("pi.agent", "home/.pi/agent"),
+    ("pi.home", "home/.pi"),
+    ("cursor.config", "home/.cursor"),
+    ("cursor.app-data", "home/.config/Cursor"),
+    // Where agents keep worktrees outside a project: one root, several places.
+    ("git.agent-locations", "home/.codex/worktrees"),
+    ("git.agent-locations", "home/.cursor/worktrees"),
+    ("git.agent-locations", "home/conductor/workspaces"),
+    ("git.agent-locations", "home/.herdr/worktrees"),
     ("pacman.cache", "var/cache/pacman/pkg"),
     ("journald.journal", "var/log/journal"),
 ];
@@ -57,8 +102,24 @@ pub(crate) fn tree(now: SystemTime) -> FixtureTree {
     claude_settings::config(&mut tree, "home/.claude", 14);
     pacman_v7_1_0::cache(&mut tree, "var/cache/pacman/pkg");
     journald_v262::journal(&mut tree, "var/log/journal");
+    claude_demo::demo(&mut tree);
+    codex_demo::demo(&mut tree);
+    tree.after_build(codex_selection_history);
+    cursor_demo::demo(&mut tree);
+    git_demo::demo(&mut tree);
+    pi_demo::demo(&mut tree);
     tree.modified("home", now - 41 * DAY)
         .modified("var", now - 41 * DAY)
         .modified(&format!("{projects}/web/node_modules"), now - 4 * DAY);
     tree
+}
+
+/// Writes the Codex store's `selection-history` once its `current` link exists, since the
+/// file records that link's stamp. A system with no such stamp gets no file, and its store
+/// reads as one whose history is missing.
+fn codex_selection_history(root: &Path) -> io::Result<()> {
+    match codex_demo::selection_history(root, FixtureTree::link_stamp) {
+        Err(error) if error.kind() == io::ErrorKind::Unsupported => Ok(()),
+        written => written,
+    }
 }

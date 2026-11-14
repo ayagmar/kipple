@@ -351,7 +351,7 @@ impl Integration for Codex {
             facts: FACTS,
             state: STATE,
             evidences: &[RELEASE_ACTIVITY, HOME_ACTIVITY],
-            revision: 2,
+            revision: 3,
         }
     }
 

@@ -1,5 +1,4 @@
-//! What `demo-home` shows of Pi. `demo_home.rs` calls this once the demo step enables
-//! the hooks, so nothing compiles it before then.
+//! What `demo-home` shows of Pi. `demo_home.rs` calls this.
 
 use super::pi_v1_5_0;
 use super::tree::FixtureTree;

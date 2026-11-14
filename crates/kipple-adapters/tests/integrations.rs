@@ -63,6 +63,14 @@ fn found(base: &Path, report: &ScanReport) -> Vec<(String, String, Vec<Evidence>
         .collect()
 }
 
+/// Whether `rule` is one of an agent integration's, whose own tests hold what it finds in
+/// the demo.
+fn an_agents(rule: &str) -> bool {
+    ["claude-code", "codex", "cursor", "git", "pi"]
+        .iter()
+        .any(|id| rule.starts_with(&format!("builtin.{id}.")))
+}
+
 fn marker(name: &str) -> Evidence {
     Evidence::Marker(name.to_owned())
 }
@@ -76,6 +84,7 @@ fn every_supported_layout_in_the_demo_home_is_found_with_its_evidence_and_nothin
     let Scanned { temp, report } = scan(&demo_home::tree(demo_home::looked_at()));
 
     let mut found = found(temp.path(), &report);
+    found.retain(|(rule, ..)| !an_agents(rule));
     found.sort();
     let root = |name| vec![Evidence::Root(SymbolicRoot::from_name(name).unwrap())];
     let project = |file: &str, sign: Evidence| vec![marker(file), sign];
@@ -94,6 +103,11 @@ fn every_supported_layout_in_the_demo_home_is_found_with_its_evidence_and_nothin
             "builtin.journald.journal",
             "var/log/journal",
             root("journald.journal"),
+        ),
+        (
+            "builtin.node.node-modules",
+            "home/projects/app/.claude/worktrees/fix-b/node_modules",
+            project("package.json", signature(".package-lock.json")),
         ),
         (
             "builtin.node.node-modules",
@@ -141,9 +155,11 @@ fn every_supported_layout_in_the_demo_home_is_found_with_its_evidence_and_nothin
     .collect::<Vec<_>>();
     expected.sort();
     assert_eq!(found, expected);
+    // This scan has no git to ask, so git says what it couldn't list.
+    let others = report.integrations.iter().filter(|i| i.id.0 != "git");
     assert!(
-        report.integrations.iter().all(|i| i.omissions.is_empty()),
-        "no integration has an omission"
+        others.into_iter().all(|i| i.omissions.is_empty()),
+        "no integration but git has an omission"
     );
 }
 
@@ -308,7 +324,7 @@ fn every_builtin_rule_applies_only_where_its_integration_runs() {
 fn a_stub_finds_nothing_and_keeps_its_roots_closed() {
     let Scanned { report, .. } = scan(&demo_home::tree(demo_home::looked_at()));
 
-    for id in ["cursor", "git", "npm", "pi"] {
+    for id in ["cursor", "npm"] {
         let integration = report.integrations.iter().find(|i| i.id.0 == id).unwrap();
         assert_eq!(integration.owner, OwnerStatus::Unsupported, "{id}");
         assert!(
